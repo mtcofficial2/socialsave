@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: socialsave-api
+    runtime: docker
+    plan: free
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: REQUIRE_API_KEY
+        value: "false"
+      - key: PYTHONUNBUFFERED
+        value: "1"

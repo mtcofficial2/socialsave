@@ -1,0 +1,4 @@
+{
+  "apiBaseUrl": "https://api.example.com",
+  "notes": "Do not put provider API secrets in this file. Configure the Flutter app with --dart-define=API_BASE_URL=https://api.example.com and optional --dart-define=API_KEY=public-client-token."
+}

@@ -1,0 +1,130 @@
+openapi: 3.0.3
+info:
+  title: SocialSave API
+  version: 1.0.0
+  description: >
+    Backend contract for SocialSave. The Flutter app never talks to social
+    platforms directly and never embeds provider secrets.
+servers:
+  - url: https://api.example.com
+paths:
+  /health:
+    get:
+      summary: Liveness
+      responses:
+        "200":
+          description: OK
+  /api/v1/platforms:
+    get:
+      summary: Enabled providers
+      responses:
+        "200":
+          description: Provider catalog
+  /api/v1/analyze:
+    post:
+      summary: Validate a URL and return normalized metadata
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url:
+                  type: string
+                  example: https://example.com/video.mp4
+      responses:
+        "200":
+          description: Metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyzeResponse"
+        "400":
+          description: Invalid or unsupported URL
+        "403":
+          description: Private, disabled, or download not permitted
+  /api/v1/download:
+    post:
+      summary: Issue a temporary download URL when the platform permits it
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, format_id]
+              properties:
+                url:
+                  type: string
+                format_id:
+                  type: string
+      responses:
+        "200":
+          description: Temporary download ticket
+  /api/v1/download/{id}:
+    get:
+      summary: Async job status
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Job status
+  /api/v1/files/{token}:
+    get:
+      summary: Stream a validated video after SSRF and type checks
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Video bytes
+components:
+  schemas:
+    AnalyzeResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        platform:
+          type: string
+        title:
+          type: string
+        thumbnail:
+          type: string
+          nullable: true
+        duration:
+          type: integer
+          nullable: true
+        author:
+          type: string
+          nullable: true
+        formats:
+          type: array
+          items:
+            $ref: "#/components/schemas/MediaFormat"
+        can_download:
+          type: boolean
+        download_restricted_reason:
+          type: string
+          nullable: true
+    MediaFormat:
+      type: object
+      properties:
+        id:
+          type: string
+        quality:
+          type: string
+        format:
+          type: string
+        filesize:
+          type: integer
+          nullable: true

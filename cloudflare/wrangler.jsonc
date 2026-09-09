@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "socialsave-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-09",
+  "containers": [
+    {
+      "class_name": "SocialSaveContainer",
+      "image": "../backend/Dockerfile",
+      "instance_type": "standard-1",
+      "max_instances": 2
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SOCIALSAVE",
+        "class_name": "SocialSaveContainer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["SocialSaveContainer"]
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "socialsave-cloudflare",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "^4.130.0"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "^0.0.30"
+  }
+}
