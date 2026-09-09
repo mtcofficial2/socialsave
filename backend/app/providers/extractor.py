@@ -20,6 +20,7 @@ from app.errors import (
 )
 from app.models import MediaFormat
 from app.providers.base import MediaMetadata
+from app.providers import youtube_fallback
 
 _EXECUTOR = ThreadPoolExecutor(max_workers=2)
 _QUALITY_STEPS = (360, 480, 720, 1080, 1440, 2160)
@@ -337,6 +338,31 @@ def _extract_sync(url: str, settings: Settings) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001
             last_error = exc
             continue
+    if _is_youtube(url):
+        video_id = youtube_fallback.video_id_from_url(url)
+        if video_id:
+            info = youtube_fallback.fetch_info(video_id)
+            return {
+                "title": info.get("title") or "YouTube video",
+                "thumbnail": youtube_fallback.thumbnail_url(info),
+                "duration": info.get("lengthSeconds"),
+                "uploader": info.get("author"),
+                "width": info.get("width"),
+                "height": info.get("height"),
+                "ext": "mp4",
+                "formats": [
+                    {
+                        "vcodec": "avc1",
+                        "height": fmt.height,
+                        "width": fmt.width,
+                        "ext": fmt.format,
+                        "filesize": fmt.filesize,
+                    }
+                    for fmt in youtube_fallback.to_formats(info)
+                    if fmt.height
+                ],
+                "_fallback": info,
+            }
     raise _map_error(last_error or Exception("analyze failed"), url)
 
 
@@ -414,6 +440,22 @@ def _download_sync(
             last_error = exc
             _clear_workdir(workdir)
             continue
+    if info is None and _is_youtube(url):
+        video_id = youtube_fallback.video_id_from_url(url)
+        if video_id:
+            fallback = youtube_fallback.fetch_info(video_id)
+            stream = youtube_fallback.pick_stream(fallback, format_id)
+            dest = workdir / "youtube.mp4"
+            size = youtube_fallback.download_stream(
+                str(stream["url"]), dest, settings.max_download_bytes
+            )
+            title = _safe_title(str(fallback.get("title") or "youtube"))
+            return {
+                "path": str(dest.resolve()),
+                "mime": "video/mp4",
+                "name": f"{title}.mp4",
+                "filesize": size,
+            }
     if info is None:
         raise _map_error(last_error or Exception("download failed"), url)
 
