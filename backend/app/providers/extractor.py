@@ -327,21 +327,29 @@ def _youtube_attempts() -> list[dict[str, Any]]:
 
 
 def _extract_sync(url: str, settings: Settings) -> dict[str, Any]:
-    last_error: Exception | None = None
     if _is_youtube(url):
         mapped = _youtube_fallback_info(url)
         if mapped is not None:
             return mapped
-    extras = _youtube_attempts() if _is_youtube(url) else [{}]
+        extras = _youtube_attempts()[:1]
+    else:
+        extras = [{}]
+    last_error: Exception | None = None
     for extra in extras:
         opts = _base_opts(settings, url)
         opts["skip_download"] = True
+        if _is_youtube(url):
+            opts["socket_timeout"] = 12
         opts.update(extra)
         try:
             return _unwrap_info(_run_ydl_raw(url, opts, download=False))
         except Exception as exc:  # noqa: BLE001
             last_error = exc
             continue
+    if _is_youtube(url):
+        raise platform_unavailable(
+            "YouTube is blocking this free cloud server. TikTok and direct MP4 links still work."
+        )
     raise _map_error(last_error or Exception("analyze failed"), url)
 
 
@@ -459,6 +467,7 @@ def _download_sync(
             _clear_workdir(workdir)
             continue
     if info is None and _is_youtube(url):
+        # yt-dlp is often IP-blocked on Render; try a public metadata API then a direct file URL.
         video_id = youtube_fallback.video_id_from_url(url)
         if video_id:
             fallback = youtube_fallback.fetch_info(video_id)
