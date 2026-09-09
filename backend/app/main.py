@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import get_settings
 from app.errors import ApiError
 from app.rate_limit import InMemoryRateLimiter
 from app.routers import analyze, download, health, platforms
+
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -17,7 +22,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["Cache-Control"] = "no-store"
+        path = request.url.path
+        if path.startswith("/api/") or path == "/health":
+            response.headers["Cache-Control"] = "no-store"
+        elif path.endswith((".js", ".css", ".png", ".jpg", ".svg", ".json", ".webp")):
+            response.headers["Cache-Control"] = "public, max-age=3600"
         return response
 
 
@@ -32,7 +41,7 @@ def create_app() -> FastAPI:
     app.add_middleware(InMemoryRateLimiter)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"] if settings.environment == "development" else [],
+        allow_origins=["*"],
         allow_methods=["GET", "POST"],
         allow_headers=["Authorization", "Content-Type", "X-API-Key"],
     )
@@ -44,6 +53,9 @@ def create_app() -> FastAPI:
     @app.exception_handler(ApiError)
     async def api_error_handler(_, exc: ApiError) -> JSONResponse:
         return JSONResponse(status_code=exc.status_code, content=exc.detail)
+
+    if STATIC_DIR.is_dir():
+        app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="web")
 
     return app
 

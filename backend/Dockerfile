@@ -31,6 +31,7 @@ RUN pip install --no-cache-dir --default-timeout=120 \
     && python -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())"
 
 COPY app ./app
+COPY static ./static
 
 ENV ENVIRONMENT=production
 ENV PYTHONUNBUFFERED=1

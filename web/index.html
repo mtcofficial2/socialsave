@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0F766E" />
+  <meta name="description" content="Paste a public video link and save it to this device. Public and allowed content only." />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="SocialSave" />
+  <title>SocialSave</title>
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="./icon-512.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <section id="screen-home" class="screen active">
+      <div class="topbar">
+        <div class="brand">
+          <div class="logo-mark"><span class="ms">south</span></div>
+          <div class="wordmark">SocialSave</div>
+        </div>
+        <button class="icon-btn" data-go="settings" aria-label="Settings"><span class="ms">settings</span></button>
+      </div>
+      <p class="tagline">Paste a public video link and save it to this device</p>
+
+      <div class="card">
+        <h2 class="card-title">Paste a public video URL</h2>
+        <p class="card-sub">Paste a TikTok, YouTube, Instagram, Facebook, X, Reddit, Pinterest, or direct video link.</p>
+        <div class="field">
+          <span class="lead"><span class="ms">link</span></span>
+          <input id="url-input" type="url" placeholder="https://" autocomplete="off" spellcheck="false" />
+          <button class="trail" id="url-clear" hidden aria-label="Clear"><span class="ms">close</span></button>
+        </div>
+        <div id="detected-platform"></div>
+        <div id="home-error"></div>
+        <div class="row">
+          <button class="btn btn-outline" id="paste-btn"><span class="ms">content_paste</span> Paste</button>
+          <button class="btn btn-primary" id="analyze-btn"><span class="ms">search</span> <span id="analyze-label">Analyze</span></button>
+        </div>
+        <button class="btn-text" id="sample-btn">Try a sample public video</button>
+        <p class="sample-hint">Sample: BigBuckBunny.mp4 — a public Creative Commons film.</p>
+      </div>
+
+      <div class="notice">
+        <span class="ms">gavel</span>
+        <div>Only download content you have the right to save. SocialSave does not bypass DRM, logins, or private posts.</div>
+      </div>
+
+      <h2 class="section-label">Supported platforms</h2>
+      <p class="section-help">Public videos can be saved from these sources. Private, login-only, and DRM-protected clips are skipped.</p>
+      <div class="chips" id="platform-chips"></div>
+
+      <h2 class="section-label">Recent downloads</h2>
+      <div id="recent-list"></div>
+    </section>
+
+    <section id="screen-preview" class="screen sub">
+      <div class="topbar">
+        <button class="icon-btn" data-back aria-label="Back"><span class="ms">arrow_back</span></button>
+        <h1>Download</h1>
+        <span style="width:44px"></span>
+      </div>
+      <div class="thumb-wrap">
+        <img class="thumb lg" id="preview-thumb" alt="Video thumbnail" referrerpolicy="no-referrer" />
+        <span class="duration" id="preview-duration"></span>
+      </div>
+      <div class="preview-head">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span class="chip dot" id="preview-platform" data-platform="direct"></span>
+          <span class="badge" id="preview-badge"></span>
+        </div>
+        <h2 id="preview-title"></h2>
+        <p class="preview-author" id="preview-author"></p>
+        <p class="est" id="preview-size"></p>
+      </div>
+      <div id="quality-block">
+        <h2 class="section-label">Quality</h2>
+        <div class="chips" id="quality-chips"></div>
+      </div>
+      <div id="preview-restricted"></div>
+      <div class="row" style="margin-top:20px">
+        <button class="btn btn-primary" id="download-btn" style="flex:1"><span class="ms">download</span> Download</button>
+      </div>
+      <div class="notice" style="margin-top:16px">
+        <span class="ms">gavel</span>
+        <div>Only save public videos you have the right to keep. SocialSave never bypasses DRM, logins, or private posts.</div>
+      </div>
+    </section>
+
+    <section id="screen-active" class="screen sub">
+      <div class="topbar">
+        <button class="icon-btn" data-back aria-label="Back"><span class="ms">arrow_back</span></button>
+        <h1 id="active-status">Downloading</h1>
+        <span style="width:44px"></span>
+      </div>
+      <div class="thumb-wrap">
+        <img class="thumb lg" id="active-thumb" alt="" style="height:180px" referrerpolicy="no-referrer" />
+      </div>
+      <p style="margin:14px 0 0" id="active-platform-wrap"></p>
+      <h2 id="active-title" style="margin:8px 0 0;font-size:20px"></h2>
+      <div class="progress-ring">
+        <svg viewBox="0 0 148 148">
+          <circle class="bg" cx="74" cy="74" r="64"></circle>
+          <circle class="fg" id="ring-fg" cx="74" cy="74" r="64" stroke-dasharray="402" stroke-dashoffset="402"></circle>
+        </svg>
+        <div class="pct" id="active-pct">0%</div>
+      </div>
+      <p class="est" id="active-meta" style="text-align:center"></p>
+      <div class="row" id="active-actions"></div>
+    </section>
+
+    <section id="screen-downloads" class="screen">
+      <div class="topbar">
+        <h1>Downloads</h1>
+        <button class="icon-btn" id="clear-history" aria-label="Clear history"><span class="ms">delete_sweep</span></button>
+      </div>
+      <div id="downloads-body"></div>
+    </section>
+
+    <section id="screen-settings" class="screen">
+      <div class="topbar"><h1>Settings</h1></div>
+      <div class="settings-group">
+        <h2>Appearance</h2>
+        <div class="segmented" id="theme-seg">
+          <button data-theme-mode="system">System</button>
+          <button data-theme-mode="light">Light</button>
+          <button data-theme-mode="dark">Dark</button>
+        </div>
+      </div>
+      <div class="settings-group card" style="padding:4px 12px">
+        <h2 style="margin:12px 4px 0">Downloads</h2>
+        <div class="switch-row">
+          <div><strong>Wi-Fi only</strong><small>Avoid cellular data for downloads</small></div>
+          <button class="toggle" id="tog-wifi" aria-label="Wi-Fi only"></button>
+        </div>
+        <div class="switch-row">
+          <div><strong>Auto-start downloads</strong><small>Begin saving as soon as a format is confirmed</small></div>
+          <button class="toggle" id="tog-auto" aria-label="Auto-start"></button>
+        </div>
+        <div class="switch-row">
+          <div><strong>Notifications</strong><small>Notify when a download finishes or fails</small></div>
+          <button class="toggle" id="tog-notify" aria-label="Notifications"></button>
+        </div>
+        <button class="nav-row" id="btn-location">
+          <div><strong>Download location</strong><small id="loc-label">This browser (Downloads folder)</small></div>
+          <span class="ms">folder</span>
+        </button>
+        <button class="nav-row" id="btn-quality">
+          <div><strong>Default quality</strong><small id="q-label">Best</small></div>
+          <span class="ms">chevron_right</span>
+        </button>
+      </div>
+      <div class="settings-group card" style="padding:4px 12px">
+        <h2 style="margin:12px 4px 0">About</h2>
+        <button class="nav-row" data-go="about">
+          <div><strong>About</strong><small>SocialSave 1.0.0</small></div>
+          <span class="ms">chevron_right</span>
+        </button>
+        <button class="nav-row" data-go="privacy">
+          <div><strong>Privacy policy</strong></div>
+          <span class="ms">chevron_right</span>
+        </button>
+        <button class="nav-row" data-go="terms">
+          <div><strong>Legal / compliance</strong></div>
+          <span class="ms">chevron_right</span>
+        </button>
+      </div>
+    </section>
+
+    <section id="screen-about" class="screen sub legal">
+      <div class="topbar">
+        <button class="icon-btn" data-back aria-label="Back"><span class="ms">arrow_back</span></button>
+        <h1>About</h1>
+        <span style="width:44px"></span>
+      </div>
+      <div style="text-align:center;margin:12px 0 20px">
+        <div class="logo-mark" style="width:72px;height:72px;border-radius:20px;margin:0 auto 12px"><span class="ms" style="font-size:36px">south</span></div>
+        <div class="wordmark">SocialSave</div>
+        <p class="est">Version 1.0.0</p>
+      </div>
+      <p>SocialSave is a download manager for public video URLs that you are allowed to save. This web app never bypasses DRM, logins, or private posts. Demo mode uses a sample Creative Commons MP4 so the flow works without scraping social platforms.</p>
+      <div class="notice" style="margin-top:16px">
+        <span class="ms">gavel</span>
+        <div>You are responsible for the content you download. SocialSave only works with publicly accessible media that you are allowed to save.</div>
+      </div>
+    </section>
+
+    <section id="screen-privacy" class="screen sub legal">
+      <div class="topbar">
+        <button class="icon-btn" data-back aria-label="Back"><span class="ms">arrow_back</span></button>
+        <h1>Privacy</h1>
+        <span style="width:44px"></span>
+      </div>
+      <p>SocialSave is a local download manager. Settings and download history stay in this browser unless you share a file yourself.</p>
+      <h2>What stays on this device</h2>
+      <p>Theme, quality, Wi-Fi-only preference, notifications, and history (title, source URL, platform, date, size). Downloaded files are saved through your browser.</p>
+      <h2>What is not collected</h2>
+      <p>This demo does not send URLs to a backend, create accounts, or store watch history on a server.</p>
+    </section>
+
+    <section id="screen-terms" class="screen sub legal">
+      <div class="topbar">
+        <button class="icon-btn" data-back aria-label="Back"><span class="ms">arrow_back</span></button>
+        <h1>Legal / compliance</h1>
+        <span style="width:44px"></span>
+      </div>
+      <p>By using SocialSave you agree to save only videos that are publicly accessible and that you have the right to download.</p>
+      <h2>Permitted use</h2>
+      <p>Public links, Creative Commons media, and files the source platform allows you to keep.</p>
+      <h2>Prohibited use</h2>
+      <p>Do not use SocialSave to bypass DRM, logins, private accounts, paywalls, or other access controls, or to copy content you do not have permission to save.</p>
+      <h2>Responsibility</h2>
+      <p>You are responsible for the URLs you paste and the files you save. SocialSave does not grant a copyright license in third-party content.</p>
+    </section>
+
+    <div class="mini-progress" id="mini">
+      <div>
+        <strong id="mini-title" style="font-size:13px">Saving…</strong>
+        <div class="bar"><span id="mini-bar"></span></div>
+      </div>
+      <span id="mini-pct" style="font-weight:700;font-size:13px">0%</span>
+    </div>
+
+    <nav class="nav">
+      <button data-nav="home" class="active"><span class="ms">home</span>Home</button>
+      <button data-nav="downloads"><span class="ms">download</span>Downloads</button>
+      <button data-nav="settings"><span class="ms">tune</span>Settings</button>
+    </nav>
+  </div>
+
+  <div class="sheet" id="sheet">
+    <div class="sheet-card" id="sheet-body"></div>
+  </div>
+  <div class="toast" id="toast"></div>
+  <script src="./app.js"></script>
+</body>
+</html>
