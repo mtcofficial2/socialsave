@@ -145,6 +145,8 @@ def _base_opts(settings: Settings, url: str) -> dict[str, Any]:
     runtimes = _js_runtimes()
     if runtimes:
         opts["js_runtimes"] = runtimes
+    if _is_youtube(url):
+        opts["no_warnings"] = False
     if ffmpeg_dir:
         opts["ffmpeg_location"] = ffmpeg_dir
         opts["merge_output_format"] = "mp4"
@@ -303,10 +305,39 @@ def _run_ydl(url: str, opts: dict[str, Any], *, download: bool) -> dict[str, Any
         raise _map_error(exc, url) from exc
 
 
+def _youtube_attempts() -> list[dict[str, Any]]:
+    """Innertube clients first: Render IPs often get a bot page instead of ytInitialPlayerResponse."""
+    return [
+        {
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["android", "ios", "tv"],
+                    "player_skip": ["webpage"],
+                }
+            }
+        },
+        {
+            "extractor_args": {
+                "youtube": {"player_client": ["tv", "android_vr", "mweb", "web"]}
+            }
+        },
+        {},
+    ]
+
+
 def _extract_sync(url: str, settings: Settings) -> dict[str, Any]:
-    opts = _base_opts(settings, url)
-    opts["skip_download"] = True
-    return _unwrap_info(_run_ydl(url, opts, download=False))
+    extras = _youtube_attempts() if _is_youtube(url) else [{}]
+    last_error: Exception | None = None
+    for extra in extras:
+        opts = _base_opts(settings, url)
+        opts["skip_download"] = True
+        opts.update(extra)
+        try:
+            return _unwrap_info(_run_ydl_raw(url, opts, download=False))
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            continue
+    raise _map_error(last_error or Exception("analyze failed"), url)
 
 
 def _clear_workdir(workdir: Path) -> None:
@@ -332,11 +363,21 @@ def _download_sync(
         }
     ]
     if _is_youtube(url):
+        attempts.extend(
+            {
+                "format": extra.get("format", _format_selector(format_id, has_ffmpeg)),
+                **{k: v for k, v in extra.items() if k != "format"},
+            }
+            for extra in _youtube_attempts()
+        )
         attempts.append(
             {
                 "format": "18/22/best[ext=mp4][acodec!=none]/best",
                 "extractor_args": {
-                    "youtube": {"player_client": ["android", "ios"]},
+                    "youtube": {
+                        "player_client": ["android", "ios"],
+                        "player_skip": ["webpage"],
+                    }
                 },
             }
         )
