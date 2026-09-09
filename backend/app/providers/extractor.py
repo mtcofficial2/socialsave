@@ -38,6 +38,10 @@ def _ffmpeg_dir() -> Optional[str]:
         return None
 
 
+def _node_path() -> Optional[str]:
+    return shutil.which("node") or shutil.which("nodejs")
+
+
 def _hostname(url: str) -> str:
     return (urlparse(url).hostname or "").lower()
 
@@ -121,9 +125,17 @@ def _base_opts(settings: Settings, url: str) -> dict[str, Any]:
         "skip_unavailable_fragments": True,
         "concurrent_fragment_downloads": 3,
         "format_sort": ["res", "fps", "hdr:12", "codec:av01:vp9.2:vp9:h265:h264", "size", "br"],
-        "js_runtimes": {"node": {}, "deno": {}},
         "http_headers": headers,
+        "remote_components": ["ejs:github"],
     }
+    node = _node_path()
+    if node:
+        opts["js_runtimes"] = {"node": {"path": node}}
+    if _is_youtube(url):
+        # tv/android_vr need less JS; web works once Node can solve n/sig.
+        opts["extractor_args"] = {
+            "youtube": {"player_client": ["tv", "android_vr", "web"]}
+        }
     if ffmpeg_dir:
         opts["ffmpeg_location"] = ffmpeg_dir
         opts["merge_output_format"] = "mp4"

@@ -1,11 +1,14 @@
+FROM node:20-bookworm-slim AS nodebin
 FROM python:3.13-slim-bookworm
 
-# Node is required for YouTube EJS in yt-dlp.
+# Official Node binary as `node` (Debian's nodejs package only provides `js`).
+# yt-dlp needs `node` to solve YouTube n/sig challenges.
+COPY --from=nodebin /usr/local/bin/node /usr/local/bin/node
+RUN node -v
+
 # Skip apt ffmpeg: Debian ffmpeg pulls libllvm. imageio-ffmpeg ships a static binary.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        ca-certificates \
-        nodejs \
+    && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
