@@ -43,25 +43,24 @@ def video_id_from_url(url: str) -> Optional[str]:
 
 def fetch_info(video_id: str) -> dict[str, Any]:
     last_error: Exception | None = None
-    with httpx.Client(timeout=20.0, follow_redirects=True, headers=_HEADERS) as client:
+    with httpx.Client(timeout=8.0, follow_redirects=True, headers=_HEADERS) as client:
         for base in _INSTANCES:
             try:
                 response = client.get(f"{base}/api/v1/videos/{video_id}")
-                if response.status_code == 404:
-                    raise removed_video()
-                response.raise_for_status()
+                if response.status_code >= 400:
+                    last_error = RuntimeError(f"{base} HTTP {response.status_code}")
+                    continue
                 data = response.json()
                 if isinstance(data, dict) and data.get("title") and (
                     data.get("formatStreams") or data.get("adaptiveFormats")
                 ):
                     return data
-            except removed_video:
-                raise
+                last_error = RuntimeError(f"{base} missing streams")
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
                 continue
     raise platform_unavailable(
-        "YouTube blocked the cloud server. Try again in a minute, or use TikTok / a direct MP4."
+        "YouTube blocked the cloud server. Try TikTok or a direct MP4, or try YouTube again later."
     ) from last_error
 
 

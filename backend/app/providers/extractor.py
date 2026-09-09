@@ -327,8 +327,12 @@ def _youtube_attempts() -> list[dict[str, Any]]:
 
 
 def _extract_sync(url: str, settings: Settings) -> dict[str, Any]:
-    extras = _youtube_attempts() if _is_youtube(url) else [{}]
     last_error: Exception | None = None
+    if _is_youtube(url):
+        mapped = _youtube_fallback_info(url)
+        if mapped is not None:
+            return mapped
+    extras = _youtube_attempts() if _is_youtube(url) else [{}]
     for extra in extras:
         opts = _base_opts(settings, url)
         opts["skip_download"] = True
@@ -338,32 +342,46 @@ def _extract_sync(url: str, settings: Settings) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001
             last_error = exc
             continue
-    if _is_youtube(url):
-        video_id = youtube_fallback.video_id_from_url(url)
-        if video_id:
-            info = youtube_fallback.fetch_info(video_id)
-            return {
-                "title": info.get("title") or "YouTube video",
-                "thumbnail": youtube_fallback.thumbnail_url(info),
-                "duration": info.get("lengthSeconds"),
-                "uploader": info.get("author"),
-                "width": info.get("width"),
-                "height": info.get("height"),
-                "ext": "mp4",
-                "formats": [
-                    {
-                        "vcodec": "avc1",
-                        "height": fmt.height,
-                        "width": fmt.width,
-                        "ext": fmt.format,
-                        "filesize": fmt.filesize,
-                    }
-                    for fmt in youtube_fallback.to_formats(info)
-                    if fmt.height
-                ],
-                "_fallback": info,
-            }
     raise _map_error(last_error or Exception("analyze failed"), url)
+
+
+def _youtube_fallback_info(url: str) -> Optional[dict[str, Any]]:
+    video_id = youtube_fallback.video_id_from_url(url)
+    if not video_id:
+        return None
+    try:
+        info = youtube_fallback.fetch_info(video_id)
+    except Exception as exc:  # noqa: BLE001
+        print(f"youtube fallback: {type(exc).__name__}: {exc}", flush=True)
+        return None
+    raw_formats: list[dict[str, Any]] = []
+    for item in info.get("formatStreams") or []:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("qualityLabel") or "")
+        height = youtube_fallback._int(label.replace("p", "")) if label.endswith("p") else None
+        if not height:
+            continue
+        raw_formats.append(
+            {
+                "vcodec": "avc1",
+                "acodec": "aac",
+                "height": height,
+                "ext": str(item.get("container") or "mp4"),
+                "filesize": youtube_fallback._filesize(item),
+            }
+        )
+    return {
+        "title": info.get("title") or "YouTube video",
+        "thumbnail": youtube_fallback.thumbnail_url(info),
+        "duration": info.get("lengthSeconds"),
+        "uploader": info.get("author"),
+        "width": info.get("width"),
+        "height": info.get("height"),
+        "ext": "mp4",
+        "formats": raw_formats,
+        "_fallback": info,
+    }
 
 
 def _clear_workdir(workdir: Path) -> None:
