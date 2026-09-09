@@ -1,12 +1,14 @@
 FROM node:20-bookworm-slim AS nodebin
+FROM mwader/static-ffmpeg:7.1 AS ffmpeg
 FROM python:3.13-slim-bookworm
 
-# Official Node binary as `node` (Debian's nodejs package only provides `js`).
-# yt-dlp needs `node` to solve YouTube n/sig challenges.
+# Official Node as `node` — Debian's nodejs package only provides `js`.
 COPY --from=nodebin /usr/local/bin/node /usr/local/bin/node
-RUN node -v
+# Static ffmpeg+ffprobe (no apt/libllvm). yt-dlp needs both to merge TikTok/YouTube.
+COPY --from=ffmpeg /ffmpeg /usr/local/bin/ffmpeg
+COPY --from=ffmpeg /ffprobe /usr/local/bin/ffprobe
+RUN node -v && ffmpeg -version && ffprobe -version
 
-# Skip apt ffmpeg: Debian ffmpeg pulls libllvm. imageio-ffmpeg ships a static binary.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*

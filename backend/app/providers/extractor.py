@@ -33,7 +33,14 @@ def _ffmpeg_dir() -> Optional[str]:
     try:
         import imageio_ffmpeg
 
-        return str(Path(imageio_ffmpeg.get_ffmpeg_exe()).parent)
+        exe = Path(imageio_ffmpeg.get_ffmpeg_exe())
+        alias = exe.parent / "ffmpeg"
+        if exe.name != "ffmpeg" and not alias.exists():
+            try:
+                alias.symlink_to(exe)
+            except OSError:
+                shutil.copy2(exe, alias)
+        return str(exe.parent)
     except Exception:
         return None
 
