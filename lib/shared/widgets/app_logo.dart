@@ -13,22 +13,13 @@ class AppLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final mark = Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(size * 0.28),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [scheme.primary, scheme.tertiary],
-        ),
-      ),
-      child: Icon(
-        Icons.south_outlined,
-        color: scheme.onPrimary,
-        size: size * 0.54,
+    final mark = ClipRRect(
+      borderRadius: BorderRadius.circular(size * 0.28),
+      child: Image.asset(
+        'assets/brand/icon_1024.png',
+        width: size,
+        height: size,
+        filterQuality: FilterQuality.high,
       ),
     );
 
