@@ -1,13 +1,14 @@
-FROM node:20-bookworm-slim AS nodebin
+FROM node:22-bookworm-slim AS nodebin
+FROM denoland/deno:bin AS denobin
 FROM mwader/static-ffmpeg:7.1 AS ffmpeg
 FROM python:3.13-slim-bookworm
 
-# Official Node as `node` — Debian's nodejs package only provides `js`.
+# yt-dlp EJS requires Node >= 22 (v20 is rejected). Deno is the default runtime.
 COPY --from=nodebin /usr/local/bin/node /usr/local/bin/node
-# Static ffmpeg+ffprobe (no apt/libllvm). yt-dlp needs both to merge TikTok/YouTube.
+COPY --from=denobin /deno /usr/local/bin/deno
 COPY --from=ffmpeg /ffmpeg /usr/local/bin/ffmpeg
 COPY --from=ffmpeg /ffprobe /usr/local/bin/ffprobe
-RUN node -v && ffmpeg -version && ffprobe -version
+RUN node -v && deno -V && ffmpeg -version && ffprobe -version
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
@@ -23,7 +24,8 @@ RUN pip install --no-cache-dir --default-timeout=120 \
         "pydantic>=2.9.0" \
         "pydantic-settings>=2.6.0" \
         "python-dotenv>=1.0.1" \
-        "yt-dlp>=2025.1.0" \
+        "yt-dlp[default]>=2026.8.19" \
+        "yt-dlp-ejs" \
         "imageio-ffmpeg>=0.5.1" \
         "curl_cffi>=0.10,<0.16" \
     && python -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())"

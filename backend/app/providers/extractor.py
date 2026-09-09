@@ -45,8 +45,15 @@ def _ffmpeg_dir() -> Optional[str]:
         return None
 
 
-def _node_path() -> Optional[str]:
-    return shutil.which("node") or shutil.which("nodejs")
+def _js_runtimes() -> dict[str, dict[str, str]]:
+    runtimes: dict[str, dict[str, str]] = {}
+    deno = shutil.which("deno")
+    node = shutil.which("node") or shutil.which("nodejs")
+    if deno:
+        runtimes["deno"] = {"path": deno}
+    if node:
+        runtimes["node"] = {"path": node}
+    return runtimes
 
 
 def _hostname(url: str) -> str:
@@ -133,16 +140,11 @@ def _base_opts(settings: Settings, url: str) -> dict[str, Any]:
         "concurrent_fragment_downloads": 3,
         "format_sort": ["res", "fps", "hdr:12", "codec:av01:vp9.2:vp9:h265:h264", "size", "br"],
         "http_headers": headers,
-        "remote_components": ["ejs:github"],
+        "remote_components": ["ejs:github", "ejs:npm"],
     }
-    node = _node_path()
-    if node:
-        opts["js_runtimes"] = {"node": {"path": node}}
-    if _is_youtube(url):
-        # tv/android_vr need less JS; web works once Node can solve n/sig.
-        opts["extractor_args"] = {
-            "youtube": {"player_client": ["tv", "android_vr", "web"]}
-        }
+    runtimes = _js_runtimes()
+    if runtimes:
+        opts["js_runtimes"] = runtimes
     if ffmpeg_dir:
         opts["ffmpeg_location"] = ffmpeg_dir
         opts["merge_output_format"] = "mp4"
