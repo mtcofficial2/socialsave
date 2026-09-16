@@ -45,6 +45,7 @@ class _RecordingDownloader implements FileDownloader {
     required String savePath,
     required CancelToken cancelToken,
     int startByte = 0,
+    Map<String, String>? extraHeaders,
     void Function(DownloadProgress progress)? onProgress,
   }) async {
     final file = File(savePath);

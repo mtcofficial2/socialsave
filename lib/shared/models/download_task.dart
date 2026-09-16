@@ -24,6 +24,8 @@ class DownloadTask extends Equatable {
     this.supportsResume = false,
     this.createdAt,
     this.jobId,
+    this.directUrl,
+    this.requestHeaders,
   });
 
   final String id;
@@ -44,6 +46,8 @@ class DownloadTask extends Equatable {
   final int? durationSeconds;
   final DateTime? createdAt;
   final String? jobId;
+  final String? directUrl;
+  final Map<String, String>? requestHeaders;
 
   double get progress {
     final total = totalBytes;
@@ -74,6 +78,8 @@ class DownloadTask extends Equatable {
     bool? supportsResume,
     String? downloadUrl,
     String? jobId,
+    String? directUrl,
+    Map<String, String>? requestHeaders,
     bool clearError = false,
   }) {
     return DownloadTask(
@@ -95,6 +101,8 @@ class DownloadTask extends Equatable {
       durationSeconds: durationSeconds,
       createdAt: createdAt,
       jobId: jobId ?? this.jobId,
+      directUrl: directUrl ?? this.directUrl,
+      requestHeaders: requestHeaders ?? this.requestHeaders,
     );
   }
 
@@ -105,12 +113,16 @@ class DownloadTask extends Equatable {
     required String downloadUrl,
     int? totalBytes,
     String? jobId,
+    String? directUrl,
+    Map<String, String>? requestHeaders,
   }) {
     return DownloadTask(
       id: id,
       sourceUrl: media.sourceUrl,
       downloadUrl: downloadUrl,
       jobId: jobId,
+      directUrl: directUrl,
+      requestHeaders: requestHeaders,
       title: media.title,
       thumbnailUrl: media.thumbnailUrl,
       author: media.author,
@@ -142,6 +154,9 @@ class DownloadTask extends Equatable {
         supportsResume,
         durationSeconds,
         createdAt,
+        jobId,
+        directUrl,
+        requestHeaders,
         jobId,
       ];
 }

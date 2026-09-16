@@ -29,6 +29,7 @@ class DownloadHandle:
     file_name: Optional[str] = None
     upstream_url: Optional[str] = None
     prepare_locally: bool = False
+    http_headers: Optional[dict[str, str]] = None
 
 
 class SocialMediaProvider(ABC):

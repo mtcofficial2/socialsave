@@ -38,6 +38,7 @@ abstract class FileDownloader {
     required String savePath,
     required CancelToken cancelToken,
     int startByte = 0,
+    Map<String, String>? extraHeaders,
     void Function(DownloadProgress progress)? onProgress,
   });
 }
@@ -129,26 +130,17 @@ class DioFileDownloader implements FileDownloader {
     required String savePath,
     required CancelToken cancelToken,
     int startByte = 0,
+    Map<String, String>? extraHeaders,
     void Function(DownloadProgress progress)? onProgress,
   }) async {
     final file = File(savePath);
     await file.parent.create(recursive: true);
-    if (startByte > 0) {
-      await _downloadSingle(
-        url: url,
-        file: file,
-        cancelToken: cancelToken,
-        startByte: startByte,
-        onProgress: onProgress,
-      );
-      return;
-    }
-
     await _downloadSingle(
       url: url,
       file: file,
       cancelToken: cancelToken,
-      startByte: 0,
+      startByte: startByte,
+      extraHeaders: extraHeaders,
       onProgress: onProgress,
     );
   }
@@ -158,9 +150,12 @@ class DioFileDownloader implements FileDownloader {
     required File file,
     required CancelToken cancelToken,
     required int startByte,
+    Map<String, String>? extraHeaders,
     void Function(DownloadProgress progress)? onProgress,
   }) async {
-    final headers = <String, String>{};
+    final headers = <String, String>{
+      if (extraHeaders != null) ...extraHeaders,
+    };
     if (startByte > 0) {
       headers['Range'] = 'bytes=$startByte-';
     }

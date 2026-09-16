@@ -29,12 +29,7 @@ class ExtractingProvider(SocialMediaProvider):
         )
 
     async def create_download(self, url: str, format_id: str) -> DownloadHandle:
-        return DownloadHandle(
-            source_url=url,
-            format_id=format_id or "auto",
-            mime_type="video/mp4",
-            prepare_locally=True,
-        )
+        return await self._extractor.resolve_handle(url, format_id or "auto")
 
 
 class TikTokProvider(ExtractingProvider):

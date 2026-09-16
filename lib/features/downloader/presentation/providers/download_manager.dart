@@ -105,6 +105,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       totalBytes: ticket.filesize ?? format.filesize,
       jobId: ticket.jobId,
       directUrl: ticket.directUrl,
+      requestHeaders: ticket.requestHeaders,
     );
 
     File target;
@@ -194,6 +195,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
             savePath: task.localPath!,
             cancelToken: attempt,
             startByte: startByte,
+            extraHeaders: task.requestHeaders,
             onProgress: (progress) {
               if (progress.received > startByte) {
                 gotBytes = true;

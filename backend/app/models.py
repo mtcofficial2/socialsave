@@ -46,6 +46,7 @@ class DownloadResponse(BaseModel):
     mime_type: Optional[str] = None
     filesize: Optional[int] = None
     file_name: Optional[str] = None
+    request_headers: Optional[dict[str, str]] = None
 
 
 class PlatformStatus(BaseModel):

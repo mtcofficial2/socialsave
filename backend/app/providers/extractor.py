@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import shutil
 import tempfile
@@ -19,8 +20,8 @@ from app.errors import (
     unsupported_platform,
 )
 from app.models import MediaFormat
-from app.providers.base import MediaMetadata
-from app.providers import youtube_fallback
+from app.providers.base import DownloadHandle, MediaMetadata
+from app.providers import social_fallback, youtube_fallback
 
 _EXECUTOR = ThreadPoolExecutor(max_workers=2)
 _QUALITY_STEPS = (360, 480, 720, 1080, 1440, 2160)
@@ -121,15 +122,18 @@ def _base_opts(settings: Settings, url: str) -> dict[str, Any]:
         headers["Referer"] = "https://www.facebook.com/"
     elif "pinterest.com" in host or host.endswith("pin.it"):
         headers["Referer"] = "https://www.pinterest.com/"
+    elif host in {"x.com", "twitter.com"} or host.endswith(".x.com") or host.endswith(".twitter.com"):
+        headers["Referer"] = "https://x.com/"
 
     opts: dict[str, Any] = {
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
         "noprogress": True,
-        "retries": 3,
-        "fragment_retries": 3,
-        "socket_timeout": 30,
+        "retries": 5,
+        "fragment_retries": 5,
+        "socket_timeout": 25,
+        "extractor_retries": 3,
         "max_filesize": settings.max_download_bytes,
         "restrictfilenames": True,
         "overwrites": True,
@@ -138,7 +142,7 @@ def _base_opts(settings: Settings, url: str) -> dict[str, Any]:
         "cachedir": False,
         "extract_flat": False,
         "skip_unavailable_fragments": True,
-        "concurrent_fragment_downloads": 3,
+        "concurrent_fragment_downloads": 8,
         "format_sort": ["res", "fps", "hdr:12", "codec:av01:vp9.2:vp9:h265:h264", "size", "br"],
         "http_headers": headers,
         "remote_components": ["ejs:github", "ejs:npm"],
@@ -151,6 +155,9 @@ def _base_opts(settings: Settings, url: str) -> dict[str, Any]:
     if ffmpeg_dir:
         opts["ffmpeg_location"] = ffmpeg_dir
         opts["merge_output_format"] = "mp4"
+    cookiefile = os.environ.get("YTDLP_COOKIES")
+    if cookiefile and Path(cookiefile).is_file():
+        opts["cookiefile"] = cookiefile
     return opts
 
 
@@ -213,8 +220,20 @@ def _map_error(exc: Exception, url: str = ""):
         return private_video("This video is DRM-protected and cannot be saved.")
     if any(token in lower for token in ("not found", "http error 404", "has been deleted")):
         return removed_video()
-    if "unsupported url" in lower or "no video formats" in lower:
+    if "unsupported url" in lower:
         return unsupported_platform()
+    if "no video could be found" in lower or "no video formats" in lower:
+        return platform_unavailable(
+            "This post does not contain a public downloadable video."
+        )
+    if "empty media response" in lower:
+        return private_video(
+            "This Instagram post is not available without a login. Try a fully public Reel or post."
+        )
+    if "cannot parse data" in lower:
+        return platform_unavailable(
+            "Facebook blocked the public parser. Try a public watch or reel link that opens logged out."
+        )
     if "unable to download video data" in lower or "http error 403" in lower:
         return platform_unavailable(
             "The source refused the video file. Try another quality, or try again."
@@ -326,6 +345,31 @@ def _youtube_attempts() -> list[dict[str, Any]]:
     ]
 
 
+def _impersonate(name: str) -> dict[str, Any]:
+    return {"impersonate": name}
+
+
+def _site_attempts(url: str) -> list[dict[str, Any]]:
+    host = _hostname(url)
+    attempts: list[dict[str, Any]] = []
+    if "instagram.com" in host or host.endswith("instagr.am"):
+        attempts.append({"extractor_args": {"instagram": {"app_id": ["936619743392459"]}}})
+        attempts.append(_impersonate("chrome"))
+    elif "facebook.com" in host or host.endswith("fb.com") or host.endswith("fb.watch"):
+        attempts.append(_impersonate("chrome"))
+    elif host in {"x.com", "twitter.com"} or host.endswith(".x.com") or host.endswith(".twitter.com"):
+        attempts.append(
+            {"extractor_args": {"twitter": {"api": ["syndication", "graphql", "legacy"]}}}
+        )
+        attempts.append(_impersonate("chrome"))
+    elif "pinterest.com" in host or host.endswith("pin.it"):
+        attempts.append(_impersonate("chrome"))
+    elif "tiktok.com" in host:
+        attempts.append(_impersonate("chrome"))
+    attempts.append({})
+    return attempts
+
+
 def _extract_sync(url: str, settings: Settings) -> dict[str, Any]:
     if _is_youtube(url):
         mapped = _youtube_fallback_info(url)
@@ -333,7 +377,7 @@ def _extract_sync(url: str, settings: Settings) -> dict[str, Any]:
             return mapped
         extras = _youtube_attempts()[:1]
     else:
-        extras = [{}]
+        extras = _site_attempts(url)
     last_error: Exception | None = None
     for extra in extras:
         opts = _base_opts(settings, url)
@@ -346,11 +390,58 @@ def _extract_sync(url: str, settings: Settings) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001
             last_error = exc
             continue
+    if not _is_youtube(url):
+        fallback = social_fallback.extract(url)
+        if fallback is not None:
+            return fallback
     if _is_youtube(url):
         raise platform_unavailable(
             "YouTube is blocking this free cloud server. TikTok and direct MP4 links still work."
         )
     raise _map_error(last_error or Exception("analyze failed"), url)
+
+
+def _pick_progressive(info: dict[str, Any]) -> Optional[dict[str, Any]]:
+    formats = [item for item in (info.get("formats") or []) if isinstance(item, dict)]
+    progressive: list[dict[str, Any]] = []
+    for item in formats:
+        url = item.get("url")
+        if not isinstance(url, str) or not url.startswith("http"):
+            continue
+        protocol = str(item.get("protocol") or "")
+        if protocol.startswith("m3u8") or protocol.startswith("http_dash") or ".m3u8" in url:
+            continue
+        vcodec = item.get("vcodec")
+        acodec = item.get("acodec")
+        if vcodec in {None, "none"}:
+            continue
+        progressive.append(item)
+        if acodec not in {None, "none"}:
+            progressive.append(item)
+    if not progressive and isinstance(info.get("url"), str) and str(info["url"]).startswith("http"):
+        return {
+            "url": info["url"],
+            "ext": info.get("ext") or "mp4",
+            "filesize": info.get("filesize") or info.get("filesize_approx"),
+            "http_headers": info.get("http_headers") or {},
+        }
+    if not progressive:
+        return None
+    def score(item: dict[str, Any]) -> tuple[int, int, int]:
+        has_audio = 1 if item.get("acodec") not in {None, "none"} else 0
+        height = item.get("height") if isinstance(item.get("height"), int) else 0
+        tbr = int(item.get("tbr") or 0)
+        return (has_audio, height, tbr)
+
+    best = max(progressive, key=score)
+    headers = best.get("http_headers") or info.get("http_headers") or {}
+    return {
+        "url": best["url"],
+        "ext": best.get("ext") or info.get("ext") or "mp4",
+        "filesize": best.get("filesize") or best.get("filesize_approx"),
+        "http_headers": headers if isinstance(headers, dict) else {},
+        "filename": info.get("title"),
+    }
 
 
 def _youtube_fallback_info(url: str) -> Optional[dict[str, Any]]:
@@ -539,6 +630,47 @@ class MediaExtractor:
             author=info.get("uploader") or info.get("creator") or info.get("channel"),
             formats=_build_formats(info),
             can_download=True,
+        )
+
+    async def resolve_handle(self, url: str, format_id: str) -> DownloadHandle:
+        info = await asyncio.get_running_loop().run_in_executor(
+            _EXECUTOR,
+            _extract_sync,
+            url,
+            self._settings,
+        )
+        title = _safe_title(str(info.get("title") or "video"))
+        stream = _pick_progressive(info)
+        if stream and isinstance(stream.get("url"), str):
+            ext = str(stream.get("ext") or "mp4").replace(".", "") or "mp4"
+            raw_headers = stream.get("http_headers") or {}
+            headers = {
+                str(key): str(value)
+                for key, value in raw_headers.items()
+                if isinstance(key, str)
+            }
+            if "User-Agent" not in headers:
+                headers["User-Agent"] = _base_opts(self._settings, url)["http_headers"]["User-Agent"]
+            if "Referer" not in headers:
+                referer = (_base_opts(self._settings, url).get("http_headers") or {}).get("Referer")
+                if referer:
+                    headers["Referer"] = referer
+            return DownloadHandle(
+                source_url=url,
+                format_id=format_id or "auto",
+                mime_type=f"video/{ext}" if ext != "m4a" else "audio/mp4",
+                filesize=stream.get("filesize") if isinstance(stream.get("filesize"), int) else None,
+                file_name=f"{title}.{ext}",
+                upstream_url=str(stream["url"]),
+                prepare_locally=False,
+                http_headers=headers,
+            )
+        return DownloadHandle(
+            source_url=url,
+            format_id=format_id or "auto",
+            mime_type="video/mp4",
+            file_name=f"{title}.mp4",
+            prepare_locally=True,
         )
 
     async def download(

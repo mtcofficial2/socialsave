@@ -11,6 +11,8 @@ class DownloadTicket extends Equatable {
     this.mimeType,
     this.filesize,
     this.fileName,
+    this.directUrl,
+    this.requestHeaders,
   });
 
   final String downloadUrl;
@@ -20,6 +22,8 @@ class DownloadTicket extends Equatable {
   final String? mimeType;
   final int? filesize;
   final String? fileName;
+  final String? directUrl;
+  final Map<String, String>? requestHeaders;
 
   bool get isReady =>
       state == DownloadJobState.ready && downloadUrl.isNotEmpty;
@@ -37,12 +41,25 @@ class DownloadTicket extends Equatable {
       mimeType: json['mime_type'] as String?,
       filesize: json['filesize'] is int ? json['filesize'] as int : null,
       fileName: json['file_name'] as String?,
+      directUrl: json['direct_url'] as String?,
+      requestHeaders: _stringMap(json['request_headers'] ?? json['headers']),
     );
+  }
+
+  static Map<String, String>? _stringMap(Object? raw) {
+    if (raw is! Map) return null;
+    final out = <String, String>{};
+    raw.forEach((key, value) {
+      if (key is String && value != null) {
+        out[key] = value.toString();
+      }
+    });
+    return out.isEmpty ? null : out;
   }
 
   @override
   List<Object?> get props =>
-      [downloadUrl, jobId, expiresAt, state, mimeType, filesize, fileName];
+      [downloadUrl, jobId, expiresAt, state, mimeType, filesize, fileName, directUrl];
 }
 
 class DownloadJobStatus extends Equatable {

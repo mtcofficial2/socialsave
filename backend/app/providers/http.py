@@ -59,10 +59,10 @@ class SafeHttp:
                 )
             return response
 
-    async def stream(self, url: str):
+    async def stream(self, url: str, extra_headers: Optional[dict[str, str]] = None):
         validate_public_url(url)
         client = self.client()
-        request = client.build_request("GET", url)
+        request = client.build_request("GET", url, headers=extra_headers)
         response = await client.send(request, stream=True)
         redirects = 0
         while response.is_redirect:
@@ -78,7 +78,7 @@ class SafeHttp:
                 raise private_video()
             next_url = str(response.url.join(location))
             assert_redirect_safe(next_url)
-            request = client.build_request("GET", next_url)
+            request = client.build_request("GET", next_url, headers=extra_headers)
             response = await client.send(request, stream=True)
         return client, response
 

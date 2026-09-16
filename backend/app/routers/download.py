@@ -65,6 +65,7 @@ async def create_download(
             "mime": handle.mime_type,
             "max": settings.max_download_bytes,
             "name": handle.file_name,
+            "headers": handle.http_headers or {},
         }
     )
     expires = datetime.now(timezone.utc) + timedelta(seconds=settings.token_ttl_seconds)
@@ -77,6 +78,7 @@ async def create_download(
         mime_type=handle.mime_type,
         filesize=handle.filesize,
         file_name=handle.file_name,
+        request_headers=handle.http_headers,
     )
 
 
@@ -117,8 +119,9 @@ async def stream_file(token: str, settings: Settings = Depends(get_settings)):
     if not isinstance(url, str):
         raise unauthorized()
     validate_public_url(url)
+    extra_headers = payload.get("headers") if isinstance(payload.get("headers"), dict) else None
     http = SafeHttp(settings)
-    client, response = await http.stream(url)
+    client, response = await http.stream(url, extra_headers=extra_headers)
     mime = (response.headers.get("content-type") or payload.get("mime") or "video/mp4").split(";")[0]
     if mime.startswith("text/html") or mime.startswith("application/json"):
         await response.aclose()
