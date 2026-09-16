@@ -234,6 +234,13 @@ def _map_error(exc: Exception, url: str = ""):
         return platform_unavailable(
             "Facebook blocked the public parser. Try a public watch or reel link that opens logged out."
         )
+    if _is_tiktok(url) and any(
+        token in lower
+        for token in ("unable to extract", "webpage video data", "universal data")
+    ):
+        return platform_unavailable(
+            "TikTok blocked the public parser. Try a fully public video, or try again in a moment."
+        )
     if "unable to download video data" in lower or "http error 403" in lower:
         return platform_unavailable(
             "The source refused the video file. Try another quality, or try again."
@@ -308,13 +315,40 @@ def _unwrap_info(info: dict[str, Any]) -> dict[str, Any]:
     return info
 
 
+def _cookie_header(ydl: Any) -> str:
+    jar = getattr(ydl, "cookiejar", None)
+    if jar is None:
+        return ""
+    parts: list[str] = []
+    try:
+        for cookie in jar:
+            name = getattr(cookie, "name", None)
+            value = getattr(cookie, "value", None)
+            if name and value:
+                parts.append(f"{name}={value}")
+    except Exception:
+        return ""
+    return "; ".join(parts)
+
+
 def _run_ydl_raw(url: str, opts: dict[str, Any], *, download: bool) -> dict[str, Any]:
     import yt_dlp
 
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=download)
+        cookie_header = _cookie_header(ydl)
     if not isinstance(info, dict):
         raise removed_video()
+    if cookie_header:
+        headers = dict(info.get("http_headers") or {})
+        headers.setdefault("Cookie", cookie_header)
+        info["http_headers"] = headers
+        for item in info.get("formats") or []:
+            if not isinstance(item, dict):
+                continue
+            item_headers = dict(item.get("http_headers") or headers)
+            item_headers.setdefault("Cookie", cookie_header)
+            item["http_headers"] = item_headers
     return info
 
 
@@ -366,11 +400,16 @@ def _site_attempts(url: str) -> list[dict[str, Any]]:
         attempts.append(_impersonate("chrome"))
     elif "tiktok.com" in host:
         attempts.append(_impersonate("chrome"))
+        attempts.append(_impersonate("safari"))
     attempts.append({})
     return attempts
 
 
 def _extract_sync(url: str, settings: Settings) -> dict[str, Any]:
+    if _is_tiktok(url):
+        fallback = social_fallback.extract(url)
+        if fallback is not None:
+            return fallback
     if _is_youtube(url):
         mapped = _youtube_fallback_info(url)
         if mapped is not None:
@@ -399,6 +438,13 @@ def _extract_sync(url: str, settings: Settings) -> dict[str, Any]:
             "YouTube is blocking this free cloud server. TikTok and direct MP4 links still work."
         )
     raise _map_error(last_error or Exception("analyze failed"), url)
+
+
+def _stream_needs_session(url: str, headers: Any) -> bool:
+    cookies = ""
+    if isinstance(headers, dict):
+        cookies = str(headers.get("Cookie") or headers.get("cookie") or "")
+    return "tt_chain_token" in url and "tt_chain_token" not in cookies
 
 
 def _pick_progressive(info: dict[str, Any]) -> Optional[dict[str, Any]]:
@@ -641,6 +687,12 @@ class MediaExtractor:
         )
         title = _safe_title(str(info.get("title") or "video"))
         stream = _pick_progressive(info)
+        if stream and isinstance(stream.get("url"), str) and _stream_needs_session(str(stream["url"]), stream.get("http_headers") or {}):
+            fallback = social_fallback.extract(url) if _is_tiktok(url) else None
+            if fallback is not None:
+                stream = _pick_progressive(fallback) or stream
+            else:
+                stream = None
         if stream and isinstance(stream.get("url"), str):
             ext = str(stream.get("ext") or "mp4").replace(".", "") or "mp4"
             raw_headers = stream.get("http_headers") or {}

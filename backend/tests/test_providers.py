@@ -17,6 +17,28 @@ def test_detects_youtube() -> None:
 def test_detects_tiktok() -> None:
     extractor = MediaExtractor(Settings())
     assert TikTokProvider(extractor).can_handle("https://www.tiktok.com/@user/video/123")
+    assert TikTokProvider(extractor).can_handle("https://vm.tiktok.com/ZMabcdef/")
+
+
+def test_tiktok_video_id_from_public_and_photo_links() -> None:
+    from app.providers.social_fallback import tiktok_video_id
+
+    assert (
+        tiktok_video_id("https://www.tiktok.com/@scout2015/video/6718335390845095173")
+        == "6718335390845095173"
+    )
+    assert tiktok_video_id("https://www.tiktok.com/@user/photo/1234567890123456789") == (
+        "1234567890123456789"
+    )
+
+
+def test_ascii_filename_strips_emoji_for_http_headers() -> None:
+    from app.routers.download import ascii_filename
+
+    name = ascii_filename("Scramble up ur name 😍❤️ #foryou.mp4")
+    assert name.isascii()
+    assert name.endswith(".mp4")
+    assert '"' not in name
 
 
 def test_detects_direct_video() -> None:

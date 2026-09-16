@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -15,7 +16,6 @@ from app.errors import (
     file_too_large,
     platform_unavailable,
     unauthorized,
-    unsupported_format,
 )
 from app.jobs import job_store
 from app.models import DownloadRequest, DownloadResponse, JobStatusResponse
@@ -98,10 +98,19 @@ async def job_status(job_id: str) -> JobStatusResponse:
     )
 
 
+def ascii_filename(name: str | None) -> str:
+    raw = (name or "video.mp4").replace('"', "")
+    cleaned = re.sub(r"[^\w.\-]+", "_", raw, flags=re.ASCII).strip("._") or "video"
+    if "." not in cleaned:
+        cleaned += ".mp4"
+    return cleaned[:80]
+
+
 @router.get("/api/v1/files/{token}")
 async def stream_file(token: str, settings: Settings = Depends(get_settings)):
     payload = DownloadTokenService(settings).parse(token)
     job_id = payload.get("job")
+    filename = ascii_filename(str(payload.get("name") or "video.mp4"))
     if isinstance(job_id, str):
         job = job_store.get(job_id)
         if job is None or not job.file_path:
@@ -112,7 +121,7 @@ async def stream_file(token: str, settings: Settings = Depends(get_settings)):
         return FileResponse(
             path,
             media_type=job.mime_type or payload.get("mime") or "video/mp4",
-            filename=job.file_name or payload.get("name") or "video.mp4",
+            filename=ascii_filename(job.file_name or filename),
         )
 
     url = payload.get("url")
@@ -121,12 +130,21 @@ async def stream_file(token: str, settings: Settings = Depends(get_settings)):
     validate_public_url(url)
     extra_headers = payload.get("headers") if isinstance(payload.get("headers"), dict) else None
     http = SafeHttp(settings)
-    client, response = await http.stream(url, extra_headers=extra_headers)
+    try:
+        client, response = await http.stream(url, extra_headers=extra_headers)
+    except ApiError:
+        raise
+    except Exception as exc:
+        raise platform_unavailable(
+            "TikTok (or the source) refused the video file. Try again in a moment."
+        ) from exc
     mime = (response.headers.get("content-type") or payload.get("mime") or "video/mp4").split(";")[0]
-    if mime.startswith("text/html") or mime.startswith("application/json"):
+    if response.status_code >= 400 or mime.startswith("text/html") or mime.startswith("application/json"):
         await response.aclose()
         await client.aclose()
-        raise unsupported_format()
+        raise platform_unavailable(
+            "The source refused the video file. Try a public TikTok, or try again."
+        )
 
     async def iterator():
         sent = 0
@@ -141,7 +159,7 @@ async def stream_file(token: str, settings: Settings = Depends(get_settings)):
             await client.aclose()
 
     headers = {
-        "Content-Disposition": f'attachment; filename="{payload.get("name") or "video.mp4"}"',
+        "Content-Disposition": f'attachment; filename="{filename}"',
         "Cache-Control": "no-store",
     }
     length = response.headers.get("content-length")

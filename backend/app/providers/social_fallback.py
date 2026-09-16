@@ -18,6 +18,8 @@ _UA = (
 
 def extract(url: str) -> Optional[dict[str, Any]]:
     host = (urlparse(url).hostname or "").lower()
+    if "tiktok.com" in host:
+        return _tiktok(url)
     if "instagram.com" in host or host.endswith("instagr.am"):
         return _instagram(url)
     if host in {"x.com", "twitter.com"} or host.endswith(".x.com") or host.endswith(".twitter.com"):
@@ -35,6 +37,18 @@ def _client() -> httpx.Client:
         follow_redirects=True,
         headers={"User-Agent": _UA, "Accept-Language": "en-US,en;q=0.9"},
     )
+
+
+def tiktok_video_id(url: str) -> Optional[str]:
+    match = re.search(r"/(?:video|photo|v)/(\d{6,})", url)
+    if match:
+        return match.group(1)
+    query = parse_qs(urlparse(url).query)
+    for key in ("item_id", "aweme_id", "id"):
+        value = query.get(key)
+        if value and value[0].isdigit():
+            return value[0]
+    return None
 
 
 def _twitter_id(url: str) -> Optional[str]:
@@ -97,6 +111,86 @@ def _as_info(
         ],
         "http_headers": {"User-Agent": _UA, "Referer": webpage},
     }
+
+
+def _tiktok(url: str) -> Optional[dict[str, Any]]:
+    resolved = _follow(url)
+    video_id = tiktok_video_id(resolved) or tiktok_video_id(url)
+    with _client() as client:
+        for api in (
+            "https://www.tikwm.com/api/",
+            "https://tikwm.com/api/",
+        ):
+            try:
+                response = client.get(
+                    api,
+                    params={"url": resolved, "hd": 1},
+                    headers={
+                        "Accept": "application/json",
+                        "Referer": "https://www.tikwm.com/",
+                    },
+                )
+                if response.status_code >= 400:
+                    continue
+                data = response.json()
+            except Exception:
+                continue
+            payload = data.get("data") if isinstance(data, dict) else None
+            if not isinstance(payload, dict):
+                continue
+            stream = payload.get("hdplay") or payload.get("play") or payload.get("wmplay")
+            if not isinstance(stream, str) or not stream.startswith("http"):
+                continue
+            author = payload.get("author") if isinstance(payload.get("author"), dict) else {}
+            duration = payload.get("duration")
+            return _as_info(
+                title=str(payload.get("title") or "TikTok video")[:80],
+                webpage=resolved,
+                stream=stream,
+                thumbnail=payload.get("cover") or payload.get("origin_cover"),
+                duration=int(duration) if isinstance(duration, (int, float)) else None,
+                author=str(author.get("unique_id") or author.get("nickname") or ""),
+            )
+        if video_id:
+            embed = _tiktok_embed(client, video_id, resolved)
+            if embed is not None:
+                return embed
+    return None
+
+
+def _tiktok_embed(client: httpx.Client, video_id: str, webpage: str) -> Optional[dict[str, Any]]:
+    try:
+        response = client.get(f"https://www.tiktok.com/embed/v2/{video_id}")
+        html = response.text
+    except Exception:
+        return None
+    stream = (
+        _search_url(html, r'"playAddr"\s*:\s*"([^"]+)"')
+        or _search_url(html, r'"downloadAddr"\s*:\s*"([^"]+)"')
+        or _search_url(html, r'"play_addr"[^]]*?"url_list"\s*:\s*\[\s*"([^"]+)"')
+    )
+    if not stream:
+        return None
+    title = _search_text(html, r'<meta[^>]+property="og:title"[^>]+content="([^"]+)"') or "TikTok video"
+    thumb = _search_url(html, r'<meta[^>]+property="og:image"[^>]+content="([^"]+)"')
+    return _as_info(title=title, webpage=webpage, stream=stream, thumbnail=thumb)
+
+
+def _follow(url: str) -> str:
+    with _client() as client:
+        try:
+            response = client.head(url)
+            if str(response.url).startswith("http"):
+                return str(response.url)
+        except Exception:
+            pass
+        try:
+            response = client.get(url)
+            if str(response.url).startswith("http"):
+                return str(response.url)
+        except Exception:
+            pass
+    return url
 
 
 def _twitter(url: str) -> Optional[dict[str, Any]]:
