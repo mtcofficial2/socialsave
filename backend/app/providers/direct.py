@@ -87,13 +87,40 @@ class DirectVideoProvider(SocialMediaProvider):
         )
 
     async def _analyze_direct(self, url: str) -> MediaMetadata:
-        response = await self._http.head_or_get(url)
+        title = _filename(url)
+        guessed = "mp4"
+        path = urlparse(url).path.lower()
+        for ext in VIDEO_EXTENSIONS:
+            if path.endswith(ext):
+                guessed = ext.lstrip(".")
+                break
+        try:
+            response = await self._http.head_or_get(url)
+        except ApiError:
+            return MediaMetadata(
+                platform=self.id,
+                title=title,
+                source_url=url,
+                formats=[
+                    MediaFormat(id="original", quality="original", format=guessed)
+                ],
+                can_download=True,
+            )
+        if response.status_code >= 400:
+            return MediaMetadata(
+                platform=self.id,
+                title=title,
+                source_url=url,
+                formats=[
+                    MediaFormat(id="original", quality="original", format=guessed)
+                ],
+                can_download=True,
+            )
         content_type = (response.headers.get("content-type") or "").split(";")[0].strip().lower()
         fmt = _format_from_mime(content_type, url)
         length = _content_length(response.headers)
         if length is not None and length > self._settings.max_download_bytes:
             raise file_too_large()
-        title = _filename(url)
         return MediaMetadata(
             platform=self.id,
             title=title,

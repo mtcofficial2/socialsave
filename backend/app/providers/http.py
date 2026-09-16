@@ -17,7 +17,13 @@ class SafeHttp:
         return httpx.AsyncClient(
             timeout=self._settings.request_timeout_seconds,
             follow_redirects=False,
-            headers={"User-Agent": "SocialSave/1.0 (compliant metadata client)"},
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/126.0.0.0 Safari/537.36"
+                )
+            },
         )
 
     async def get_json(self, url: str, *, params: Optional[dict[str, Any]] = None) -> dict[str, Any]:

@@ -39,6 +39,7 @@ class AnalyzeResponse(BaseModel):
 class DownloadResponse(BaseModel):
     success: bool = True
     download_url: str = ""
+    direct_url: Optional[str] = None
     id: Optional[str] = None
     state: str = "ready"
     expires_at: Optional[str] = None

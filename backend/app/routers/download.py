@@ -70,6 +70,7 @@ async def create_download(
     expires = datetime.now(timezone.utc) + timedelta(seconds=settings.token_ttl_seconds)
     return DownloadResponse(
         download_url=f"{base}/api/v1/files/{token}",
+        direct_url=handle.upstream_url,
         id=token[:12],
         state="ready",
         expires_at=expires.isoformat(),
