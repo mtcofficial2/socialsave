@@ -9,12 +9,13 @@ enum VideoFormatPreference { mp4, webm, original }
 class AppSettings extends Equatable {
   const AppSettings({
     this.themeMode = ThemeMode.system,
-    this.downloadLocation = DownloadLocation.appStorage,
-    this.wifiOnly = true,
+    this.downloadLocation = DownloadLocation.publicDownloads,
+    this.wifiOnly = false,
     this.autoStartDownloads = true,
     this.notificationsEnabled = true,
     this.defaultQuality = VideoQualityPreference.original,
     this.defaultFormat = VideoFormatPreference.mp4,
+    this.fontFamily = 'Inter',
   });
 
   final ThemeMode themeMode;
@@ -24,6 +25,7 @@ class AppSettings extends Equatable {
   final bool notificationsEnabled;
   final VideoQualityPreference defaultQuality;
   final VideoFormatPreference defaultFormat;
+  final String fontFamily;
 
   AppSettings copyWith({
     ThemeMode? themeMode,
@@ -33,6 +35,7 @@ class AppSettings extends Equatable {
     bool? notificationsEnabled,
     VideoQualityPreference? defaultQuality,
     VideoFormatPreference? defaultFormat,
+    String? fontFamily,
   }) {
     return AppSettings(
       themeMode: themeMode ?? this.themeMode,
@@ -42,6 +45,7 @@ class AppSettings extends Equatable {
       notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
       defaultQuality: defaultQuality ?? this.defaultQuality,
       defaultFormat: defaultFormat ?? this.defaultFormat,
+      fontFamily: fontFamily ?? this.fontFamily,
     );
   }
 
@@ -57,6 +61,7 @@ class AppSettings extends Equatable {
       'notificationsEnabled': notificationsEnabled,
       'defaultQuality': defaultQuality.name,
       'defaultFormat': defaultFormat.name,
+      'fontFamily': fontFamily,
     };
   }
 
@@ -81,6 +86,9 @@ class AppSettings extends Equatable {
         (value) => value.name == map['defaultFormat'],
         orElse: () => VideoFormatPreference.mp4,
       ),
+      fontFamily: (map['fontFamily'] as String?)?.trim().isNotEmpty == true
+          ? map['fontFamily'] as String
+          : 'Inter',
     );
   }
 
@@ -93,6 +101,7 @@ class AppSettings extends Equatable {
         notificationsEnabled,
         defaultQuality,
         defaultFormat,
+        fontFamily,
       ];
 }
 

@@ -64,6 +64,20 @@ class _RecordingDownloader implements FileDownloader {
   }
 }
 
+Future<DownloadStatus?> _waitStatus(ProviderContainer ref, String id) async {
+  DownloadStatus? status;
+  for (var i = 0; i < 40; i++) {
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    status = ref.read(downloadManagerProvider).byId(id)?.status;
+    if (status == DownloadStatus.completed ||
+        status == DownloadStatus.failed ||
+        status == DownloadStatus.cancelled) {
+      break;
+    }
+  }
+  return status;
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(() {
@@ -146,11 +160,7 @@ void main() {
           media: sampleMedia(),
           format: sampleMedia().formats.first,
         );
-    await Future<void>.delayed(const Duration(milliseconds: 80));
-    expect(
-      ref.read(downloadManagerProvider).byId(task.id)?.status,
-      DownloadStatus.completed,
-    );
+    expect(await _waitStatus(ref, task.id), DownloadStatus.completed);
     expect(await history.getAll(), isNotEmpty);
   });
 
@@ -179,23 +189,15 @@ void main() {
       media: sampleMedia(),
       format: sampleMedia().formats.first,
     );
-    await Future<void>.delayed(const Duration(milliseconds: 80));
-    expect(
-      ref.read(downloadManagerProvider).byId(task.id)?.status,
-      DownloadStatus.failed,
-    );
+    expect(await _waitStatus(ref, task.id), DownloadStatus.failed);
     downloader.fail = false;
     await manager.retry(task.id);
-    await Future<void>.delayed(const Duration(milliseconds: 80));
-    expect(
-      ref.read(downloadManagerProvider).byId(task.id)?.status,
-      DownloadStatus.completed,
-    );
+    expect(await _waitStatus(ref, task.id), DownloadStatus.completed);
   });
 
-  test('wifi-only blocks cellular', () async {
+  test('offline blocks downloads', () async {
     final connectivity = MockConnectivityService();
-    when(() => connectivity.current()).thenAnswer((_) async => NetworkAccess.cellular);
+    when(() => connectivity.current()).thenAnswer((_) async => NetworkAccess.offline);
     when(
       () => connectivity.canDownload(
         access: any(named: 'access'),

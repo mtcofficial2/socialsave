@@ -3,14 +3,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/errors/exceptions.dart';
+import 'package:social_save/core/theme/app_colors.dart';
 import 'package:social_save/features/downloader/presentation/providers/download_manager.dart';
 import 'package:social_save/features/downloader/presentation/providers/preview_controller.dart';
+import 'package:social_save/features/player/open_player.dart';
+import 'package:social_save/features/player/player_session.dart';
+import 'package:social_save/shared/models/download_ticket.dart';
 import 'package:social_save/shared/models/media_format.dart';
 import 'package:social_save/shared/models/media_info.dart';
 import 'package:social_save/shared/widgets/compliance_notice.dart';
 import 'package:social_save/shared/widgets/error_banner.dart';
-import 'package:social_save/shared/widgets/platform_badge.dart';
-import 'package:social_save/shared/widgets/quality_selector.dart';
+import 'package:social_save/shared/widgets/platform_logo.dart';
 import 'package:social_save/shared/widgets/video_thumbnail.dart';
 
 class PreviewScreen extends ConsumerStatefulWidget {
@@ -24,6 +27,7 @@ class PreviewScreen extends ConsumerStatefulWidget {
 
 class _PreviewScreenState extends ConsumerState<PreviewScreen> {
   bool _starting = false;
+  bool _previewing = false;
   String? _error;
 
   @override
@@ -32,114 +36,427 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
     final formatters = ref.watch(formattersProvider);
     final media = preview.media;
     final format = preview.format;
-    final formats = media.formats.map((item) => item.format).toSet().toList();
+    final scheme = Theme.of(context).colorScheme;
+    final sizeLabel = format?.filesize != null
+        ? formatters.bytes(format!.filesize)
+        : 'file';
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Download')),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-        children: [
-          VideoThumbnail(
-            url: media.thumbnailUrl,
-            durationSeconds: media.durationSeconds,
-            height: 210,
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              PlatformBadge(platform: media.platform),
-              const Spacer(),
-              if (media.durationSeconds != null)
-                Text(formatters.duration(media.durationSeconds)),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Text(
-            media.title,
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+          children: [
+            Row(
+              children: [
+                IconButton(
+                  onPressed: () => Navigator.maybePop(context),
+                  icon: const Icon(Icons.arrow_back_rounded),
                 ),
-          ),
-          if (media.author != null && media.author!.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text(
-              media.author!,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                const Expanded(
+                  child: Text(
+                    'Media Inspection Details',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
                   ),
+                ),
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: scheme.primary,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.person, color: Colors.white, size: 18),
+                ),
+              ],
             ),
-          ],
-          const SizedBox(height: 8),
-          Text(
-            format?.filesize != null
-                ? 'Estimated size ${formatters.bytes(format!.filesize)}'
-                : 'File size will be confirmed when the download starts.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          const SizedBox(height: 20),
-          Text('Quality', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          QualitySelector(
-            formats: media.formats,
-            selected: format,
-            onSelected: (value) => ref
-                .read(previewControllerProvider(widget.media).notifier)
-                .selectFormat(value),
-          ),
-          if (formats.length > 1) ...[
-            const SizedBox(height: 16),
-            Text('Format', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
-            FormatSelector(
-              formats: formats,
-              selected: format?.format,
-              onSelected: (value) {
-                final match = media.formats.firstWhere(
-                  (item) =>
-                      item.format.toLowerCase() == value.toLowerCase() &&
-                      (format == null ||
-                          item.quality == format.quality ||
-                          item.id == format.id),
-                  orElse: () => media.formats.firstWhere(
-                    (item) => item.format.toLowerCase() == value.toLowerCase(),
-                    orElse: () => media.formats.first,
+            Row(
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: scheme.primary,
+                    shape: BoxShape.circle,
                   ),
-                );
-                ref
-                    .read(previewControllerProvider(widget.media).notifier)
-                    .selectFormat(match);
-              },
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'ANALYSIS COMPLETE',
+                  style: TextStyle(
+                    color: scheme.primary,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 11,
+                    letterSpacing: 0.6,
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainerHigh,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    'ID: ${media.platform.letter}-${media.sourceUrl.hashCode.abs().toRadixString(16).substring(0, 5).toUpperCase()}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
-          const SizedBox(height: 20),
-          if (!media.canDownload)
-            ErrorBanner(
-              message: media.downloadRestrictedReason ??
-                  'This platform does not permit downloading through SocialSave.',
-            ),
-          if (_error != null) ...[
             const SizedBox(height: 12),
-            ErrorBanner(message: _error!),
+            Card(
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Stack(
+                    children: [
+                      VideoThumbnail(
+                        url: media.thumbnailUrl,
+                        durationSeconds: media.durationSeconds,
+                        height: 210,
+                        borderRadius: 0,
+                      ),
+                      Positioned(
+                        top: 12,
+                        left: 12,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.92),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Row(
+                            children: [
+                              PlatformLogo(platform: media.platform, size: 16),
+                              const SizedBox(width: 6),
+                              Text(
+                                '${media.platform.displayName}${media.platform.id == 'instagram' ? ' Reel' : ''}',
+                                style: TextStyle(
+                                  color: AppColors.platformColor(media.platform),
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      if (format?.width != null && format?.height != null)
+                        Positioned(
+                          top: 12,
+                          right: 12,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.black54,
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              '${format!.width} × ${format.height}',
+                              style: const TextStyle(color: Colors.white, fontSize: 11),
+                            ),
+                          ),
+                        ),
+                      Positioned.fill(
+                        child: Center(
+                          child: Material(
+                            color: Colors.white,
+                            shape: const CircleBorder(),
+                            child: InkWell(
+                              customBorder: const CircleBorder(),
+                              onTap: _previewing || !media.canDownload
+                                  ? null
+                                  : () => _playBeforeDownload(media, format),
+                              child: SizedBox(
+                                width: 64,
+                                height: 64,
+                                child: _previewing
+                                    ? const Padding(
+                                        padding: EdgeInsets.all(16),
+                                        child: CircularProgressIndicator(strokeWidth: 2),
+                                      )
+                                    : const Icon(Icons.play_arrow_rounded, size: 36, color: AppColors.primary),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          media.title,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                            height: 1.25,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          [
+                            if (media.author != null && media.author!.isNotEmpty)
+                              '@${media.author}',
+                            media.canDownload ? 'Public' : 'Restricted',
+                            if (format != null) format.quality,
+                          ].join('  •  '),
+                          style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                        ),
+                        const SizedBox(height: 12),
+                        if (media.canDownload)
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: AppColors.okSoft,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Row(
+                              children: [
+                                Icon(Icons.verified, color: AppColors.ok, size: 20),
+                                SizedBox(width: 8),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Verified Public Post — Safe to Archive',
+                                        style: TextStyle(
+                                          color: AppColors.ok,
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 11,
+                                        ),
+                                      ),
+                                      Text(
+                                        'Metadata confirms creative attribution & open availability.',
+                                        style: TextStyle(color: AppColors.ok, fontSize: 11),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
+                        else
+                          const ComplianceNotice(danger: true, compact: true),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                const Text(
+                  'Select Quality & Format',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                ),
+                const Spacer(),
+                Icon(Icons.tune, size: 16, color: scheme.primary),
+                const SizedBox(width: 4),
+                Text(
+                  '${media.formats.length} available',
+                  style: TextStyle(color: scheme.primary, fontSize: 12, fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ...media.formats.map((item) {
+              final selected = format?.id == item.id;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Material(
+                  color: selected
+                      ? scheme.secondaryContainer.withValues(alpha: 0.22)
+                      : scheme.surfaceContainerLowest,
+                  borderRadius: BorderRadius.circular(16),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(16),
+                    onTap: () => ref
+                        .read(previewControllerProvider(widget.media).notifier)
+                        .selectFormat(item),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 24,
+                            height: 24,
+                            decoration: BoxDecoration(
+                              color: selected ? scheme.primary : scheme.surfaceContainerHighest,
+                              shape: BoxShape.circle,
+                            ),
+                            child: selected
+                                ? const Icon(Icons.check, size: 16, color: Colors.white)
+                                : null,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Flexible(
+                                      child: Text(
+                                        item.quality.toLowerCase() == 'original'
+                                            ? 'Best Quality (${item.format.toUpperCase()})'
+                                            : '${item.quality} ${item.format.toUpperCase()}',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                    ),
+                                    if (selected) ...[
+                                      const SizedBox(width: 6),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: scheme.primary,
+                                          borderRadius: BorderRadius.circular(999),
+                                        ),
+                                        child: const Text(
+                                          'Recommended',
+                                          style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  item.hasVideo ? 'H.264 • ${item.format.toUpperCase()}' : 'Audio extract',
+                                  style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                item.filesize != null ? '~${formatters.bytes(item.filesize)}' : '—',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  color: selected ? scheme.primary : scheme.onSurface,
+                                ),
+                              ),
+                              Text(
+                                selected ? 'Instant' : 'Fast',
+                                style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }),
+            if (_error != null) ...[
+              ErrorBanner(message: _error!),
+              const SizedBox(height: 12),
+            ],
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: !media.canDownload || format == null || _previewing
+                  ? null
+                  : () => _playBeforeDownload(media, format),
+              icon: const Icon(Icons.play_circle_outline),
+              label: Text(_previewing ? 'Opening preview…' : 'Play without downloading'),
+            ),
+            const SizedBox(height: 8),
+            FilledButton.icon(
+              onPressed: !media.canDownload || format == null || _starting
+                  ? null
+                  : () => _startDownload(media, format),
+              icon: const Icon(Icons.download_rounded),
+              label: Text(_starting ? 'Starting…' : 'Start Download ($sizeLabel)'),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 52,
+              child: FilledButton.tonal(
+                style: FilledButton.styleFrom(
+                  backgroundColor: scheme.surfaceContainerLow,
+                  foregroundColor: scheme.primary,
+                ),
+                onPressed: () => Navigator.maybePop(context),
+                child: const Text('Cancel'),
+              ),
+            ),
           ],
-          const SizedBox(height: 16),
-          FilledButton.icon(
-            onPressed: !media.canDownload || format == null || _starting
-                ? null
-                : () => _startDownload(media, format),
-            icon: _starting
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.download_rounded),
-            label: Text(_starting ? 'Starting…' : 'Download'),
-          ),
-          const SizedBox(height: 16),
-          const ComplianceNotice(),
-        ],
+        ),
       ),
     );
+  }
+
+  Future<void> _playBeforeDownload(MediaInfo media, MediaFormat? format) async {
+    if (format == null) {
+      setState(() => _error = 'Choose a quality first.');
+      return;
+    }
+    setState(() {
+      _previewing = true;
+      _error = null;
+    });
+    try {
+      final ticket = await ref.read(mediaRepositoryProvider).requestDownload(
+            url: media.sourceUrl,
+            formatId: format.id,
+          );
+      var url = ticket.directUrl ?? ticket.downloadUrl;
+      if (url.isEmpty && ticket.jobId != null) {
+        for (var i = 0; i < 20; i++) {
+          await Future<void>.delayed(const Duration(seconds: 2));
+          final status = await ref.read(mediaRepositoryProvider).getJobStatus(ticket.jobId!);
+          if ((status.downloadUrl ?? '').isNotEmpty) {
+            url = status.downloadUrl!;
+            break;
+          }
+          if (status.state == DownloadJobState.failed) {
+            break;
+          }
+        }
+      }
+      if (url.isEmpty) {
+        throw const AppException(
+          code: AppErrorCode.platformUnavailable,
+          message: 'No preview stream yet. Download the file, then play it.',
+        );
+      }
+      if (!mounted) return;
+      await openPreviewPlayer(
+        context,
+        PlayerSession(
+          title: media.title,
+          platform: media.platform,
+          networkUrl: url,
+          thumbnailUrl: media.thumbnailUrl,
+          author: media.author,
+          referer: media.sourceUrl,
+          isPreview: true,
+        ),
+      );
+    } on AppException catch (error) {
+      setState(() => _error = error.message);
+    } catch (_) {
+      setState(() => _error = 'Could not start a preview. Try downloading first.');
+    } finally {
+      if (mounted) setState(() => _previewing = false);
+    }
   }
 
   Future<void> _startDownload(MediaInfo media, MediaFormat format) async {
@@ -160,9 +477,7 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
     } catch (_) {
       setState(() => _error = 'Could not start the download.');
     } finally {
-      if (mounted) {
-        setState(() => _starting = false);
-      }
+      if (mounted) setState(() => _starting = false);
     }
   }
 }

@@ -3,8 +3,11 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path/path.dart' as p;
 import 'package:social_save/core/constants/app_constants.dart';
 import 'package:social_save/core/di/providers.dart';
+import 'package:social_save/core/storage/download_path_service.dart';
+import 'package:social_save/core/storage/media_store_service.dart';
 import 'package:social_save/core/errors/error_mapper.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
@@ -101,14 +104,25 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       downloadUrl: ticket.downloadUrl,
       totalBytes: ticket.filesize ?? format.filesize,
       jobId: ticket.jobId,
+      directUrl: ticket.directUrl,
     );
 
-    final target = await ref.read(downloadPathServiceProvider).createTargetFile(
-          title: media.title,
-          format: format.format,
-          quality: format.quality,
-          location: settings.downloadLocation,
-        );
+    File target;
+    try {
+      target = await ref.read(downloadPathServiceProvider).createTargetFile(
+            title: media.title,
+            format: format.format,
+            quality: format.quality,
+            location: settings.downloadLocation,
+          );
+    } catch (_) {
+      target = await ref.read(downloadPathServiceProvider).createTargetFile(
+            title: media.title,
+            format: format.format,
+            quality: format.quality,
+            location: DownloadLocation.appStorage,
+          );
+    }
     task = task.copyWith(localPath: target.path);
     state = state.copyWithTask(task);
 
@@ -151,54 +165,77 @@ class DownloadManager extends Notifier<DownloadManagerState> {
         );
         state = state.copyWithTask(task);
       }
-      if (task.downloadUrl.isEmpty) {
+      if (task.downloadUrl.isEmpty && (task.directUrl == null || task.directUrl!.isEmpty)) {
         throw const AppException(
           code: AppErrorCode.serverError,
           message: ErrorMessages.serverError,
         );
       }
-      final probe = await downloader.probe(
-        task.downloadUrl,
-        cancelToken: token,
-      );
-      task = task.copyWith(
-        supportsResume: probe.supportsResume,
-        totalBytes: probe.contentLength ?? task.totalBytes,
-      );
-      state = state.copyWithTask(task);
-
-      final startByte = await _existingBytes(task.localPath);
-      if (startByte > 0 && !probe.supportsResume) {
-        await _deletePartial(task.localPath);
+      Object? lastError;
+      var downloaded = false;
+      for (final url in _candidateUrls(task)) {
+        final attempt = CancelToken();
+        unawaited(token.whenCancel.then((_) {
+          if (!attempt.isCancelled) attempt.cancel();
+        }));
+        var gotBytes = false;
+        final grace = url.contains('onrender.com')
+            ? const Duration(seconds: 90)
+            : const Duration(seconds: 25);
+        final watchdog = Timer(grace, () {
+          if (!gotBytes && !attempt.isCancelled) {
+            attempt.cancel('slow-start');
+          }
+        });
+        try {
+          final startByte = await _existingBytes(task.localPath);
+          await downloader.download(
+            url: url,
+            savePath: task.localPath!,
+            cancelToken: attempt,
+            startByte: startByte,
+            onProgress: (progress) {
+              if (progress.received > startByte) {
+                gotBytes = true;
+                watchdog.cancel();
+              }
+              final current = state.byId(id);
+              if (current == null || current.status != DownloadStatus.running) {
+                return;
+              }
+              final tracker = _speeds[id] ?? _SpeedTracker();
+              tracker.record(progress.received);
+              state = state.copyWithTask(
+                current.copyWith(
+                  receivedBytes: progress.received,
+                  totalBytes: progress.total ?? current.totalBytes,
+                  bytesPerSecond: tracker.bytesPerSecond,
+                  downloadUrl: url,
+                ),
+              );
+            },
+          );
+          downloaded = true;
+          break;
+        } catch (error) {
+          lastError = error;
+          if (token.isCancelled) rethrow;
+        } finally {
+          watchdog.cancel();
+        }
+      }
+      if (!downloaded) {
+        if (token.isCancelled) {
+          return;
+        }
+        throw _mapAttemptError(lastError);
       }
 
-      await downloader.download(
-        url: task.downloadUrl,
-        savePath: task.localPath!,
-        cancelToken: token,
-        startByte: probe.supportsResume ? startByte : 0,
-        onProgress: (progress) {
-          final current = state.byId(id);
-          if (current == null || current.status != DownloadStatus.running) {
-            return;
-          }
-          final tracker = _speeds[id] ?? _SpeedTracker();
-          tracker.record(progress.received);
-          state = state.copyWithTask(
-            current.copyWith(
-              receivedBytes: progress.received,
-              totalBytes: progress.total ?? current.totalBytes,
-              bytesPerSecond: tracker.bytesPerSecond,
-              supportsResume: probe.supportsResume,
-            ),
-          );
-        },
-      );
-
-      final completed = state.byId(id);
+      var completed = state.byId(id);
       if (completed == null) {
         return;
       }
+      final savedPath = completed.localPath;
       final finished = completed.copyWith(
         status: DownloadStatus.completed,
         receivedBytes: completed.totalBytes ?? completed.receivedBytes,
@@ -208,6 +245,29 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       await ref.read(downloadsRepositoryProvider).upsert(
             DownloadRecord.fromTask(finished),
           );
+      if (savedPath != null && File(savedPath).existsSync()) {
+        unawaited(() async {
+          final published = await MediaStoreService().publishToDownloads(
+            sourcePath: savedPath,
+            fileName: p.basename(savedPath),
+            mimeType: finished.format.format.toLowerCase() == 'webm'
+                ? 'video/webm'
+                : 'video/mp4',
+          );
+          if (published == null || published.isEmpty) {
+            await MediaStoreService().scanFile(savedPath);
+          } else if (!published.startsWith('content:') && published != savedPath) {
+            final latest = state.byId(id);
+            if (latest != null) {
+              final updated = latest.copyWith(localPath: published);
+              state = state.copyWithTask(updated);
+              await ref.read(downloadsRepositoryProvider).upsert(
+                    DownloadRecord.fromTask(updated),
+                  );
+            }
+          }
+        }());
+      }
       final settings = ref.read(settingsControllerProvider);
       if (settings.notificationsEnabled) {
         await ref.read(notificationServiceProvider).showDownloadComplete(
@@ -216,19 +276,84 @@ class DownloadManager extends Notifier<DownloadManagerState> {
             );
       }
     } on DioException catch (error) {
-      if (CancelToken.isCancel(error) || error.type == DioExceptionType.cancel) {
+      if (token.isCancelled) {
         return;
       }
       await _fail(id, _errorMapper.fromDio(error));
     } catch (error) {
-      final mapped = _errorMapper.fromObject(error);
-      if (mapped.code == AppErrorCode.downloadInterrupted) {
+      if (token.isCancelled) {
         return;
       }
-      await _fail(id, mapped);
+      await _fail(id, _errorMapper.fromObject(error));
     } finally {
       _tokens.remove(id);
     }
+  }
+
+  AppException _mapAttemptError(Object? error) {
+    if (error is AppException) {
+      if (error.code == AppErrorCode.downloadInterrupted) {
+        return const AppException(
+          code: AppErrorCode.timeout,
+          message:
+              'The download did not start in time. Check the link and try again.',
+        );
+      }
+      return error;
+    }
+    if (error is DioException &&
+        (CancelToken.isCancel(error) || error.type == DioExceptionType.cancel)) {
+      return const AppException(
+        code: AppErrorCode.timeout,
+        message:
+            'The download did not start in time. Check the link and try again.',
+      );
+    }
+    return _errorMapper.fromObject(error ?? 'Download failed.');
+  }
+
+  Iterable<String> _candidateUrls(DownloadTask task) {
+    final urls = <String>[];
+    void add(String? value) {
+      if (value == null || value.isEmpty || urls.contains(value)) return;
+      urls.add(value);
+    }
+
+    if (_isDirectMediaFile(task.directUrl)) add(task.directUrl);
+    if (_isDirectMediaFile(task.sourceUrl)) add(task.sourceUrl);
+    add(task.downloadUrl);
+    return urls;
+  }
+
+  bool _isDirectMediaFile(String? url) {
+    if (url == null || url.isEmpty) return false;
+    final uri = Uri.tryParse(url);
+    if (uri == null) return false;
+    if (uri.scheme != 'http' && uri.scheme != 'https') return false;
+    final host = uri.host.toLowerCase();
+    final path = uri.path.toLowerCase();
+    if (host.contains('facebook.com') ||
+        host.contains('instagram.com') ||
+        host.contains('tiktok.com') ||
+        host.contains('youtube.com') ||
+        host.contains('youtu.be')) {
+      return false;
+    }
+    if (AppConstants.allowedVideoExtensions.any((ext) => path.endsWith('.$ext'))) {
+      return true;
+    }
+    const cdns = [
+      'fbcdn.net',
+      'cdninstagram.com',
+      'googleapis.com',
+      'googleusercontent.com',
+      'googlevideo.com',
+      'tiktokcdn',
+      'byteoversea',
+      'akamai',
+      'cloudfront.net',
+    ];
+    return cdns.any(host.contains);
   }
 
   Future<void> pause(String id) async {
@@ -348,15 +473,6 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       throw const AppException(
         code: AppErrorCode.networkUnavailable,
         message: ErrorMessages.networkUnavailable,
-      );
-    }
-    if (!connectivity.canDownload(
-      access: access,
-      wifiOnly: settings.wifiOnly,
-    )) {
-      throw const AppException(
-        code: AppErrorCode.networkUnavailable,
-        message: ErrorMessages.wifiOnly,
       );
     }
   }

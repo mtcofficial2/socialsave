@@ -16,11 +16,11 @@ class PermissionService {
     }
     if (Platform.isAndroid) {
       final videos = await Permission.videos.request();
-      if (videos.isGranted || videos.isLimited) {
+      final storage = await Permission.storage.request();
+      if (videos.isGranted || videos.isLimited || storage.isGranted) {
         return true;
       }
-      final storage = await Permission.storage.request();
-      return storage.isGranted;
+      return true;
     }
     return true;
   }

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 import 'package:social_save/core/config/env_config.dart';
 import 'package:social_save/core/errors/error_messages.dart';
 import 'package:social_save/core/errors/exceptions.dart';
@@ -42,22 +43,41 @@ abstract class FileDownloader {
 }
 
 class DioFileDownloader implements FileDownloader {
-  DioFileDownloader({Dio? dio})
-      : _dio = dio ??
-            Dio(
-              BaseOptions(
-                connectTimeout: const Duration(seconds: 20),
-                receiveTimeout: Duration(
-                  seconds: EnvConfig.downloadTimeoutSeconds,
-                ),
-                followRedirects: true,
-                maxRedirects: 3,
-                validateStatus: (status) =>
-                    status != null && status >= 200 && status < 400,
-              ),
-            );
+  DioFileDownloader({Dio? dio}) : _dio = dio ?? _createDio();
 
   final Dio _dio;
+
+  static Dio _createDio() {
+    final dio = Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 12),
+        receiveTimeout: const Duration(minutes: 30),
+        sendTimeout: const Duration(seconds: 20),
+        followRedirects: true,
+        maxRedirects: 5,
+        persistentConnection: true,
+        validateStatus: (status) =>
+            status != null && status >= 200 && status < 400,
+        headers: {
+          'Accept': '*/*',
+          'Accept-Encoding': 'identity',
+          'User-Agent':
+              'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/126.0.0.0 Mobile Safari/537.36',
+        },
+      ),
+    );
+    dio.httpClientAdapter = IOHttpClientAdapter(
+      createHttpClient: () {
+        final client = HttpClient();
+        client.maxConnectionsPerHost = 16;
+        client.idleTimeout = const Duration(seconds: 15);
+        client.autoUncompress = false;
+        client.connectionTimeout = const Duration(seconds: 12);
+        return client;
+      },
+    );
+    return dio;
+  }
 
   static const _allowedMime = {
     'video/mp4',
@@ -66,43 +86,41 @@ class DioFileDownloader implements FileDownloader {
     'video/x-m4v',
     'video/x-matroska',
     'video/mpeg',
+    'audio/mp4',
+    'audio/mpeg',
     'application/octet-stream',
   };
 
   @override
   Future<RemoteFileProbe> probe(String url, {CancelToken? cancelToken}) async {
     try {
-      final response = await _dio.head<void>(
+      final response = await _dio.get<void>(
         url,
         cancelToken: cancelToken,
         options: Options(
           followRedirects: true,
-          maxRedirects: 3,
+          headers: {'Range': 'bytes=0-0'},
+          receiveTimeout: const Duration(seconds: 8),
         ),
       );
-      final lengthHeader = response.headers.value('content-length');
-      final acceptRanges = response.headers.value('accept-ranges');
-      final contentType = response.headers.value('content-type');
-      _assertAllowedType(contentType);
-      final length = int.tryParse(lengthHeader ?? '');
-      if (length != null && length > EnvConfig.maxDownloadBytes) {
-        throw const AppException(
-          code: AppErrorCode.fileTooLarge,
-          message: ErrorMessages.fileTooLarge,
-        );
-      }
+      final headers = response.headers;
+      final total = _totalFromContentRange(headers.value('content-range')) ??
+          int.tryParse(headers.value('content-length') ?? '');
       return RemoteFileProbe(
-        supportsResume: (acceptRanges ?? '').toLowerCase().contains('bytes'),
-        contentLength: length,
-        contentType: contentType,
+        supportsResume: response.statusCode == 206,
+        contentLength: total,
+        contentType: headers.value('content-type'),
       );
     } on DioException catch (error) {
-      if (error.type == DioExceptionType.cancel) {
-        rethrow;
-      }
-      // Some CDNs reject HEAD. Continue with a GET-based download.
+      if (error.type == DioExceptionType.cancel) rethrow;
       return const RemoteFileProbe(supportsResume: false);
     }
+  }
+
+  int? _totalFromContentRange(String? header) {
+    if (header == null) return null;
+    final match = RegExp(r'bytes\s+\d+-\d+/(\d+)').firstMatch(header);
+    return match == null ? null : int.tryParse(match.group(1)!);
   }
 
   @override
@@ -115,7 +133,33 @@ class DioFileDownloader implements FileDownloader {
   }) async {
     final file = File(savePath);
     await file.parent.create(recursive: true);
+    if (startByte > 0) {
+      await _downloadSingle(
+        url: url,
+        file: file,
+        cancelToken: cancelToken,
+        startByte: startByte,
+        onProgress: onProgress,
+      );
+      return;
+    }
 
+    await _downloadSingle(
+      url: url,
+      file: file,
+      cancelToken: cancelToken,
+      startByte: 0,
+      onProgress: onProgress,
+    );
+  }
+
+  Future<void> _downloadSingle({
+    required String url,
+    required File file,
+    required CancelToken cancelToken,
+    required int startByte,
+    void Function(DownloadProgress progress)? onProgress,
+  }) async {
     final headers = <String, String>{};
     if (startByte > 0) {
       headers['Range'] = 'bytes=$startByte-';
@@ -128,7 +172,7 @@ class DioFileDownloader implements FileDownloader {
         responseType: ResponseType.stream,
         headers: headers,
         followRedirects: true,
-        maxRedirects: 3,
+        maxRedirects: 5,
       ),
     );
 
@@ -138,15 +182,14 @@ class DioFileDownloader implements FileDownloader {
     final status = response.statusCode ?? 200;
     final resumeAccepted = startByte > 0 && status == 206;
     final writeOffset = resumeAccepted ? startByte : 0;
-    if (startByte > 0 && !resumeAccepted) {
-      if (await file.exists()) {
-        await file.delete();
-      }
+    if (startByte > 0 && !resumeAccepted && await file.exists()) {
+      await file.delete();
     }
 
     final contentLength = int.tryParse(
-      response.headers.value('content-length') ?? '',
-    );
+          response.headers.value('content-length') ?? '',
+        ) ??
+        _totalFromContentRange(response.headers.value('content-range'));
     final total = contentLength == null
         ? null
         : (resumeAccepted ? writeOffset + contentLength : contentLength);
@@ -162,6 +205,7 @@ class DioFileDownloader implements FileDownloader {
       mode: writeOffset > 0 ? FileMode.append : FileMode.write,
     );
     var received = writeOffset;
+    var lastEmit = DateTime.fromMillisecondsSinceEpoch(0);
     try {
       await for (final chunk in response.data!.stream) {
         if (cancelToken.isCancelled) {
@@ -170,16 +214,22 @@ class DioFileDownloader implements FileDownloader {
             message: ErrorMessages.downloadInterrupted,
           );
         }
-        await raf.writeFrom(Uint8List.fromList(chunk));
-        received += chunk.length;
+        final data = Uint8List.fromList(chunk);
+        await raf.writeFrom(data);
+        received += data.length;
         if (received > EnvConfig.maxDownloadBytes) {
           throw const AppException(
             code: AppErrorCode.fileTooLarge,
             message: ErrorMessages.fileTooLarge,
           );
         }
-        onProgress?.call(DownloadProgress(received: received, total: total));
+        final now = DateTime.now();
+        if (now.difference(lastEmit) >= const Duration(milliseconds: 120)) {
+          lastEmit = now;
+          onProgress?.call(DownloadProgress(received: received, total: total));
+        }
       }
+      onProgress?.call(DownloadProgress(received: received, total: total));
     } on PathAccessException {
       throw const AppException(
         code: AppErrorCode.permissionDenied,
@@ -206,7 +256,9 @@ class DioFileDownloader implements FileDownloader {
         message: ErrorMessages.unsupportedFormat,
       );
     }
-    if (mime.startsWith('video/') || _allowedMime.contains(mime)) {
+    if (mime.startsWith('video/') ||
+        mime.startsWith('audio/') ||
+        _allowedMime.contains(mime)) {
       return;
     }
     throw const AppException(

@@ -15,15 +15,29 @@ class DownloadPathService {
 
   Future<Directory> resolveDirectory(DownloadLocation location) async {
     if (location == DownloadLocation.publicDownloads) {
-      final downloads = await getDownloadsDirectory();
-      if (downloads != null) {
-        final folder = Directory(
-          p.join(downloads.path, AppConstants.defaultFolderName),
+      final candidates = <Directory>[
+        Directory('/storage/emulated/0/Download/${AppConstants.defaultFolderName}'),
+        Directory('/sdcard/Download/${AppConstants.defaultFolderName}'),
+      ];
+      final systemDownloads = await getDownloadsDirectory();
+      if (systemDownloads != null) {
+        candidates.insert(
+          0,
+          Directory(p.join(systemDownloads.path, AppConstants.defaultFolderName)),
         );
-        if (!await folder.exists()) {
-          await folder.create(recursive: true);
+      }
+      for (final folder in candidates) {
+        try {
+          if (!await folder.exists()) {
+            await folder.create(recursive: true);
+          }
+          final probe = File(p.join(folder.path, '.socialsave_write'));
+          await probe.writeAsString('ok');
+          await probe.delete();
+          return folder;
+        } on FileSystemException {
+          continue;
         }
-        return folder;
       }
     }
 

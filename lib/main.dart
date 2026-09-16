@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:media_kit/media_kit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/app.dart';
 import 'package:social_save/core/di/providers.dart';
@@ -10,6 +11,7 @@ import 'package:social_save/features/settings/data/datasources/settings_store.da
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  MediaKit.ensureInitialized();
 
   final box = await const HiveInit().openDownloadsBox();
   final prefs = await SharedPreferences.getInstance();

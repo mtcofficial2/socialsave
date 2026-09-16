@@ -10,7 +10,7 @@ class AppConstants {
 
   static const String defaultFolderName = 'SocialSave';
   static const String samplePublicVideoUrl =
-      'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+      'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4';
 
   static const Duration snackBarDuration = Duration(seconds: 4);
   static const Duration bannerDuration = Duration(seconds: 5);
