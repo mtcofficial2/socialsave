@@ -10,7 +10,9 @@ class PlayerSession {
     this.thumbnailUrl,
     this.author,
     this.referer,
+    this.httpHeaders,
     this.isPreview = false,
+    this.isVault = false,
   });
 
   final String title;
@@ -20,7 +22,9 @@ class PlayerSession {
   final String? thumbnailUrl;
   final String? author;
   final String? referer;
+  final Map<String, String>? httpHeaders;
   final bool isPreview;
+  final bool isVault;
 
   factory PlayerSession.fromRecord(DownloadRecord record) {
     return PlayerSession(

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -10,6 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import get_settings
 from app.errors import ApiError
+from app.jobs import job_store
 from app.rate_limit import InMemoryRateLimiter
 from app.routers import analyze, download, health, platforms
 
@@ -30,12 +33,28 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    settings = get_settings()
+    logging.basicConfig(level=logging.INFO, format="%(name)s %(levelname)s %(message)s")
+    job_store.configure(ttl_seconds=settings.job_ttl_seconds)
+    job_store.start_reaper()
+    logging.getLogger("socialsave.delivery").info(
+        "api ready max_download_bytes=%s default_max_height=%s",
+        settings.max_download_bytes,
+        settings.default_max_height,
+    )
+    yield
+    job_store.stop_reaper()
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
         title=settings.app_name,
         version="1.0.0",
         summary="Compliant media metadata and download API for SocialSave",
+        lifespan=lifespan,
     )
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(InMemoryRateLimiter)

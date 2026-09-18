@@ -32,7 +32,7 @@ class EnvConfig {
 
   static const int maxDownloadBytes = int.fromEnvironment(
     'MAX_DOWNLOAD_BYTES',
-    defaultValue: 2147483647, // 2 GB
+    defaultValue: 104857600, // 100 MB
   );
 
   static String get apiBaseUrl {

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse
+from starlette.background import BackgroundTask
 
 from app.auth import require_api_key
 from app.config import Settings, get_settings
@@ -17,14 +20,16 @@ from app.errors import (
     platform_unavailable,
     unauthorized,
 )
-from app.jobs import job_store
+from app.jobs import delete_media_path, job_store
 from app.models import DownloadRequest, DownloadResponse, JobStatusResponse
 from app.providers.extractor import MediaExtractor
-from app.providers.http import SafeHttp
 from app.providers.registry import ProviderRegistry
 from app.public_url import public_base_url
 from app.security import validate_public_url
+from app.storage.object_store import get_object_store
 from app.tokens import DownloadTokenService
+
+logger = logging.getLogger("socialsave.delivery")
 
 router = APIRouter()
 
@@ -45,8 +50,15 @@ async def create_download(
     if not provider.supports_download:
         raise download_not_permitted()
     handle = await provider.create_download(url, payload.format_id)
+    if handle.filesize and handle.filesize > settings.max_download_bytes:
+        raise file_too_large(settings.max_download_bytes)
     if handle.prepare_locally:
         job = job_store.create()
+        logger.info(
+            "download delivery=prepare_local job=%s size=%s",
+            job.id[:8],
+            handle.filesize,
+        )
         asyncio.create_task(
             _prepare_job(job.id, url, handle.format_id, settings, base),
         )
@@ -59,6 +71,7 @@ async def create_download(
         )
     if not handle.upstream_url:
         raise download_not_permitted()
+    validate_public_url(handle.upstream_url)
     token = DownloadTokenService(settings).issue(
         {
             "url": handle.upstream_url,
@@ -66,9 +79,16 @@ async def create_download(
             "max": settings.max_download_bytes,
             "name": handle.file_name,
             "headers": handle.http_headers or {},
+            "size": handle.filesize,
         }
     )
     expires = datetime.now(timezone.utc) + timedelta(seconds=settings.token_ttl_seconds)
+    host = urlparse(handle.upstream_url).hostname or "unknown"
+    logger.info(
+        "download delivery=direct host=%s size=%s prepare_local=false",
+        host,
+        handle.filesize,
+    )
     return DownloadResponse(
         download_url=f"{base}/api/v1/files/{token}",
         direct_url=handle.upstream_url,
@@ -106,6 +126,11 @@ def ascii_filename(name: str | None) -> str:
     return cleaned[:80]
 
 
+def _cleanup_job_file(job_id: str, path: str) -> None:
+    job_store.pop(job_id)
+    delete_media_path(path)
+
+
 @router.get("/api/v1/files/{token}")
 async def stream_file(token: str, settings: Settings = Depends(get_settings)):
     payload = DownloadTokenService(settings).parse(token)
@@ -118,58 +143,28 @@ async def stream_file(token: str, settings: Settings = Depends(get_settings)):
         path = Path(job.file_path)
         if not path.is_file():
             raise unauthorized()
+        logger.info(
+            "download delivery=proxy_file job=%s size=%s",
+            job_id[:8],
+            job.filesize,
+        )
         return FileResponse(
             path,
             media_type=job.mime_type or payload.get("mime") or "video/mp4",
             filename=ascii_filename(job.file_name or filename),
+            background=BackgroundTask(_cleanup_job_file, job_id, str(path)),
         )
 
     url = payload.get("url")
     if not isinstance(url, str):
         raise unauthorized()
     validate_public_url(url)
-    extra_headers = payload.get("headers") if isinstance(payload.get("headers"), dict) else None
-    http = SafeHttp(settings)
-    try:
-        client, response = await http.stream(url, extra_headers=extra_headers)
-    except ApiError:
-        raise
-    except Exception as exc:
-        raise platform_unavailable(
-            "TikTok (or the source) refused the video file. Try again in a moment."
-        ) from exc
-    mime = (response.headers.get("content-type") or payload.get("mime") or "video/mp4").split(";")[0]
-    if response.status_code >= 400 or mime.startswith("text/html") or mime.startswith("application/json"):
-        await response.aclose()
-        await client.aclose()
-        raise platform_unavailable(
-            "The source refused the video file. Try a public TikTok, or try again."
-        )
-
-    async def iterator():
-        sent = 0
-        try:
-            async for chunk in response.aiter_bytes():
-                sent += len(chunk)
-                if sent > settings.max_download_bytes:
-                    raise file_too_large()
-                yield chunk
-        finally:
-            await response.aclose()
-            await client.aclose()
-
-    headers = {
-        "Content-Disposition": f'attachment; filename="{filename}"',
-        "Cache-Control": "no-store",
-    }
-    length = response.headers.get("content-length")
-    if length:
-        headers["Content-Length"] = length
-        if int(length) > settings.max_download_bytes:
-            await response.aclose()
-            await client.aclose()
-            raise file_too_large()
-    return StreamingResponse(iterator(), media_type=mime, headers=headers)
+    size = payload.get("size")
+    if isinstance(size, (int, float)) and int(size) > settings.max_download_bytes:
+        raise file_too_large(settings.max_download_bytes)
+    host = urlparse(url).hostname or "unknown"
+    logger.info("download delivery=proxy_redirect host=%s size=%s", host, size)
+    return RedirectResponse(url=url, status_code=307)
 
 
 async def _prepare_job(
@@ -191,6 +186,23 @@ async def _prepare_job(
 
     try:
         result = await extractor.download(url, format_id, progress=on_progress)
+        size = result.get("filesize")
+        if isinstance(size, (int, float)) and int(size) > settings.max_download_bytes:
+            delete_media_path(result.get("path"))
+            raise file_too_large(settings.max_download_bytes)
+        store = get_object_store(settings)
+        if store.enabled():
+            signed = store.put_file(Path(result["path"]), str(result.get("name") or "video.mp4"))
+            if signed:
+                validate_public_url(signed)
+                job.mime_type = result["mime"]
+                job.file_name = result["name"]
+                job.filesize = result["filesize"]
+                job.download_url = signed
+                job_store.mark_ready(job)
+                delete_media_path(result.get("path"))
+                logger.info("download delivery=object_store size=%s", job.filesize)
+                return
         token = DownloadTokenService(settings).issue(
             {
                 "job": job_id,
@@ -202,15 +214,17 @@ async def _prepare_job(
         job.mime_type = result["mime"]
         job.file_name = result["name"]
         job.filesize = result["filesize"]
-        job.progress = 1
         job.download_url = f"{public_base.rstrip('/')}/api/v1/files/{token}"
-        job.state = "ready"
+        job_store.mark_ready(job)
+        logger.info("download delivery=proxy_file size=%s", job.filesize)
     except ApiError as exc:
         job.state = "failed"
         job.error = {"code": exc.code, "message": exc.message}
+        logger.info("download delivery=prepare_local_failed code=%s", exc.code)
     except Exception:
         job.state = "failed"
         job.error = {
             "code": "platform_unavailable",
             "message": platform_unavailable().message,
         }
+        logger.info("download delivery=prepare_local_failed code=platform_unavailable")

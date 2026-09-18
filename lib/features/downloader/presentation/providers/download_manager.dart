@@ -162,6 +162,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
         );
         task = task.copyWith(
           downloadUrl: ready.downloadUrl,
+          directUrl: ready.directUrl ?? task.directUrl,
           totalBytes: ready.filesize ?? task.totalBytes,
         );
         state = state.copyWithTask(task);
@@ -321,41 +322,25 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       urls.add(value);
     }
 
-    if (_isDirectMediaFile(task.directUrl)) add(task.directUrl);
-    if (_isDirectMediaFile(task.sourceUrl)) add(task.sourceUrl);
+    if (_isUsableDirect(task.directUrl)) add(task.directUrl);
     add(task.downloadUrl);
     return urls;
   }
 
-  bool _isDirectMediaFile(String? url) {
+  bool _isUsableDirect(String? url) {
     if (url == null || url.isEmpty) return false;
     final uri = Uri.tryParse(url);
     if (uri == null) return false;
     if (uri.scheme != 'http' && uri.scheme != 'https') return false;
     final host = uri.host.toLowerCase();
-    final path = uri.path.toLowerCase();
-    if (host.contains('facebook.com') ||
-        host.contains('instagram.com') ||
-        host.contains('tiktok.com') ||
-        host.contains('youtube.com') ||
-        host.contains('youtu.be')) {
+    if (host.isEmpty) return false;
+    if (host.contains('onrender.com') ||
+        host == 'localhost' ||
+        host == '127.0.0.1' ||
+        host.endsWith('.localhost')) {
       return false;
     }
-    if (AppConstants.allowedVideoExtensions.any((ext) => path.endsWith('.$ext'))) {
-      return true;
-    }
-    const cdns = [
-      'fbcdn.net',
-      'cdninstagram.com',
-      'googleapis.com',
-      'googleusercontent.com',
-      'googlevideo.com',
-      'tiktokcdn',
-      'byteoversea',
-      'akamai',
-      'cloudfront.net',
-    ];
-    return cdns.any(host.contains);
+    return true;
   }
 
   Future<void> pause(String id) async {
@@ -433,6 +418,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
           jobId: status.id,
           state: DownloadJobState.ready,
           filesize: status.filesize,
+          directUrl: status.directUrl,
         );
       }
       if (status.state == DownloadJobState.failed) {

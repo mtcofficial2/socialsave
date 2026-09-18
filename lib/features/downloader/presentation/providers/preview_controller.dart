@@ -72,7 +72,13 @@ class PreviewController extends FamilyNotifier<PreviewState, MediaInfo> {
       return null;
     }
 
-    if (preferredQuality == 'auto' || preferredQuality == 'original') {
+    if (preferredQuality == 'auto') {
+      return match(quality: 'auto') ??
+          match(quality: '480p') ??
+          match(quality: '360p') ??
+          media.defaultFormat;
+    }
+    if (preferredQuality == 'original') {
       return match(quality: 'original') ?? media.defaultFormat;
     }
     return match(quality: preferredQuality, format: preferredFormat) ??

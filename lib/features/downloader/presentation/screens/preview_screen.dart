@@ -417,7 +417,11 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
             url: media.sourceUrl,
             formatId: format.id,
           );
-      var url = ticket.directUrl ?? ticket.downloadUrl;
+      var url = (ticket.directUrl != null &&
+              ticket.directUrl!.isNotEmpty &&
+              !ticket.directUrl!.contains('onrender.com'))
+          ? ticket.directUrl!
+          : ticket.downloadUrl;
       if (url.isEmpty && ticket.jobId != null) {
         for (var i = 0; i < 20; i++) {
           await Future<void>.delayed(const Duration(seconds: 2));
@@ -447,6 +451,7 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
           thumbnailUrl: media.thumbnailUrl,
           author: media.author,
           referer: media.sourceUrl,
+          httpHeaders: ticket.requestHeaders,
           isPreview: true,
         ),
       );

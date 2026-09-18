@@ -17,12 +17,15 @@ class Settings(BaseSettings):
     enabled_platforms: str = (
         "tiktok,instagram,facebook,x,youtube,reddit,pinterest,direct"
     )
-    max_download_bytes: int = 2_147_483_647
+    max_download_bytes: int = 104_857_600
+    default_max_height: int = 480
     token_ttl_seconds: int = 3600
+    job_ttl_seconds: int = 600
     request_timeout_seconds: float = 30.0
     max_redirects: int = 3
     analyze_rate_limit: str = "30/minute"
     download_rate_limit: str = "10/minute"
+    object_storage_url: str = ""
 
     youtube_api_key: str = ""
     instagram_access_token: str = ""

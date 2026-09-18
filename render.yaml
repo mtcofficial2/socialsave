@@ -13,3 +13,9 @@ services:
         value: "false"
       - key: PYTHONUNBUFFERED
         value: "1"
+      - key: MAX_DOWNLOAD_BYTES
+        value: "104857600"
+      - key: DEFAULT_MAX_HEIGHT
+        value: "480"
+      - key: JOB_TTL_SECONDS
+        value: "600"

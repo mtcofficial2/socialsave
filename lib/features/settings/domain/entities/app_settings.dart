@@ -13,7 +13,7 @@ class AppSettings extends Equatable {
     this.wifiOnly = false,
     this.autoStartDownloads = true,
     this.notificationsEnabled = true,
-    this.defaultQuality = VideoQualityPreference.original,
+    this.defaultQuality = VideoQualityPreference.auto,
     this.defaultFormat = VideoFormatPreference.mp4,
     this.fontFamily = 'Inter',
   });

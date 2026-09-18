@@ -71,8 +71,23 @@ def _is_tiktok(url: str) -> bool:
     return "tiktok.com" in _hostname(url)
 
 
-def _format_selector(format_id: str, has_ffmpeg: bool) -> str:
+def requested_max_height(format_id: str, default_max_height: int = 480) -> Optional[int]:
     quality = (format_id or "auto").lower()
+    if quality in {"original", "best"}:
+        return None
+    if quality in {"auto", "", "default"}:
+        return default_max_height
+    if quality == "4k":
+        return 2160
+    if quality.endswith("p") and quality[:-1].isdigit():
+        return int(quality[:-1])
+    return default_max_height
+
+
+def _format_selector(format_id: str, has_ffmpeg: bool, max_height: int = 480) -> str:
+    quality = (format_id or "auto").lower()
+    if quality in {"auto", "", "default"}:
+        quality = f"{max_height}p"
     if has_ffmpeg:
         mapping = {
             "360p": "bv*[height<=360]+ba/b[height<=360]/b",
@@ -83,9 +98,8 @@ def _format_selector(format_id: str, has_ffmpeg: bool) -> str:
             "2160p": "bv*[height<=2160]+ba/b[height<=2160]/b",
             "4k": "bv*[height<=2160]+ba/b[height<=2160]/b",
             "original": _BEST_FORMAT,
-            "auto": _BEST_FORMAT,
         }
-        return mapping.get(quality, _BEST_FORMAT)
+        return mapping.get(quality, mapping.get(f"{max_height}p", _BEST_FORMAT))
     mapping = {
         "360p": "best[height<=360][acodec!=none][vcodec!=none]/best[height<=360]/best",
         "480p": "best[height<=480][acodec!=none][vcodec!=none]/best[height<=480]/best",
@@ -94,9 +108,8 @@ def _format_selector(format_id: str, has_ffmpeg: bool) -> str:
         "1440p": "best[height<=1440][acodec!=none][vcodec!=none]/best[height<=1440]/best",
         "2160p": "best[height<=2160][acodec!=none][vcodec!=none]/best[height<=2160]/best",
         "original": "best[acodec!=none][vcodec!=none]/best",
-        "auto": "best[acodec!=none][vcodec!=none]/best",
     }
-    return mapping.get(quality, mapping["auto"])
+    return mapping.get(quality, mapping.get(f"{max_height}p", mapping["480p"]))
 
 
 def _base_opts(settings: Settings, url: str) -> dict[str, Any]:
@@ -447,7 +460,24 @@ def _stream_needs_session(url: str, headers: Any) -> bool:
     return "tt_chain_token" in url and "tt_chain_token" not in cookies
 
 
-def _pick_progressive(info: dict[str, Any]) -> Optional[dict[str, Any]]:
+def _as_int(value: Any) -> Optional[int]:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _pick_progressive(
+    info: dict[str, Any],
+    *,
+    max_height: Optional[int] = None,
+) -> Optional[dict[str, Any]]:
     formats = [item for item in (info.get("formats") or []) if isinstance(item, dict)]
     progressive: list[dict[str, Any]] = []
     for item in formats:
@@ -473,6 +503,14 @@ def _pick_progressive(info: dict[str, Any]) -> Optional[dict[str, Any]]:
         }
     if not progressive:
         return None
+    if max_height:
+        capped = [
+            item
+            for item in progressive
+            if not isinstance(item.get("height"), int) or item["height"] <= max_height
+        ]
+        if capped:
+            progressive = capped
     def score(item: dict[str, Any]) -> tuple[int, int, int]:
         has_audio = 1 if item.get("acodec") not in {None, "none"} else 0
         height = item.get("height") if isinstance(item.get("height"), int) else 0
@@ -546,15 +584,16 @@ def _download_sync(
 ) -> dict[str, Any]:
     has_ffmpeg = _ffmpeg_dir() is not None
     workdir = Path(tempfile.mkdtemp(prefix="socialsave-", dir=str(_temp_root())))
+    selector = _format_selector(format_id, has_ffmpeg, settings.default_max_height)
     attempts: list[dict[str, Any]] = [
         {
-            "format": _format_selector(format_id, has_ffmpeg),
+            "format": selector,
         }
     ]
     if _is_youtube(url):
         attempts.extend(
             {
-                "format": extra.get("format", _format_selector(format_id, has_ffmpeg)),
+                "format": extra.get("format", selector),
                 **{k: v for k, v in extra.items() if k != "format"},
             }
             for extra in _youtube_attempts()
@@ -582,6 +621,28 @@ def _download_sync(
             if total:
                 progress(min(received / total, 0.99))
 
+    try:
+        return _download_sync_inner(
+            url,
+            format_id,
+            settings,
+            workdir,
+            attempts,
+            hook,
+        )
+    except Exception:
+        shutil.rmtree(workdir, ignore_errors=True)
+        raise
+
+
+def _download_sync_inner(
+    url: str,
+    format_id: str,
+    settings: Settings,
+    workdir: Path,
+    attempts: list[dict[str, Any]],
+    hook: Any,
+) -> dict[str, Any]:
     last_error: Exception | None = None
     info: dict[str, Any] | None = None
     for extra in attempts:
@@ -632,7 +693,7 @@ def _download_sync(
         raise unsupported_format()
     video = max(files, key=lambda path: path.stat().st_size)
     if video.stat().st_size > settings.max_download_bytes:
-        raise file_too_large()
+        raise file_too_large(settings.max_download_bytes)
     info = _unwrap_info(info) if isinstance(info, dict) else {}
     ext = video.suffix.lstrip(".").lower() or "mp4"
     title = _safe_title(str(info.get("title") or video.stem))
@@ -686,11 +747,12 @@ class MediaExtractor:
             self._settings,
         )
         title = _safe_title(str(info.get("title") or "video"))
-        stream = _pick_progressive(info)
+        max_height = requested_max_height(format_id, self._settings.default_max_height)
+        stream = _pick_progressive(info, max_height=max_height)
         if stream and isinstance(stream.get("url"), str) and _stream_needs_session(str(stream["url"]), stream.get("http_headers") or {}):
             fallback = social_fallback.extract(url) if _is_tiktok(url) else None
             if fallback is not None:
-                stream = _pick_progressive(fallback) or stream
+                stream = _pick_progressive(fallback, max_height=max_height) or stream
             else:
                 stream = None
         if stream and isinstance(stream.get("url"), str):
@@ -707,11 +769,14 @@ class MediaExtractor:
                 referer = (_base_opts(self._settings, url).get("http_headers") or {}).get("Referer")
                 if referer:
                     headers["Referer"] = referer
+            size = _as_int(stream.get("filesize"))
+            if size is not None and size > self._settings.max_download_bytes:
+                raise file_too_large(self._settings.max_download_bytes)
             return DownloadHandle(
                 source_url=url,
                 format_id=format_id or "auto",
                 mime_type=f"video/{ext}" if ext != "m4a" else "audio/mp4",
-                filesize=stream.get("filesize") if isinstance(stream.get("filesize"), int) else None,
+                filesize=size,
                 file_name=f"{title}.{ext}",
                 upstream_url=str(stream["url"]),
                 prepare_locally=False,

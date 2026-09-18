@@ -47,6 +47,34 @@ def test_detects_direct_video() -> None:
     assert not provider.can_handle("https://cdn.example.com/page")
 
 
+def test_auto_format_selector_caps_height() -> None:
+    from app.providers.extractor import _format_selector, requested_max_height
+
+    assert requested_max_height("auto", 480) == 480
+    assert requested_max_height("720p", 480) == 720
+    assert requested_max_height("original", 480) is None
+    assert "480" in _format_selector("auto", True, 480)
+    assert "720" in _format_selector("720p", True, 480)
+    assert "bv*" in _format_selector("original", True, 480)
+
+
+def test_default_max_download_is_100mb() -> None:
+    settings = Settings()
+    assert settings.max_download_bytes == 104_857_600
+    assert settings.default_max_height == 480
+
+
+def test_job_store_purges_failed_jobs(monkeypatch) -> None:
+    from app.jobs import JobStore
+
+    store = JobStore(ttl_seconds=1)
+    job = store.create()
+    job.state = "failed"
+    job.created_at = 0
+    store.purge()
+    assert store.get(job.id) is None
+
+
 def test_disabled_platform_is_rejected() -> None:
     settings = Settings(enabled_platforms="direct")
     registry = ProviderRegistry(settings)

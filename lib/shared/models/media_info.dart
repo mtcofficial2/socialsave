@@ -29,32 +29,20 @@ class MediaInfo extends Equatable {
     if (formats.isEmpty) {
       return null;
     }
-    MediaFormat? original;
-    MediaFormat? best;
-    var bestHeight = -1;
-    for (final format in formats) {
-      final quality = format.quality.toLowerCase();
-      if (quality == 'auto') {
-        continue;
+    MediaFormat? byQuality(String quality) {
+      for (final format in formats) {
+        if (format.quality.toLowerCase() == quality) {
+          return format;
+        }
       }
-      if (quality == 'original') {
-        original = format;
-      }
-      final height = format.height ?? _heightFromQuality(quality);
-      if (height != null && height > bestHeight) {
-        bestHeight = height;
-        best = format;
-      }
-    }
-    return original ?? best ?? formats.first;
-  }
-
-  static int? _heightFromQuality(String quality) {
-    final match = RegExp(r'(\d+)p').firstMatch(quality);
-    if (match == null) {
       return null;
     }
-    return int.tryParse(match.group(1)!);
+
+    return byQuality('auto') ??
+        byQuality('480p') ??
+        byQuality('360p') ??
+        byQuality('original') ??
+        formats.first;
   }
 
   List<MediaFormat> get videoFormats =>

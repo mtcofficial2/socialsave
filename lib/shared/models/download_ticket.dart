@@ -67,6 +67,7 @@ class DownloadJobStatus extends Equatable {
     required this.id,
     required this.state,
     this.downloadUrl,
+    this.directUrl,
     this.errorCode,
     this.errorMessage,
     this.progress,
@@ -76,6 +77,7 @@ class DownloadJobStatus extends Equatable {
   final String id;
   final DownloadJobState state;
   final String? downloadUrl;
+  final String? directUrl;
   final String? errorCode;
   final String? errorMessage;
   final double? progress;
@@ -90,6 +92,7 @@ class DownloadJobStatus extends Equatable {
         orElse: () => DownloadJobState.processing,
       ),
       downloadUrl: json['download_url'] as String?,
+      directUrl: json['direct_url'] as String?,
       errorCode: json['error_code'] as String?,
       errorMessage: json['error_message'] as String? ??
           (json['error'] is Map ? (json['error'] as Map)['message'] as String? : null),
@@ -100,5 +103,5 @@ class DownloadJobStatus extends Equatable {
 
   @override
   List<Object?> get props =>
-      [id, state, downloadUrl, errorCode, errorMessage, progress, filesize];
+      [id, state, downloadUrl, directUrl, errorCode, errorMessage, progress, filesize];
 }

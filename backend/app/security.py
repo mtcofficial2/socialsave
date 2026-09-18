@@ -27,7 +27,7 @@ def validate_public_url(raw: str) -> str:
     if not raw or not isinstance(raw, str):
         raise invalid_url()
     trimmed = raw.strip()
-    if len(trimmed) > 2048 or " " in trimmed:
+    if len(trimmed) > 4096 or " " in trimmed:
         raise invalid_url("That URL is not valid.")
     parsed = urlparse(trimmed)
     if parsed.scheme not in ALLOWED_SCHEMES:
