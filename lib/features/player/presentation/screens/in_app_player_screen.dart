@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:open_filex/open_filex.dart';
@@ -10,20 +11,21 @@ import 'package:social_save/core/theme/app_colors.dart';
 import 'package:social_save/features/library/device_media.dart';
 import 'package:social_save/features/player/pip.dart';
 import 'package:social_save/features/player/player_session.dart';
+import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
 import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
-class InAppPlayerScreen extends StatefulWidget {
+class InAppPlayerScreen extends ConsumerStatefulWidget {
   const InAppPlayerScreen({super.key, required this.session});
 
   final PlayerSession session;
 
   @override
-  State<InAppPlayerScreen> createState() => _InAppPlayerScreenState();
+  ConsumerState<InAppPlayerScreen> createState() => _InAppPlayerScreenState();
 }
 
-class _InAppPlayerScreenState extends State<InAppPlayerScreen> {
+class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
   static const _rates = <double>[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
   late final Player _player;
@@ -40,10 +42,38 @@ class _InAppPlayerScreenState extends State<InAppPlayerScreen> {
   double _rate = 1;
   double _volume = 100;
   BoxFit _fit = BoxFit.contain;
+  bool _showEndCard = false;
+  int _countdown = 5;
+  Timer? _nextTimer;
+  late List<PlayerQueueItem> _queue;
+  late int _queueIndex;
+
+  PlayerSession get _session {
+    if (_queue.isEmpty) return widget.session;
+    return _queue[_queueIndex.clamp(0, _queue.length - 1)].toSession();
+  }
+
+  bool get _hasNext => _queueIndex < _queue.length - 1;
 
   @override
   void initState() {
     super.initState();
+    _queue = List<PlayerQueueItem>.from(widget.session.queue);
+    _queueIndex = widget.session.queueIndex;
+    if (_queue.isEmpty) {
+      _queue = [
+        PlayerQueueItem(
+          title: widget.session.title,
+          filePath: widget.session.filePath,
+          networkUrl: widget.session.networkUrl,
+          httpHeaders: widget.session.httpHeaders,
+          referer: widget.session.referer,
+          platform: widget.session.platform,
+          isVault: widget.session.isVault,
+        ),
+      ];
+      _queueIndex = 0;
+    }
     _player = Player(
       configuration: const PlayerConfiguration(
         bufferSize: 64 * 1024 * 1024,
@@ -63,7 +93,10 @@ class _InAppPlayerScreenState extends State<InAppPlayerScreen> {
     _subs.add(_player.stream.completed.listen((done) {
       if (!mounted) return;
       setState(() => _completed = done);
-      if (done) unawaited(_clearResume());
+      if (done) {
+        unawaited(_clearResume());
+        unawaited(_onFinished());
+      }
     }));
     _subs.add(_player.stream.rate.listen((value) {
       if (mounted) setState(() => _rate = value);
@@ -87,13 +120,13 @@ class _InAppPlayerScreenState extends State<InAppPlayerScreen> {
   }
 
   String? get _resumeKey {
-    final path = widget.session.filePath;
+    final path = _session.filePath;
     if (path == null || path.isEmpty) return null;
     return 'player.pos.${path.hashCode}';
   }
 
   Future<void> _open() async {
-    final session = widget.session;
+    final session = _session;
     String? uri;
     Map<String, String>? headers;
     if (session.filePath != null && File(session.filePath!).existsSync()) {
@@ -136,7 +169,7 @@ class _InAppPlayerScreenState extends State<InAppPlayerScreen> {
   }
 
   Future<void> _restoreResume() async {
-    if (_didResume || widget.session.isPreview) return;
+    if (_didResume || _session.isPreview) return;
     final key = _resumeKey;
     if (key == null) return;
     final prefs = await SharedPreferences.getInstance();
@@ -207,7 +240,7 @@ class _InAppPlayerScreenState extends State<InAppPlayerScreen> {
   }
 
   Future<void> _openExternal() async {
-    final path = widget.session.filePath;
+    final path = _session.filePath;
     if (path == null || !File(path).existsSync()) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -228,6 +261,78 @@ class _InAppPlayerScreenState extends State<InAppPlayerScreen> {
         const SnackBar(content: Text('This device cannot play over other apps.')),
       );
     }
+  }
+
+  void _cancelCountdown() {
+    _nextTimer?.cancel();
+    _nextTimer = null;
+  }
+
+  Future<void> _onFinished() async {
+    if (_loop || _showEndCard) return;
+    final autoNext = ref.read(settingsControllerProvider).autoPlayNextInGallery;
+    setState(() {
+      _showEndCard = true;
+      _countdown = 5;
+    });
+    if (!autoNext || !_hasNext) return;
+    _nextTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      if (_countdown <= 1) {
+        timer.cancel();
+        unawaited(_playNext());
+        return;
+      }
+      setState(() => _countdown -= 1);
+    });
+  }
+
+  Future<void> _rewatch() async {
+    _cancelCountdown();
+    if (mounted) {
+      setState(() {
+        _showEndCard = false;
+        _completed = false;
+      });
+    }
+    await _player.seek(Duration.zero);
+    await _player.play();
+  }
+
+  Future<void> _playNext() async {
+    if (!_hasNext) return;
+    _cancelCountdown();
+    setState(() {
+      _queueIndex += 1;
+      _showEndCard = false;
+      _completed = false;
+      _ready = false;
+      _error = null;
+      _didResume = true;
+    });
+    var item = _queue[_queueIndex];
+    final existing = item.filePath;
+    if (existing == null || !File(existing).existsSync()) {
+      if (item.deviceId != null) {
+        final path = await DeviceMediaService().resolvePlayablePath(
+          DeviceVideo(
+            id: item.deviceId!,
+            title: item.title,
+            path: item.devicePath,
+            uri: item.deviceUri,
+          ),
+        );
+        if (path != null) {
+          item = item.copyWith(filePath: path);
+          _queue[_queueIndex] = item;
+        }
+      }
+    }
+    if (!mounted) return;
+    await _open();
   }
 
   Future<void> _showTools() async {
@@ -404,6 +509,7 @@ class _InAppPlayerScreenState extends State<InAppPlayerScreen> {
 
   @override
   void dispose() {
+    _cancelCountdown();
     unawaited(_saveResume());
     for (final sub in _subs) {
       unawaited(sub.cancel());
@@ -449,14 +555,14 @@ class _InAppPlayerScreenState extends State<InAppPlayerScreen> {
                     onPressed: () => Navigator.maybePop(context),
                     icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
                   ),
-                  PlatformLogo(platform: widget.session.platform, size: 22),
+                  PlatformLogo(platform: _session.platform, size: 22),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          widget.session.title,
+                          _session.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
@@ -466,9 +572,9 @@ class _InAppPlayerScreenState extends State<InAppPlayerScreen> {
                           ),
                         ),
                         Text(
-                          widget.session.isPreview
+                          _session.isPreview
                               ? 'Preview · not saved yet'
-                              : widget.session.isVault
+                              : _session.isVault
                                   ? 'Vault · PIN protected'
                                   : 'Tap video for skip, speed, loop, and fill',
                           style: const TextStyle(color: Colors.white70, fontSize: 11),
@@ -481,13 +587,13 @@ class _InAppPlayerScreenState extends State<InAppPlayerScreen> {
                     onPressed: _showTools,
                     icon: const Icon(Icons.tune_rounded, color: Colors.white),
                   ),
-                  if (!widget.session.isVault)
+                  if (!_session.isVault)
                     IconButton(
                       tooltip: 'Play over other apps',
                       onPressed: _playOverApps,
                       icon: const Icon(Icons.picture_in_picture_alt_rounded, color: Colors.white),
                     ),
-                  if (widget.session.filePath != null && !widget.session.isVault)
+                  if (_session.filePath != null && !_session.isVault)
                     IconButton(
                       tooltip: 'Open in another app',
                       onPressed: _openExternal,
@@ -497,8 +603,11 @@ class _InAppPlayerScreenState extends State<InAppPlayerScreen> {
               ),
             ),
             Expanded(
-              child: _error != null
-                  ? Center(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (_error != null)
+                    Center(
                       child: Padding(
                         padding: const EdgeInsets.all(24),
                         child: Column(
@@ -513,7 +622,7 @@ class _InAppPlayerScreenState extends State<InAppPlayerScreen> {
                                 height: 1.4,
                               ),
                             ),
-                            if (widget.session.filePath != null && !widget.session.isVault) ...[
+                            if (_session.filePath != null && !_session.isVault) ...[
                               const SizedBox(height: 16),
                               FilledButton(
                                 onPressed: _openExternal,
@@ -524,7 +633,18 @@ class _InAppPlayerScreenState extends State<InAppPlayerScreen> {
                         ),
                       ),
                     )
-                  : video,
+                  else
+                    video,
+                  if (_showEndCard) _EndCard(
+                    countdown: _countdown,
+                    hasNext: _hasNext,
+                    nextTitle: _hasNext ? _queue[_queueIndex + 1].title : null,
+                    autoNext: ref.watch(settingsControllerProvider).autoPlayNextInGallery,
+                    onRewatch: () => unawaited(_rewatch()),
+                    onPlayNext: _hasNext ? () => unawaited(_playNext()) : null,
+                  ),
+                ],
+              ),
             ),
             if (!_ready && _error == null)
               const LinearProgressIndicator(
@@ -532,6 +652,93 @@ class _InAppPlayerScreenState extends State<InAppPlayerScreen> {
                 backgroundColor: Colors.white10,
               ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EndCard extends StatelessWidget {
+  const _EndCard({
+    required this.countdown,
+    required this.hasNext,
+    required this.autoNext,
+    required this.onRewatch,
+    this.nextTitle,
+    this.onPlayNext,
+  });
+
+  final int countdown;
+  final bool hasNext;
+  final bool autoNext;
+  final String? nextTitle;
+  final VoidCallback onRewatch;
+  final VoidCallback? onPlayNext;
+
+  @override
+  Widget build(BuildContext context) {
+    final showTimer = autoNext && hasNext;
+    return ColoredBox(
+      color: const Color(0xCC000000),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.replay_rounded, color: Colors.white, size: 40),
+              const SizedBox(height: 12),
+              const Text(
+                'Video ended',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 20,
+                ),
+              ),
+              if (showTimer) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Next in $countdown s',
+                  style: const TextStyle(color: Colors.white70, fontSize: 16),
+                ),
+                if (nextTitle != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      nextTitle!,
+                      maxLines: 2,
+                      textAlign: TextAlign.center,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white, fontSize: 14),
+                    ),
+                  ),
+              ] else if (!hasNext)
+                const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: Text(
+                    'That was the last video in this list.',
+                    style: TextStyle(color: Colors.white70),
+                  ),
+                ),
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                onPressed: onRewatch,
+                icon: const Icon(Icons.replay_rounded),
+                label: const Text('Rewatch'),
+              ),
+              if (showTimer && onPlayNext != null) ...[
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: onPlayNext,
+                  child: const Text(
+                    'Play next now',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
+              ],
+            ],
+          ),
         ),
       ),
     );

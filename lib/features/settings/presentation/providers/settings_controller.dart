@@ -41,6 +41,14 @@ class SettingsController extends Notifier<AppSettings> {
     return _commit(state.copyWith(defaultFormat: value));
   }
 
+  Future<void> setFontFamily(String value) {
+    return _commit(state.copyWith(fontFamily: value));
+  }
+
+  Future<void> setAutoPlayNextInGallery(bool value) {
+    return _commit(state.copyWith(autoPlayNextInGallery: value));
+  }
+
   Future<void> _commit(AppSettings next) async {
     state = next;
     await ref.read(settingsRepositoryProvider).save(next);

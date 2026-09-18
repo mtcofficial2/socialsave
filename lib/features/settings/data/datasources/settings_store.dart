@@ -18,6 +18,9 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
       '${AppConstants.settingsPrefsPrefix}notificationsEnabled';
   static const _quality = '${AppConstants.settingsPrefsPrefix}defaultQuality';
   static const _format = '${AppConstants.settingsPrefsPrefix}defaultFormat';
+  static const _fontFamily = '${AppConstants.settingsPrefsPrefix}fontFamily';
+  static const _autoPlayNext =
+      '${AppConstants.settingsPrefsPrefix}autoPlayNextInGallery';
 
   @override
   Future<AppSettings> load() async {
@@ -29,6 +32,8 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
       'notificationsEnabled': _prefs.getBool(_notifications),
       'defaultQuality': _prefs.getString(_quality),
       'defaultFormat': _prefs.getString(_format),
+      'fontFamily': _prefs.getString(_fontFamily),
+      'autoPlayNextInGallery': _prefs.getBool(_autoPlayNext),
     });
   }
 
@@ -44,5 +49,7 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
     await _prefs.setBool(_notifications, settings.notificationsEnabled);
     await _prefs.setString(_quality, settings.defaultQuality.name);
     await _prefs.setString(_format, settings.defaultFormat.name);
+    await _prefs.setString(_fontFamily, settings.fontFamily);
+    await _prefs.setBool(_autoPlayNext, settings.autoPlayNextInGallery);
   }
 }
