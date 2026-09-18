@@ -71,7 +71,7 @@ def _is_tiktok(url: str) -> bool:
     return "tiktok.com" in _hostname(url)
 
 
-def requested_max_height(format_id: str, default_max_height: int = 480) -> Optional[int]:
+def requested_max_height(format_id: str, default_max_height: int = 1080) -> Optional[int]:
     quality = (format_id or "auto").lower()
     if quality in {"original", "best"}:
         return None
@@ -84,7 +84,7 @@ def requested_max_height(format_id: str, default_max_height: int = 480) -> Optio
     return default_max_height
 
 
-def _format_selector(format_id: str, has_ffmpeg: bool, max_height: int = 480) -> str:
+def _format_selector(format_id: str, has_ffmpeg: bool, max_height: int = 1080) -> str:
     quality = (format_id or "auto").lower()
     if quality in {"auto", "", "default"}:
         quality = f"{max_height}p"

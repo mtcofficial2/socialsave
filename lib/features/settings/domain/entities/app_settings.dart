@@ -13,7 +13,7 @@ class AppSettings extends Equatable {
     this.wifiOnly = false,
     this.autoStartDownloads = true,
     this.notificationsEnabled = true,
-    this.defaultQuality = VideoQualityPreference.auto,
+    this.defaultQuality = VideoQualityPreference.p1080,
     this.defaultFormat = VideoFormatPreference.mp4,
     this.fontFamily = 'Inter',
   });
@@ -80,7 +80,7 @@ class AppSettings extends Equatable {
       notificationsEnabled: map['notificationsEnabled'] as bool? ?? true,
       defaultQuality: VideoQualityPreference.values.firstWhere(
         (value) => value.name == map['defaultQuality'],
-        orElse: () => VideoQualityPreference.auto,
+        orElse: () => VideoQualityPreference.p1080,
       ),
       defaultFormat: VideoFormatPreference.values.firstWhere(
         (value) => value.name == map['defaultFormat'],

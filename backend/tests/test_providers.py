@@ -50,18 +50,18 @@ def test_detects_direct_video() -> None:
 def test_auto_format_selector_caps_height() -> None:
     from app.providers.extractor import _format_selector, requested_max_height
 
-    assert requested_max_height("auto", 480) == 480
-    assert requested_max_height("720p", 480) == 720
-    assert requested_max_height("original", 480) is None
-    assert "480" in _format_selector("auto", True, 480)
-    assert "720" in _format_selector("720p", True, 480)
-    assert "bv*" in _format_selector("original", True, 480)
+    assert requested_max_height("auto", 1080) == 1080
+    assert requested_max_height("720p", 1080) == 720
+    assert requested_max_height("original", 1080) is None
+    assert "1080" in _format_selector("auto", True, 1080)
+    assert "720" in _format_selector("720p", True, 1080)
+    assert "bv*" in _format_selector("original", True, 1080)
 
 
-def test_default_max_download_is_100mb() -> None:
+def test_default_max_download_is_2gb_and_1080p() -> None:
     settings = Settings()
-    assert settings.max_download_bytes == 104_857_600
-    assert settings.default_max_height == 480
+    assert settings.max_download_bytes == 2_147_483_647
+    assert settings.default_max_height == 1080
 
 
 def test_job_store_purges_failed_jobs(monkeypatch) -> None:

@@ -61,7 +61,7 @@ def unsupported_format() -> ApiError:
 
 
 def file_too_large(max_bytes: int | None = None) -> ApiError:
-    limit = max_bytes or 104_857_600
+    limit = max_bytes or 2_147_483_647
     megabytes = max(1, limit // (1024 * 1024))
     return ApiError(
         "file_too_large",

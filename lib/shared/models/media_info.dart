@@ -39,8 +39,9 @@ class MediaInfo extends Equatable {
     }
 
     return byQuality('auto') ??
+        byQuality('1080p') ??
+        byQuality('720p') ??
         byQuality('480p') ??
-        byQuality('360p') ??
         byQuality('original') ??
         formats.first;
   }

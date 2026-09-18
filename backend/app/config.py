@@ -17,8 +17,8 @@ class Settings(BaseSettings):
     enabled_platforms: str = (
         "tiktok,instagram,facebook,x,youtube,reddit,pinterest,direct"
     )
-    max_download_bytes: int = 104_857_600
-    default_max_height: int = 480
+    max_download_bytes: int = 2_147_483_647
+    default_max_height: int = 1080
     token_ttl_seconds: int = 3600
     job_ttl_seconds: int = 600
     request_timeout_seconds: float = 30.0
