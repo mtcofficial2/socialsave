@@ -47,6 +47,56 @@ def test_detects_direct_video() -> None:
     assert not provider.can_handle("https://cdn.example.com/page")
 
 
+def test_pick_progressive_requires_audio() -> None:
+    from app.providers.extractor import _pick_progressive
+
+    info = {
+        "formats": [
+            {
+                "url": "https://cdn.example.com/silent.mp4",
+                "vcodec": "avc1",
+                "acodec": "none",
+                "height": 1080,
+                "tbr": 2500,
+            },
+            {
+                "url": "https://cdn.example.com/with-audio.mp4",
+                "vcodec": "avc1",
+                "acodec": "aac",
+                "height": 480,
+                "tbr": 800,
+            },
+        ]
+    }
+    picked = _pick_progressive(info, max_height=1080)
+    assert picked is not None
+    assert picked["url"].endswith("with-audio.mp4")
+
+
+def test_pick_progressive_skips_video_only() -> None:
+    from app.providers.extractor import _pick_progressive
+
+    info = {
+        "formats": [
+            {
+                "url": "https://cdn.example.com/silent.mp4",
+                "vcodec": "avc1",
+                "acodec": "none",
+                "height": 1080,
+            }
+        ]
+    }
+    assert _pick_progressive(info) is None
+
+
+def test_facebook_share_and_reel_ids() -> None:
+    from app.providers.social_fallback import _facebook_id
+
+    assert _facebook_id("https://www.facebook.com/watch/?v=1234567890") == "1234567890"
+    assert _facebook_id("https://www.facebook.com/reel/1234567890") == "1234567890"
+    assert _facebook_id("https://www.facebook.com/share/v/1234567890/") == "1234567890"
+
+
 def test_auto_format_selector_caps_height() -> None:
     from app.providers.extractor import _format_selector, requested_max_height
 

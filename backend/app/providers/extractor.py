@@ -90,14 +90,14 @@ def _format_selector(format_id: str, has_ffmpeg: bool, max_height: int = 1080) -
         quality = f"{max_height}p"
     if has_ffmpeg:
         mapping = {
-            "360p": "bv*[height<=360]+ba/b[height<=360]/b",
-            "480p": "bv*[height<=480]+ba/b[height<=480]/b",
-            "720p": "bv*[height<=720]+ba/b[height<=720]/b",
-            "1080p": "bv*[height<=1080]+ba/b[height<=1080]/b",
-            "1440p": "bv*[height<=1440]+ba/b[height<=1440]/b",
-            "2160p": "bv*[height<=2160]+ba/b[height<=2160]/b",
-            "4k": "bv*[height<=2160]+ba/b[height<=2160]/b",
-            "original": _BEST_FORMAT,
+            "360p": "b[height<=360][acodec!=none][vcodec!=none]/bv*[height<=360]+ba/b[height<=360]/b",
+            "480p": "b[height<=480][acodec!=none][vcodec!=none]/bv*[height<=480]+ba/b[height<=480]/b",
+            "720p": "b[height<=720][acodec!=none][vcodec!=none]/bv*[height<=720]+ba/b[height<=720]/b",
+            "1080p": "b[height<=1080][acodec!=none][vcodec!=none]/bv*[height<=1080]+ba/b[height<=1080]/b",
+            "1440p": "b[height<=1440][acodec!=none][vcodec!=none]/bv*[height<=1440]+ba/b[height<=1440]/b",
+            "2160p": "b[height<=2160][acodec!=none][vcodec!=none]/bv*[height<=2160]+ba/b[height<=2160]/b",
+            "4k": "b[height<=2160][acodec!=none][vcodec!=none]/bv*[height<=2160]+ba/b[height<=2160]/b",
+            "original": "b[acodec!=none][vcodec!=none]/" + _BEST_FORMAT,
         }
         return mapping.get(quality, mapping.get(f"{max_height}p", _BEST_FORMAT))
     mapping = {
@@ -127,12 +127,14 @@ def _base_opts(settings: Settings, url: str) -> dict[str, Any]:
         headers["Referer"] = "https://www.tiktok.com/"
     elif "instagram.com" in host or host.endswith("instagr.am"):
         headers["Referer"] = "https://www.instagram.com/"
+        headers["Origin"] = "https://www.instagram.com"
     elif _is_youtube(url):
         headers["Referer"] = "https://www.youtube.com/"
     elif "reddit.com" in host or host.endswith("redd.it"):
         headers["Referer"] = "https://www.reddit.com/"
     elif "facebook.com" in host or host.endswith("fb.watch") or host.endswith("fb.com"):
         headers["Referer"] = "https://www.facebook.com/"
+        headers["Origin"] = "https://www.facebook.com"
     elif "pinterest.com" in host or host.endswith("pin.it"):
         headers["Referer"] = "https://www.pinterest.com/"
     elif host in {"x.com", "twitter.com"} or host.endswith(".x.com") or host.endswith(".twitter.com"):
@@ -404,6 +406,13 @@ def _site_attempts(url: str) -> list[dict[str, Any]]:
         attempts.append(_impersonate("chrome"))
     elif "facebook.com" in host or host.endswith("fb.com") or host.endswith("fb.watch"):
         attempts.append(_impersonate("chrome"))
+        attempts.append(
+            {
+                "extractor_args": {
+                    "facebook": {"api": ["graphql", "webpage", "plugin"]}
+                }
+            }
+        )
     elif host in {"x.com", "twitter.com"} or host.endswith(".x.com") or host.endswith(".twitter.com"):
         attempts.append(
             {"extractor_args": {"twitter": {"api": ["syndication", "graphql", "legacy"]}}}
@@ -473,6 +482,14 @@ def _as_int(value: Any) -> Optional[int]:
         return None
 
 
+def _has_audio_track(item: dict[str, Any]) -> bool:
+    return item.get("acodec") not in {None, "none"}
+
+
+def _has_video_track(item: dict[str, Any]) -> bool:
+    return item.get("vcodec") not in {None, "none"}
+
+
 def _pick_progressive(
     info: dict[str, Any],
     *,
@@ -487,16 +504,19 @@ def _pick_progressive(
         protocol = str(item.get("protocol") or "")
         if protocol.startswith("m3u8") or protocol.startswith("http_dash") or ".m3u8" in url:
             continue
-        vcodec = item.get("vcodec")
-        acodec = item.get("acodec")
-        if vcodec in {None, "none"}:
+        if not _has_video_track(item) or not _has_audio_track(item):
             continue
         progressive.append(item)
-        if acodec not in {None, "none"}:
-            progressive.append(item)
-    if not progressive and isinstance(info.get("url"), str) and str(info["url"]).startswith("http"):
+    selected_url = info.get("url")
+    if (
+        not progressive
+        and isinstance(selected_url, str)
+        and selected_url.startswith("http")
+        and _has_video_track(info)
+        and _has_audio_track(info)
+    ):
         return {
-            "url": info["url"],
+            "url": selected_url,
             "ext": info.get("ext") or "mp4",
             "filesize": info.get("filesize") or info.get("filesize_approx"),
             "http_headers": info.get("http_headers") or {},
@@ -512,10 +532,9 @@ def _pick_progressive(
         if capped:
             progressive = capped
     def score(item: dict[str, Any]) -> tuple[int, int, int]:
-        has_audio = 1 if item.get("acodec") not in {None, "none"} else 0
         height = item.get("height") if isinstance(item.get("height"), int) else 0
         tbr = int(item.get("tbr") or 0)
-        return (has_audio, height, tbr)
+        return (1, height, tbr)
 
     best = max(progressive, key=score)
     headers = best.get("http_headers") or info.get("http_headers") or {}
@@ -757,18 +776,16 @@ class MediaExtractor:
                 stream = None
         if stream and isinstance(stream.get("url"), str):
             ext = str(stream.get("ext") or "mp4").replace(".", "") or "mp4"
+            base_headers = dict(_base_opts(self._settings, url)["http_headers"])
             raw_headers = stream.get("http_headers") or {}
             headers = {
-                str(key): str(value)
-                for key, value in raw_headers.items()
-                if isinstance(key, str)
+                **base_headers,
+                **{
+                    str(key): str(value)
+                    for key, value in raw_headers.items()
+                    if isinstance(key, str)
+                },
             }
-            if "User-Agent" not in headers:
-                headers["User-Agent"] = _base_opts(self._settings, url)["http_headers"]["User-Agent"]
-            if "Referer" not in headers:
-                referer = (_base_opts(self._settings, url).get("http_headers") or {}).get("Referer")
-                if referer:
-                    headers["Referer"] = referer
             size = _as_int(stream.get("filesize"))
             if size is not None and size > self._settings.max_download_bytes:
                 raise file_too_large(self._settings.max_download_bytes)

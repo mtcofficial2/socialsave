@@ -10,6 +10,7 @@ import 'package:social_save/core/theme/app_colors.dart';
 import 'package:social_save/features/library/device_media.dart';
 import 'package:social_save/features/player/pip.dart';
 import 'package:social_save/features/player/player_session.dart';
+import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
@@ -105,6 +106,7 @@ class _InAppPlayerScreenState extends State<InAppPlayerScreen> {
         'Accept': '*/*',
         if (session.referer != null) 'Referer': session.referer!,
         ...?session.httpHeaders,
+        ..._platformHeaders(session.platform),
       };
     }
     if (uri == null) {
@@ -533,5 +535,22 @@ class _InAppPlayerScreenState extends State<InAppPlayerScreen> {
         ),
       ),
     );
+  }
+}
+
+Map<String, String> _platformHeaders(SocialPlatform platform) {
+  switch (platform) {
+    case SocialPlatform.facebook:
+      return {
+        'Referer': 'https://www.facebook.com/',
+        'Origin': 'https://www.facebook.com',
+      };
+    case SocialPlatform.instagram:
+      return {
+        'Referer': 'https://www.instagram.com/',
+        'Origin': 'https://www.instagram.com',
+      };
+    default:
+      return const {};
   }
 }

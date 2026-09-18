@@ -72,7 +72,10 @@ def _facebook_id(url: str) -> Optional[str]:
     for key in ("v", "video_id", "story_fbid"):
         if query.get(key):
             return query[key][0]
-    match = re.search(r"/(?:videos|reel|watch)/(?:vb\.\d+/)?(\d+)", parsed.path)
+    match = re.search(
+        r"/(?:videos|reel|reels|watch|share/v)/(?:vb\.\d+/)?(\d+)",
+        parsed.path,
+    )
     return match.group(1) if match else None
 
 
@@ -91,6 +94,14 @@ def _as_info(
     author: Optional[str] = None,
     ext: str = "mp4",
 ) -> dict[str, Any]:
+    host = (urlparse(webpage).hostname or "").lower()
+    headers = {"User-Agent": _UA, "Referer": webpage}
+    if "facebook.com" in host or host.endswith("fb.com") or host.endswith("fb.watch"):
+        headers["Referer"] = "https://www.facebook.com/"
+        headers["Origin"] = "https://www.facebook.com"
+    elif "instagram.com" in host or host.endswith("instagr.am"):
+        headers["Referer"] = "https://www.instagram.com/"
+        headers["Origin"] = "https://www.instagram.com"
     return {
         "title": title or "Public video",
         "webpage_url": webpage,
@@ -109,7 +120,7 @@ def _as_info(
                 "protocol": "https",
             }
         ],
-        "http_headers": {"User-Agent": _UA, "Referer": webpage},
+        "http_headers": headers,
     }
 
 
@@ -265,31 +276,39 @@ def _instagram(url: str) -> Optional[dict[str, Any]]:
 
 
 def _facebook(url: str) -> Optional[dict[str, Any]]:
-    video_id = _facebook_id(url)
-    href = url
+    resolved = _follow(url)
+    video_id = _facebook_id(resolved) or _facebook_id(url)
+    href = resolved
     if video_id:
         href = f"https://www.facebook.com/watch/?v={video_id}"
     from urllib.parse import quote
 
     plugin = "https://www.facebook.com/plugins/video.php?href=" + quote(href, safe="")
     with _client() as client:
-        try:
-            response = client.get(plugin)
-        except Exception:
-            return None
-        html = response.text
-        for pattern in (
-            r'"playable_url_quality_hd"\s*:\s*"([^"]+)"',
-            r'"playable_url"\s*:\s*"([^"]+)"',
-            r'"hd_src(?:_no_ratelimit)?"\s*:\s*"([^"]+)"',
-            r'"sd_src(?:_no_ratelimit)?"\s*:\s*"([^"]+)"',
-            r'<meta[^>]+property="og:video"[^>]+content="([^"]+)"',
-        ):
-            video = _search_url(html, pattern)
-            if video:
-                title = _search_text(html, r'<meta[^>]+property="og:title"[^>]+content="([^"]+)"') or "Facebook video"
-                thumb = _search_url(html, r'<meta[^>]+property="og:image"[^>]+content="([^"]+)"')
-                return _as_info(title=title, webpage=href, stream=video, thumbnail=thumb)
+        pages = [plugin, href]
+        for page in pages:
+            try:
+                response = client.get(page)
+            except Exception:
+                continue
+            html = response.text
+            for pattern in (
+                r'"browser_native_hd_url"\s*:\s*"([^"]+)"',
+                r'"browser_native_sd_url"\s*:\s*"([^"]+)"',
+                r'"playable_url_quality_hd"\s*:\s*"([^"]+)"',
+                r'"playable_url"\s*:\s*"([^"]+)"',
+                r'"hd_src(?:_no_ratelimit)?"\s*:\s*"([^"]+)"',
+                r'"sd_src(?:_no_ratelimit)?"\s*:\s*"([^"]+)"',
+                r'<meta[^>]+property="og:video(?::secure_url)?"[^>]+content="([^"]+)"',
+            ):
+                video = _search_url(html, pattern)
+                if video and "audio" not in video.lower():
+                    title = (
+                        _search_text(html, r'<meta[^>]+property="og:title"[^>]+content="([^"]+)"')
+                        or "Facebook video"
+                    )
+                    thumb = _search_url(html, r'<meta[^>]+property="og:image"[^>]+content="([^"]+)"')
+                    return _as_info(title=title, webpage=href, stream=video, thumbnail=thumb)
     return None
 
 
