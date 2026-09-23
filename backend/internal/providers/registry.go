@@ -37,7 +37,7 @@ func NewRegistry(cfg config.Config, validator *security.Validator) *Registry {
 		cfg:    cfg,
 		runner: runner,
 		items: []Provider{
-			NewTikTok(cfg),
+			social("tiktok", "TikTok", []string{"tiktok.com"}),
 			social("instagram", "Instagram", []string{"instagram.com", "instagr.am"}),
 			social("facebook", "Facebook", []string{"facebook.com", "fb.com", "fb.watch"}),
 			social("x", "X", []string{"x.com", "twitter.com"}),

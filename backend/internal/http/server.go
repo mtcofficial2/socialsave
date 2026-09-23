@@ -102,11 +102,9 @@ func (s *Server) Router() http.Handler {
 	}))
 	r.Use(s.limit)
 	r.Get("/health", s.health)
-	r.With(s.requireKey).Post("/api/tiktok", s.tiktok)
 	r.Route("/api/v1", func(r chi.Router) {
 		r.With(s.requireKey).Get("/platforms", s.platforms)
 		r.With(s.requireKey).Post("/analyze", s.analyze)
-		r.With(s.requireKey).Post("/tiktok", s.tiktok)
 		r.With(s.requireKey).Post("/download", s.download)
 		r.Get("/download/{job_id}", s.jobStatus)
 		r.Get("/files/{token}", s.file)
@@ -182,40 +180,6 @@ func (s *Server) analyze(w http.ResponseWriter, r *http.Request) {
 		CanDownload:              meta.CanDownload,
 		DownloadRestrictedReason: meta.DownloadRestrictedReason,
 	})
-}
-
-func (s *Server) tiktok(w http.ResponseWriter, r *http.Request) {
-	var body models.AnalyzeRequest
-	if err := readJSON(w, r, &body); err != nil {
-		writeError(w, err)
-		return
-	}
-	if len(strings.TrimSpace(body.URL)) < 8 || len(body.URL) > 2048 {
-		writeError(w, errs.InvalidURL("That URL is not valid."))
-		return
-	}
-	raw, err := s.Validator.Validate(r.Context(), body.URL)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	provider, err := s.Registry.Resolve(raw)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	tiktok, ok := provider.(*providers.TikTok)
-	if !ok {
-		writeError(w, errs.InvalidURL("Paste a TikTok video link."))
-		return
-	}
-	media, err := tiktok.Lookup(r.Context(), raw)
-	if err != nil {
-		slog.Info("tiktok resolve failed", "message", err.Error())
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, media.Response())
 }
 
 func (s *Server) download(w http.ResponseWriter, r *http.Request) {

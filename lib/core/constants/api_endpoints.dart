@@ -6,7 +6,6 @@ class ApiEndpoints {
   static const String health = '/health';
   static const String platforms = '$apiPrefix/platforms';
   static const String analyze = '$apiPrefix/analyze';
-  static const String tiktok = '$apiPrefix/tiktok';
   static const String download = '$apiPrefix/download';
 
   static String downloadStatus(String id) => '$apiPrefix/download/$id';

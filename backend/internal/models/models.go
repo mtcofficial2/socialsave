@@ -91,20 +91,6 @@ type JobStatusResponse struct {
 	FileName    string     `json:"file_name"`
 }
 
-// TikTokResponse is POST /api/v1/tiktok and POST /api/tiktok.
-type TikTokResponse struct {
-	Success     bool   `json:"success"`
-	Platform    string `json:"platform"`
-	VideoURL    string `json:"videoUrl"`
-	Author      string `json:"author"`
-	Caption     string `json:"caption"`
-	Duration    int    `json:"duration"`
-	Width       int    `json:"width"`
-	Height      int    `json:"height"`
-	CoverURL    string `json:"coverUrl"`
-	Watermarked bool   `json:"watermarked"`
-}
-
 // HealthResponse is GET /health.
 type HealthResponse struct {
 	Status  string `json:"status"`

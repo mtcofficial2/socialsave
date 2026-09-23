@@ -35,27 +35,6 @@ func TestHealthAndSecurityHeaders(t *testing.T) {
 	}
 }
 
-func TestTikTokRouteRejectsOtherPlatforms(t *testing.T) {
-	app := testApp(t)
-	youtube := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tiktok", strings.NewReader(`{"url":"https://www.youtube.com/watch?v=dQw4w9WgXcQ"}`))
-	req.Header.Set("Content-Type", "application/json")
-	app.Router().ServeHTTP(youtube, req)
-	if youtube.Code != http.StatusBadRequest || !strings.Contains(youtube.Body.String(), "invalid_url") {
-		t.Fatalf("youtube via tiktok route = %d %s", youtube.Code, youtube.Body.String())
-	}
-	missing := httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/tiktok", strings.NewReader(`{"url":"https://www.tiktok.com/@creator/video/123456789"}`))
-	req.Header.Set("Content-Type", "application/json")
-	app.Router().ServeHTTP(missing, req)
-	if missing.Code != http.StatusServiceUnavailable || !strings.Contains(missing.Body.String(), "not configured") {
-		t.Fatalf("unconfigured tiktok = %d %s", missing.Code, missing.Body.String())
-	}
-	if strings.Contains(missing.Body.String(), "Bearer") || strings.Contains(missing.Body.String(), "ANYAPI") {
-		t.Fatal("response leaked resolver credentials")
-	}
-}
-
 func TestPlatformsAllowYouTubeDownload(t *testing.T) {
 	response := httptest.NewRecorder()
 	testApp(t).Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/platforms", nil))

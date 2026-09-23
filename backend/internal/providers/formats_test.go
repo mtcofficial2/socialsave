@@ -100,8 +100,8 @@ func TestRegistryDetectsHostsAndDisabledPlatform(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := tiktok.(*TikTok); !ok {
-		t.Fatalf("tiktok provider type = %T", tiktok)
+	if _, ok := tiktok.(*Social); !ok || tiktok.ID() != "tiktok" {
+		t.Fatalf("tiktok provider type = %T %s", tiktok, tiktok.ID())
 	}
 	direct, err := registry.Resolve("https://cdn.example.com/film.mp4")
 	if err != nil || direct.ID() != "direct" || !direct.CanHandle("https://cdn.example.com/film.mp4") {
