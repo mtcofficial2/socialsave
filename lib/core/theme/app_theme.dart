@@ -16,7 +16,7 @@ class AppTheme {
       useMaterial3: true,
       colorScheme: scheme,
       brightness: scheme.brightness,
-      scaffoldBackgroundColor: scheme.surface,
+      scaffoldBackgroundColor: Colors.transparent,
     );
     final text = _textTheme(base.textTheme, fontFamily).apply(
       bodyColor: scheme.onSurface,
@@ -30,7 +30,7 @@ class AppTheme {
         centerTitle: false,
         scrolledUnderElevation: 0,
         elevation: 0,
-        backgroundColor: scheme.surface,
+        backgroundColor: Colors.transparent,
         foregroundColor: scheme.onSurface,
         titleTextStyle: text.titleLarge?.copyWith(
           fontWeight: FontWeight.w700,
@@ -41,17 +41,25 @@ class AppTheme {
       ),
       cardTheme: CardThemeData(
         elevation: 0,
-        color: scheme.surfaceContainerLowest,
+        color: scheme.brightness == Brightness.dark
+            ? const Color(0xCC1C2633)
+            : const Color(0xCCFFFFFF),
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-          side: BorderSide(color: scheme.outline),
+          borderRadius: BorderRadius.circular(28),
+          side: BorderSide(
+            color: Colors.white.withValues(
+              alpha: scheme.brightness == Brightness.dark ? 0.16 : 0.72,
+            ),
+          ),
         ),
         shadowColor: const Color(0x140F172A),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: scheme.surface,
+        fillColor: scheme.brightness == Brightness.dark
+            ? const Color(0x66141C28)
+            : const Color(0x99FFFFFF),
         hintStyle: text.bodyLarge?.copyWith(color: scheme.onSurfaceVariant),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
@@ -77,7 +85,7 @@ class AppTheme {
           backgroundColor: scheme.primary,
           foregroundColor: scheme.onPrimary,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(22),
           ),
           textStyle: text.titleMedium?.copyWith(fontWeight: FontWeight.w600, fontSize: 15),
         ),
@@ -86,9 +94,9 @@ class AppTheme {
         style: OutlinedButton.styleFrom(
           minimumSize: const Size(48, 52),
           foregroundColor: scheme.onSurface,
-          side: BorderSide(color: scheme.outline),
+          side: BorderSide(color: Colors.white.withValues(alpha: 0.55)),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(22),
           ),
           textStyle: text.titleMedium?.copyWith(fontWeight: FontWeight.w600, fontSize: 15),
         ),
@@ -100,8 +108,10 @@ class AppTheme {
         ),
       ),
       chipTheme: ChipThemeData(
-        backgroundColor: scheme.surfaceContainerHigh,
-        selectedColor: scheme.primaryContainer,
+        backgroundColor: scheme.brightness == Brightness.dark
+            ? const Color(0x661C2633)
+            : const Color(0xB3FFFFFF),
+        selectedColor: scheme.primary.withValues(alpha: 0.18),
         side: BorderSide(color: scheme.outline),
         shape: const StadiumBorder(),
         labelStyle: text.labelLarge?.copyWith(fontWeight: FontWeight.w600, fontSize: 12),
@@ -112,12 +122,20 @@ class AppTheme {
         behavior: SnackBarBehavior.floating,
         backgroundColor: AppColors.inkLight,
         contentTextStyle: text.bodyMedium?.copyWith(color: Colors.white),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: scheme.brightness == Brightness.dark
+            ? const Color(0xF2141C28)
+            : const Color(0xF7FFFFFF),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
       ),
       bottomSheetTheme: BottomSheetThemeData(
-        backgroundColor: scheme.surfaceContainerLowest,
+        backgroundColor: scheme.brightness == Brightness.dark
+            ? const Color(0xF2141C28)
+            : const Color(0xF7FFFFFF),
         shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
         ),
       ),
       switchTheme: SwitchThemeData(

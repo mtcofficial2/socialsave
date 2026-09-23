@@ -14,6 +14,7 @@ import 'package:social_save/shared/models/download_ticket.dart';
 import 'package:social_save/shared/models/media_format.dart';
 import 'package:social_save/shared/models/media_info.dart';
 import 'package:social_save/shared/widgets/compliance_notice.dart';
+import 'package:social_save/shared/widgets/glass.dart';
 import 'package:social_save/shared/widgets/error_banner.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
 import 'package:social_save/shared/widgets/video_thumbnail.dart';
@@ -187,7 +188,7 @@ class _PreviewBody extends ConsumerWidget {
               ],
             ),
             const SizedBox(height: 12),
-            Card(
+            GlassCard(
               clipBehavior: Clip.antiAlias,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,

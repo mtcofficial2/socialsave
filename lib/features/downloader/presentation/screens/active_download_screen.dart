@@ -10,6 +10,7 @@ import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/shared/models/download_status.dart';
 import 'package:social_save/shared/models/download_task.dart';
 import 'package:social_save/shared/widgets/brand_header.dart';
+import 'package:social_save/shared/widgets/glass.dart';
 import 'package:social_save/core/utils/formatters.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
 import 'package:social_save/shared/widgets/video_thumbnail.dart';
@@ -75,7 +76,7 @@ class ActiveDownloadScreen extends ConsumerWidget {
               ],
             ),
             const SizedBox(height: 16),
-            Card(
+            GlassCard(
               clipBehavior: Clip.antiAlias,
               child: Column(
                 children: [
@@ -280,7 +281,7 @@ class ActiveDownloadScreen extends ConsumerWidget {
               ),
               const SizedBox(height: 8),
               ...queued.map(
-                (item) => Card(
+                (item) => GlassCard(
                   child: ListTile(
                     leading: SizedBox(
                       width: 56,

@@ -12,6 +12,7 @@ import 'package:social_save/features/library/vault_actions.dart';
 import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/shared/models/download_status.dart';
 import 'package:social_save/shared/widgets/brand_header.dart';
+import 'package:social_save/shared/widgets/glass.dart';
 import 'package:social_save/shared/widgets/empty_state.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
 import 'package:social_save/shared/widgets/video_thumbnail.dart';
@@ -158,7 +159,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                                 final pct = (task.progress * 100).round();
                                 return Padding(
                                   padding: const EdgeInsets.only(bottom: 12),
-                                  child: Card(
+                                  child: GlassCard(
                                     child: Padding(
                                       padding: const EdgeInsets.all(16),
                                       child: Column(
@@ -369,7 +370,7 @@ class _HistoryCard extends ConsumerWidget {
     final color = AppColors.platformColor(record.platform);
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: Card(
+      child: GlassCard(
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(

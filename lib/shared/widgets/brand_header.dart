@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:social_save/core/theme/app_colors.dart';
 import 'package:social_save/shared/widgets/app_logo.dart';
+import 'package:social_save/shared/widgets/glass.dart';
 
 class BrandHeader extends StatelessWidget {
   const BrandHeader({
@@ -84,57 +84,36 @@ class StitchNavBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: scheme.surface.withValues(alpha: 0.92),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x0A0F172A),
-            blurRadius: 16,
-            offset: Offset(0, -4),
-          ),
-        ],
-      ),
-      child: SafeArea(
-        top: false,
-        child: SizedBox(
-          height: 80,
-          child: Column(
-            children: [
-              Expanded(
-                child: Row(
-                  children: [
-                    _item(context, 0, Icons.home_outlined, Icons.home_rounded, 'Home'),
-                    _item(
-                      context,
-                      1,
-                      Icons.video_library_outlined,
-                      Icons.video_library_rounded,
-                      'Library',
-                    ),
-                    _item(
-                      context,
-                      2,
-                      Icons.download_outlined,
-                      Icons.download_rounded,
-                      'Downloads',
-                      badge: downloadBadge,
-                    ),
-                    _item(context, 3, Icons.tune_outlined, Icons.tune_rounded, 'Settings'),
-                  ],
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      child: Glass(
+        borderRadius: 32,
+        blur: true,
+        child: SafeArea(
+          top: false,
+          child: SizedBox(
+            height: 64,
+            child: Row(
+              children: [
+                _item(context, 0, Icons.home_outlined, Icons.home_rounded, 'Home'),
+                _item(
+                  context,
+                  1,
+                  Icons.video_library_outlined,
+                  Icons.video_library_rounded,
+                  'Library',
                 ),
-              ),
-              Container(
-                width: 128,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 8),
-                decoration: BoxDecoration(
-                  color: scheme.onSurface.withValues(alpha: 0.18),
-                  borderRadius: BorderRadius.circular(99),
+                _item(
+                  context,
+                  2,
+                  Icons.download_outlined,
+                  Icons.download_rounded,
+                  'Downloads',
+                  badge: downloadBadge,
                 ),
-              ),
-            ],
+                _item(context, 3, Icons.tune_outlined, Icons.tune_rounded, 'Settings'),
+              ],
+            ),
           ),
         ),
       ),
@@ -162,8 +141,11 @@ class StitchNavBar extends StatelessWidget {
               duration: const Duration(milliseconds: 180),
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
               decoration: BoxDecoration(
-                color: selected ? AppColors.onPrimaryContainer : Colors.transparent,
+                color: selected ? scheme.primary.withValues(alpha: 0.16) : Colors.transparent,
                 borderRadius: BorderRadius.circular(999),
+                border: selected
+                    ? Border.all(color: Colors.white.withValues(alpha: 0.45))
+                    : null,
               ),
               child: Stack(
                 clipBehavior: Clip.none,

@@ -14,6 +14,7 @@ import 'package:social_save/core/theme/app_colors.dart';
 import 'package:social_save/features/library/device_media.dart';
 import 'package:social_save/features/player/pip.dart';
 import 'package:social_save/features/player/player_session.dart';
+import 'package:social_save/features/player/resume_position.dart';
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
 import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
@@ -28,7 +29,8 @@ class InAppPlayerScreen extends ConsumerStatefulWidget {
   ConsumerState<InAppPlayerScreen> createState() => _InAppPlayerScreenState();
 }
 
-class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
+class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
+    with WidgetsBindingObserver {
   static const _rates = <double>[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
   late final Player _player;
@@ -45,7 +47,12 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
   bool _loop = false;
   bool _muted = false;
   bool _completed = false;
-  bool _didResume = false;
+  bool _announcedResume = false;
+  bool _resumeLanded = false;
+  int? _resumeTargetMs;
+  DateTime? _resumeUntil;
+  DateTime? _lastForceSeek;
+  DateTime? _lastResumeSave;
   double _rate = 1;
   double _volume = 100;
   BoxFit _fit = BoxFit.contain;
@@ -73,6 +80,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
     super.initState();
     _queue = List<PlayerQueueItem>.from(widget.session.queue);
     _queueIndex = widget.session.queueIndex;
+    WidgetsBinding.instance.addObserver(this);
     if (_queue.isEmpty) {
       _queue = [
         PlayerQueueItem(
@@ -126,6 +134,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
       if (!mounted || value == null || value <= 0) return;
       setState(() => _frameWidth = value);
       _syncPipAspect();
+      _nudgeResume();
     }));
     _subs.add(_player.stream.height.listen((value) {
       if (!mounted || value == null || value <= 0) return;
@@ -135,15 +144,12 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
     _subs.add(_player.stream.position.listen((pos) {
       final a = _markA;
       final b = _markB;
-      if (a == null || b == null || !_loopAB) return;
-      if (pos >= b) {
+      if (a != null && b != null && _loopAB && pos >= b) {
         unawaited(_player.seek(a));
+        return;
       }
-    }));
-    _subs.add(_player.stream.duration.listen((duration) {
-      if (duration.inMilliseconds > 8000) {
-        unawaited(_restoreResume());
-      }
+      _guardResume(pos);
+      _saveResumeThrottled();
     }));
     PipController.listen((inPip) {
       if (mounted) setState(() => _inPip = inPip);
@@ -175,10 +181,24 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
     });
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      unawaited(_saveResume());
+    }
+  }
+
   String? get _resumeKey {
-    final path = _session.filePath;
-    if (path == null || path.isEmpty) return null;
-    return 'player.pos.${path.hashCode}';
+    final item = _queue.isEmpty
+        ? null
+        : _queue[_queueIndex.clamp(0, _queue.length - 1)];
+    return resumeStorageKey(
+      isPreview: _session.isPreview,
+      deviceId: item?.deviceId,
+      filePath: _session.filePath ?? item?.filePath,
+    );
   }
 
   Future<void> _open() async {
@@ -203,8 +223,10 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
       return;
     }
     try {
+      final start = await _savedStart();
       await _player.open(Media(uri, httpHeaders: headers));
       await _player.play();
+      if (start != null) _armResume(start);
       await WakelockPlus.enable();
       if (session.isVault) {
         await DeviceMediaService().setSecure(true);
@@ -224,31 +246,130 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
     }
   }
 
-  Future<void> _restoreResume() async {
-    if (_didResume || _session.isPreview) return;
+  Future<Duration?> _savedStart() async {
     final key = _resumeKey;
-    if (key == null) return;
+    if (key == null) return null;
     final prefs = await SharedPreferences.getInstance();
     final ms = prefs.getInt(key);
     final duration = _player.state.duration.inMilliseconds;
-    if (ms == null || ms < 5000 || duration <= 0 || ms > duration - 2000) {
+    if (!shouldResume(ms, duration)) return null;
+    return Duration(milliseconds: ms!);
+  }
+
+  void _armResume(Duration target) {
+    _resumeTargetMs = target.inMilliseconds;
+    _resumeLanded = false;
+    _announcedResume = false;
+    _resumeUntil = DateTime.now().add(const Duration(seconds: 8));
+    _nudgeResume();
+  }
+
+  void _nudgeResume() {
+    final targetMs = _resumeTargetMs;
+    if (targetMs == null || _resumeLanded) return;
+    unawaited(_seekResume(Duration(milliseconds: targetMs)));
+  }
+
+  /// Android attaches the video surface and then seeks back to the start.
+  /// Keep putting the playhead on the saved spot until that reset is done.
+  void _guardResume(Duration pos) {
+    final targetMs = _resumeTargetMs;
+    if (targetMs == null) return;
+    final target = Duration(milliseconds: targetMs);
+    final duration = _player.state.duration;
+    if (duration > const Duration(seconds: 8) &&
+        !shouldResume(targetMs, duration.inMilliseconds)) {
+      _resumeTargetMs = null;
+      unawaited(_clearResume());
       return;
     }
-    _didResume = true;
-    await _player.seek(Duration(milliseconds: ms));
+    if (_atResume(pos, target)) {
+      _resumeLanded = true;
+      _announceResume(target);
+      final expired = _resumeUntil != null && DateTime.now().isAfter(_resumeUntil!);
+      if (expired) _resumeTargetMs = null;
+      return;
+    }
+    final expired = _resumeUntil != null && DateTime.now().isAfter(_resumeUntil!);
+    if (expired) {
+      _resumeTargetMs = null;
+      return;
+    }
+    final resetToStart = pos < const Duration(seconds: 1);
+    if (_resumeLanded && !resetToStart) {
+      _resumeTargetMs = null;
+      return;
+    }
+    unawaited(_seekResume(target));
+  }
+
+  bool _atResume(Duration pos, Duration target) {
+    return pos > const Duration(milliseconds: 400) &&
+        pos >= target - const Duration(milliseconds: 1200) &&
+        pos <= target + const Duration(seconds: 2);
+  }
+
+  Future<void> _seekResume(Duration target) async {
+    final now = DateTime.now();
+    if (_lastForceSeek != null &&
+        now.difference(_lastForceSeek!) < const Duration(milliseconds: 350)) {
+      return;
+    }
+    _lastForceSeek = now;
+    await _player.seek(target);
+  }
+
+  void _announceResume(Duration position) {
+    if (_announcedResume || !mounted) return;
+    _announcedResume = true;
+    final label = formatResumeClock(position);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Resumed at $label'),
+        duration: const Duration(seconds: 4),
+        action: SnackBarAction(
+          label: 'Start over',
+          onPressed: () {
+            _resumeTargetMs = null;
+            _resumeLanded = true;
+            unawaited(_clearResume());
+            unawaited(_player.seek(Duration.zero));
+          },
+        ),
+      ),
+    );
+  }
+
+  void _saveResumeThrottled() {
+    if (!_ready) return;
+    final now = DateTime.now();
+    if (_lastResumeSave != null &&
+        now.difference(_lastResumeSave!) < const Duration(seconds: 3)) {
+      return;
+    }
+    _lastResumeSave = now;
+    unawaited(_saveResume());
   }
 
   Future<void> _saveResume() async {
     final key = _resumeKey;
-    if (key == null) return;
-    final prefs = await SharedPreferences.getInstance();
+    if (key == null || !_ready) return;
     final pos = _player.state.position.inMilliseconds;
     final duration = _player.state.duration.inMilliseconds;
-    if (_completed || pos < 5000 || (duration > 0 && pos > duration - 2000)) {
+    final target = _resumeTargetMs;
+    if (target != null && !_resumeLanded) return;
+    final prefs = await SharedPreferences.getInstance();
+    final stored = positionToStore(
+      positionMs: pos,
+      durationMs: duration,
+      completed: _completed,
+    );
+    if (stored == null) {
+      if (pos < 1000 && !_completed) return;
       await prefs.remove(key);
       return;
     }
-    await prefs.setInt(key, pos);
+    await prefs.setInt(key, stored);
   }
 
   Future<void> _clearResume() async {
@@ -433,6 +554,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
         _completed = false;
       });
     }
+    _resumeTargetMs = null;
+    _resumeLanded = true;
     await _player.seek(Duration.zero);
     await _player.play();
   }
@@ -441,13 +564,17 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
     if (!_hasNext) return;
     HapticFeedback.lightImpact();
     _cancelCountdown();
+    await _saveResume();
     setState(() {
       _queueIndex += 1;
       _showEndCard = false;
       _completed = false;
       _ready = false;
       _error = null;
-      _didResume = true;
+      _announcedResume = false;
+      _resumeLanded = false;
+      _resumeTargetMs = null;
+      _resumeUntil = null;
       _frameWidth = null;
       _frameHeight = null;
       _markA = null;
@@ -776,6 +903,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _cancelCountdown();
     _chromeTimer?.cancel();
     _sleepTimer?.cancel();

@@ -6,6 +6,7 @@ import 'package:social_save/features/downloader/presentation/providers/download_
 import 'package:social_save/features/library/presentation/library_screen.dart';
 import 'package:social_save/shared/models/download_status.dart';
 import 'package:social_save/shared/widgets/brand_header.dart';
+import 'package:social_save/shared/widgets/glass.dart';
 
 class AppShell extends ConsumerWidget {
   const AppShell({super.key, required this.navigationShell});
@@ -25,6 +26,7 @@ class AppShell extends ConsumerWidget {
         current.status != DownloadStatus.cancelled;
 
     return Scaffold(
+      backgroundColor: Colors.transparent,
       body: navigationShell,
       bottomNavigationBar: Column(
         mainAxisSize: MainAxisSize.min,
@@ -82,13 +84,11 @@ class _MiniProgress extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Material(
-      color: scheme.surfaceContainerLowest,
-      elevation: 2,
-      shadowColor: const Color(0x140F172A),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+    return Glass(
+      borderRadius: 22,
+      blur: true,
       child: InkWell(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(22),
         onTap: onOpen,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),

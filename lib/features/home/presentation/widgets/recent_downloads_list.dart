@@ -7,6 +7,7 @@ import 'package:social_save/core/theme/app_colors.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
 import 'package:social_save/features/downloads/presentation/providers/downloads_controller.dart';
 import 'package:social_save/features/player/open_player.dart';
+import 'package:social_save/shared/widgets/glass.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
 import 'package:social_save/shared/widgets/video_thumbnail.dart';
 
@@ -84,11 +85,10 @@ class _RecentRow extends ConsumerWidget {
     final scheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: Material(
-        color: scheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(20),
+      child: Glass(
+        borderRadius: 22,
         child: InkWell(
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(22),
           onTap: () => context.push('/downloads/${record.id}'),
           child: Padding(
             padding: const EdgeInsets.all(12),

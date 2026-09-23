@@ -19,3 +19,5 @@ services:
         value: "1080"
       - key: JOB_TTL_SECONDS
         value: "600"
+      - key: ANYAPI_KEY
+        sync: false

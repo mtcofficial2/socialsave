@@ -4,6 +4,7 @@ import 'package:social_save/features/home/presentation/providers/home_controller
 import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/widgets/error_banner.dart';
 import 'package:social_save/shared/widgets/platform_badge.dart';
+import 'package:social_save/shared/widgets/glass.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
 
 class UrlInputCard extends ConsumerStatefulWidget {
@@ -56,7 +57,8 @@ class _UrlInputCardState extends ConsumerState<UrlInputCard> {
       }
     });
 
-    return Card(
+    return GlassCard(
+      blur: true,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(

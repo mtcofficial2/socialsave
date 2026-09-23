@@ -80,8 +80,28 @@ func TestRegistryDetectsHostsAndDisabledPlatform(t *testing.T) {
 	if err != nil || youtube.ID() != "youtube" || !youtube.SupportsDownload() {
 		t.Fatalf("youtube = %v %v", youtube, err)
 	}
-	if _, err := registry.Resolve("https://www.tiktok.com/@user/video/123"); err != nil {
+	if _, ok := youtube.(*Social); !ok {
+		t.Fatalf("youtube provider type = %T", youtube)
+	}
+	for _, raw := range []string{
+		"https://www.instagram.com/reel/abc/",
+		"https://www.facebook.com/watch?v=1",
+		"https://www.pinterest.com/pin/1/",
+	} {
+		provider, err := registry.Resolve(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := provider.(*Social); !ok || provider.ID() == "tiktok" {
+			t.Fatalf("%s provider = %T %s", raw, provider, provider.ID())
+		}
+	}
+	tiktok, err := registry.Resolve("https://www.tiktok.com/@user/video/123")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if _, ok := tiktok.(*TikTok); !ok {
+		t.Fatalf("tiktok provider type = %T", tiktok)
 	}
 	direct, err := registry.Resolve("https://cdn.example.com/film.mp4")
 	if err != nil || direct.ID() != "direct" || !direct.CanHandle("https://cdn.example.com/film.mp4") {

@@ -215,8 +215,11 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
               child: Container(
                 padding: const EdgeInsets.all(4),
                 decoration: BoxDecoration(
-                  color: scheme.surfaceContainerLow,
-                  borderRadius: BorderRadius.circular(16),
+                  color: scheme.brightness == Brightness.dark
+                      ? const Color(0x661C2633)
+                      : const Color(0xB3FFFFFF),
+                  borderRadius: BorderRadius.circular(22),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.55)),
                 ),
                 child: Row(
                   children: [
@@ -702,8 +705,13 @@ class _VideoCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Material(
-      color: scheme.surfaceContainerLowest,
-      borderRadius: BorderRadius.circular(18),
+      color: scheme.brightness == Brightness.dark
+          ? const Color(0xCC1C2633)
+          : const Color(0xCCFFFFFF),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(22),
+        side: BorderSide(color: Colors.white.withValues(alpha: 0.55)),
+      ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,

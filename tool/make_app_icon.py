@@ -91,6 +91,10 @@ def save_resized(src: Image.Image, path: Path, size: int, *, rgba: bool = False)
 
 
 def main() -> None:
+    source = OUT / "source_icon.png"
+    if source.exists():
+        print(f"launcher art is {source}; sizes are already exported")
+        return
     OUT.mkdir(parents=True, exist_ok=True)
     master = composite_full(1024)
     fg = foreground(1024)

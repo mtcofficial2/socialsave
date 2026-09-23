@@ -2,9 +2,11 @@ import 'package:social_save/core/constants/api_endpoints.dart';
 import 'package:social_save/core/errors/error_messages.dart';
 import 'package:social_save/core/errors/exceptions.dart';
 import 'package:social_save/core/network/dio_client.dart';
+import 'package:social_save/core/utils/platform_detector.dart';
 import 'package:social_save/shared/models/download_ticket.dart';
 import 'package:social_save/shared/models/media_info.dart';
 import 'package:social_save/shared/models/platform_catalog.dart';
+import 'package:social_save/shared/models/social_platform.dart';
 
 class MediaApiClient {
   MediaApiClient(this._client);
@@ -12,6 +14,15 @@ class MediaApiClient {
   final DioClient _client;
 
   Future<MediaInfo> analyze(String url) async {
+    if (const PlatformDetector().detect(url) == SocialPlatform.tiktok) {
+      final response = await _client.post<Map<String, dynamic>>(
+        ApiEndpoints.tiktok,
+        data: {'url': url},
+      );
+      final data = _requireMap(response.data);
+      _ensureSuccess(data);
+      return MediaInfo.fromJson(_tiktokAsAnalyze(data, url), fallbackUrl: url);
+    }
     final response = await _client.post<Map<String, dynamic>>(
       ApiEndpoints.analyze,
       data: {'url': url},
@@ -19,6 +30,38 @@ class MediaApiClient {
     final data = _requireMap(response.data);
     _ensureSuccess(data);
     return MediaInfo.fromJson(data, fallbackUrl: url);
+  }
+
+  Map<String, dynamic> _tiktokAsAnalyze(Map<String, dynamic> data, String url) {
+    final height = data['height'];
+    var quality = 'original';
+    if (height is num && height > 0) {
+      quality = '${height.round()}p';
+    }
+    return {
+      'success': true,
+      'platform': 'tiktok',
+      'title': (data['caption'] as String?)?.trim().isNotEmpty == true
+          ? data['caption']
+          : 'TikTok video',
+      'thumbnail': data['coverUrl'],
+      'duration': data['duration'],
+      'author': data['author'],
+      'url': url,
+      'can_download': data['videoUrl'] is String && (data['videoUrl'] as String).isNotEmpty,
+      'formats': [
+        {
+          'id': 'best',
+          'quality': quality,
+          'format': 'mp4',
+          'width': data['width'],
+          'height': data['height'],
+          'filesize': null,
+          'has_audio': true,
+          'has_video': true,
+        },
+      ],
+    };
   }
 
   Future<DownloadTicket> requestDownload({

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:social_save/shared/widgets/glass.dart';
 
 class ComplianceNotice extends StatelessWidget {
   const ComplianceNotice({super.key, this.compact = false, this.danger = false});
@@ -33,11 +34,9 @@ class ComplianceNotice extends StatelessWidget {
         ),
       );
     }
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(16),
-      ),
+    return Glass(
+      borderRadius: 22,
+      padding: EdgeInsets.zero,
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Row(

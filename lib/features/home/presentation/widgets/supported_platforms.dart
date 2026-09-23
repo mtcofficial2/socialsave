@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:social_save/core/theme/app_colors.dart';
 import 'package:social_save/shared/models/social_platform.dart';
+import 'package:social_save/shared/widgets/glass.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
 
 class SupportedPlatformsSection extends StatelessWidget {
@@ -45,19 +46,9 @@ class SupportedPlatformsSection extends StatelessWidget {
           runSpacing: 8,
           children: _chips.map((item) {
             final color = AppColors.platformColor(item.$1);
-            return Container(
+            return Glass(
+              borderRadius: 999,
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: scheme.surfaceContainerLowest,
-                borderRadius: BorderRadius.circular(999),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x0A0F172A),
-                    blurRadius: 6,
-                    offset: Offset(0, 1),
-                  ),
-                ],
-              ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [

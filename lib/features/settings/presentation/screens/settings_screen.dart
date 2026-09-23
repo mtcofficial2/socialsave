@@ -10,6 +10,7 @@ import 'package:social_save/features/settings/domain/entities/app_settings.dart'
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
 import 'package:social_save/features/settings/presentation/screens/font_picker_sheet.dart';
 import 'package:social_save/shared/widgets/brand_header.dart';
+import 'package:social_save/shared/widgets/glass.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -59,7 +60,7 @@ class SettingsScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 20),
             _groupTitle(context, Icons.palette_outlined, 'Appearance & Theme'),
-            Card(
+            GlassCard(
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
@@ -140,7 +141,7 @@ class SettingsScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 20),
             _groupTitle(context, Icons.download_for_offline_outlined, 'Download Preferences'),
-            Card(
+            GlassCard(
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
@@ -189,7 +190,7 @@ class SettingsScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 20),
             _groupTitle(context, Icons.play_circle_outline, 'Player'),
-            Card(
+            GlassCard(
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: _toggleRow(
@@ -205,7 +206,7 @@ class SettingsScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 20),
             _groupTitle(context, Icons.notifications_active_outlined, 'Notifications & System'),
-            Card(
+            GlassCard(
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
@@ -238,7 +239,7 @@ class SettingsScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 20),
             _groupTitle(context, Icons.gavel, 'Legal, Compliance & Privacy'),
-            Card(
+            GlassCard(
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:social_save/shared/widgets/glass.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:social_save/features/home/presentation/providers/home_controller.dart';
 import 'package:social_save/features/home/presentation/providers/save_queue.dart';
@@ -35,7 +36,7 @@ class SaveQueueSection extends ConsumerWidget {
               SavePhase.done => 'Done',
               SavePhase.failed => 'Failed',
             };
-            return Card(
+            return GlassCard(
               child: ListTile(
                 title: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis),
                 subtitle: Text(item.detail ?? item.url, maxLines: 2, overflow: TextOverflow.ellipsis),

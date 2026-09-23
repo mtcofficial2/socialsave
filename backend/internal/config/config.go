@@ -42,6 +42,7 @@ type Config struct {
 	InstagramToken    string
 	FacebookToken     string
 	XBearerToken      string
+	AnyAPIKey         string
 	Port              string
 }
 
@@ -80,6 +81,7 @@ func Load() Config {
 		InstagramToken:    strings.TrimSpace(os.Getenv("INSTAGRAM_ACCESS_TOKEN")),
 		FacebookToken:     strings.TrimSpace(os.Getenv("FACEBOOK_ACCESS_TOKEN")),
 		XBearerToken:      strings.TrimSpace(os.Getenv("X_BEARER_TOKEN")),
+		AnyAPIKey:         strings.TrimSpace(os.Getenv("ANYAPI_KEY")),
 		Port:              getenv("PORT", "8080"),
 	}
 }
