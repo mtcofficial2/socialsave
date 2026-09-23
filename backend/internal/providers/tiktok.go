@@ -214,10 +214,7 @@ func parseTikTokClip(body []byte) (Clip, error) {
 	if err := json.Unmarshal(body, &root); err != nil {
 		return Clip{}, errs.PlatformUnavailable("TikTok returned an unreadable response.")
 	}
-	data, _ := root["data"].(map[string]any)
-	if data == nil {
-		data = root
-	}
+	data := tiktokPayload(root)
 	videoURL := firstString(data, "videoUrl", "video_url", "downloadUrl")
 	if videoURL == "" {
 		return Clip{}, errs.PlatformUnavailable("TikTok did not return a clean video file.")
@@ -227,21 +224,37 @@ func parseTikTokClip(body []byte) (Clip, error) {
 	}
 	author := authorString(data["author"])
 	if author == "" {
-		author = authorString(data["username"])
+		author = firstString(data, "authorHandle", "username")
 	}
 	if author != "" && !strings.HasPrefix(author, "@") {
 		author = "@" + author
 	}
 	caption := firstString(data, "caption", "title", "desc")
+	duration := anyInt(data["duration"])
+	if duration == 0 {
+		duration = anyInt(data["durationSeconds"])
+	}
 	return Clip{
 		VideoURL: videoURL,
 		Author:   author,
 		Caption:  caption,
-		Duration: anyInt(data["duration"]),
+		Duration: duration,
 		Width:    anyInt(data["width"]),
 		Height:   anyInt(data["height"]),
-		CoverURL: firstString(data, "coverUrl", "cover", "thumbnail"),
+		CoverURL: firstString(data, "coverUrl", "cover", "thumbnail", "image"),
 	}, nil
+}
+
+func tiktokPayload(root map[string]any) map[string]any {
+	if output, ok := root["output"].(map[string]any); ok {
+		if data, ok := output["data"].(map[string]any); ok {
+			return data
+		}
+	}
+	if data, ok := root["data"].(map[string]any); ok {
+		return data
+	}
+	return root
 }
 
 func firstString(data map[string]any, keys ...string) string {

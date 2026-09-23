@@ -67,6 +67,17 @@ func TestTikTokUsesCleanURLNotWatermark(t *testing.T) {
 	}
 }
 
+func TestTikTokReadsAnyAPIEnvelope(t *testing.T) {
+	body := []byte(`{"output":{"found":true,"data":{"authorHandle":"tiktok","caption":"Hello","durationSeconds":66,"image":"https://cdn.example/cover.jpg","videoUrl":"https://cdn.example/clean.mp4","watermarkedUrl":"https://cdn.example/wm.mp4"}},"costUsd":0.0009}`)
+	clip, err := parseTikTokClip(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clip.VideoURL != "https://cdn.example/clean.mp4" || clip.Author != "@tiktok" || clip.Duration != 66 || clip.CoverURL != "https://cdn.example/cover.jpg" {
+		t.Fatalf("clip = %+v", clip)
+	}
+}
+
 func TestTikTokRejectsWatermarkOnlyAndBadURLs(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"watermarkedUrl":"https://cdn.example/wm.mp4"}}`))
