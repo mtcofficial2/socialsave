@@ -12,7 +12,6 @@ import (
 )
 
 // Social is a platform whose public files are resolved with yt-dlp.
-// YouTube is not one of these providers.
 type Social struct {
 	id      string
 	display string
@@ -77,15 +76,6 @@ func (s *Social) CreateDownload(ctx context.Context, rawURL, formatID string) (H
 			Stream:    true,
 		}, nil
 	}
-	if s.id == "youtube" {
-		return Handle{
-			SourceURL:      rawURL,
-			FormatID:       formatID,
-			MimeType:       "video/mp4",
-			FileName:       "video.mp4",
-			PrepareLocally: true,
-		}, nil
-	}
 	if s.id == "x" && s.cfg.XBearerToken != "" {
 		handle, ok, err := s.downloadX(ctx, rawURL, formatID)
 		if err != nil && hardOfficial(err) {
@@ -101,29 +91,8 @@ func (s *Social) CreateDownload(ctx context.Context, rawURL, formatID string) (H
 		return Handle{}, err
 	}
 	title := safeTitle(firstNonEmpty(info.Title, "video"))
-	maxHeight := RequestedMaxHeight(formatID, s.cfg.DefaultMaxHeight)
-	stream := PickProgressive(info, maxHeight)
-	if stream != nil && needsSession(stream.URL, stream.Headers) {
-		stream = nil
-	}
-	if stream != nil && strings.HasPrefix(stream.URL, "http") {
-		if stream.Filesize != nil && *stream.Filesize > s.cfg.MaxDownloadBytes {
-			return Handle{}, errs.FileTooLarge(s.cfg.MaxDownloadBytes)
-		}
-		ext := strings.TrimPrefix(stream.Ext, ".")
-		if ext == "" {
-			ext = "mp4"
-		}
-		return Handle{
-			SourceURL:   rawURL,
-			FormatID:    formatID,
-			MimeType:    mimeForExt(ext),
-			Filesize:    stream.Filesize,
-			FileName:    title + "." + ext,
-			UpstreamURL: stream.URL,
-			Headers:     publicHeaders(baseHeaders(rawURL), stream.Headers),
-			Proxy:       false,
-		}, nil
+	if handle, ok, err := directFromInfo(info, rawURL, formatID, title, s.cfg); err != nil || ok {
+		return handle, err
 	}
 	return Handle{
 		SourceURL:      rawURL,

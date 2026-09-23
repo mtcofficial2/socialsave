@@ -27,6 +27,18 @@ func TestPickProgressiveSkipsVideoOnly(t *testing.T) {
 	}
 }
 
+func TestPreferDirectFileDoesNotDowngrade(t *testing.T) {
+	if preferDirectFile(480, 1080) {
+		t.Fatal("a 480p file must not replace a 1080p video")
+	}
+	if !preferDirectFile(1080, 1080) {
+		t.Fatal("a matching 1080p file should be delivered directly")
+	}
+	if !preferDirectFile(720, 0) {
+		t.Fatal("a file should be delivered directly when no taller video is known")
+	}
+}
+
 func TestFormatSelectorCapsHeight(t *testing.T) {
 	if got := RequestedMaxHeight("auto", 1080); got == nil || *got != 1080 {
 		t.Fatalf("auto = %v", got)

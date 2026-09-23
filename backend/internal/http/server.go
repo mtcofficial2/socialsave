@@ -43,6 +43,7 @@ type Server struct {
 	Objects   *storage.Store
 	upstream  *http.Client
 	plays     sync.Map
+	preparing sync.Map
 	limiter   *rateLimiter
 }
 
@@ -251,26 +252,7 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if handle.PrepareLocally {
-		job := s.Jobs.Create()
-		slog.Info("download delivery=prepare_local", "job", job.ID[:8], "size", handle.Filesize)
-		go s.prepare(job.ID, raw, handle.FormatID, base)
-		mime := handle.MimeType
-		name := handle.FileName
-		if mime == "" {
-			mime = "video/mp4"
-		}
-		if name == "" {
-			name = "video.mp4"
-		}
-		id := job.ID
-		writeJSON(w, http.StatusOK, models.DownloadResponse{
-			Success:     true,
-			DownloadURL: "",
-			ID:          &id,
-			State:       "processing",
-			MimeType:    &mime,
-			FileName:    &name,
-		})
+		s.beginPrepare(w, raw, handle, base)
 		return
 	}
 	if handle.UpstreamURL == "" {
@@ -281,7 +263,7 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	token, err := s.Tokens.IssueRemote(handle.UpstreamURL, handle.MimeType, handle.FileName, s.Config.MaxDownloadBytes, handle.Headers, handle.Filesize, handle.Proxy || proxyHost(handle.UpstreamURL))
+	token, err := s.Tokens.IssueRemote(handle.UpstreamURL, handle.MimeType, handle.FileName, s.Config.MaxDownloadBytes, handle.Headers, handle.Filesize, false)
 	if err != nil {
 		writeError(w, errs.PlatformUnavailable(""))
 		return
@@ -298,6 +280,7 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 	slog.Info("download delivery=direct", "host", host, "size", handle.Filesize, "prepare_local", false)
 	mime := handle.MimeType
 	name := handle.FileName
+	direct := handle.UpstreamURL
 	response := models.DownloadResponse{
 		Success:        true,
 		DownloadURL:    base + "/api/v1/files/" + token,
@@ -308,10 +291,45 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 		Filesize:       handle.Filesize,
 		FileName:       &name,
 		RequestHeaders: handle.Headers,
+		DirectURL:      &direct,
 	}
-	if !handle.Proxy && !proxyHost(handle.UpstreamURL) {
-		direct := handle.UpstreamURL
-		response.DirectURL = &direct
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) beginPrepare(w http.ResponseWriter, raw string, handle providers.Handle, base string) {
+	key := raw + "\n" + handle.FormatID
+	if existing, ok := s.preparing.Load(key); ok {
+		if job, found := s.Jobs.Get(existing.(string)); found && (job.State == "processing" || job.State == "ready") {
+			slog.Info("download delivery=prepare_local", "job", job.ID[:8], "duplicate", true, "state", job.State)
+			s.writePrepare(w, job, handle)
+			return
+		}
+	}
+	job := s.Jobs.Create()
+	s.preparing.Store(key, job.ID)
+	slog.Info("download delivery=prepare_local", "job", job.ID[:8], "size", handle.Filesize)
+	go func() {
+		defer s.preparing.Delete(key)
+		s.prepare(job.ID, raw, handle.FormatID, base)
+	}()
+	s.writePrepare(w, job, handle)
+}
+
+func (s *Server) writePrepare(w http.ResponseWriter, job jobs.Job, handle providers.Handle) {
+	mime := firstNonEmpty(job.MimeType, handle.MimeType, "video/mp4")
+	name := firstNonEmpty(job.FileName, handle.FileName, "video.mp4")
+	id := job.ID
+	response := models.DownloadResponse{
+		Success:     true,
+		DownloadURL: job.DownloadURL,
+		ID:          &id,
+		State:       job.State,
+		MimeType:    &mime,
+		FileName:    &name,
+		Filesize:    job.Filesize,
+	}
+	if response.State == "" {
+		response.State = "processing"
 	}
 	writeJSON(w, http.StatusOK, response)
 }
@@ -369,15 +387,6 @@ func (s *Server) file(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("download delivery=redirect", "host", host, "size", claims.Size)
 	http.Redirect(w, r, claims.URL, http.StatusTemporaryRedirect)
-}
-
-func proxyHost(rawURL string) bool {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return false
-	}
-	host := strings.ToLower(parsed.Hostname())
-	return strings.Contains(host, "googlevideo.com") || strings.Contains(host, "youtube.com") || strings.HasSuffix(host, "youtu.be")
 }
 
 func (s *Server) serveJob(w http.ResponseWriter, r *http.Request, claims tokens.Claims) {
@@ -450,7 +459,7 @@ func (s *Server) prepare(jobID, rawURL, formatID, publicBase string) {
 			if _, valid := s.Validator.Validate(ctx, signed); valid == nil {
 				s.Jobs.MarkReady(jobID, "", result.MIME, result.Name, signed, &size)
 				jobs.DeleteMedia(result.Path)
-				slog.Info("download delivery=object_store", "size", size)
+				slog.Info("download delivery=object_storage", "size", size)
 				return
 			}
 		}

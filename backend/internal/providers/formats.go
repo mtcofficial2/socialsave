@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/aviation256444-boop/socialsave/backend/internal/config"
 	"github.com/aviation256444-boop/socialsave/backend/internal/errs"
 	"github.com/aviation256444-boop/socialsave/backend/internal/models"
 )
@@ -243,6 +244,7 @@ func BuildFormats(info mediaInfo) []models.MediaFormat {
 type progressive struct {
 	URL      string
 	Ext      string
+	Height   int
 	Filesize *int64
 	Headers  map[string]string
 }
@@ -267,6 +269,7 @@ func PickProgressive(info mediaInfo, maxHeight *int) *progressive {
 		return &progressive{
 			URL:      info.URL,
 			Ext:      fallbackExt(info.Ext),
+			Height:   heightOf(info),
 			Filesize: info.size(),
 			Headers:  stringMap(info.HTTPHeaders),
 		}
@@ -298,9 +301,83 @@ func PickProgressive(info mediaInfo, maxHeight *int) *progressive {
 	return &progressive{
 		URL:      best.URL,
 		Ext:      fallbackExt(firstNonEmpty(best.Ext, info.Ext)),
+		Height:   heightOf(best),
 		Filesize: best.size(),
 		Headers:  headers,
 	}
+}
+
+// bestVideoHeight is the tallest video at or under the requested cap.
+// A nil cap means the tallest video of any size.
+func bestVideoHeight(info mediaInfo, maxHeight *int) int {
+	best := 0
+	consider := func(item mediaInfo) {
+		if !hasVideo(item) {
+			return
+		}
+		height := heightOf(item)
+		if height <= 0 {
+			return
+		}
+		if maxHeight != nil && height > *maxHeight {
+			return
+		}
+		if height > best {
+			best = height
+		}
+	}
+	consider(info)
+	for _, item := range info.Formats {
+		consider(item)
+	}
+	return best
+}
+
+// preferDirectFile reports whether a single-file URL is as tall as the best
+// available video. A shorter file is not used in place of a taller one.
+func directFromInfo(info mediaInfo, rawURL, formatID, title string, cfg config.Config) (Handle, bool, error) {
+	maxHeight := RequestedMaxHeight(formatID, cfg.DefaultMaxHeight)
+	stream := PickProgressive(info, maxHeight)
+	if stream == nil || !strings.HasPrefix(stream.URL, "http") || needsSession(stream.URL, stream.Headers) {
+		return Handle{}, false, nil
+	}
+	if !preferDirectFile(stream.Height, bestVideoHeight(info, maxHeight)) {
+		return Handle{}, false, nil
+	}
+	if stream.Filesize != nil && *stream.Filesize > cfg.MaxDownloadBytes {
+		return Handle{}, false, errs.FileTooLarge(cfg.MaxDownloadBytes)
+	}
+	ext := strings.TrimPrefix(stream.Ext, ".")
+	if ext == "" {
+		ext = "mp4"
+	}
+	return Handle{
+		SourceURL:   rawURL,
+		FormatID:    formatID,
+		MimeType:    mimeForExt(ext),
+		Filesize:    stream.Filesize,
+		FileName:    title + "." + ext,
+		UpstreamURL: stream.URL,
+		Headers:     publicHeaders(baseHeaders(rawURL), stream.Headers),
+		Proxy:       false,
+	}, true, nil
+}
+
+func preferDirectFile(progressiveHeight, bestHeight int) bool {
+	if bestHeight <= 0 {
+		return true
+	}
+	if progressiveHeight <= 0 {
+		return false
+	}
+	return progressiveHeight >= bestHeight
+}
+
+func heightOf(item mediaInfo) int {
+	if item.Height.N == nil || *item.Height.N <= 0 {
+		return 0
+	}
+	return int(*item.Height.N)
 }
 
 func betterStream(item, best mediaInfo) bool {

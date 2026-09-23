@@ -94,6 +94,15 @@ func (d *Direct) CreateDownload(ctx context.Context, rawURL, formatID string) (H
 	if formatID == "" {
 		formatID = "auto"
 	}
+	if d.runner != nil {
+		info, err := d.runner.Extract(ctx, rawURL, d.cfg)
+		if err == nil {
+			title := safeTitle(firstNonEmpty(info.Title, "video"))
+			if handle, ok, directErr := directFromInfo(info, rawURL, formatID, title, d.cfg); directErr != nil || ok {
+				return handle, directErr
+			}
+		}
+	}
 	return Handle{
 		SourceURL:      rawURL,
 		FormatID:       formatID,
