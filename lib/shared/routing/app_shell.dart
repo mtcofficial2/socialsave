@@ -5,6 +5,7 @@ import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/features/downloader/presentation/providers/download_manager.dart';
 import 'package:social_save/features/library/presentation/library_screen.dart';
 import 'package:social_save/shared/models/download_status.dart';
+import 'package:social_save/features/updates/update_checker.dart';
 import 'package:social_save/shared/widgets/brand_header.dart';
 import 'package:social_save/shared/widgets/glass.dart';
 
@@ -27,7 +28,7 @@ class AppShell extends ConsumerWidget {
 
     return Scaffold(
       backgroundColor: Colors.transparent,
-      body: navigationShell,
+      body: UpdateChecker(child: navigationShell),
       bottomNavigationBar: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
