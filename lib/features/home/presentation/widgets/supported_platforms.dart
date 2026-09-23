@@ -16,6 +16,7 @@ class SupportedPlatformsSection extends StatelessWidget {
     (SocialPlatform.reddit, 'Reddit'),
     (SocialPlatform.pinterest, 'Pinterest'),
     (SocialPlatform.direct, 'Direct MP4/WebM'),
+    (SocialPlatform.web, 'Other websites'),
   ];
 
   @override
@@ -35,7 +36,7 @@ class SupportedPlatformsSection extends StatelessWidget {
             ),
             const Spacer(),
             Text(
-              '8 Public Engines',
+              '9 Public Engines',
               style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
             ),
           ],

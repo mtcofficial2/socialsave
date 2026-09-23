@@ -31,6 +31,7 @@ class PlatformLogo extends StatelessWidget {
         return 'assets/platforms/pinterest.svg';
       case SocialPlatform.direct:
         return 'assets/platforms/direct.svg';
+      case SocialPlatform.web:
       case SocialPlatform.unknown:
         return null;
     }

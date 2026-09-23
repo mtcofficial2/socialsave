@@ -20,7 +20,12 @@ void main() {
     );
   });
 
-  test('unknown hosts without a video extension stay unknown', () {
-    expect(detector.detect('https://example.com/watch'), SocialPlatform.unknown);
+  test('other public websites are accepted as web videos', () {
+    expect(detector.detect('https://example.com/watch'), SocialPlatform.web);
+    expect(detector.detect('https://vimeo.com/123'), SocialPlatform.web);
+  });
+
+  test('text that is not a URL stays unknown', () {
+    expect(detector.detect('not a link'), SocialPlatform.unknown);
   });
 }

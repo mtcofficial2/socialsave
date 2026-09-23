@@ -98,7 +98,7 @@ class _UrlInputCardState extends ConsumerState<UrlInputCard> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Works with public posts from TikTok, Instagram, YouTube, X, Reddit, Facebook, Pinterest, or direct MP4/WebM.',
+              'Works with public videos from TikTok, Instagram, YouTube, X, Reddit, Facebook, Pinterest, a direct file, or another website.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: scheme.onSurfaceVariant,
                     fontSize: 12,

@@ -121,6 +121,8 @@ class AppColors {
         return const Color(0xFFE60023);
       case SocialPlatform.direct:
         return primary;
+      case SocialPlatform.web:
+        return const Color(0xFF0F766E);
       case SocialPlatform.unknown:
         return const Color(0xFF64748B);
     }

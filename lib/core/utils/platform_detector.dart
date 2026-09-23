@@ -50,6 +50,10 @@ class PlatformDetector {
     if (_looksLikeDirectVideo(uri)) {
       return SocialPlatform.direct;
     }
+    final scheme = uri.scheme.toLowerCase();
+    if (host.isNotEmpty && (scheme == 'http' || scheme == 'https')) {
+      return SocialPlatform.web;
+    }
     return SocialPlatform.unknown;
   }
 

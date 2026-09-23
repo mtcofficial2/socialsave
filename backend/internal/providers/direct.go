@@ -139,7 +139,7 @@ func (d *Direct) fromExtractor(ctx context.Context, rawURL string) (Metadata, er
 		title = "Direct URL video"
 	}
 	return Metadata{
-		Platform:    d.ID(),
+		Platform:    "web",
 		Title:       title,
 		SourceURL:   rawURL,
 		Thumbnail:   thumbnailOf(info),

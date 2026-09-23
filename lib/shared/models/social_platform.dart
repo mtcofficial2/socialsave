@@ -7,6 +7,7 @@ enum SocialPlatform {
   reddit,
   pinterest,
   direct,
+  web,
   unknown;
 
   String get id {
@@ -27,6 +28,8 @@ enum SocialPlatform {
         return 'pinterest';
       case SocialPlatform.direct:
         return 'direct';
+      case SocialPlatform.web:
+        return 'web';
       case SocialPlatform.unknown:
         return 'unknown';
     }
@@ -50,6 +53,8 @@ enum SocialPlatform {
         return 'Pinterest';
       case SocialPlatform.direct:
         return 'Direct URL';
+      case SocialPlatform.web:
+        return 'Other website';
       case SocialPlatform.unknown:
         return 'Unknown';
     }
@@ -73,6 +78,8 @@ enum SocialPlatform {
         return 'PN';
       case SocialPlatform.direct:
         return 'URL';
+      case SocialPlatform.web:
+        return 'WEB';
       case SocialPlatform.unknown:
         return '?';
     }
@@ -97,6 +104,8 @@ enum SocialPlatform {
         return SocialPlatform.pinterest;
       case 'direct':
         return SocialPlatform.direct;
+      case 'web':
+        return SocialPlatform.web;
       default:
         return SocialPlatform.unknown;
     }
@@ -111,5 +120,6 @@ enum SocialPlatform {
     SocialPlatform.reddit,
     SocialPlatform.pinterest,
     SocialPlatform.direct,
+    SocialPlatform.web,
   ];
 }
