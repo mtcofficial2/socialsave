@@ -1,10 +1,13 @@
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/errors/exceptions.dart';
 import 'package:social_save/features/downloads/presentation/providers/downloads_controller.dart';
+import 'package:social_save/features/library/vault_actions.dart';
+import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/features/home/presentation/providers/home_controller.dart';
 import 'package:social_save/shared/widgets/platform_badge.dart';
 import 'package:social_save/shared/widgets/video_thumbnail.dart';
@@ -62,22 +65,48 @@ class DownloadDetailScreen extends ConsumerWidget {
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               const SizedBox(height: 24),
-              FilledButton.icon(
-                onPressed: () => _guard(
-                  context,
-                  () => controller.open(record),
-                ),
-                icon: const Icon(Icons.play_circle_outline),
-                label: const Text('Open'),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _guard(
+                        context,
+                        () => controller.share(record),
+                      ),
+                      icon: const Icon(Icons.ios_share),
+                      label: const Text('Share'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: () => openInAppPlayer(context, record),
+                      icon: const Icon(Icons.play_arrow_rounded),
+                      label: const Text('Play'),
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 8),
               OutlinedButton.icon(
-                onPressed: () => _guard(
-                  context,
-                  () => controller.share(record),
-                ),
-                icon: const Icon(Icons.share_outlined),
-                label: const Text('Share'),
+                onPressed: record.localPath == null
+                    ? null
+                    : () => moveDownloadToVault(context, ref, record),
+                icon: const Icon(Icons.lock_outline),
+                label: const Text('Move to vault'),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: record.sourceUrl));
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Link copied. You can download it again later.')),
+                    );
+                  }
+                },
+                icon: const Icon(Icons.link_rounded),
+                label: const Text('Copy link'),
               ),
               const SizedBox(height: 8),
               OutlinedButton.icon(

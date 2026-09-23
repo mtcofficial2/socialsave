@@ -1,75 +1,82 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:social_save/core/di/providers.dart';
-import 'package:social_save/shared/models/platform_catalog.dart';
-import 'package:social_save/shared/widgets/platform_badge.dart';
+import 'package:social_save/core/theme/app_colors.dart';
+import 'package:social_save/shared/models/social_platform.dart';
+import 'package:social_save/shared/widgets/platform_logo.dart';
 
-class SupportedPlatformsSection extends ConsumerWidget {
+class SupportedPlatformsSection extends StatelessWidget {
   const SupportedPlatformsSection({super.key});
 
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final catalog = ref.watch(platformCatalogProvider);
-    return catalog.when(
-      data: (items) => _PlatformGrid(items: items),
-      loading: () => _PlatformGrid(items: PlatformCapability.fallbackCatalog()),
-      error: (_, _) =>
-          _PlatformGrid(items: PlatformCapability.fallbackCatalog()),
-    );
-  }
-}
-
-class _PlatformGrid extends StatelessWidget {
-  const _PlatformGrid({required this.items});
-
-  final List<PlatformCapability> items;
+  static const _chips = <(SocialPlatform, String)>[
+    (SocialPlatform.tiktok, 'TikTok'),
+    (SocialPlatform.instagram, 'Instagram'),
+    (SocialPlatform.youtube, 'YouTube'),
+    (SocialPlatform.x, 'X (Twitter)'),
+    (SocialPlatform.facebook, 'Facebook'),
+    (SocialPlatform.reddit, 'Reddit'),
+    (SocialPlatform.pinterest, 'Pinterest'),
+    (SocialPlatform.direct, 'Direct MP4/WebM'),
+  ];
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Supported platforms',
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
+        Row(
+          children: [
+            Text(
+              'Supported Platforms',
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+            ),
+            const Spacer(),
+            Text(
+              '8 Public Engines',
+              style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+            ),
+          ],
         ),
-        const SizedBox(height: 6),
-        Text(
-          'Public videos can be saved from these sources. Private, login-only, and DRM-protected clips are skipped.',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-        ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 10),
         Wrap(
           spacing: 8,
           runSpacing: 8,
-          children: items.map((item) {
-            return FilterChip(
-              avatar: PlatformBadge(platform: item.platform, compact: true),
-              label: Text(item.platform.displayName),
-              selected: item.enabled,
-              onSelected: null,
-              tooltip: _tooltip(item),
+          children: _chips.map((item) {
+            final color = AppColors.platformColor(item.$1);
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerLowest,
+                borderRadius: BorderRadius.circular(999),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x0A0F172A),
+                    blurRadius: 6,
+                    offset: Offset(0, 1),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  PlatformLogo(platform: item.$1, size: 16),
+                  const SizedBox(width: 6),
+                  Text(
+                    item.$2,
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
             );
           }).toList(),
         ),
       ],
     );
-  }
-
-  String _tooltip(PlatformCapability item) {
-    if (!item.enabled) {
-      return '${item.platform.displayName} is disabled.';
-    }
-    if (item.supportsDownload) {
-      return 'Metadata and permitted downloads are available.';
-    }
-    if (item.supportsMetadata) {
-      return 'Metadata only. Direct download is not offered unless the platform allows it.';
-    }
-    return item.notes ?? item.platform.displayName;
   }
 }

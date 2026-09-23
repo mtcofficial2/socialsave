@@ -17,6 +17,7 @@ class AppSettings extends Equatable {
     this.defaultFormat = VideoFormatPreference.mp4,
     this.fontFamily = 'Inter',
     this.autoPlayNextInGallery = true,
+    this.lastChosenQuality,
   });
 
   final ThemeMode themeMode;
@@ -28,6 +29,7 @@ class AppSettings extends Equatable {
   final VideoFormatPreference defaultFormat;
   final String fontFamily;
   final bool autoPlayNextInGallery;
+  final String? lastChosenQuality;
 
   AppSettings copyWith({
     ThemeMode? themeMode,
@@ -39,6 +41,7 @@ class AppSettings extends Equatable {
     VideoFormatPreference? defaultFormat,
     String? fontFamily,
     bool? autoPlayNextInGallery,
+    String? lastChosenQuality,
   }) {
     return AppSettings(
       themeMode: themeMode ?? this.themeMode,
@@ -50,6 +53,7 @@ class AppSettings extends Equatable {
       defaultFormat: defaultFormat ?? this.defaultFormat,
       fontFamily: fontFamily ?? this.fontFamily,
       autoPlayNextInGallery: autoPlayNextInGallery ?? this.autoPlayNextInGallery,
+      lastChosenQuality: lastChosenQuality ?? this.lastChosenQuality,
     );
   }
 
@@ -67,6 +71,7 @@ class AppSettings extends Equatable {
       'defaultFormat': defaultFormat.name,
       'fontFamily': fontFamily,
       'autoPlayNextInGallery': autoPlayNextInGallery,
+      if (lastChosenQuality != null) 'lastChosenQuality': lastChosenQuality!,
     };
   }
 
@@ -95,6 +100,7 @@ class AppSettings extends Equatable {
           ? map['fontFamily'] as String
           : 'Inter',
       autoPlayNextInGallery: map['autoPlayNextInGallery'] as bool? ?? true,
+      lastChosenQuality: map['lastChosenQuality'] as String?,
     );
   }
 
@@ -109,6 +115,7 @@ class AppSettings extends Equatable {
         defaultFormat,
         fontFamily,
         autoPlayNextInGallery,
+        lastChosenQuality,
       ];
 }
 

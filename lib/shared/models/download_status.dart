@@ -29,7 +29,7 @@ enum DownloadStatus {
       case DownloadStatus.paused:
         return 'Paused';
       case DownloadStatus.completed:
-        return 'Completed';
+        return 'Saved';
       case DownloadStatus.failed:
         return 'Failed';
       case DownloadStatus.cancelled:

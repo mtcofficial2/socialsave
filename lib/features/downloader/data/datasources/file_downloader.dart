@@ -31,7 +31,11 @@ class RemoteFileProbe {
 }
 
 abstract class FileDownloader {
-  Future<RemoteFileProbe> probe(String url, {CancelToken? cancelToken});
+  Future<RemoteFileProbe> probe(
+    String url, {
+    CancelToken? cancelToken,
+    Map<String, String>? extraHeaders,
+  });
 
   Future<void> download({
     required String url,
@@ -93,14 +97,21 @@ class DioFileDownloader implements FileDownloader {
   };
 
   @override
-  Future<RemoteFileProbe> probe(String url, {CancelToken? cancelToken}) async {
+  Future<RemoteFileProbe> probe(
+    String url, {
+    CancelToken? cancelToken,
+    Map<String, String>? extraHeaders,
+  }) async {
     try {
       final response = await _dio.get<void>(
         url,
         cancelToken: cancelToken,
         options: Options(
           followRedirects: true,
-          headers: {'Range': 'bytes=0-0'},
+          headers: {
+            if (extraHeaders != null) ...extraHeaders,
+            'Range': 'bytes=0-0',
+          },
           receiveTimeout: const Duration(seconds: 8),
         ),
       );
@@ -135,6 +146,36 @@ class DioFileDownloader implements FileDownloader {
   }) async {
     final file = File(savePath);
     await file.parent.create(recursive: true);
+    if (startByte == 0) {
+      final probe = await this.probe(
+        url,
+        cancelToken: cancelToken,
+        extraHeaders: extraHeaders,
+      );
+      final length = probe.contentLength;
+      if (!_isLan(url) &&
+          probe.supportsResume &&
+          length != null &&
+          length >= 2 * 1024 * 1024) {
+        try {
+          await _downloadParallel(
+            url: url,
+            file: file,
+            length: length,
+            cancelToken: cancelToken,
+            extraHeaders: extraHeaders,
+            onProgress: onProgress,
+          );
+          return;
+        } on AppException {
+          rethrow;
+        } on DioException {
+          rethrow;
+        } catch (_) {
+          if (cancelToken.isCancelled) rethrow;
+        }
+      }
+    }
     await _downloadSingle(
       url: url,
       file: file,
@@ -143,6 +184,109 @@ class DioFileDownloader implements FileDownloader {
       extraHeaders: extraHeaders,
       onProgress: onProgress,
     );
+  }
+
+  Future<void> _downloadParallel({
+    required String url,
+    required File file,
+    required int length,
+    required CancelToken cancelToken,
+    Map<String, String>? extraHeaders,
+    void Function(DownloadProgress progress)? onProgress,
+  }) async {
+    const parts = 8;
+    final chunk = (length / parts).ceil();
+    final received = List<int>.filled(parts, 0);
+    final partFiles = <File>[
+      for (var part = 0; part < parts; part++) File('${file.path}.part$part'),
+    ];
+    var lastEmit = DateTime.fromMillisecondsSinceEpoch(0);
+    try {
+      await Future.wait(<Future<void>>[
+        for (var part = 0; part < parts; part++)
+          () async {
+            final start = part * chunk;
+            if (start >= length) return;
+            var end = start + chunk - 1;
+            if (end >= length) end = length - 1;
+            final partFile = partFiles[part];
+            final headers = <String, String>{
+              if (extraHeaders != null) ...extraHeaders,
+              'Range': 'bytes=$start-$end',
+            };
+            final response = await _dio.get<ResponseBody>(
+              url,
+              cancelToken: cancelToken,
+              options: Options(
+                responseType: ResponseType.stream,
+                headers: headers,
+                followRedirects: true,
+                maxRedirects: 5,
+              ),
+            );
+            _assertAllowedType(response.headers.value('content-type'));
+            final raf = await partFile.open(mode: FileMode.write);
+            try {
+              await for (final piece in response.data!.stream) {
+                if (cancelToken.isCancelled) {
+                  throw const AppException(
+                    code: AppErrorCode.downloadInterrupted,
+                    message: ErrorMessages.downloadInterrupted,
+                  );
+                }
+                final data = Uint8List.fromList(piece);
+                await raf.writeFrom(data);
+                received[part] += data.length;
+                if (received[part] > (end - start + 1)) {
+                  throw const AppException(
+                    code: AppErrorCode.serverError,
+                    message: ErrorMessages.serverError,
+                  );
+                }
+                final now = DateTime.now();
+                if (now.difference(lastEmit) >= const Duration(milliseconds: 120)) {
+                  lastEmit = now;
+                  var sum = 0;
+                  for (final value in received) {
+                    sum += value;
+                  }
+                  onProgress?.call(DownloadProgress(received: sum, total: length));
+                }
+              }
+            } finally {
+              await raf.close();
+            }
+            if (received[part] != end - start + 1) {
+              throw const AppException(
+                code: AppErrorCode.serverError,
+                message: ErrorMessages.serverError,
+              );
+            }
+          }(),
+      ]);
+      final out = await file.open(mode: FileMode.write);
+      try {
+        for (final partFile in partFiles) {
+          if (!partFile.existsSync()) continue;
+          await for (final piece in partFile.openRead()) {
+            await out.writeFrom(piece);
+          }
+        }
+      } finally {
+        await out.close();
+      }
+    } finally {
+      for (final partFile in partFiles) {
+        if (partFile.existsSync()) {
+          await partFile.delete();
+        }
+      }
+    }
+    var sum = 0;
+    for (final value in received) {
+      sum += value;
+    }
+    onProgress?.call(DownloadProgress(received: sum, total: length));
   }
 
   Future<void> _downloadSingle({
@@ -201,6 +345,7 @@ class DioFileDownloader implements FileDownloader {
     );
     var received = writeOffset;
     var lastEmit = DateTime.fromMillisecondsSinceEpoch(0);
+    final pending = BytesBuilder(copy: false);
     try {
       await for (final chunk in response.data!.stream) {
         if (cancelToken.isCancelled) {
@@ -209,9 +354,11 @@ class DioFileDownloader implements FileDownloader {
             message: ErrorMessages.downloadInterrupted,
           );
         }
-        final data = Uint8List.fromList(chunk);
-        await raf.writeFrom(data);
-        received += data.length;
+        pending.add(chunk);
+        received += chunk.length;
+        if (pending.length >= 1024 * 1024) {
+          await raf.writeFrom(pending.takeBytes());
+        }
         if (received > EnvConfig.maxDownloadBytes) {
           throw const AppException(
             code: AppErrorCode.fileTooLarge,
@@ -223,6 +370,9 @@ class DioFileDownloader implements FileDownloader {
           lastEmit = now;
           onProgress?.call(DownloadProgress(received: received, total: total));
         }
+      }
+      if (pending.length > 0) {
+        await raf.writeFrom(pending.takeBytes());
       }
       onProgress?.call(DownloadProgress(received: received, total: total));
     } on PathAccessException {
@@ -238,6 +388,15 @@ class DioFileDownloader implements FileDownloader {
     } finally {
       await raf.close();
     }
+  }
+
+  bool _isLan(String url) {
+    final host = Uri.tryParse(url)?.host.toLowerCase() ?? '';
+    if (host == 'localhost' || host == '127.0.0.1') return true;
+    if (host.startsWith('192.168.') || host.startsWith('10.')) return true;
+    if (!host.startsWith('172.')) return false;
+    final second = int.tryParse(host.split('.')[1]) ?? -1;
+    return second >= 16 && second <= 31;
   }
 
   void _assertAllowedType(String? contentType) {

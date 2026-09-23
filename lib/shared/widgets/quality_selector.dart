@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:social_save/core/di/providers.dart';
-import 'package:social_save/shared/models/media_format.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:social_save/shared/models/media_format.dart';
 
 class QualitySelector extends ConsumerWidget {
   const QualitySelector({
@@ -17,7 +16,6 @@ class QualitySelector extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final formatters = ref.watch(formattersProvider);
     if (formats.isEmpty) {
       return const Text('No downloadable formats were returned for this URL.');
     }
@@ -27,16 +25,20 @@ class QualitySelector extends ConsumerWidget {
       runSpacing: 8,
       children: formats.map((format) {
         final isSelected = selected?.id == format.id;
-        final size = format.filesize == null
-            ? format.label
-            : '${format.label} · ${formatters.bytes(format.filesize)}';
-        return ChoiceChip(
-          label: Text(size),
+        return _SelectablePill(
+          label: _chipLabel(format),
           selected: isSelected,
-          onSelected: (_) => onSelected(format),
+          onTap: () => onSelected(format),
         );
       }).toList(),
     );
+  }
+
+  String _chipLabel(MediaFormat format) {
+    final quality = format.quality.toLowerCase();
+    if (quality == 'original' || quality == 'best') return 'Best';
+    if (quality == 'auto') return 'Auto';
+    return format.quality;
   }
 }
 
@@ -57,12 +59,55 @@ class FormatSelector extends StatelessWidget {
     return Wrap(
       spacing: 8,
       children: formats.map((format) {
-        return ChoiceChip(
-          label: Text(format.toUpperCase()),
+        return _SelectablePill(
+          label: format.toUpperCase(),
           selected: selected?.toLowerCase() == format.toLowerCase(),
-          onSelected: (_) => onSelected(format),
+          onTap: () => onSelected(format),
         );
       }).toList(),
+    );
+  }
+}
+
+class _SelectablePill extends StatelessWidget {
+  const _SelectablePill({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: selected
+          ? Color.alphaBlend(
+              scheme.primary.withValues(alpha: 0.12),
+              scheme.surfaceContainerLowest,
+            )
+          : scheme.surfaceContainerLowest,
+      shape: StadiumBorder(
+        side: BorderSide(color: selected ? scheme.primary : scheme.outline),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const StadiumBorder(),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+              color: selected ? scheme.primary : scheme.onSurface,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

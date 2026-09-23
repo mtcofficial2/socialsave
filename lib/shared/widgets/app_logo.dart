@@ -37,6 +37,9 @@ class AppLogo extends StatelessWidget {
           style: Theme.of(context).textTheme.titleLarge?.copyWith(
                 fontWeight: FontWeight.w700,
                 letterSpacing: -0.4,
+                fontSize: 18,
+                color: Theme.of(context).colorScheme.primary,
+                height: 1,
               ),
         ),
       ],

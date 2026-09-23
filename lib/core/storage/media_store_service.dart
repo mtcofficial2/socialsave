@@ -20,6 +20,27 @@ class MediaStoreService {
     }
   }
 
+  Future<String?> publishToGallery({
+    required String sourcePath,
+    required String fileName,
+    String mimeType = 'video/mp4',
+  }) async {
+    try {
+      final result = await _channel.invokeMethod<String>('saveToGallery', {
+        'path': sourcePath,
+        'name': fileName,
+        'mime': mimeType,
+      });
+      return result;
+    } catch (_) {
+      return publishToDownloads(
+        sourcePath: sourcePath,
+        fileName: fileName,
+        mimeType: mimeType,
+      );
+    }
+  }
+
   Future<void> scanFile(String path) async {
     try {
       await _channel.invokeMethod<void>('scanFile', {'path': path});

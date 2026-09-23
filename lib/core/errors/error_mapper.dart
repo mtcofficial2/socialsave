@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:social_save/core/config/env_config.dart';
 import 'package:social_save/core/errors/error_messages.dart';
 import 'package:social_save/core/errors/exceptions.dart';
 
@@ -13,14 +14,14 @@ class ErrorMapper {
       case DioExceptionType.sendTimeout:
       case DioExceptionType.receiveTimeout:
       case DioExceptionType.transformTimeout:
-        return const AppException(
+        return AppException(
           code: AppErrorCode.timeout,
-          message: ErrorMessages.timeout,
+          message: _reachabilityMessage(ErrorMessages.timeout),
         );
       case DioExceptionType.connectionError:
-        return const AppException(
+        return AppException(
           code: AppErrorCode.networkUnavailable,
-          message: ErrorMessages.networkUnavailable,
+          message: _reachabilityMessage(ErrorMessages.networkUnavailable),
         );
       case DioExceptionType.cancel:
         return const AppException(
@@ -39,9 +40,9 @@ class ErrorMapper {
         );
       case DioExceptionType.unknown:
         if (error.error is SocketException) {
-          return const AppException(
+          return AppException(
             code: AppErrorCode.networkUnavailable,
-            message: ErrorMessages.networkUnavailable,
+            message: _reachabilityMessage(ErrorMessages.networkUnavailable),
           );
         }
         return AppException(
@@ -50,6 +51,17 @@ class ErrorMapper {
           cause: error,
         );
     }
+  }
+
+  String _reachabilityMessage(String fallback) {
+    final host = Uri.tryParse(EnvConfig.apiBaseUrl)?.host.toLowerCase() ?? '';
+    final local = host == 'localhost' ||
+        host == '127.0.0.1' ||
+        host.startsWith('192.168.') ||
+        host.startsWith('10.') ||
+        host.startsWith('172.');
+    if (local) return ErrorMessages.computerAsleep;
+    return fallback;
   }
 
   AppException fromStatus(int? statusCode, Object? data) {
@@ -70,9 +82,9 @@ class ErrorMapper {
       return fromDio(error);
     }
     if (error is SocketException) {
-      return const AppException(
+      return AppException(
         code: AppErrorCode.networkUnavailable,
-        message: ErrorMessages.networkUnavailable,
+        message: _reachabilityMessage(ErrorMessages.networkUnavailable),
       );
     }
     if (error is PathNotFoundException || error is FileSystemException) {

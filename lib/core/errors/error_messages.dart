@@ -30,6 +30,9 @@ class ErrorMessages {
   static const String networkUnavailable =
       'You appear to be offline. Connect to the internet and try again.';
 
+  static const String computerAsleep =
+      'This computer looks asleep, or SocialSave is not running on it. Wake it and stay on the same Wi-Fi.';
+
   static const String serverError =
       'The server could not complete this request. Please try again.';
 

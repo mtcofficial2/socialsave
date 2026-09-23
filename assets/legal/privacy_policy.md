@@ -1,15 +1,12 @@
 # Privacy policy
 
-Last updated: 2026-04-09
+Last updated: 9 April 2026
 
-SocialSave is a local download manager. It is designed to keep as little personal data as possible.
+SocialSave is a local download manager. It is designed to keep as little personal data as possible and to leave your files on this device.
 
 ## What the app stores on your device
 
-- Settings such as theme, default quality, and Wi-Fi-only downloads
-- Download history: title, source URL, platform, local file path, date, size, and duration
-- Downloaded video files you choose to save
-- Cached thumbnails
+The app stores settings such as theme, typeface, default quality, and Wi-Fi-only downloads. It also keeps download history (title, source URL, platform, local file path, date, size, and duration), the video files you choose to save, and cached thumbnails.
 
 This data stays on your device unless you share a file yourself.
 
@@ -25,9 +22,7 @@ The example backend is designed not to keep user accounts, watch history, or cop
 
 ## Permissions
 
-- Network access is required to analyze URLs and download files.
-- Storage or photo-library permission is requested only if you choose the public Downloads location.
-- Notifications are optional.
+Network access is required to analyze URLs and download files. Storage or photo-library permission is requested only if you choose the public Downloads location. Notifications are optional.
 
 ## Third parties
 

@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/errors/exceptions.dart';
@@ -44,13 +43,6 @@ class DownloadsController extends AsyncNotifier<List<DownloadRecord>> {
       throw const AppException(
         code: AppErrorCode.removedVideo,
         message: 'The file is no longer on this device.',
-      );
-    }
-    final result = await OpenFilex.open(path);
-    if (result.type != ResultType.done) {
-      throw AppException(
-        code: AppErrorCode.unknown,
-        message: result.message,
       );
     }
   }

@@ -1,42 +1,33 @@
-FROM node:22-bookworm-slim AS nodebin
-FROM denoland/deno:bin AS denobin
-FROM mwader/static-ffmpeg:7.1 AS ffmpeg
-FROM python:3.13-slim-bookworm
+FROM golang:1.27-bookworm AS build
 
-# yt-dlp EJS requires Node >= 22 (v20 is rejected). Deno is the default runtime.
-COPY --from=nodebin /usr/local/bin/node /usr/local/bin/node
-COPY --from=denobin /deno /usr/local/bin/deno
-COPY --from=ffmpeg /ffmpeg /usr/local/bin/ffmpeg
-COPY --from=ffmpeg /ffprobe /usr/local/bin/ffprobe
-RUN node -v && deno -V && ffmpeg -version && ffprobe -version
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd ./cmd
+COPY internal ./internal
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api
+
+FROM debian:bookworm-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates curl unzip ffmpeg \
+    && curl -fsSL -o /usr/local/bin/yt-dlp \
+        https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp_linux \
+    && chmod 755 /usr/local/bin/yt-dlp \
+    && curl -fsSL -o /tmp/deno.zip \
+        https://github.com/denoland/deno/releases/download/v2.9.7/deno-x86_64-unknown-linux-gnu.zip \
+    && unzip -j /tmp/deno.zip deno -d /usr/local/bin \
+    && chmod 755 /usr/local/bin/deno \
+    && rm /tmp/deno.zip \
+    && apt-get purge -y curl unzip \
+    && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+COPY --from=build /out/api /usr/local/bin/api
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir --default-timeout=120 \
-        "fastapi>=0.115.0" \
-        "uvicorn>=0.32.0" \
-        "httpx>=0.27.0" \
-        "pydantic>=2.9.0" \
-        "pydantic-settings>=2.6.0" \
-        "python-dotenv>=1.0.1" \
-        "yt-dlp[default]>=2026.8.19" \
-        "yt-dlp-ejs" \
-        "imageio-ffmpeg>=0.5.1" \
-        "curl_cffi>=0.10,<0.16" \
-    && python -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())"
+ENV PORT=8080 \
+    HOME=/tmp \
+    YTDLP_NO_UPDATE=1
+EXPOSE 8080
 
-COPY app ./app
-COPY static ./static
-
-ENV ENVIRONMENT=production
-ENV PYTHONUNBUFFERED=1
-ENV REQUIRE_API_KEY=false
-ENV PORT=8000
-EXPOSE 8000
-
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+ENTRYPOINT ["/usr/local/bin/api"]

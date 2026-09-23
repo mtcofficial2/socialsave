@@ -7,7 +7,7 @@ class VideoThumbnail extends StatelessWidget {
     super.key,
     required this.url,
     this.durationSeconds,
-    this.borderRadius = 16,
+    this.borderRadius = 20,
     this.height = 180,
   });
 

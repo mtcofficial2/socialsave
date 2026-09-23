@@ -1,8 +1,9 @@
-.venv
-__pycache__
-*.pyc
-.pytest_cache
+.git
 .env
+app
 tests
-*.md
 wheels
+static
+**/__pycache__
+**/*.pyc
+**/*_test.go

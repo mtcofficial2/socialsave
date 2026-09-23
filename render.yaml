@@ -11,8 +11,8 @@ services:
         value: production
       - key: REQUIRE_API_KEY
         value: "false"
-      - key: PYTHONUNBUFFERED
-        value: "1"
+      - key: SECRET_KEY
+        generateValue: true
       - key: MAX_DOWNLOAD_BYTES
         value: "2147483647"
       - key: DEFAULT_MAX_HEIGHT

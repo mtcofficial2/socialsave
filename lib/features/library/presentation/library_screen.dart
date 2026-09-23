@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:social_save/features/library/device_media.dart';
 import 'package:social_save/features/library/vault_service.dart';
 import 'package:social_save/features/player/open_player.dart';
@@ -31,6 +32,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   int _tab = 0;
   bool _loading = true;
   String? _error;
+  String _query = '';
+  String _platform = 'All';
   List<DeviceVideo> _device = [];
   List<VaultItem> _vault = [];
   final Map<String, String> _vaultPaths = {};
@@ -224,6 +227,37 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
               ),
             ),
             const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: TextField(
+                onChanged: (value) => setState(() => _query = value),
+                decoration: const InputDecoration(
+                  hintText: 'Search by title',
+                  prefixIcon: Icon(Icons.search_rounded),
+                  isDense: true,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 40,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                children: [
+                  for (final name in const ['All', 'YouTube', 'TikTok', 'Instagram', 'Facebook', 'X'])
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        label: Text(name),
+                        selected: _platform == name,
+                        onSelected: (_) => setState(() => _platform = name),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
             Expanded(
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
@@ -235,12 +269,13 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
                         )
                       : _tab == 0
                           ? _DeviceList(
-                              videos: _device,
+                              videos: _device.where(_matchesVideo).toList(),
                               onPlay: _playDevice,
                               onVault: (video) => _confirmVault(video),
+                              onActions: _deviceActions,
                             )
                           : _VaultGate(
-                              items: _vault,
+                              items: _vault.where(_matchesVault).toList(),
                               paths: _vaultPaths,
                               onPlay: _playVault,
                               onActions: _vaultItemActions,
@@ -251,6 +286,22 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
         ),
       ),
     );
+  }
+
+  bool _matchesVideo(DeviceVideo video) {
+    return _matchesText('${video.title} ${video.path ?? ''}');
+  }
+
+  bool _matchesVault(VaultItem item) {
+    return _matchesText(item.title);
+  }
+
+  bool _matchesText(String value) {
+    final query = _query.trim().toLowerCase();
+    final blob = value.toLowerCase();
+    if (query.isNotEmpty && !blob.contains(query)) return false;
+    if (_platform == 'All') return true;
+    return blob.contains(_platform.toLowerCase());
   }
 
   Widget _seg(String label, int value) {
@@ -291,6 +342,11 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
               subtitle: Text(item.title, maxLines: 2, overflow: TextOverflow.ellipsis),
             ),
             ListTile(
+              leading: const Icon(Icons.drive_file_rename_outline),
+              title: const Text('Rename'),
+              onTap: () => Navigator.pop(context, 'rename'),
+            ),
+            ListTile(
               leading: const Icon(Icons.video_library_outlined),
               title: const Text('Move to Library'),
               subtitle: const Text('Put it back in On this phone and remove it from the vault'),
@@ -314,6 +370,28 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     );
     if (action == 'delete') {
       await _deleteVaultItem(item);
+      return;
+    }
+    if (action == 'rename') {
+      final controller = TextEditingController(text: item.title);
+      final name = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Rename'),
+          content: TextField(controller: controller, autofocus: true),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, controller.text.trim()),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      );
+      controller.dispose();
+      if (name == null || name.isEmpty) return;
+      await ref.read(vaultServiceProvider).rename(item, name);
+      await _reload();
       return;
     }
     if (action != 'move' && action != 'copy') return;
@@ -376,6 +454,122 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     await _reload();
   }
 
+  Future<void> _deviceActions(DeviceVideo video) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(title: Text(video.title), subtitle: Text(_durationLabel((video.durationMs / 1000).round(), video.size))),
+            ListTile(
+              leading: const Icon(Icons.play_arrow_rounded),
+              title: const Text('Play'),
+              onTap: () => Navigator.pop(context, 'play'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.drive_file_rename_outline),
+              title: const Text('Rename'),
+              onTap: () => Navigator.pop(context, 'rename'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.share_outlined),
+              title: const Text('Share file'),
+              onTap: () => Navigator.pop(context, 'share'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.info_outline),
+              title: const Text('Details'),
+              onTap: () => Navigator.pop(context, 'details'),
+            ),
+            ListTile(
+              leading: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
+              title: const Text('Delete from phone'),
+              onTap: () => Navigator.pop(context, 'delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || action == null) return;
+    if (action == 'play') {
+      await _playDevice(video);
+      return;
+    }
+    if (action == 'rename') {
+      await _renameDevice(video);
+      return;
+    }
+    if (action == 'share') {
+      final path = await DeviceMediaService().resolvePlayablePath(video);
+      if (path == null || !mounted) return;
+      await Share.shareXFiles([XFile(path)], text: video.title);
+      return;
+    }
+    if (action == 'details') {
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(video.title),
+          content: Text(
+            '${_durationLabel((video.durationMs / 1000).round(), video.size)}\n${video.path ?? video.uri ?? ''}',
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
+          ],
+        ),
+      );
+      return;
+    }
+    if (action == 'delete') {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Delete this video?'),
+          content: Text('“${video.title}” will be removed from this phone.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
+          ],
+        ),
+      );
+      if (ok != true) return;
+      final deleted = await DeviceMediaService().deletePublic(video);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(deleted ? 'Deleted.' : 'Could not delete this video.')),
+      );
+      await _reload();
+    }
+  }
+
+  Future<void> _renameDevice(DeviceVideo video) async {
+    final controller = TextEditingController(text: video.title);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Rename'),
+        content: TextField(controller: controller, autofocus: true),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name == null || name.isEmpty) return;
+    final ok = await DeviceMediaService().renamePublic(video, name);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(ok ? 'Renamed.' : 'Could not rename this video.')),
+    );
+    await _reload();
+  }
+
   Future<void> _confirmVault(DeviceVideo video) async {
     final unlocked = await ensureVaultUnlocked(context, ref);
     if (!unlocked || !mounted) return;
@@ -415,11 +609,13 @@ class _DeviceList extends StatelessWidget {
     required this.videos,
     required this.onPlay,
     required this.onVault,
+    required this.onActions,
   });
 
   final List<DeviceVideo> videos;
   final ValueChanged<DeviceVideo> onPlay;
   final ValueChanged<DeviceVideo> onVault;
+  final ValueChanged<DeviceVideo> onActions;
 
   @override
   Widget build(BuildContext context) {
@@ -451,6 +647,7 @@ class _DeviceList extends StatelessWidget {
           caption: _durationLabel(seconds, video.size),
           durationLabel: _clock(seconds),
           onTap: () => onPlay(video),
+          onLongPress: () => onActions(video),
           action: IconButton(
             tooltip: 'Add to vault',
             onPressed: () => onVault(video),
@@ -705,28 +902,56 @@ class VaultLockPane extends ConsumerStatefulWidget {
 }
 
 class _VaultLockPaneState extends ConsumerState<VaultLockPane> {
-  final _controller = TextEditingController();
-  final _confirm = TextEditingController();
+  static const _length = 4;
+  String _pin = '';
+  String _first = '';
+  bool _confirming = false;
   String? _error;
 
-  @override
-  void dispose() {
-    _controller.dispose();
-    _confirm.dispose();
-    super.dispose();
+  Future<void> _press(String digit) async {
+    if (_pin.length >= _length) return;
+    HapticFeedback.selectionClick();
+    setState(() {
+      _pin += digit;
+      _error = null;
+    });
+    if (_pin.length == _length) {
+      await _submit(_pin);
+    }
   }
 
-  Future<void> _submit() async {
-    final pin = _controller.text.trim();
-    if (pin.length < 4 || pin.length > 8 || int.tryParse(pin) == null) {
-      setState(() => _error = 'Use a 4–8 digit PIN.');
+  void _backspace() {
+    if (_pin.isEmpty) return;
+    HapticFeedback.selectionClick();
+    setState(() {
+      _pin = _pin.substring(0, _pin.length - 1);
+      _error = null;
+    });
+  }
+
+  Future<void> _submit(String pin) async {
+    if (pin.length != _length || int.tryParse(pin) == null) {
+      setState(() => _error = 'Use a 4-digit PIN.');
       return;
     }
     final vault = ref.read(vaultServiceProvider);
     await HapticFeedback.lightImpact();
     if (!vault.hasPin) {
-      if (pin != _confirm.text.trim()) {
-        setState(() => _error = 'PINs do not match.');
+      if (!_confirming) {
+        setState(() {
+          _first = pin;
+          _pin = '';
+          _confirming = true;
+        });
+        return;
+      }
+      if (pin != _first) {
+        setState(() {
+          _error = 'PINs do not match. Enter 4 digits again.';
+          _pin = '';
+          _first = '';
+          _confirming = false;
+        });
         return;
       }
       await vault.setPin(pin);
@@ -739,78 +964,109 @@ class _VaultLockPaneState extends ConsumerState<VaultLockPane> {
       widget.onUnlocked?.call();
       return;
     }
-    setState(() => _error = 'Wrong PIN.');
+    setState(() {
+      _error = 'Wrong PIN.';
+      _pin = '';
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final vault = ref.watch(vaultServiceProvider);
     final scheme = Theme.of(context).colorScheme;
+    final creating = !vault.hasPin;
     return Padding(
-      padding: const EdgeInsets.all(24),
-      child: ListView(
-        shrinkWrap: true,
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
+      child: Column(
         children: [
-          const SizedBox(height: 8),
-          Center(
-            child: CircleAvatar(
-              radius: 36,
-              backgroundColor: scheme.primaryContainer,
-              child: const Icon(Icons.lock_rounded, color: Colors.white, size: 32),
-            ),
+          CircleAvatar(
+            radius: 32,
+            backgroundColor: scheme.primaryContainer,
+            child: const Icon(Icons.lock_rounded, color: Colors.white, size: 28),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           Text(
-            vault.hasPin ? 'Enter vault PIN' : 'Create a vault PIN',
+            creating
+                ? (_confirming ? 'Confirm your PIN' : 'Create a vault PIN')
+                : 'Enter vault PIN',
             textAlign: TextAlign.center,
             style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           Text(
-            vault.hasPin
-                ? 'Videos in the vault stay inside SocialSave. Other apps cannot see them.'
-                : 'Choose a 4–8 digit PIN. You will need it to open the vault.',
+            creating
+                ? '4 digits only. You will need them to open the vault.'
+                : 'Videos in the vault stay inside SocialSave.',
             textAlign: TextAlign.center,
             style: TextStyle(color: scheme.onSurfaceVariant),
           ),
-          const SizedBox(height: 20),
-          TextField(
-            controller: _controller,
-            keyboardType: TextInputType.number,
-            obscureText: true,
-            maxLength: 8,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 24, letterSpacing: 8),
-            decoration: InputDecoration(
-              counterText: '',
-              hintText: '••••',
-              errorText: _error,
-            ),
-            onSubmitted: (_) => _submit(),
-          ),
-          if (!vault.hasPin) ...[
-            const SizedBox(height: 12),
-            TextField(
-              controller: _confirm,
-              keyboardType: TextInputType.number,
-              obscureText: true,
-              maxLength: 8,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 24, letterSpacing: 8),
-              decoration: const InputDecoration(
-                counterText: '',
-                hintText: 'Confirm PIN',
-              ),
-              onSubmitted: (_) => _submit(),
-            ),
-          ],
           const SizedBox(height: 16),
-          FilledButton(
-            onPressed: _submit,
-            child: Text(vault.hasPin ? 'Unlock' : 'Save PIN'),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (var i = 0; i < _length; i++)
+                Container(
+                  width: 14,
+                  height: 14,
+                  margin: const EdgeInsets.symmetric(horizontal: 8),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: i < _pin.length ? scheme.primary : scheme.surfaceContainerHighest,
+                  ),
+                ),
+            ],
           ),
-          const SizedBox(height: 8),
+          if (_error != null) ...[
+            const SizedBox(height: 10),
+            Text(_error!, textAlign: TextAlign.center, style: TextStyle(color: scheme.error)),
+          ],
+          const SizedBox(height: 12),
+          for (final row in const [
+            ['1', '2', '3'],
+            ['4', '5', '6'],
+            ['7', '8', '9'],
+          ])
+            Row(
+              children: [
+                for (final digit in row)
+                  Expanded(child: _PinKey(label: digit, onTap: () => _press(digit))),
+              ],
+            ),
+          Row(
+            children: [
+              const Expanded(child: SizedBox(height: 64)),
+              Expanded(child: _PinKey(label: '0', onTap: () => _press('0'))),
+              Expanded(
+                child: _PinKey(
+                  icon: Icons.backspace_outlined,
+                  onTap: _backspace,
+                ),
+              ),
+            ],
+          ),
         ],
+      ),
+    );
+  }
+}
+
+class _PinKey extends StatelessWidget {
+  const _PinKey({this.label, this.icon, required this.onTap});
+
+  final String? label;
+  final IconData? icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(6),
+      child: SizedBox(
+        height: 56,
+        child: FilledButton.tonal(
+          onPressed: onTap,
+          child: icon != null ? Icon(icon) : Text(label!, style: const TextStyle(fontSize: 22)),
+        ),
       ),
     );
   }
@@ -826,7 +1082,7 @@ Future<bool> ensureVaultUnlocked(BuildContext context, WidgetRef ref) async {
         bottom: MediaQuery.of(context).viewInsets.bottom,
       ),
       child: SizedBox(
-        height: 480,
+        height: 560,
         child: VaultLockPane(
           onUnlocked: () => Navigator.pop(context, true),
         ),

@@ -19,18 +19,21 @@ class EmptyState extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(32),
+        padding: const EdgeInsets.all(48),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 48, color: scheme.outline),
-            const SizedBox(height: 16),
+            Icon(icon, size: 48, color: scheme.primary),
+            const SizedBox(height: 12),
             Text(
               title,
-              style: Theme.of(context).textTheme.titleMedium,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 18,
+                  ),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             Text(
               message,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(

@@ -39,8 +39,8 @@ void main() {
     expect(find.byKey(const Key('url-input')), findsOneWidget);
     expect(find.byKey(const Key('paste-button')), findsOneWidget);
     expect(find.byKey(const Key('analyze-button')), findsOneWidget);
-    expect(find.textContaining('Supported platforms'), findsOneWidget);
-    expect(find.textContaining('Only download content'), findsOneWidget);
+    expect(find.textContaining('Supported Platforms'), findsOneWidget);
+    expect(find.textContaining('Compliance Notice'), findsOneWidget);
   });
 
   testWidgets('analyze with empty URL shows an error', (tester) async {

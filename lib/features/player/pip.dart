@@ -9,6 +9,15 @@ class PipController {
     } catch (_) {}
   }
 
+  static Future<void> setAspect(int width, int height) async {
+    try {
+      await _channel.invokeMethod<void>('setPipAspect', {
+        'width': width,
+        'height': height,
+      });
+    } catch (_) {}
+  }
+
   static Future<bool> enter() async {
     try {
       return await _channel.invokeMethod<bool>('enterPip') ?? false;

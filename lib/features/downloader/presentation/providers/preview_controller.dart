@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:social_save/features/settings/domain/entities/app_settings.dart';
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
@@ -49,6 +51,9 @@ class PreviewController extends FamilyNotifier<PreviewState, MediaInfo> {
 
   void selectFormat(MediaFormat format) {
     state = state.copyWith(selectedFormat: format, clearError: true);
+    unawaited(
+      ref.read(settingsControllerProvider.notifier).setLastChosenQuality(format.quality),
+    );
   }
 
   MediaFormat? _pickDefault(MediaInfo media, AppSettings settings) {
@@ -70,6 +75,12 @@ class PreviewController extends FamilyNotifier<PreviewState, MediaInfo> {
         }
       }
       return null;
+    }
+
+    final remembered = settings.lastChosenQuality?.toLowerCase();
+    if (remembered != null && remembered.isNotEmpty) {
+      final last = match(quality: remembered);
+      if (last != null) return last;
     }
 
     if (preferredQuality == 'auto') {

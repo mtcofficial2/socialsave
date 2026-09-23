@@ -10,16 +10,14 @@ class SocialSaveApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final themeMode = ref.watch(
-      settingsControllerProvider.select((value) => value.themeMode),
-    );
+    final settings = ref.watch(settingsControllerProvider);
 
     return MaterialApp.router(
       title: AppConstants.appName,
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.light(),
-      darkTheme: AppTheme.dark(),
-      themeMode: themeMode,
+      theme: AppTheme.light(fontFamily: settings.fontFamily),
+      darkTheme: AppTheme.dark(fontFamily: settings.fontFamily),
+      themeMode: settings.themeMode,
       routerConfig: appRouter,
     );
   }

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:social_save/core/constants/app_constants.dart';
@@ -245,6 +246,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
         bytesPerSecond: 0,
       );
       state = state.copyWithTask(finished);
+      HapticFeedback.lightImpact();
       await ref.read(downloadsRepositoryProvider).upsert(
             DownloadRecord.fromTask(finished),
           );

@@ -2,10 +2,13 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:open_filex/open_filex.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/theme/app_colors.dart';
 import 'package:social_save/features/library/device_media.dart';
@@ -34,7 +37,11 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
 
   String? _error;
   bool _ready = false;
+  bool _chrome = true;
   bool _inPip = false;
+  Timer? _chromeTimer;
+  Timer? _sleepTimer;
+  int? _sleepMinutes;
   bool _loop = false;
   bool _muted = false;
   bool _completed = false;
@@ -42,6 +49,12 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
   double _rate = 1;
   double _volume = 100;
   BoxFit _fit = BoxFit.contain;
+  bool _pinchZoom = false;
+  int? _frameWidth;
+  int? _frameHeight;
+  Duration? _markA;
+  Duration? _markB;
+  bool _loopAB = false;
   bool _showEndCard = false;
   int _countdown = 5;
   Timer? _nextTimer;
@@ -83,7 +96,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
     _video = VideoController(
       _player,
       configuration: const VideoControllerConfiguration(
-        enableHardwareAcceleration: true,
+        // YouTube files are often AV1 or VP9. Hardware decode fails on many phones.
+        enableHardwareAcceleration: false,
       ),
     );
     _subs.add(_player.stream.error.listen((message) {
@@ -108,6 +122,24 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
         _muted = value <= 0;
       });
     }));
+    _subs.add(_player.stream.width.listen((value) {
+      if (!mounted || value == null || value <= 0) return;
+      setState(() => _frameWidth = value);
+      _syncPipAspect();
+    }));
+    _subs.add(_player.stream.height.listen((value) {
+      if (!mounted || value == null || value <= 0) return;
+      setState(() => _frameHeight = value);
+      _syncPipAspect();
+    }));
+    _subs.add(_player.stream.position.listen((pos) {
+      final a = _markA;
+      final b = _markB;
+      if (a == null || b == null || !_loopAB) return;
+      if (pos >= b) {
+        unawaited(_player.seek(a));
+      }
+    }));
     _subs.add(_player.stream.duration.listen((duration) {
       if (duration.inMilliseconds > 8000) {
         unawaited(_restoreResume());
@@ -117,6 +149,30 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
       if (mounted) setState(() => _inPip = inPip);
     });
     _open();
+    _showChrome();
+  }
+
+  void _showChrome() {
+    _chromeTimer?.cancel();
+    if (mounted && !_chrome) {
+      setState(() => _chrome = true);
+    } else {
+      _chrome = true;
+    }
+    _chromeTimer = Timer(const Duration(seconds: 3), () {
+      if (!mounted || _showEndCard) return;
+      setState(() => _chrome = false);
+    });
+  }
+
+  void _setSleep(int minutes) {
+    _sleepTimer?.cancel();
+    setState(() => _sleepMinutes = minutes);
+    _sleepTimer = Timer(Duration(minutes: minutes), () {
+      if (!mounted) return;
+      unawaited(_player.pause());
+      setState(() => _sleepMinutes = null);
+    });
   }
 
   String? get _resumeKey {
@@ -239,6 +295,77 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
     });
   }
 
+  void _toggleAB() {
+    final pos = _player.state.position;
+    setState(() {
+      if (_markA == null) {
+        _markA = pos;
+        _loopAB = false;
+      } else if (_markB == null || pos <= _markA!) {
+        if (pos <= _markA!) {
+          _markA = pos;
+        } else {
+          _markB = pos;
+          _loopAB = true;
+        }
+      } else {
+        _markA = null;
+        _markB = null;
+        _loopAB = false;
+      }
+    });
+  }
+
+  Future<void> _jumpToTime() async {
+    final pos = _player.state.position;
+    final controller = TextEditingController(
+      text: '${pos.inMinutes}:${(pos.inSeconds % 60).toString().padLeft(2, '0')}',
+    );
+    final value = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Jump to time'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.datetime,
+          decoration: const InputDecoration(hintText: 'm:ss or mm:ss'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('Go'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (value == null) return;
+    final parts = value.trim().split(RegExp(r'[:.]'));
+    if (parts.isEmpty) return;
+    final seconds = parts.length == 1
+        ? int.tryParse(parts[0]) ?? 0
+        : (int.tryParse(parts[0]) ?? 0) * 60 + (int.tryParse(parts.last) ?? 0);
+    await _player.seek(Duration(seconds: seconds));
+  }
+
+  Future<void> _saveFrame() async {
+    final bytes = await _player.screenshot();
+    if (bytes == null || !mounted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not capture this frame.')),
+        );
+      }
+      return;
+    }
+    final dir = await getTemporaryDirectory();
+    final file = File('${dir.path}/frame_${DateTime.now().millisecondsSinceEpoch}.jpg');
+    await file.writeAsBytes(bytes);
+    await Share.shareXFiles([XFile(file.path)], text: _session.title);
+  }
+
   Future<void> _openExternal() async {
     final path = _session.filePath;
     if (path == null || !File(path).existsSync()) {
@@ -254,7 +381,15 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
     await OpenFilex.open(path, type: 'video/*');
   }
 
+  void _syncPipAspect() {
+    final width = _frameWidth;
+    final height = _frameHeight;
+    if (width == null || height == null) return;
+    unawaited(PipController.setAspect(width, height));
+  }
+
   Future<void> _playOverApps() async {
+    _syncPipAspect();
     final ok = await PipController.enter();
     if (!ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -304,6 +439,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
 
   Future<void> _playNext() async {
     if (!_hasNext) return;
+    HapticFeedback.lightImpact();
     _cancelCountdown();
     setState(() {
       _queueIndex += 1;
@@ -312,6 +448,11 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
       _ready = false;
       _error = null;
       _didResume = true;
+      _frameWidth = null;
+      _frameHeight = null;
+      _markA = null;
+      _markB = null;
+      _loopAB = false;
     });
     var item = _queue[_queueIndex];
     final existing = item.filePath;
@@ -365,6 +506,26 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
                     ),
                     const SizedBox(height: 16),
                     const Text(
+                      'Sleep timer',
+                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        for (final minutes in [15, 30, 45])
+                          ChoiceChip(
+                            label: Text('$minutes min'),
+                            selected: _sleepMinutes == minutes,
+                            onSelected: (_) {
+                              _setSleep(minutes);
+                              setSheet(() {});
+                            },
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
                       'Speed',
                       style: TextStyle(color: Colors.white70, fontSize: 12),
                     ),
@@ -398,16 +559,117 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
                     ),
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
+                      value: _pinchZoom,
+                      title: const Text(
+                        'Pinch to zoom',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                      subtitle: const Text(
+                        'Turn off to keep skip, seek, and volume gestures.',
+                        style: TextStyle(color: Colors.white54, fontSize: 12),
+                      ),
+                      onChanged: (value) {
+                        setState(() => _pinchZoom = value);
+                        setSheet(() {});
+                      },
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
                       value: _fit == BoxFit.cover,
                       title: const Text(
                         'Fill the screen',
                         style: TextStyle(color: Colors.white),
+                      ),
+                      subtitle: const Text(
+                        'Off keeps the real video shape. On fills the window.',
+                        style: TextStyle(color: Colors.white54, fontSize: 12),
                       ),
                       onChanged: (_) {
                         _cycleFit();
                         setSheet(() {});
                       },
                     ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.timelapse_rounded, color: Colors.white70),
+                      title: const Text('Jump to time', style: TextStyle(color: Colors.white)),
+                      onTap: () {
+                        Navigator.pop(context);
+                        unawaited(_jumpToTime());
+                      },
+                    ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.camera_alt_outlined, color: Colors.white70),
+                      title: const Text('Save a still frame', style: TextStyle(color: Colors.white)),
+                      onTap: () {
+                        Navigator.pop(context);
+                        unawaited(_saveFrame());
+                      },
+                    ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.repeat_on_rounded, color: Colors.white70),
+                      title: Text(
+                        _loopAB ? 'A–B loop on' : 'Set A–B loop',
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                      subtitle: Text(
+                        _loopAB
+                            ? 'Playing between the two marks'
+                            : 'Mark this moment as A, then again as B',
+                        style: const TextStyle(color: Colors.white54, fontSize: 12),
+                      ),
+                      onTap: () {
+                        _toggleAB();
+                        setSheet(() {});
+                      },
+                    ),
+                    if (_player.state.tracks.audio.length > 1) ...[
+                      const Text('Audio', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                      const SizedBox(height: 4),
+                      Wrap(
+                        spacing: 8,
+                        children: [
+                          for (final track in _player.state.tracks.audio)
+                            ChoiceChip(
+                              label: Text(track.title ?? track.language ?? track.id),
+                              selected: _player.state.track.audio.id == track.id,
+                              onSelected: (_) {
+                                unawaited(_player.setAudioTrack(track));
+                                setSheet(() {});
+                              },
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    if (_player.state.tracks.subtitle.isNotEmpty) ...[
+                      const Text('Captions', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                      const SizedBox(height: 4),
+                      Wrap(
+                        spacing: 8,
+                        children: [
+                          ChoiceChip(
+                            label: const Text('Off'),
+                            selected: _player.state.track.subtitle.id == 'no',
+                            onSelected: (_) {
+                              unawaited(_player.setSubtitleTrack(SubtitleTrack.no()));
+                              setSheet(() {});
+                            },
+                          ),
+                          for (final track in _player.state.tracks.subtitle)
+                            ChoiceChip(
+                              label: Text(track.title ?? track.language ?? track.id),
+                              selected: _player.state.track.subtitle.id == track.id,
+                              onSelected: (_) {
+                                unawaited(_player.setSubtitleTrack(track));
+                                setSheet(() {});
+                              },
+                            ),
+                        ],
+                      ),
+                    ],
                     Row(
                       children: [
                         Icon(
@@ -486,6 +748,11 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
           ),
           onPressed: () => unawaited(_showTools()),
         ),
+        if (_hasNext)
+          MaterialCustomButton(
+            icon: const Icon(Icons.skip_next_rounded),
+            onPressed: () => unawaited(_playNext()),
+          ),
         MaterialCustomButton(
           icon: Icon(_loop ? Icons.repeat_one_rounded : Icons.repeat_rounded),
           onPressed: () => unawaited(_toggleLoop()),
@@ -510,6 +777,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
   @override
   void dispose() {
     _cancelCountdown();
+    _chromeTimer?.cancel();
+    _sleepTimer?.cancel();
     unawaited(_saveResume());
     for (final sub in _subs) {
       unawaited(sub.cancel());
@@ -539,14 +808,29 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
     );
 
     if (_inPip) {
-      return Scaffold(backgroundColor: Colors.black, body: video);
+      return Scaffold(
+        backgroundColor: Colors.black,
+        body: _FittedVideo(
+          width: _frameWidth,
+          height: _frameHeight,
+          child: Video(
+            controller: _video,
+            fill: Colors.black,
+            fit: BoxFit.contain,
+            controls: null,
+          ),
+        ),
+      );
     }
 
     return Scaffold(
       backgroundColor: Colors.black,
-      body: SafeArea(
+      body: Listener(
+        onPointerDown: (_) => _showChrome(),
+        child: SafeArea(
         child: Column(
           children: [
+            if (_chrome || _showEndCard)
             Padding(
               padding: const EdgeInsets.fromLTRB(4, 4, 8, 8),
               child: Row(
@@ -634,7 +918,18 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
                       ),
                     )
                   else
-                    video,
+                    _FittedVideo(
+                      width: _frameWidth,
+                      height: _frameHeight,
+                      child: _pinchZoom
+                          ? InteractiveViewer(
+                              minScale: 1,
+                              maxScale: 3,
+                              panEnabled: false,
+                              child: video,
+                            )
+                          : video,
+                    ),
                   if (_showEndCard) _EndCard(
                     countdown: _countdown,
                     hasNext: _hasNext,
@@ -652,6 +947,37 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen> {
                 backgroundColor: Colors.white10,
               ),
           ],
+        ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FittedVideo extends StatelessWidget {
+  const _FittedVideo({
+    required this.child,
+    this.width,
+    this.height,
+  });
+
+  final Widget child;
+  final int? width;
+  final int? height;
+
+  @override
+  Widget build(BuildContext context) {
+    final frameWidth = width ?? 0;
+    final frameHeight = height ?? 0;
+    final aspect = frameWidth > 0 && frameHeight > 0
+        ? frameWidth / frameHeight
+        : 9 / 16;
+    return ColoredBox(
+      color: Colors.black,
+      child: Center(
+        child: AspectRatio(
+          aspectRatio: aspect,
+          child: child,
         ),
       ),
     );
@@ -756,6 +1082,11 @@ Map<String, String> _platformHeaders(SocialPlatform platform) {
       return {
         'Referer': 'https://www.instagram.com/',
         'Origin': 'https://www.instagram.com',
+      };
+    case SocialPlatform.youtube:
+      return {
+        'Referer': 'https://www.youtube.com/',
+        'Origin': 'https://www.youtube.com',
       };
     default:
       return const {};

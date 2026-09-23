@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/features/downloader/presentation/providers/download_manager.dart';
+import 'package:social_save/features/library/presentation/library_screen.dart';
 import 'package:social_save/shared/models/download_status.dart';
+import 'package:social_save/shared/widgets/brand_header.dart';
 
 class AppShell extends ConsumerWidget {
   const AppShell({super.key, required this.navigationShell});
@@ -15,71 +17,130 @@ class AppShell extends ConsumerWidget {
     final current = ref.watch(
       downloadManagerProvider.select((state) => state.current),
     );
+    final activeCount = ref.watch(
+      downloadManagerProvider.select((state) => state.active.length),
+    );
+    final showMini = current != null &&
+        current.status != DownloadStatus.completed &&
+        current.status != DownloadStatus.cancelled;
 
     return Scaffold(
-      body: Column(
+      body: navigationShell,
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Expanded(child: navigationShell),
-          if (current != null && current.status != DownloadStatus.completed)
-            Material(
-              color: Theme.of(context).colorScheme.surfaceContainerHigh,
-              child: InkWell(
-                onTap: () => context.push('/progress/${current.id}'),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.downloading_rounded),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              current.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            LinearProgressIndicator(
-                              value: current.totalBytes == null
-                                  ? null
-                                  : current.progress,
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Text(ref.watch(formattersProvider).percent(current.progress)),
-                    ],
-                  ),
-                ),
+          if (showMini)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: _MiniProgress(
+                title: current.title,
+                progress: current.progress,
+                speed: ref.watch(formattersProvider).speed(current.bytesPerSecond),
+                thumbnail: current.thumbnailUrl,
+                onOpen: () => context.push('/progress/${current.id}'),
+                onPause: current.status.canPause
+                    ? () => ref.read(downloadManagerProvider.notifier).pause(current.id)
+                    : null,
               ),
             ),
+          StitchNavBar(
+            index: navigationShell.currentIndex,
+            downloadBadge: activeCount,
+            onSelect: (index) {
+              if (index != 1) {
+                ref.read(vaultUnlockedProvider.notifier).state = false;
+              }
+              navigationShell.goBranch(
+                index,
+                initialLocation: index == navigationShell.currentIndex,
+              );
+            },
+          ),
         ],
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: navigationShell.currentIndex,
-        onDestinationSelected: (index) => navigationShell.goBranch(
-          index,
-          initialLocation: index == navigationShell.currentIndex,
+    );
+  }
+}
+
+class _MiniProgress extends StatelessWidget {
+  const _MiniProgress({
+    required this.title,
+    required this.progress,
+    required this.speed,
+    required this.onOpen,
+    this.thumbnail,
+    this.onPause,
+  });
+
+  final String title;
+  final double progress;
+  final String speed;
+  final String? thumbnail;
+  final VoidCallback onOpen;
+  final VoidCallback? onPause;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.surfaceContainerLowest,
+      elevation: 2,
+      shadowColor: const Color(0x140F172A),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onOpen,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
+          child: Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: SizedBox(
+                  width: 40,
+                  height: 40,
+                  child: thumbnail == null || thumbnail!.isEmpty
+                      ? ColoredBox(color: scheme.surfaceContainerHigh)
+                      : Image.network(thumbnail!, fit: BoxFit.cover),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      '${(progress * 100).round()}%  •  $speed',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: scheme.primary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (onPause != null)
+                IconButton(
+                  onPressed: onPause,
+                  icon: const Icon(Icons.pause_rounded, size: 20),
+                ),
+              IconButton(
+                onPressed: onOpen,
+                icon: const Icon(Icons.open_in_new_rounded, size: 18),
+              ),
+            ],
+          ),
         ),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home_rounded),
-            label: 'Home',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.download_outlined),
-            selectedIcon: Icon(Icons.download_rounded),
-            label: 'Downloads',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings_rounded),
-            label: 'Settings',
-          ),
-        ],
       ),
     );
   }

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:social_save/core/di/providers.dart';
+import 'package:social_save/core/utils/platform_detector.dart';
+import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/core/errors/exceptions.dart';
 import 'package:social_save/core/theme/app_colors.dart';
 import 'package:social_save/features/downloader/presentation/providers/download_manager.dart';
@@ -17,9 +19,10 @@ import 'package:social_save/shared/widgets/platform_logo.dart';
 import 'package:social_save/shared/widgets/video_thumbnail.dart';
 
 class PreviewScreen extends ConsumerStatefulWidget {
-  const PreviewScreen({super.key, required this.media});
+  const PreviewScreen({super.key, this.media, this.pendingUrl});
 
-  final MediaInfo media;
+  final MediaInfo? media;
+  final String? pendingUrl;
 
   @override
   ConsumerState<PreviewScreen> createState() => _PreviewScreenState();
@@ -29,10 +32,85 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
   bool _starting = false;
   bool _previewing = false;
   String? _error;
+  MediaInfo? _loaded;
+  bool _lookup = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loaded = widget.media;
+    final pending = widget.pendingUrl;
+    if (_loaded == null && pending != null) {
+      _lookup = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _lookupLink(pending));
+    }
+  }
+
+  Future<void> _lookupLink(String url) async {
+    try {
+      final media = await ref.read(mediaRepositoryProvider).analyze(url);
+      if (!mounted) return;
+      setState(() {
+        _loaded = media;
+        _lookup = false;
+      });
+    } on AppException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _lookup = false;
+        _error = error.message;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _lookup = false;
+        _error = 'Could not look up this link.';
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final preview = ref.watch(previewControllerProvider(widget.media));
+    final pending = widget.pendingUrl;
+    if (_loaded == null) {
+      return _LookupScaffold(
+        url: pending ?? '',
+        error: _error,
+        loading: _lookup,
+        onRetry: pending == null ? null : () => _lookupLink(pending),
+      );
+    }
+    return _PreviewBody(
+      media: _loaded!,
+      starting: _starting,
+      previewing: _previewing,
+      error: _error,
+      onPlay: _playBeforeDownload,
+      onDownload: (media, format) => _startDownload(media, format),
+    );
+  }
+}
+
+class _PreviewBody extends ConsumerWidget {
+  const _PreviewBody({
+    required this.media,
+    required this.starting,
+    required this.previewing,
+    required this.error,
+    required this.onPlay,
+    required this.onDownload,
+  });
+
+  final MediaInfo media;
+  final bool starting;
+  final bool previewing;
+  final String? error;
+  final Future<void> Function(MediaInfo media, MediaFormat? format) onPlay;
+  final Future<void> Function(MediaInfo media, MediaFormat format) onDownload;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final preview = ref.watch(previewControllerProvider(this.media));
     final formatters = ref.watch(formattersProvider);
     final media = preview.media;
     final format = preview.format;
@@ -170,13 +248,13 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
                             shape: const CircleBorder(),
                             child: InkWell(
                               customBorder: const CircleBorder(),
-                              onTap: _previewing || !media.canDownload
+                              onTap: previewing || !media.canDownload
                                   ? null
-                                  : () => _playBeforeDownload(media, format),
+                                  : () => onPlay(media, format),
                               child: SizedBox(
                                 width: 64,
                                 height: 64,
-                                child: _previewing
+                                child: previewing
                                     ? const Padding(
                                         padding: EdgeInsets.all(16),
                                         child: CircularProgressIndicator(strokeWidth: 2),
@@ -283,7 +361,7 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
                   child: InkWell(
                     borderRadius: BorderRadius.circular(16),
                     onTap: () => ref
-                        .read(previewControllerProvider(widget.media).notifier)
+                        .read(previewControllerProvider(media).notifier)
                         .selectFormat(item),
                     child: Padding(
                       padding: const EdgeInsets.all(16),
@@ -346,7 +424,7 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
                               Text(
-                                item.filesize != null ? '~${formatters.bytes(item.filesize)}' : '—',
+                                item.filesize != null ? formatters.bytes(item.filesize) : '—',
                                 style: TextStyle(
                                   fontWeight: FontWeight.w800,
                                   color: selected ? scheme.primary : scheme.onSurface,
@@ -365,25 +443,25 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
                 ),
               );
             }),
-            if (_error != null) ...[
-              ErrorBanner(message: _error!),
+            if (error != null) ...[
+              ErrorBanner(message: error!),
               const SizedBox(height: 12),
             ],
             const SizedBox(height: 8),
             OutlinedButton.icon(
-              onPressed: !media.canDownload || format == null || _previewing
+              onPressed: !media.canDownload || format == null || previewing
                   ? null
-                  : () => _playBeforeDownload(media, format),
+                  : () => onPlay(media, format),
               icon: const Icon(Icons.play_circle_outline),
-              label: Text(_previewing ? 'Opening preview…' : 'Play without downloading'),
+              label: Text(previewing ? 'Opening preview…' : 'Play without downloading'),
             ),
             const SizedBox(height: 8),
             FilledButton.icon(
-              onPressed: !media.canDownload || format == null || _starting
+              onPressed: !media.canDownload || format == null || starting
                   ? null
-                  : () => _startDownload(media, format),
+                  : () => onDownload(media, format),
               icon: const Icon(Icons.download_rounded),
-              label: Text(_starting ? 'Starting…' : 'Start Download ($sizeLabel)'),
+              label: Text(starting ? 'Starting…' : 'Start Download ($sizeLabel)'),
             ),
             const SizedBox(height: 8),
             SizedBox(
@@ -402,7 +480,71 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
       ),
     );
   }
+}
 
+class _LookupScaffold extends StatelessWidget {
+  const _LookupScaffold({
+    required this.url,
+    required this.loading,
+    this.error,
+    this.onRetry,
+  });
+
+  final String url;
+  final bool loading;
+  final String? error;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final platform = const PlatformDetector().detect(url);
+    final scheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+          children: [
+            Row(
+              children: [
+                IconButton(
+                  onPressed: () => Navigator.maybePop(context),
+                  icon: const Icon(Icons.arrow_back_rounded),
+                ),
+                PlatformLogo(platform: platform, size: 28),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    platform == SocialPlatform.unknown
+                        ? 'Looking up this link'
+                        : platform.displayName,
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            VideoThumbnail(url: null, height: 180, borderRadius: 16),
+            const SizedBox(height: 12),
+            Text(
+              url,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: scheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 16),
+            if (loading) const LinearProgressIndicator(),
+            if (error != null) ...[
+              const SizedBox(height: 12),
+              ErrorBanner(message: error!, onRetry: onRetry),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+extension on _PreviewScreenState {
   Future<void> _playBeforeDownload(MediaInfo media, MediaFormat? format) async {
     if (format == null) {
       setState(() => _error = 'Choose a quality first.');
@@ -413,17 +555,20 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
       _error = null;
     });
     try {
+      final playFormat = media.platform.id == 'youtube' ? 'preview' : format.id;
       final ticket = await ref.read(mediaRepositoryProvider).requestDownload(
             url: media.sourceUrl,
-            formatId: format.id,
+            formatId: playFormat,
           );
-      var url = (ticket.directUrl != null &&
-              ticket.directUrl!.isNotEmpty &&
-              !ticket.directUrl!.contains('onrender.com'))
-          ? ticket.directUrl!
-          : ticket.downloadUrl;
+      final direct = ticket.directUrl;
+      final directPlayable = direct != null &&
+          direct.isNotEmpty &&
+          !direct.contains('onrender.com') &&
+          !direct.contains('googlevideo') &&
+          media.platform.id != 'youtube';
+      var url = directPlayable ? direct! : ticket.downloadUrl;
       if (url.isEmpty && ticket.jobId != null) {
-        for (var i = 0; i < 20; i++) {
+        for (var i = 0; i < 45; i++) {
           await Future<void>.delayed(const Duration(seconds: 2));
           final status = await ref.read(mediaRepositoryProvider).getJobStatus(ticket.jobId!);
           if ((status.downloadUrl ?? '').isNotEmpty) {

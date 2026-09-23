@@ -49,6 +49,10 @@ class SettingsController extends Notifier<AppSettings> {
     return _commit(state.copyWith(autoPlayNextInGallery: value));
   }
 
+  Future<void> setLastChosenQuality(String quality) {
+    return _commit(state.copyWith(lastChosenQuality: quality));
+  }
+
   Future<void> _commit(AppSettings next) async {
     state = next;
     await ref.read(settingsRepositoryProvider).save(next);

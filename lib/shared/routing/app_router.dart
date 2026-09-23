@@ -4,7 +4,10 @@ import 'package:social_save/features/downloader/presentation/screens/active_down
 import 'package:social_save/features/downloader/presentation/screens/preview_screen.dart';
 import 'package:social_save/features/downloads/presentation/screens/download_detail_screen.dart';
 import 'package:social_save/features/downloads/presentation/screens/downloads_screen.dart';
+import 'package:social_save/features/player/player_session.dart';
+import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
 import 'package:social_save/features/home/presentation/screens/home_screen.dart';
+import 'package:social_save/features/library/presentation/library_screen.dart';
 import 'package:social_save/features/settings/presentation/screens/about_screen.dart';
 import 'package:social_save/features/settings/presentation/screens/legal_screen.dart';
 import 'package:social_save/features/settings/presentation/screens/settings_screen.dart';
@@ -25,6 +28,16 @@ final appRouter = GoRouter(
               path: '/',
               pageBuilder: (context, state) => const NoTransitionPage(
                 child: HomeScreen(),
+              ),
+            ),
+          ],
+        ),
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/library',
+              pageBuilder: (context, state) => const NoTransitionPage(
+                child: LibraryScreen(),
               ),
             ),
           ],
@@ -62,7 +75,11 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/preview',
       builder: (context, state) {
-        final media = state.extra;
+        final extra = state.extra;
+        if (extra is String) {
+          return PreviewScreen(pendingUrl: extra);
+        }
+        final media = extra;
         if (media is! MediaInfo) {
           return const Scaffold(
             body: Center(child: Text('No video information was provided.')),
@@ -94,6 +111,18 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/about',
       builder: (context, state) => const AboutScreen(),
+    ),
+    GoRoute(
+      path: '/player',
+      builder: (context, state) {
+        final extra = state.extra;
+        if (extra is! PlayerSession) {
+          return const Scaffold(
+            body: Center(child: Text('Nothing to play.')),
+          );
+        }
+        return InAppPlayerScreen(session: extra);
+      },
     ),
   ],
 );

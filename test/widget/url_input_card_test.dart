@@ -9,15 +9,15 @@ void main() {
       const ProviderScope(
         child: MaterialApp(
           home: Scaffold(
-            body: UrlInputCard(onAnalyze: _noop),
+            body: UrlInputCard(onAnalyze: _noop, onPaste: _noop),
           ),
         ),
       ),
     );
-    await tester.tap(find.text('Try a sample public video'));
+    await tester.tap(find.textContaining('Try a sample public video'));
     await tester.pump();
     final field = tester.widget<TextField>(find.byKey(const Key('url-input')));
-    expect(field.controller?.text, contains('BigBuckBunny.mp4'));
+    expect(field.controller?.text, contains('flower.mp4'));
   });
 }
 

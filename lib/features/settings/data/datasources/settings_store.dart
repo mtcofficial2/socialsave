@@ -21,6 +21,8 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
   static const _fontFamily = '${AppConstants.settingsPrefsPrefix}fontFamily';
   static const _autoPlayNext =
       '${AppConstants.settingsPrefsPrefix}autoPlayNextInGallery';
+  static const _lastQuality =
+      '${AppConstants.settingsPrefsPrefix}lastChosenQuality';
 
   @override
   Future<AppSettings> load() async {
@@ -34,6 +36,7 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
       'defaultFormat': _prefs.getString(_format),
       'fontFamily': _prefs.getString(_fontFamily),
       'autoPlayNextInGallery': _prefs.getBool(_autoPlayNext),
+      'lastChosenQuality': _prefs.getString(_lastQuality),
     });
   }
 
@@ -51,5 +54,11 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
     await _prefs.setString(_format, settings.defaultFormat.name);
     await _prefs.setString(_fontFamily, settings.fontFamily);
     await _prefs.setBool(_autoPlayNext, settings.autoPlayNextInGallery);
+    final last = settings.lastChosenQuality;
+    if (last == null || last.isEmpty) {
+      await _prefs.remove(_lastQuality);
+    } else {
+      await _prefs.setString(_lastQuality, last);
+    }
   }
 }

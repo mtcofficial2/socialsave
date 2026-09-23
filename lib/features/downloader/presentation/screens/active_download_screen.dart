@@ -10,7 +10,7 @@ import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/shared/models/download_status.dart';
 import 'package:social_save/shared/models/download_task.dart';
 import 'package:social_save/shared/widgets/brand_header.dart';
-import 'package:social_save/shared/widgets/error_banner.dart';
+import 'package:social_save/core/utils/formatters.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
 import 'package:social_save/shared/widgets/video_thumbnail.dart';
 
@@ -173,27 +173,6 @@ class ActiveDownloadScreen extends ConsumerWidget {
                                 ),
                               ),
                             ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                              decoration: BoxDecoration(
-                                color: scheme.surfaceContainerHigh,
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(Icons.bolt, size: 14, color: scheme.secondary),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    formatters.speed(task.bytesPerSecond),
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w700,
-                                      color: scheme.primary,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
                           ],
                         ),
                         const SizedBox(height: 10),
@@ -204,6 +183,18 @@ class ActiveDownloadScreen extends ConsumerWidget {
                             minHeight: 10,
                             backgroundColor: scheme.surfaceContainerHigh,
                             color: scheme.primary,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            _speedLine(task, formatters),
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: scheme.onSurface,
+                            ),
                           ),
                         ),
                         const SizedBox(height: 16),
@@ -256,7 +247,10 @@ class ActiveDownloadScreen extends ConsumerWidget {
                         if (task.status == DownloadStatus.failed &&
                             task.errorMessage != null) ...[
                           const SizedBox(height: 12),
-                          ErrorBanner(message: task.errorMessage!),
+                          _FailureCard(
+                            message: task.errorMessage!,
+                            onRetry: () => manager.retry(task.id),
+                          ),
                         ],
                         if (task.status == DownloadStatus.completed) ...[
                           const SizedBox(height: 12),
@@ -328,6 +322,94 @@ class ActiveDownloadScreen extends ConsumerWidget {
           fontWeight: FontWeight.w700,
           color: scheme.primary,
         ),
+      ),
+    );
+  }
+}
+
+String _speedLine(DownloadTask task, Formatters formatters) {
+  final preparing = task.status == DownloadStatus.queued ||
+      (task.status == DownloadStatus.running &&
+          task.receivedBytes == 0 &&
+          task.bytesPerSecond <= 0);
+  if (preparing) return 'Preparing on your computer';
+  if (task.status == DownloadStatus.paused) return 'Paused';
+  if (task.bytesPerSecond <= 0) return 'Starting the save…';
+  return '${formatters.speed(task.bytesPerSecond)} · about ${formatters.eta(task.eta)} left';
+}
+
+String _failureTitle(String message) {
+  final lower = message.toLowerCase();
+  if (lower.contains('asleep') || lower.contains('same wi-fi')) {
+    return 'Computer is not reachable';
+  }
+  if (lower.contains('no longer available') || lower.contains('removed')) {
+    return 'This video was removed';
+  }
+  if (lower.contains('private') ||
+      lower.contains('login') ||
+      lower.contains('not allow') ||
+      lower.contains('members-only')) {
+    return 'This video is private';
+  }
+  if (lower.contains('offline')) return 'No connection';
+  if (lower.contains('too long') || lower.contains('timed out')) {
+    return 'This took too long';
+  }
+  if (lower.contains('storage')) return 'Not enough space';
+  return 'Could not save this video';
+}
+
+class _FailureCard extends StatelessWidget {
+  const _FailureCard({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: scheme.errorContainer,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _failureTitle(message),
+            style: TextStyle(
+              fontWeight: FontWeight.w700,
+              color: scheme.onErrorContainer,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            message,
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.35,
+              color: scheme.onErrorContainer,
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            height: 44,
+            child: FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: scheme.error,
+                foregroundColor: scheme.onError,
+              ),
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('Retry'),
+            ),
+          ),
+        ],
       ),
     );
   }
