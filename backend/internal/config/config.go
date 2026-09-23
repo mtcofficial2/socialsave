@@ -43,6 +43,7 @@ type Config struct {
 	FacebookToken     string
 	XBearerToken      string
 	Port              string
+	WebRoot           string
 }
 
 // Enabled reports whether a platform id is turned on.
@@ -81,6 +82,7 @@ func Load() Config {
 		FacebookToken:     strings.TrimSpace(os.Getenv("FACEBOOK_ACCESS_TOKEN")),
 		XBearerToken:      strings.TrimSpace(os.Getenv("X_BEARER_TOKEN")),
 		Port:              getenv("PORT", "8080"),
+		WebRoot:           strings.TrimSpace(os.Getenv("WEB_ROOT")),
 	}
 }
 

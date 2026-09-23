@@ -24,10 +24,12 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /out/api /usr/local/bin/api
+COPY webui /opt/socialsave/web
 
 ENV PORT=8080 \
     HOME=/tmp \
-    YTDLP_NO_UPDATE=1
+    YTDLP_NO_UPDATE=1 \
+    WEB_ROOT=/opt/socialsave/web
 EXPOSE 8080
 
 ENTRYPOINT ["/usr/local/bin/api"]

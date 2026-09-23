@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -121,6 +123,25 @@ func TestAPIKeyRequired(t *testing.T) {
 	app.Router().ServeHTTP(authed, request)
 	if authed.Code != http.StatusOK {
 		t.Fatalf("bearer status %d", authed.Code)
+	}
+}
+
+func TestWebRootServesTheSite(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<title>SocialSave</title>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app := testApp(t)
+	app.Config.WebRoot = dir
+	home := httptest.NewRecorder()
+	app.Router().ServeHTTP(home, httptest.NewRequest(http.MethodGet, "/", nil))
+	if home.Code != http.StatusOK || !strings.Contains(home.Body.String(), "SocialSave") {
+		t.Fatalf("home %d %s", home.Code, home.Body.String())
+	}
+	health := httptest.NewRecorder()
+	app.Router().ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if health.Code != http.StatusOK || !strings.Contains(health.Body.String(), "ok") {
+		t.Fatalf("health %d %s", health.Code, health.Body.String())
 	}
 }
 

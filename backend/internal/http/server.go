@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -109,10 +110,34 @@ func (s *Server) Router() http.Handler {
 		r.Get("/download/{job_id}", s.jobStatus)
 		r.Get("/files/{token}", s.file)
 	})
-	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
-		writeError(w, errs.UnsupportedPlatform())
-	})
+	r.NotFound(s.serveWeb)
 	return r
+}
+
+func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
+	root := strings.TrimSpace(s.Config.WebRoot)
+	if root == "" || r.Method != http.MethodGet && r.Method != http.MethodHead {
+		writeError(w, errs.UnsupportedPlatform())
+		return
+	}
+	clean := filepath.Clean("/" + r.URL.Path)
+	target := filepath.Join(root, clean)
+	rel, err := filepath.Rel(root, target)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		writeError(w, errs.UnsupportedPlatform())
+		return
+	}
+	info, err := os.Stat(target)
+	if err == nil && !info.IsDir() {
+		http.ServeFile(w, r, target)
+		return
+	}
+	index := filepath.Join(root, "index.html")
+	if _, err := os.Stat(index); err != nil {
+		writeError(w, errs.UnsupportedPlatform())
+		return
+	}
+	http.ServeFile(w, r, index)
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
