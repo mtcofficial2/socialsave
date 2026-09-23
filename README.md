@@ -1,5 +1,7 @@
 # SocialSave
 
+The latest Android app is on [GitHub Releases](https://github.com/mtcofficial2/socialsave/releases/latest). Download `SocialSave.apk` from that page and install it.
+
 SocialSave is a Flutter download manager for **public video URLs you are allowed to save**. The mobile app never talks to TikTok, Instagram, YouTube, or other social platforms directly. It only calls **your backend**, which must use official APIs or other permitted access.
 
 This project does **not** scrape private content, bypass DRM, logins, paywalls, or other access controls.
