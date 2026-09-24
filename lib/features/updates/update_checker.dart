@@ -1,6 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
-import 'package:package_info_plus/package_info_plus.dart';
+import 'package:social_save/core/constants/app_constants.dart';
 import 'package:social_save/features/updates/release_version.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -29,7 +29,7 @@ class _UpdateCheckerState extends State<UpdateChecker> {
     if (_checked || !mounted) return;
     _checked = true;
     try {
-      final info = await PackageInfo.fromPlatform();
+      final current = AppConstants.appVersion;
       final response = await Dio(
         BaseOptions(
           connectTimeout: const Duration(seconds: 8),
@@ -49,7 +49,7 @@ class _UpdateCheckerState extends State<UpdateChecker> {
         }
       }
       final update = newerRelease(
-        current: info.version,
+        current: current,
         tag: '${data['tag_name'] ?? ''}',
         apkUrl: apk,
         pageUrl: data['html_url'] as String?,
@@ -61,7 +61,7 @@ class _UpdateCheckerState extends State<UpdateChecker> {
         builder: (dialogContext) => AlertDialog(
           title: const Text('Update available'),
           content: Text(
-            'SocialSave ${update.version} is ready. You have ${info.version}.',
+            'SocialSave ${update.version} is ready. You have $current.',
           ),
           actions: [
             TextButton(
