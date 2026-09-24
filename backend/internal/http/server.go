@@ -40,7 +40,7 @@ type Server struct {
 	Jobs      *jobs.Store
 	Registry  *providers.Registry
 	Validator *security.Validator
-	Objects   *storage.Store
+	Objects   storage.Uploader
 	upstream  *http.Client
 	plays     sync.Map
 	preparing sync.Map
@@ -81,7 +81,7 @@ func New(cfg config.Config, validator *security.Validator, store *jobs.Store) *S
 		Jobs:      store,
 		Registry:  providers.NewRegistry(cfg, validator),
 		Validator: validator,
-		Objects:   storage.New(cfg.ObjectStorageURL),
+		Objects:   storage.NewFromConfig(cfg),
 		upstream:  upstream,
 		limiter: &rateLimiter{
 			analyze:  cfg.AnalyzeRateLimit,
@@ -277,7 +277,7 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 	if parsed, err := url.Parse(handle.UpstreamURL); err == nil && parsed.Hostname() != "" {
 		host = parsed.Hostname()
 	}
-	slog.Info("download delivery=direct", "host", host, "size", handle.Filesize, "prepare_local", false)
+	slog.Info("download delivery=direct", "host", host, "size", handle.Filesize, "render_bytes", 0)
 	mime := handle.MimeType
 	name := handle.FileName
 	direct := handle.UpstreamURL
@@ -359,6 +359,17 @@ func (s *Server) jobStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, body)
 }
 
+type byteCounter struct {
+	http.ResponseWriter
+	n int64
+}
+
+func (c *byteCounter) Write(p []byte) (int, error) {
+	n, err := c.ResponseWriter.Write(p)
+	c.n += int64(n)
+	return n, err
+}
+
 func externalDownload(rawURL, requestHost string) bool {
 	parsed, err := url.Parse(rawURL)
 	if err != nil || parsed.Host == "" {
@@ -401,7 +412,7 @@ func (s *Server) file(w http.ResponseWriter, r *http.Request) {
 	if parsed, parseErr := url.Parse(claims.URL); parseErr == nil && parsed.Hostname() != "" {
 		host = parsed.Hostname()
 	}
-	slog.Info("download delivery=redirect", "host", host, "size", claims.Size)
+	slog.Info("download delivery=redirect", "host", host, "size", claims.Size, "render_bytes", 0, "range", r.Header.Get("Range"))
 	http.Redirect(w, r, claims.URL, http.StatusTemporaryRedirect)
 }
 
@@ -434,10 +445,11 @@ func (s *Server) serveJob(w http.ResponseWriter, r *http.Request, claims tokens.
 	if len(short) > 8 {
 		short = short[:8]
 	}
-	slog.Info("download delivery=proxy_file", "job", short, "bytes", info.Size(), "range", r.Header.Get("Range") != "")
-	w.Header().Set("Content-Type", mime)
-	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
-	http.ServeContent(w, r, name, info.ModTime(), file)
+	counter := &byteCounter{ResponseWriter: w}
+	counter.Header().Set("Content-Type", mime)
+	counter.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	http.ServeContent(counter, r, name, info.ModTime(), file)
+	slog.Info("download delivery=proxy_file", "job", short, "bytes", counter.n, "size", info.Size(), "range", r.Header.Get("Range"))
 	file.Close()
 	// The phone probes with a tiny range, then downloads the file in several
 	// pieces. Deleting on that first check made the real save look unauthorized.

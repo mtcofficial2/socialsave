@@ -15,7 +15,17 @@ services:
         generateValue: true
       - key: MAX_DOWNLOAD_BYTES
         value: "2147483647"
-      - key: DEFAULT_MAX_HEIGHT
-        value: "1080"
       - key: JOB_TTL_SECONDS
         value: "600"
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_REGION
+        value: auto
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_URL_TTL_SECONDS
+        value: "3600"

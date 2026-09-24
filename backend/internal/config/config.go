@@ -38,6 +38,13 @@ type Config struct {
 	AnalyzeRateLimit  int
 	DownloadRateLimit int
 	ObjectStorageURL  string
+	S3Endpoint        string
+	S3Region          string
+	S3Bucket          string
+	S3AccessKeyID     string
+	S3SecretAccessKey string
+	S3PublicBaseURL   string
+	S3URLTTL          time.Duration
 	YouTubeAPIKey     string
 	InstagramToken    string
 	FacebookToken     string
@@ -77,6 +84,13 @@ func Load() Config {
 		AnalyzeRateLimit:  parseRate(os.Getenv("ANALYZE_RATE_LIMIT"), defaultAnalyzeRate),
 		DownloadRateLimit: parseRate(os.Getenv("DOWNLOAD_RATE_LIMIT"), defaultDownloadRate),
 		ObjectStorageURL:  strings.TrimSpace(os.Getenv("OBJECT_STORAGE_URL")),
+		S3Endpoint:        strings.TrimRight(strings.TrimSpace(os.Getenv("S3_ENDPOINT")), "/"),
+		S3Region:          getenv("S3_REGION", "us-east-1"),
+		S3Bucket:          strings.TrimSpace(os.Getenv("S3_BUCKET")),
+		S3AccessKeyID:     strings.TrimSpace(os.Getenv("S3_ACCESS_KEY_ID")),
+		S3SecretAccessKey: strings.TrimSpace(os.Getenv("S3_SECRET_ACCESS_KEY")),
+		S3PublicBaseURL:   strings.TrimRight(strings.TrimSpace(os.Getenv("S3_PUBLIC_BASE_URL")), "/"),
+		S3URLTTL:          time.Duration(parseInt(os.Getenv("S3_URL_TTL_SECONDS"), defaultTokenTTL)) * time.Second,
 		YouTubeAPIKey:     strings.TrimSpace(os.Getenv("YOUTUBE_API_KEY")),
 		InstagramToken:    strings.TrimSpace(os.Getenv("INSTAGRAM_ACCESS_TOKEN")),
 		FacebookToken:     strings.TrimSpace(os.Getenv("FACEBOOK_ACCESS_TOKEN")),

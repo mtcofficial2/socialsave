@@ -16,17 +16,15 @@ var qualitySteps = []int{360, 480, 720, 1080, 1440, 2160}
 const bestFormat = "bv*+ba/b"
 
 // RequestedMaxHeight maps a Flutter format id onto a height cap.
-// original and best are uncapped. auto uses the configured default.
+// auto, original, and best are uncapped so they keep the tallest source video.
 func RequestedMaxHeight(formatID string, defaultMax int) *int {
 	quality := strings.ToLower(strings.TrimSpace(formatID))
 	if quality == "" {
 		quality = "auto"
 	}
 	switch quality {
-	case "original", "best":
+	case "original", "best", "auto", "default":
 		return nil
-	case "auto", "default":
-		return &defaultMax
 	case "4k":
 		height := 2160
 		return &height
@@ -42,8 +40,11 @@ func RequestedMaxHeight(formatID string, defaultMax int) *int {
 // FormatSelector is the yt-dlp -f expression for a prepare-local job.
 func FormatSelector(formatID string, hasFFmpeg bool, maxHeight int) string {
 	quality := strings.ToLower(strings.TrimSpace(formatID))
-	if quality == "" || quality == "auto" || quality == "default" {
-		quality = strconv.Itoa(maxHeight) + "p"
+	if quality == "" || quality == "auto" || quality == "default" || quality == "original" || quality == "best" {
+		if hasFFmpeg {
+			return bestFormat + "/b"
+		}
+		return "best[acodec!=none][vcodec!=none]/best"
 	}
 	if hasFFmpeg {
 		// Many small pieces in parallel. One combined file is what YouTube throttles.
@@ -80,7 +81,7 @@ func FormatSelector(formatID string, hasFFmpeg bool, maxHeight int) string {
 	if selector, ok := mapping[strconv.Itoa(maxHeight)+"p"]; ok {
 		return selector
 	}
-	return mapping["480p"]
+	return "best[acodec!=none][vcodec!=none]/best"
 }
 
 func dashFirst(height int) string {

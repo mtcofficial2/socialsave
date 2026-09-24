@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:social_save/core/config/env_config.dart';
+import 'package:social_save/features/downloader/data/datasources/byte_ranges.dart';
 import 'package:social_save/core/errors/error_messages.dart';
 import 'package:social_save/core/errors/exceptions.dart';
 
@@ -194,74 +195,59 @@ class DioFileDownloader implements FileDownloader {
     Map<String, String>? extraHeaders,
     void Function(DownloadProgress progress)? onProgress,
   }) async {
-    const parts = 8;
-    final chunk = (length / parts).ceil();
-    final received = List<int>.filled(parts, 0);
+    final ranges = planByteRanges(length, 8);
+    final received = List<int>.filled(ranges.length, 0);
     final partFiles = <File>[
-      for (var part = 0; part < parts; part++) File('${file.path}.part$part'),
+      for (var part = 0; part < ranges.length; part++) File('${file.path}.part$part'),
     ];
     var lastEmit = DateTime.fromMillisecondsSinceEpoch(0);
     try {
       await Future.wait(<Future<void>>[
-        for (var part = 0; part < parts; part++)
+        for (var part = 0; part < ranges.length; part++)
           () async {
-            final start = part * chunk;
-            if (start >= length) return;
-            var end = start + chunk - 1;
-            if (end >= length) end = length - 1;
+            final range = ranges[part];
             final partFile = partFiles[part];
-            final headers = <String, String>{
-              if (extraHeaders != null) ...extraHeaders,
-              'Range': 'bytes=$start-$end',
-            };
-            final response = await _dio.get<ResponseBody>(
-              url,
-              cancelToken: cancelToken,
-              options: Options(
-                responseType: ResponseType.stream,
-                headers: headers,
-                followRedirects: true,
-                maxRedirects: 5,
-              ),
-            );
-            _assertAllowedType(response.headers.value('content-type'));
-            final raf = await partFile.open(mode: FileMode.write);
-            try {
-              await for (final piece in response.data!.stream) {
-                if (cancelToken.isCancelled) {
-                  throw const AppException(
-                    code: AppErrorCode.downloadInterrupted,
-                    message: ErrorMessages.downloadInterrupted,
-                  );
-                }
-                final data = Uint8List.fromList(piece);
-                await raf.writeFrom(data);
-                received[part] += data.length;
-                if (received[part] > (end - start + 1)) {
-                  throw const AppException(
-                    code: AppErrorCode.serverError,
-                    message: ErrorMessages.serverError,
-                  );
-                }
-                final now = DateTime.now();
-                if (now.difference(lastEmit) >= const Duration(milliseconds: 120)) {
-                  lastEmit = now;
-                  var sum = 0;
-                  for (final value in received) {
-                    sum += value;
-                  }
-                  onProgress?.call(DownloadProgress(received: sum, total: length));
-                }
+            if (partFile.existsSync() && await partFile.length() == range.length) {
+              received[part] = range.length;
+              return;
+            }
+            Object? lastError;
+            for (var attempt = 0; attempt < 3; attempt++) {
+              try {
+                await _downloadOneRange(
+                  url: url,
+                  partFile: partFile,
+                  range: range,
+                  cancelToken: cancelToken,
+                  extraHeaders: extraHeaders,
+                  onBytes: (count) {
+                    received[part] = count;
+                    final now = DateTime.now();
+                    if (now.difference(lastEmit) < const Duration(milliseconds: 120)) {
+                      return;
+                    }
+                    lastEmit = now;
+                    var sum = 0;
+                    for (final value in received) {
+                      sum += value;
+                    }
+                    onProgress?.call(DownloadProgress(received: sum, total: length));
+                  },
+                );
+                received[part] = range.length;
+                return;
+              } catch (error) {
+                lastError = error;
+                if (cancelToken.isCancelled) rethrow;
+                if (partFile.existsSync()) await partFile.delete();
+                received[part] = 0;
               }
-            } finally {
-              await raf.close();
             }
-            if (received[part] != end - start + 1) {
-              throw const AppException(
-                code: AppErrorCode.serverError,
-                message: ErrorMessages.serverError,
-              );
-            }
+            throw lastError ??
+                const AppException(
+                  code: AppErrorCode.serverError,
+                  message: ErrorMessages.serverError,
+                );
           }(),
       ]);
       final out = await file.open(mode: FileMode.write);
@@ -287,6 +273,78 @@ class DioFileDownloader implements FileDownloader {
       sum += value;
     }
     onProgress?.call(DownloadProgress(received: sum, total: length));
+  }
+
+  Future<void> _downloadOneRange({
+    required String url,
+    required File partFile,
+    required ByteRange range,
+    required CancelToken cancelToken,
+    Map<String, String>? extraHeaders,
+    required void Function(int count) onBytes,
+  }) async {
+    final response = await _dio.get<ResponseBody>(
+      url,
+      cancelToken: cancelToken,
+      options: Options(
+        responseType: ResponseType.stream,
+        followRedirects: true,
+        maxRedirects: 5,
+        headers: {
+          if (extraHeaders != null) ...extraHeaders,
+          'Range': range.header,
+        },
+      ),
+    );
+    final status = response.statusCode ?? 0;
+    if (status != 206 && status != 200) {
+      throw const AppException(
+        code: AppErrorCode.serverError,
+        message: ErrorMessages.serverError,
+      );
+    }
+    final declared = contentRangeTotal(
+      response.headers.value('content-range'),
+      range.start,
+      range.end,
+    );
+    if (response.headers.value('content-range') != null && declared == null) {
+      throw const AppException(
+        code: AppErrorCode.serverError,
+        message: ErrorMessages.serverError,
+      );
+    }
+    _assertAllowedType(response.headers.value('content-type'));
+    final raf = await partFile.open(mode: FileMode.write);
+    var count = 0;
+    try {
+      await for (final piece in response.data!.stream) {
+        if (cancelToken.isCancelled) {
+          throw const AppException(
+            code: AppErrorCode.downloadInterrupted,
+            message: ErrorMessages.downloadInterrupted,
+          );
+        }
+        final data = Uint8List.fromList(piece);
+        await raf.writeFrom(data);
+        count += data.length;
+        if (count > range.length) {
+          throw const AppException(
+            code: AppErrorCode.serverError,
+            message: ErrorMessages.serverError,
+          );
+        }
+        onBytes(count);
+      }
+    } finally {
+      await raf.close();
+    }
+    if (count != range.length) {
+      throw const AppException(
+        code: AppErrorCode.serverError,
+        message: ErrorMessages.serverError,
+      );
+    }
   }
 
   Future<void> _downloadSingle({

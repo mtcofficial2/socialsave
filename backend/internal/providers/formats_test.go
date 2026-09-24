@@ -40,8 +40,8 @@ func TestPreferDirectFileDoesNotDowngrade(t *testing.T) {
 }
 
 func TestFormatSelectorCapsHeight(t *testing.T) {
-	if got := RequestedMaxHeight("auto", 1080); got == nil || *got != 1080 {
-		t.Fatalf("auto = %v", got)
+	if RequestedMaxHeight("auto", 1080) != nil {
+		t.Fatal("auto should be uncapped")
 	}
 	if got := RequestedMaxHeight("720p", 1080); got == nil || *got != 720 {
 		t.Fatalf("720p = %v", got)
@@ -49,8 +49,9 @@ func TestFormatSelectorCapsHeight(t *testing.T) {
 	if RequestedMaxHeight("original", 1080) != nil {
 		t.Fatal("original should be uncapped")
 	}
-	if !contains(FormatSelector("auto", true, 1080), "1080") {
-		t.Fatal(FormatSelector("auto", true, 1080))
+	auto := FormatSelector("auto", true, 1080)
+	if contains(auto, "height<=") || !contains(auto, "bv*") {
+		t.Fatal(auto)
 	}
 	if !contains(FormatSelector("720p", true, 1080), "720") {
 		t.Fatal(FormatSelector("720p", true, 1080))
