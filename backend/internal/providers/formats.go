@@ -11,6 +11,8 @@ import (
 
 var qualitySteps = []int{360, 480, 720, 1080, 1440, 2160}
 
+// bestFormat is the highest video plus the highest audio, then a single file.
+// It does not prefer a codec, a bitrate, or a frame rate.
 const bestFormat = "bv*+ba/b"
 
 // RequestedMaxHeight maps a Flutter format id onto a height cap.
@@ -53,7 +55,7 @@ func FormatSelector(formatID string, hasFFmpeg bool, maxHeight int) string {
 			"1440p":    dashFirst(1440),
 			"2160p":    dashFirst(2160),
 			"4k":       dashFirst(2160),
-			"original": "bv*[vcodec^=avc1]+ba/" + bestFormat + "/b",
+			"original": bestFormat + "/b",
 		}
 		if selector, ok := mapping[quality]; ok {
 			return selector
@@ -83,8 +85,7 @@ func FormatSelector(formatID string, hasFFmpeg bool, maxHeight int) string {
 
 func dashFirst(height int) string {
 	limit := strconv.Itoa(height)
-	return "bv*[height<=" + limit + "][vcodec^=avc1]+ba/" +
-		"bv*[height<=" + limit + "]+ba/" +
+	return "bv*[height<=" + limit + "]+ba/" +
 		"b[height<=" + limit + "][acodec!=none][vcodec!=none]/" +
 		"b[height<=" + limit + "]/b"
 }

@@ -55,8 +55,12 @@ func TestFormatSelectorCapsHeight(t *testing.T) {
 	if !contains(FormatSelector("720p", true, 1080), "720") {
 		t.Fatal(FormatSelector("720p", true, 1080))
 	}
-	if !contains(FormatSelector("original", true, 1080), "bv*") {
-		t.Fatal(FormatSelector("original", true, 1080))
+	original := FormatSelector("original", true, 1080)
+	if !contains(original, "bv*") || contains(original, "avc1") || contains(original, "height<=") {
+		t.Fatal(original)
+	}
+	if contains(dashFirst(1080), "avc1") {
+		t.Fatal(dashFirst(1080))
 	}
 }
 

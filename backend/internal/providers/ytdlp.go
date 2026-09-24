@@ -185,7 +185,7 @@ func (r *Runner) WritePlayable(ctx context.Context, pageURL string, dst io.Write
 func (r *Runner) mediaURLs(ctx context.Context, pageURL string) ([]string, error) {
 	args := []string{
 		"-g",
-		"-f", "bv*[height<=720][vcodec^=avc1]+ba/b[height<=720]/b",
+		"-f", bestFormat + "/b",
 		"--no-playlist",
 		"--no-warnings",
 		"--no-progress",
