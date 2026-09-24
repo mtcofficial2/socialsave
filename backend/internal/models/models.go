@@ -85,6 +85,7 @@ type JobStatusResponse struct {
 	ID          string     `json:"id"`
 	State       string     `json:"state"`
 	DownloadURL string     `json:"download_url"`
+	DirectURL   *string    `json:"direct_url,omitempty"`
 	Error       *ErrorBody `json:"error"`
 	Progress    float64    `json:"progress"`
 	Filesize    *int64     `json:"filesize"`

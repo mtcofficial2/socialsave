@@ -556,7 +556,7 @@ extension on _PreviewScreenState {
       _error = null;
     });
     try {
-      final playFormat = media.platform.id == 'youtube' ? 'preview' : format.id;
+      final playFormat = format.id;
       final ticket = await ref.read(mediaRepositoryProvider).requestDownload(
             url: media.sourceUrl,
             formatId: playFormat,
@@ -564,9 +564,7 @@ extension on _PreviewScreenState {
       final direct = ticket.directUrl;
       final directPlayable = direct != null &&
           direct.isNotEmpty &&
-          !direct.contains('onrender.com') &&
-          !direct.contains('googlevideo') &&
-          media.platform.id != 'youtube';
+          !direct.contains('onrender.com');
       var url = directPlayable ? direct! : ticket.downloadUrl;
       if (url.isEmpty && ticket.jobId != null) {
         for (var i = 0; i < 45; i++) {

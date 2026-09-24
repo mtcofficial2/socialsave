@@ -68,6 +68,13 @@ func (s *Social) CreateDownload(ctx context.Context, rawURL, formatID string) (H
 		formatID = "auto"
 	}
 	if formatID == "preview" {
+		info, err := s.runner.Extract(ctx, rawURL, s.cfg)
+		if err == nil {
+			title := safeTitle(firstNonEmpty(info.Title, "video"))
+			if handle, ok, directErr := directFromInfo(info, rawURL, "auto", title, s.cfg); directErr != nil || ok {
+				return handle, directErr
+			}
+		}
 		return Handle{
 			SourceURL: rawURL,
 			FormatID:  "preview",

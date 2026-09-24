@@ -564,13 +564,25 @@
         throw new Error(apiErrorMessage(data, "This source could not be saved."));
       }
       let downloadUrl = data.download_url;
+      let directUrl = data.direct_url;
       let fileName = data.file_name;
       if (data.state === "processing" && data.id) {
-        downloadUrl = await pollJob(task, data.id);
+        const ready = await pollJob(task, data.id);
+        downloadUrl = ready.downloadUrl;
+        directUrl = ready.directUrl || directUrl;
         fileName = fileName || task.title;
       }
-      if (!downloadUrl) throw new Error("No download link was issued for this public video.");
+      if (!downloadUrl && !directUrl) throw new Error("No download link was issued for this public video.");
       if (data.filesize) task.total = data.filesize;
+      const external = usableExternal(directUrl);
+      if (external) {
+        try {
+          await fetchToDevice(task, external, fileName || filenameFor(task));
+          return;
+        } catch {
+          /* The source blocked the browser. The redirect ticket is the fallback. */
+        }
+      }
       await fetchToDevice(task, downloadUrl, fileName || filenameFor(task));
     } catch (err) {
       if (task.status === "cancelled") return;
@@ -592,7 +604,7 @@
       }
       if (data.state === "ready" && data.download_url) {
         if (data.filesize) task.total = data.filesize;
-        return data.download_url;
+        return { downloadUrl: data.download_url, directUrl: data.direct_url || "" };
       }
       if (data.state === "error" || data.error) {
         throw new Error(apiErrorMessage(data.error || data, "Preparing the file failed."));
@@ -601,6 +613,18 @@
       await new Promise((r) => setTimeout(r, 1200));
     }
     throw new Error("The server took too long to prepare this file.");
+  }
+
+  function usableExternal(url) {
+    if (!url || typeof url !== "string") return "";
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+      if (parsed.hostname.endsWith("onrender.com")) return "";
+      return url;
+    } catch {
+      return "";
+    }
   }
 
   function fetchToDevice(task, url, filename) {

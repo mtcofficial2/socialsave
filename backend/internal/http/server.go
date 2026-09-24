@@ -349,10 +349,26 @@ func (s *Server) jobStatus(w http.ResponseWriter, r *http.Request) {
 		Filesize:    job.Filesize,
 		FileName:    job.FileName,
 	}
+	if externalDownload(job.DownloadURL, r.Host) {
+		direct := job.DownloadURL
+		body.DirectURL = &direct
+	}
 	if job.ErrorCode != "" {
 		body.Error = &models.ErrorBody{Code: job.ErrorCode, Message: job.ErrorMessage}
 	}
 	writeJSON(w, http.StatusOK, body)
+}
+
+func externalDownload(rawURL, requestHost string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host != strings.ToLower(requestHost) && !strings.Contains(host, "onrender.com")
 }
 
 func (s *Server) file(w http.ResponseWriter, r *http.Request) {
