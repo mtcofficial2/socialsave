@@ -1036,6 +1036,46 @@
     `);
   }
 
+  async function showPairedLibrary() {
+    const code = ($("pair-code")?.value || "").trim();
+    const list = $("pair-list");
+    if (!list) return;
+    if (!code) {
+      list.textContent = "Enter the code from the phone.";
+      return;
+    }
+    list.textContent = "Looking up that code…";
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/pair/${encodeURIComponent(code)}`);
+      const data = await response.json();
+      const items = Array.isArray(data.items) ? data.items : [];
+      if (!response.ok || !data.success || items.length === 0) {
+        list.textContent = "That code has expired. Create a new one on the phone.";
+        return;
+      }
+      list.replaceChildren();
+      for (const item of items) {
+        const block = document.createElement("p");
+        const title = document.createElement("strong");
+        title.textContent = String(item.title || "Video");
+        block.append(title, document.createElement("br"));
+        block.append(`${item.platform || ""} ${item.quality || ""}`.trim(), document.createElement("br"));
+        const page = String(item.source_url || "");
+        if (page.startsWith("http://") || page.startsWith("https://")) {
+          const link = document.createElement("a");
+          link.href = page;
+          link.target = "_blank";
+          link.rel = "noopener";
+          link.textContent = page;
+          block.append(link);
+        }
+        list.append(block);
+      }
+    } catch {
+      list.textContent = "Could not reach the library code.";
+    }
+  }
+
   function bind() {
     $("url-input").addEventListener("input", (e) => setUrl(e.target.value));
     $("url-input").addEventListener("keydown", (e) => {
@@ -1047,6 +1087,7 @@
       setUrl(SAMPLE_URL);
       analyze();
     });
+    $("pair-btn")?.addEventListener("click", showPairedLibrary);
     $("paste-btn").addEventListener("click", async () => {
       try {
         const text = await navigator.clipboard.readText();

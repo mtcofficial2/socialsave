@@ -104,7 +104,7 @@ func (r *Runner) Download(ctx context.Context, rawURL, formatID string, cfg conf
 	var runErr error
 	for _, extra := range attemptArgs(rawURL) {
 		clearPartials(workDir)
-		args := downloadArgs(rawURL, cfg, selector, out, ffmpeg)
+		args := downloadArgs(rawURL, cfg, selector, out, ffmpeg, formatID)
 		args = append(args, extra...)
 		args = append(args, "--", rawURL)
 		_, errText, err := r.runProgress(ctx, args, workDir, progress)
@@ -416,7 +416,7 @@ func extractArgs(rawURL string, cfg config.Config) []string {
 	return append(args, toolArgs(rawURL)...)
 }
 
-func downloadArgs(rawURL string, cfg config.Config, selector, out, ffmpeg string) []string {
+func downloadArgs(rawURL string, cfg config.Config, selector, out, ffmpeg, formatID string) []string {
 	args := []string{
 		"--no-playlist",
 		"--ignore-config",
@@ -434,7 +434,10 @@ func downloadArgs(rawURL string, cfg config.Config, selector, out, ffmpeg string
 		"-o", out,
 	}
 	if ffmpeg != "" {
-		args = append(args, "--ffmpeg-location", ffmpeg, "--merge-output-format", "mp4", "--remux-video", "mp4")
+		args = append(args, "--ffmpeg-location", ffmpeg)
+		if !strings.EqualFold(strings.TrimSpace(formatID), "audio") {
+			args = append(args, "--merge-output-format", "mp4", "--remux-video", "mp4")
+		}
 	}
 	return append(args, toolArgs(rawURL)...)
 }
@@ -515,6 +518,7 @@ func decodeInfo(stdout string) (mediaInfo, error) {
 
 var videoExts = map[string]struct{}{
 	".mp4": {}, ".webm": {}, ".mov": {}, ".m4v": {}, ".mkv": {}, ".m4a": {},
+	".mp3": {}, ".opus": {}, ".ogg": {}, ".aac": {}, ".flac": {},
 }
 
 func largestMedia(dir string) (string, error) {

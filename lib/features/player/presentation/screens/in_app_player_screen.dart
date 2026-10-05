@@ -57,6 +57,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   double _volume = 100;
   BoxFit _fit = BoxFit.contain;
   bool _pinchZoom = false;
+  bool _locked = false;
+  bool _lockHint = false;
   int? _frameWidth;
   int? _frameHeight;
   Duration? _markA;
@@ -74,6 +76,13 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   }
 
   bool get _hasNext => _queueIndex < _queue.length - 1;
+
+  String? get _heroTag {
+    if (_queueIndex != widget.session.queueIndex) return null;
+    return widget.session.heroTag;
+  }
+
+  Widget _hiddenControls(VideoState state) => const SizedBox.shrink();
 
   @override
   void initState() {
@@ -931,7 +940,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         controller: _video,
         fill: Colors.black,
         fit: _fit,
-        controls: _inPip ? null : MaterialVideoControls,
+        controls: _locked || _inPip ? _hiddenControls : MaterialVideoControls,
       ),
     );
 
@@ -995,6 +1004,15 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                     ),
                   ),
                   IconButton(
+                    tooltip: 'Lock screen',
+                    onPressed: () => setState(() {
+                      _locked = true;
+                      _chrome = false;
+                      _lockHint = true;
+                    }),
+                    icon: const Icon(Icons.lock_outline_rounded, color: Colors.white),
+                  ),
+                  IconButton(
                     tooltip: 'Playback options',
                     onPressed: _showTools,
                     icon: const Icon(Icons.tune_rounded, color: Colors.white),
@@ -1046,7 +1064,11 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                       ),
                     )
                   else
-                    _FittedVideo(
+                    HeroMode(
+                      enabled: _heroTag != null,
+                      child: Hero(
+                        tag: _heroTag ?? 'player-idle',
+                        child: _FittedVideo(
                       width: _frameWidth,
                       height: _frameHeight,
                       child: _pinchZoom
@@ -1057,6 +1079,29 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                               child: video,
                             )
                           : video,
+                        ),
+                      ),
+                    ),
+                  if (_locked)
+                    Positioned.fill(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => setState(() => _lockHint = !_lockHint),
+                        child: _lockHint
+                            ? Center(
+                                child: IconButton(
+                                  tooltip: 'Unlock',
+                                  iconSize: 42,
+                                  onPressed: () => setState(() {
+                                    _locked = false;
+                                    _lockHint = false;
+                                    _chrome = true;
+                                  }),
+                                  icon: const Icon(Icons.lock_open_rounded, color: Colors.white),
+                                ),
+                              )
+                            : const SizedBox.expand(),
+                      ),
                     ),
                   if (_showEndCard) _EndCard(
                     countdown: _countdown,

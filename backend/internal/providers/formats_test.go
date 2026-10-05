@@ -63,6 +63,39 @@ func TestFormatSelectorCapsHeight(t *testing.T) {
 	if contains(dashFirst(1080), "avc1") {
 		t.Fatal(dashFirst(1080))
 	}
+	if RequestedMaxHeight("audio", 1080) != nil {
+		t.Fatal("audio should not apply a height cap")
+	}
+	audio := FormatSelector("audio", true, 1080)
+	if audio != "ba/b" {
+		t.Fatal(audio)
+	}
+}
+
+func TestBuildFormatsKeepsVideoAndAddsAudio(t *testing.T) {
+	info := mediaInfo{
+		Ext:    "mp4",
+		Height: flex(1080),
+		VCodec: "avc1",
+		ACodec: "aac",
+		Formats: []mediaInfo{
+			{Ext: "mp4", VCodec: "avc1", ACodec: "none", Height: flex(1080), TBR: 4000},
+			{Ext: "m4a", VCodec: "none", ACodec: "aac", TBR: 128, Filesize: flex(900000)},
+		},
+	}
+	formats := BuildFormats(info)
+	var saw1080, sawAudio bool
+	for _, item := range formats {
+		if item.ID == "1080p" && item.HasVideo {
+			saw1080 = true
+		}
+		if item.ID == "audio" && item.HasAudio && !item.HasVideo {
+			sawAudio = true
+		}
+	}
+	if !saw1080 || !sawAudio {
+		t.Fatalf("formats = %#v", formats)
+	}
 }
 
 func TestASCIIFilenameStripsEmoji(t *testing.T) {

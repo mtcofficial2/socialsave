@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:social_save/core/di/providers.dart';
+import 'package:social_save/core/errors/error_messages.dart';
 import 'package:social_save/core/errors/exceptions.dart';
 import 'package:social_save/features/downloader/presentation/providers/download_manager.dart';
 import 'package:social_save/features/settings/domain/entities/app_settings.dart';
@@ -91,6 +92,14 @@ class SaveQueueController extends Notifier<List<SaveQueueItem>> {
             detail: 'Saving in Downloads',
           ));
         } on AppException catch (error) {
+          if (error.message == ErrorMessages.alreadySaved) {
+            _replace(current.copyWith(
+              title: current.title,
+              phase: SavePhase.done,
+              detail: 'Already on this phone',
+            ));
+            continue;
+          }
           _replace(current.copyWith(
             phase: SavePhase.failed,
             detail: error.message,

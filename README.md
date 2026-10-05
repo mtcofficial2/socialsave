@@ -122,7 +122,7 @@ Set `PUBLIC_BASE_URL` to the URL the **phone** can reach. For an Android emulato
 | `SECRET_KEY` | HMAC key for temporary download tokens |
 | `ENABLED_PLATFORMS` | Comma-separated provider ids. Remove one to disable it |
 | `REQUIRE_API_KEY` / `API_KEYS` | Optional public client tokens |
-| `MAX_DOWNLOAD_BYTES` | Default 500 MB |
+| `MAX_DOWNLOAD_BYTES` | Default 2 GB (`2147483648`). A size cap, not a quality cap |
 | `YOUTUBE_API_KEY`, `INSTAGRAM_ACCESS_TOKEN`, `FACEBOOK_ACCESS_TOKEN`, `X_BEARER_TOKEN` | Official credentials **only**. Unused keys mean that provider stays metadata-only or disabled |
 
 The contract is documented in `docs/openapi.yaml`.
@@ -133,6 +133,10 @@ POST /api/v1/download    { "url": "https://...", "format_id": "original" }
 GET  /api/v1/download/{id}
 GET  /api/v1/files/{token}
 GET  /api/v1/platforms
+POST /api/v1/playlist    { "url": "https://..." }
+POST /api/v1/summarize   { "title": "...", "author": "...", "source_url": "https://..." }
+POST /api/v1/pair        { "items": [ { "title": "...", "platform": "...", "source_url": "https://...", "quality": "1080p" } ] }
+GET  /api/v1/pair/{code}
 GET  /health
 ```
 

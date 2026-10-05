@@ -13,10 +13,13 @@ import android.os.Build
 import android.os.CancellationSignal
 import android.os.Environment
 import android.provider.MediaStore
+import android.provider.Settings
 import android.util.Rational
 import android.util.Size
 import android.view.WindowManager
-import io.flutter.embedding.android.FlutterActivity
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
+import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
@@ -24,7 +27,7 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.util.concurrent.Executors
 
-class MainActivity : FlutterActivity() {
+class MainActivity : FlutterFragmentActivity() {
     private val channelName = "socialsave/media"
     private var channel: MethodChannel? = null
     private var pendingShare: String? = null
@@ -32,10 +35,27 @@ class MainActivity : FlutterActivity() {
     private var pipWidth = 16
     private var pipHeight = 9
     private val io = Executors.newFixedThreadPool(3)
+    private var backupResult: MethodChannel.Result? = null
+    private val openBackup = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val pending = backupResult
+        backupResult = null
+        if (pending == null) return@registerForActivityResult
+        if (uri == null) {
+            pending.success(null)
+            return@registerForActivityResult
+        }
+        try {
+            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            pending.success(bytes)
+        } catch (error: Exception) {
+            pending.error("read_failed", error.message, null)
+        }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
+        DownloadEvents.channel = channel
         channel?.setMethodCallHandler { call, result ->
             when (call.method) {
                 "scanFile" -> {
@@ -165,6 +185,44 @@ class MainActivity : FlutterActivity() {
                         }
                     }
                     result.success(secure)
+                }
+                "installApk" -> {
+                    val path = call.argument<String>("path")
+                    if (path.isNullOrBlank()) {
+                        result.error("missing", "No APK path", null)
+                        return@setMethodCallHandler
+                    }
+                    result.success(installApk(path))
+                }
+                "keepAlive" -> {
+                    val intent = Intent(this, DownloadKeepAliveService::class.java).apply {
+                        putExtra(DownloadKeepAliveService.EXTRA_ID, call.argument<String>("id"))
+                        putExtra(DownloadKeepAliveService.EXTRA_TITLE, call.argument<String>("title"))
+                        putExtra(DownloadKeepAliveService.EXTRA_TEXT, call.argument<String>("text"))
+                        putExtra(DownloadKeepAliveService.EXTRA_PROGRESS, call.argument<Int>("progress") ?: 0)
+                        putExtra(DownloadKeepAliveService.EXTRA_PAUSED, call.argument<Boolean>("paused") == true)
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        startForegroundService(intent)
+                    } else {
+                        startService(intent)
+                    }
+                    result.success(true)
+                }
+                "stopKeepAlive" -> {
+                    val intent = Intent(this, DownloadKeepAliveService::class.java).apply {
+                        action = DownloadKeepAliveService.ACTION_STOP
+                    }
+                    startService(intent)
+                    result.success(true)
+                }
+                "pickBackup" -> {
+                    if (backupResult != null) {
+                        result.error("busy", "A file picker is already open", null)
+                        return@setMethodCallHandler
+                    }
+                    backupResult = result
+                    openBackup.launch(arrayOf("application/octet-stream", "application/*", "*/*"))
                 }
                 else -> result.notImplemented()
             }
@@ -531,6 +589,26 @@ class MainActivity : FlutterActivity() {
             null,
             null,
         )
+        return true
+    }
+
+    private fun installApk(path: String): Boolean {
+        val file = File(path)
+        if (!file.exists()) return false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+            val settings = Intent(
+                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:$packageName"),
+            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(settings)
+            return false
+        }
+        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(intent)
         return true
     }
 }

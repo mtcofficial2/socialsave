@@ -19,6 +19,10 @@ void main() {
     );
     final connectivity = MockConnectivityService();
     when(() => connectivity.current()).thenAnswer((_) async => NetworkAccess.wifi);
+    tester.view.physicalSize = const Size(1200, 2800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
 
     await tester.pumpWidget(
       ProviderScope(
@@ -39,8 +43,9 @@ void main() {
     expect(find.byKey(const Key('url-input')), findsOneWidget);
     expect(find.byKey(const Key('paste-button')), findsOneWidget);
     expect(find.byKey(const Key('analyze-button')), findsOneWidget);
-    expect(find.textContaining('Supported Platforms'), findsOneWidget);
-    expect(find.textContaining('Compliance Notice'), findsOneWidget);
+    expect(find.text('Save a public playlist'), findsOneWidget);
+    expect(find.text('Compliance Notice'), findsOneWidget);
+    expect(find.text('Supported Platforms'), findsOneWidget);
   });
 
   testWidgets('analyze with empty URL shows an error', (tester) async {

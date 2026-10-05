@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	defaultMaxDownloadBytes int64 = 268435456 // 256 MiB, sized for free-tier hosts
+	defaultMaxDownloadBytes int64 = 2147483648 // 2 GiB. This is a size cap, not a quality cap.
 	defaultMaxHeight              = 1080
 	defaultTokenTTL               = 3600
 	defaultJobTTL                 = 600
@@ -50,6 +50,7 @@ type Config struct {
 	InstagramToken       string
 	FacebookToken        string
 	XBearerToken         string
+	XAIAPIKey            string
 	Port                 string
 	WebRoot              string
 }
@@ -97,6 +98,7 @@ func Load() Config {
 		InstagramToken:       strings.TrimSpace(os.Getenv("INSTAGRAM_ACCESS_TOKEN")),
 		FacebookToken:        strings.TrimSpace(os.Getenv("FACEBOOK_ACCESS_TOKEN")),
 		XBearerToken:         strings.TrimSpace(os.Getenv("X_BEARER_TOKEN")),
+		XAIAPIKey:            strings.TrimSpace(os.Getenv("XAI_API_KEY")),
 		Port:                 getenv("PORT", "8080"),
 		WebRoot:              strings.TrimSpace(os.Getenv("WEB_ROOT")),
 	}

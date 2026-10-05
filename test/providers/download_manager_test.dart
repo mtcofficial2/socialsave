@@ -35,7 +35,11 @@ class _RecordingDownloader implements FileDownloader {
   bool fail = false;
 
   @override
-  Future<RemoteFileProbe> probe(String url, {CancelToken? cancelToken}) async {
+  Future<RemoteFileProbe> probe(
+    String url, {
+    CancelToken? cancelToken,
+    Map<String, String>? extraHeaders,
+  }) async {
     return const RemoteFileProbe(supportsResume: true, contentLength: 4);
   }
 

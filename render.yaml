@@ -14,7 +14,7 @@ services:
       - key: SECRET_KEY
         generateValue: true
       - key: MAX_DOWNLOAD_BYTES
-        value: "524288000"
+        value: "2147483648"
       - key: JOB_TTL_SECONDS
         value: "600"
       - key: ALLOW_RENDER_FILE_PROXY

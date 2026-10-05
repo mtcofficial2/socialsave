@@ -10,6 +10,7 @@ import 'package:social_save/features/home/presentation/widgets/recent_downloads_
 import 'package:social_save/features/home/presentation/widgets/supported_platforms.dart';
 import 'package:social_save/features/home/presentation/widgets/save_queue_section.dart';
 import 'package:social_save/features/home/presentation/widgets/url_input_card.dart';
+import 'package:social_save/features/updates/update_card.dart';
 import 'package:social_save/shared/widgets/brand_header.dart';
 import 'package:social_save/shared/widgets/compliance_notice.dart';
 
@@ -94,6 +95,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     await context.push('/preview', extra: url);
   }
 
+  Future<void> _playlist() async {
+    final url = ref.read(homeControllerProvider.notifier).validatedUrl();
+    if (url == null || !mounted) return;
+    HapticFeedback.lightImpact();
+    await context.push('/playlist', extra: url);
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -114,7 +122,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                   ),
             ),
             const SizedBox(height: 16),
+            const UpdateCard(),
             UrlInputCard(onAnalyze: _analyze, onPaste: _paste),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _playlist,
+                icon: const Icon(Icons.playlist_play_rounded),
+                label: const Text('Save a public playlist'),
+              ),
+            ),
             const SizedBox(height: 12),
             const SaveQueueSection(),
             const SizedBox(height: 16),

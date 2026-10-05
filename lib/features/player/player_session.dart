@@ -68,6 +68,7 @@ class PlayerSession {
     this.isVault = false,
     this.queue = const [],
     this.queueIndex = 0,
+    this.heroTag,
   });
 
   final String title;
@@ -82,6 +83,7 @@ class PlayerSession {
   final bool isVault;
   final List<PlayerQueueItem> queue;
   final int queueIndex;
+  final String? heroTag;
 
   factory PlayerSession.fromRecord(DownloadRecord record) {
     return PlayerSession(

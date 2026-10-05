@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:social_save/features/downloader/presentation/screens/active_download_screen.dart';
+import 'package:social_save/features/downloader/presentation/screens/playlist_screen.dart';
 import 'package:social_save/features/downloader/presentation/screens/preview_screen.dart';
 import 'package:social_save/features/downloads/presentation/screens/download_detail_screen.dart';
 import 'package:social_save/features/downloads/presentation/screens/downloads_screen.dart';
@@ -71,6 +72,13 @@ final appRouter = GoRouter(
           ],
         ),
       ],
+    ),
+    GoRoute(
+      path: '/playlist',
+      builder: (context, state) {
+        final extra = state.extra;
+        return PlaylistScreen(url: extra is String ? extra : '');
+      },
     ),
     GoRoute(
       path: '/preview',

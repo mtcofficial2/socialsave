@@ -97,3 +97,55 @@ type HealthResponse struct {
 	Status  string `json:"status"`
 	Version string `json:"version"`
 }
+
+// PlaylistEntry is one public item from a playlist page.
+type PlaylistEntry struct {
+	Title    string `json:"title"`
+	URL      string `json:"url"`
+	Duration *int   `json:"duration"`
+}
+
+// PlaylistResponse is POST /api/v1/playlist.
+type PlaylistResponse struct {
+	Success bool            `json:"success"`
+	Items   []PlaylistEntry `json:"items"`
+}
+
+// SummarizeRequest is metadata for a video the phone already saved.
+type SummarizeRequest struct {
+	Title     string `json:"title"`
+	Author    string `json:"author"`
+	SourceURL string `json:"source_url"`
+}
+
+// SummarizeResponse is POST /api/v1/summarize.
+type SummarizeResponse struct {
+	Success bool   `json:"success"`
+	Summary string `json:"summary"`
+}
+
+// PairItem is one library title. It never includes a local file path.
+type PairItem struct {
+	Title     string `json:"title"`
+	Platform  string `json:"platform"`
+	SourceURL string `json:"source_url"`
+	Quality   string `json:"quality"`
+}
+
+// PairCreateRequest is POST /api/v1/pair.
+type PairCreateRequest struct {
+	Items []PairItem `json:"items"`
+}
+
+// PairCreateResponse returns a short code the computer can redeem.
+type PairCreateResponse struct {
+	Success   bool   `json:"success"`
+	Code      string `json:"code"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+// PairReadResponse is GET /api/v1/pair/{code}.
+type PairReadResponse struct {
+	Success bool       `json:"success"`
+	Items   []PairItem `json:"items"`
+}

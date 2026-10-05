@@ -5,7 +5,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:social_save/core/di/providers.dart';
+import 'package:social_save/features/downloads/domain/entities/download_record.dart';
 import 'package:social_save/features/library/device_media.dart';
+import 'package:social_save/features/library/library_catalog.dart';
+import 'package:social_save/features/library/summarize_sheet.dart';
 import 'package:social_save/features/library/vault_service.dart';
 import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/features/player/player_session.dart';
@@ -34,6 +38,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   String? _error;
   String _query = '';
   String _platform = 'All';
+  bool _favoritesOnly = false;
+  String? _collection;
   List<DeviceVideo> _device = [];
   List<VaultItem> _vault = [];
   final Map<String, String> _vaultPaths = {};
@@ -126,6 +132,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
         filePath: path,
         queue: queue,
         queueIndex: index < 0 ? 0 : index,
+        heroTag: 'library-${video.id}',
       ),
     );
   }
@@ -261,6 +268,39 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
               ),
             ),
             const SizedBox(height: 8),
+            SizedBox(
+              height: 40,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: FilterChip(
+                      label: const Text('Favorites'),
+                      selected: _favoritesOnly,
+                      onSelected: (value) => setState(() => _favoritesOnly = value),
+                    ),
+                  ),
+                  for (final name in ref.watch(libraryCatalogProvider).collectionNames)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        label: Text(name),
+                        selected: _collection == name,
+                        onSelected: (_) => setState(() {
+                          _collection = _collection == name ? null : name;
+                        }),
+                      ),
+                    ),
+                  ActionChip(
+                    label: const Text('New collection'),
+                    onPressed: _createCollection,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
             Expanded(
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
@@ -292,7 +332,13 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   }
 
   bool _matchesVideo(DeviceVideo video) {
-    return _matchesText('${video.title} ${video.path ?? ''}');
+    if (!_matchesText('${video.title} ${video.path ?? ''}')) return false;
+    final catalog = ref.read(libraryCatalogProvider);
+    final key = 'device:${video.id}';
+    if (_favoritesOnly && !catalog.isFavorite(key)) return false;
+    final collection = _collection;
+    if (collection != null && !catalog.inCollection(collection, key)) return false;
+    return true;
   }
 
   bool _matchesVault(VaultItem item) {
@@ -481,6 +527,30 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
               onTap: () => Navigator.pop(context, 'share'),
             ),
             ListTile(
+              leading: Icon(
+                ref.read(libraryCatalogProvider).isFavorite('device:${video.id}')
+                    ? Icons.favorite_rounded
+                    : Icons.favorite_border_rounded,
+              ),
+              title: const Text('Favorite'),
+              onTap: () => Navigator.pop(context, 'favorite'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.folder_outlined),
+              title: const Text('Add to collection'),
+              onTap: () => Navigator.pop(context, 'collection'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.notes_outlined),
+              title: const Text('Note'),
+              onTap: () => Navigator.pop(context, 'note'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.auto_awesome_outlined),
+              title: const Text('Summarize'),
+              onTap: () => Navigator.pop(context, 'summary'),
+            ),
+            ListTile(
               leading: const Icon(Icons.info_outline),
               title: const Text('Details'),
               onTap: () => Navigator.pop(context, 'details'),
@@ -509,6 +579,30 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
       await Share.shareXFiles([XFile(path)], text: video.title);
       return;
     }
+    if (action == 'favorite') {
+      await ref.read(libraryCatalogProvider.notifier).toggleFavorite('device:${video.id}');
+      return;
+    }
+    if (action == 'collection') {
+      await _addVideoToCollection(video);
+      return;
+    }
+    if (action == 'note') {
+      await _editNote('device:${video.id}');
+      return;
+    }
+    if (action == 'summary') {
+      final record = await _recordForPath(video.path);
+      if (!mounted) return;
+      await showVideoSummary(
+        context,
+        ref,
+        title: video.title,
+        author: record?.author,
+        sourceUrl: record?.sourceUrl,
+      );
+      return;
+    }
     if (action == 'details') {
       if (!mounted) return;
       await showDialog<void>(
@@ -516,7 +610,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
         builder: (context) => AlertDialog(
           title: Text(video.title),
           content: Text(
-            '${_durationLabel((video.durationMs / 1000).round(), video.size)}\n${video.path ?? video.uri ?? ''}',
+            '${_durationLabel((video.durationMs / 1000).round(), video.size)}\n${video.path ?? video.uri ?? ''}\n${ref.read(libraryCatalogProvider).notes['device:${video.id}'] ?? ''}',
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
@@ -605,6 +699,80 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     if (action == 'copy') await _addToVault(video, move: false);
     if (action == 'move') await _addToVault(video, move: true);
   }
+
+  Future<void> _createCollection() async {
+    final name = await _askText('New collection', 'Name');
+    if (name == null || name.isEmpty) return;
+    await ref.read(libraryCatalogProvider.notifier).createCollection(name);
+    if (!mounted) return;
+    setState(() => _collection = name.trim());
+  }
+
+  Future<void> _addVideoToCollection(DeviceVideo video) async {
+    final catalog = ref.read(libraryCatalogProvider);
+    final names = catalog.collectionNames;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final name in names)
+              ListTile(
+                title: Text(name),
+                onTap: () => Navigator.pop(context, name),
+              ),
+            ListTile(
+              leading: const Icon(Icons.add),
+              title: const Text('New collection'),
+              onTap: () => Navigator.pop(context, ''),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || choice == null) return;
+    var name = choice;
+    if (name.isEmpty) {
+      final created = await _askText('New collection', 'Name');
+      if (created == null || created.isEmpty) return;
+      name = created;
+    }
+    await ref.read(libraryCatalogProvider.notifier).addToCollection(name, 'device:${video.id}');
+  }
+
+  Future<void> _editNote(String key) async {
+    final current = ref.read(libraryCatalogProvider).notes[key] ?? '';
+    final note = await _askText('Note', 'A note for this video', initial: current);
+    if (note == null) return;
+    await ref.read(libraryCatalogProvider.notifier).setNote(key, note);
+  }
+
+  Future<String?> _askText(String title, String label, {String initial = ''}) async {
+    final controller = TextEditingController(text: initial);
+    final value = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: TextField(controller: controller, autofocus: true, decoration: InputDecoration(labelText: label)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('Save')),
+        ],
+      ),
+    );
+    controller.dispose();
+    return value;
+  }
+
+  Future<DownloadRecord?> _recordForPath(String? path) async {
+    if (path == null || path.isEmpty) return null;
+    final records = await ref.read(downloadsRepositoryProvider).getAll();
+    for (final record in records) {
+      if (record.localPath == path) return record;
+    }
+    return null;
+  }
 }
 
 class _DeviceList extends StatelessWidget {
@@ -651,6 +819,7 @@ class _DeviceList extends StatelessWidget {
           durationLabel: _clock(seconds),
           onTap: () => onPlay(video),
           onLongPress: () => onActions(video),
+          heroTag: 'library-${video.id}',
           action: IconButton(
             tooltip: 'Add to vault',
             onPressed: () => onVault(video),
@@ -687,6 +856,7 @@ class _VideoCard extends StatelessWidget {
     this.durationLabel,
     this.locked = false,
     this.action,
+    this.heroTag,
   });
 
   final String cacheKey;
@@ -700,6 +870,7 @@ class _VideoCard extends StatelessWidget {
   final String? durationLabel;
   final bool locked;
   final Widget? action;
+  final String? heroTag;
 
   @override
   Widget build(BuildContext context) {
@@ -723,12 +894,18 @@ class _VideoCard extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  LocalVideoThumb(
-                    cacheKey: cacheKey,
-                    id: id,
-                    path: path,
-                    uri: uri,
-                    borderRadius: 0,
+                  HeroMode(
+                    enabled: (ModalRoute.of(context)?.isCurrent ?? true) && heroTag != null,
+                    child: Hero(
+                      tag: heroTag ?? cacheKey,
+                      child: LocalVideoThumb(
+                        cacheKey: cacheKey,
+                        id: id,
+                        path: path,
+                        uri: uri,
+                        borderRadius: 0,
+                      ),
+                    ),
                   ),
                   const DecoratedBox(
                     decoration: BoxDecoration(

@@ -52,7 +52,10 @@ class PreviewController extends FamilyNotifier<PreviewState, MediaInfo> {
   void selectFormat(MediaFormat format) {
     state = state.copyWith(selectedFormat: format, clearError: true);
     unawaited(
-      ref.read(settingsControllerProvider.notifier).setLastChosenQuality(format.quality),
+      ref.read(settingsControllerProvider.notifier).rememberPlatformQuality(
+            state.media.platform.id,
+            format.quality,
+          ),
     );
   }
 
@@ -75,6 +78,13 @@ class PreviewController extends FamilyNotifier<PreviewState, MediaInfo> {
         }
       }
       return null;
+    }
+
+    final platformQuality =
+        settings.qualityByPlatform[media.platform.id]?.toLowerCase();
+    if (platformQuality != null && platformQuality.isNotEmpty) {
+      final platformMatch = match(quality: platformQuality);
+      if (platformMatch != null) return platformMatch;
     }
 
     final remembered = settings.lastChosenQuality?.toLowerCase();

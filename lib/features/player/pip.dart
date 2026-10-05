@@ -1,17 +1,15 @@
-import 'package:flutter/services.dart';
+import 'package:social_save/core/platform/media_events.dart';
 
 class PipController {
-  static const _channel = MethodChannel('socialsave/media');
-
   static Future<void> setAllowed(bool allowed) async {
     try {
-      await _channel.invokeMethod<void>('setPipAllowed', {'allowed': allowed});
+      await MediaEvents.channel.invokeMethod<void>('setPipAllowed', {'allowed': allowed});
     } catch (_) {}
   }
 
   static Future<void> setAspect(int width, int height) async {
     try {
-      await _channel.invokeMethod<void>('setPipAspect', {
+      await MediaEvents.channel.invokeMethod<void>('setPipAspect', {
         'width': width,
         'height': height,
       });
@@ -20,21 +18,19 @@ class PipController {
 
   static Future<bool> enter() async {
     try {
-      return await _channel.invokeMethod<bool>('enterPip') ?? false;
+      return await MediaEvents.channel.invokeMethod<bool>('enterPip') ?? false;
     } catch (_) {
       return false;
     }
   }
 
   static void listen(void Function(bool inPip) onChanged) {
-    _channel.setMethodCallHandler((call) async {
-      if (call.method == 'pipChanged') {
-        onChanged(call.arguments == true);
-      }
+    MediaEvents.on('pipChanged', (args) async {
+      onChanged(args == true);
     });
   }
 
   static void clearListener() {
-    _channel.setMethodCallHandler(null);
+    MediaEvents.off('pipChanged');
   }
 }

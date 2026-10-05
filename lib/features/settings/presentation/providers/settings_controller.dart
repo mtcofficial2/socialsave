@@ -53,6 +53,19 @@ class SettingsController extends Notifier<AppSettings> {
     return _commit(state.copyWith(lastChosenQuality: quality));
   }
 
+  Future<void> rememberPlatformQuality(String platformId, String quality) {
+    final next = Map<String, String>.from(state.qualityByPlatform);
+    next[platformId] = quality;
+    return _commit(state.copyWith(
+      lastChosenQuality: quality,
+      qualityByPlatform: next,
+    ));
+  }
+
+  Future<void> setUseDynamicColor(bool value) {
+    return _commit(state.copyWith(useDynamicColor: value));
+  }
+
   Future<void> _commit(AppSettings next) async {
     state = next;
     await ref.read(settingsRepositoryProvider).save(next);

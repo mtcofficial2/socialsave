@@ -23,7 +23,7 @@ func RequestedMaxHeight(formatID string, defaultMax int) *int {
 		quality = "auto"
 	}
 	switch quality {
-	case "original", "best", "auto", "default":
+	case "original", "best", "auto", "default", "audio":
 		return nil
 	case "4k":
 		height := 2160
@@ -40,6 +40,12 @@ func RequestedMaxHeight(formatID string, defaultMax int) *int {
 // FormatSelector is the yt-dlp -f expression for a prepare-local job.
 func FormatSelector(formatID string, hasFFmpeg bool, maxHeight int) string {
 	quality := strings.ToLower(strings.TrimSpace(formatID))
+	if quality == "audio" {
+		if hasFFmpeg {
+			return "ba/b"
+		}
+		return "bestaudio/best"
+	}
 	if quality == "" || quality == "auto" || quality == "default" || quality == "original" || quality == "best" {
 		if hasFFmpeg {
 			return bestFormat + "/b"
@@ -105,6 +111,7 @@ type mediaInfo struct {
 	Filesize    flexInt        `json:"filesize"`
 	FilesizeAp  flexInt        `json:"filesize_approx"`
 	URL         string         `json:"url"`
+	WebpageURL  string         `json:"webpage_url"`
 	VCodec      string         `json:"vcodec"`
 	ACodec      string         `json:"acodec"`
 	Protocol    string         `json:"protocol"`
@@ -240,7 +247,47 @@ func BuildFormats(info mediaInfo) []models.MediaFormat {
 		HasAudio: true,
 		HasVideo: true,
 	})
+	if audio, ok := audioChoice(info); ok {
+		formats = append(formats, audio)
+	}
 	return formats
+}
+
+// audioChoice is an extra format. It does not replace or cap any video format.
+func audioChoice(info mediaInfo) (models.MediaFormat, bool) {
+	if !hasAnyAudio(info) {
+		return models.MediaFormat{}, false
+	}
+	ext := "m4a"
+	for _, item := range info.Formats {
+		if hasAudio(item) && !hasVideo(item) {
+			candidate := strings.TrimPrefix(strings.ToLower(item.Ext), ".")
+			if candidate != "" {
+				ext = candidate
+				break
+			}
+		}
+	}
+	return models.MediaFormat{
+		ID:       "audio",
+		Quality:  "audio",
+		Format:   ext,
+		Filesize: bestAudioSize(info.Formats),
+		HasAudio: true,
+		HasVideo: false,
+	}, true
+}
+
+func hasAnyAudio(info mediaInfo) bool {
+	if hasAudio(info) {
+		return true
+	}
+	for _, item := range info.Formats {
+		if hasAudio(item) {
+			return true
+		}
+	}
+	return false
 }
 
 type progressive struct {
@@ -338,6 +385,9 @@ func bestVideoHeight(info mediaInfo, maxHeight *int) int {
 // preferDirectFile reports whether a single-file URL is as tall as the best
 // available video. A shorter file is not used in place of a taller one.
 func directFromInfo(info mediaInfo, rawURL, formatID, title string, cfg config.Config) (Handle, bool, error) {
+	if strings.EqualFold(strings.TrimSpace(formatID), "audio") {
+		return Handle{}, false, nil
+	}
 	maxHeight := RequestedMaxHeight(formatID, cfg.DefaultMaxHeight)
 	stream := PickProgressive(info, maxHeight)
 	if stream == nil || !strings.HasPrefix(stream.URL, "http") || needsSession(stream.URL, stream.Headers) {

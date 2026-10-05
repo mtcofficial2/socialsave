@@ -5,6 +5,7 @@ import 'package:social_save/core/network/dio_client.dart';
 import 'package:social_save/shared/models/download_ticket.dart';
 import 'package:social_save/shared/models/media_info.dart';
 import 'package:social_save/shared/models/platform_catalog.dart';
+import 'package:social_save/shared/models/playlist_entry.dart';
 
 class MediaApiClient {
   MediaApiClient(this._client);
@@ -62,6 +63,64 @@ class MediaApiClient {
           ),
         )
         .toList();
+  }
+
+  Future<List<PlaylistEntry>> playlist(String url) async {
+    final response = await _client.post<Map<String, dynamic>>(
+      ApiEndpoints.playlist,
+      data: {'url': url},
+    );
+    final data = _requireMap(response.data);
+    _ensureSuccess(data);
+    final items = data['items'];
+    if (items is! List) return const [];
+    return items
+        .whereType<Map>()
+        .map((item) => PlaylistEntry.fromJson(Map<String, dynamic>.from(item)))
+        .where((item) => item.url.isNotEmpty)
+        .toList();
+  }
+
+  Future<String> summarize({
+    required String title,
+    String? author,
+    String? sourceUrl,
+  }) async {
+    final response = await _client.post<Map<String, dynamic>>(
+      ApiEndpoints.summarize,
+      data: {
+        'title': title,
+        'author': author ?? '',
+        'source_url': sourceUrl ?? '',
+      },
+    );
+    final data = _requireMap(response.data);
+    _ensureSuccess(data);
+    final summary = data['summary'];
+    if (summary is! String || summary.trim().isEmpty) {
+      throw const AppException(
+        code: AppErrorCode.serverError,
+        message: ErrorMessages.serverError,
+      );
+    }
+    return summary.trim();
+  }
+
+  Future<String> createPair(List<Map<String, String>> items) async {
+    final response = await _client.post<Map<String, dynamic>>(
+      ApiEndpoints.pair,
+      data: {'items': items},
+    );
+    final data = _requireMap(response.data);
+    _ensureSuccess(data);
+    final code = data['code'];
+    if (code is! String || code.isEmpty) {
+      throw const AppException(
+        code: AppErrorCode.serverError,
+        message: ErrorMessages.serverError,
+      );
+    }
+    return code;
   }
 
   Map<String, dynamic> _requireMap(Map<String, dynamic>? data) {

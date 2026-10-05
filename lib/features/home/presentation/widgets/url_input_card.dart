@@ -105,6 +105,17 @@ class _UrlInputCardState extends ConsumerState<UrlInputCard> {
                     height: 1.35,
                   ),
             ),
+            if (state.canPasteLink) ...[
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: ActionChip(
+                  avatar: const Icon(Icons.content_paste_rounded, size: 18),
+                  label: const Text('Link on clipboard'),
+                  onPressed: () => widget.onPaste(),
+                ),
+              ),
+            ],
             const SizedBox(height: 14),
             Container(
               padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),

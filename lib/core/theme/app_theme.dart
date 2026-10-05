@@ -5,11 +5,11 @@ import 'package:social_save/core/theme/app_colors.dart';
 class AppTheme {
   const AppTheme._();
 
-  static ThemeData light({String fontFamily = 'Inter'}) =>
-      _theme(AppColors.lightScheme(), fontFamily);
+  static ThemeData light({String fontFamily = 'Inter', ColorScheme? colorScheme}) =>
+      _theme(colorScheme ?? AppColors.lightScheme(), fontFamily);
 
-  static ThemeData dark({String fontFamily = 'Inter'}) =>
-      _theme(AppColors.darkScheme(), fontFamily);
+  static ThemeData dark({String fontFamily = 'Inter', ColorScheme? colorScheme}) =>
+      _theme(colorScheme ?? AppColors.darkScheme(), fontFamily);
 
   static ThemeData _theme(ColorScheme scheme, String fontFamily) {
     final base = ThemeData(

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/constants/app_constants.dart';
 import 'package:social_save/features/settings/domain/entities/app_settings.dart';
@@ -23,6 +25,10 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
       '${AppConstants.settingsPrefsPrefix}autoPlayNextInGallery';
   static const _lastQuality =
       '${AppConstants.settingsPrefsPrefix}lastChosenQuality';
+  static const _qualityByPlatform =
+      '${AppConstants.settingsPrefsPrefix}qualityByPlatform';
+  static const _dynamicColor =
+      '${AppConstants.settingsPrefsPrefix}useDynamicColor';
 
   @override
   Future<AppSettings> load() async {
@@ -37,6 +43,8 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
       'fontFamily': _prefs.getString(_fontFamily),
       'autoPlayNextInGallery': _prefs.getBool(_autoPlayNext),
       'lastChosenQuality': _prefs.getString(_lastQuality),
+      'qualityByPlatform': _decodePlatforms(_prefs.getString(_qualityByPlatform)),
+      'useDynamicColor': _prefs.getBool(_dynamicColor),
     });
   }
 
@@ -59,6 +67,22 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
       await _prefs.remove(_lastQuality);
     } else {
       await _prefs.setString(_lastQuality, last);
+    }
+    await _prefs.setString(
+      _qualityByPlatform,
+      jsonEncode(settings.qualityByPlatform),
+    );
+    await _prefs.setBool(_dynamicColor, settings.useDynamicColor);
+  }
+
+  Map<String, String> _decodePlatforms(String? raw) {
+    if (raw == null || raw.isEmpty) return const {};
+    try {
+      final data = jsonDecode(raw);
+      if (data is! Map) return const {};
+      return data.map((key, value) => MapEntry('$key', '$value'));
+    } catch (_) {
+      return const {};
     }
   }
 }

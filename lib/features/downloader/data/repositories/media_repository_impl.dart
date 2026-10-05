@@ -7,6 +7,7 @@ import 'package:social_save/features/downloader/domain/repositories/media_reposi
 import 'package:social_save/shared/models/download_ticket.dart';
 import 'package:social_save/shared/models/media_info.dart';
 import 'package:social_save/shared/models/platform_catalog.dart';
+import 'package:social_save/shared/models/playlist_entry.dart';
 
 class MediaRepositoryImpl implements MediaRepository {
   MediaRepositoryImpl({
@@ -68,6 +69,38 @@ class MediaRepositoryImpl implements MediaRepository {
       );
     }
     return result.normalized.toString();
+  }
+
+  @override
+  Future<List<PlaylistEntry>> playlist(String url) async {
+    final normalized = _requireValidUrl(url);
+    await _requireNetwork();
+    return _apiClient.playlist(normalized);
+  }
+
+  @override
+  Future<String> summarize({
+    required String title,
+    String? author,
+    String? sourceUrl,
+  }) async {
+    await _requireNetwork();
+    return _apiClient.summarize(title: title, author: author, sourceUrl: sourceUrl);
+  }
+
+  @override
+  Future<String> createPair(List<Map<String, String>> items) async {
+    await _requireNetwork();
+    final safe = <Map<String, String>>[];
+    for (final item in items) {
+      safe.add({
+        'title': item['title'] ?? '',
+        'platform': item['platform'] ?? '',
+        'source_url': item['source_url'] ?? item['sourceUrl'] ?? '',
+        'quality': item['quality'] ?? '',
+      });
+    }
+    return _apiClient.createPair(safe);
   }
 
   Future<void> _requireNetwork() async {

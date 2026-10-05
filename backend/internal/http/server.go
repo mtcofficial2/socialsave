@@ -45,6 +45,7 @@ type Server struct {
 	plays     sync.Map
 	preparing sync.Map
 	limiter   *rateLimiter
+	pairs     pairStore
 }
 
 // New wires the handlers. jobs may be nil and will be created from config.
@@ -108,6 +109,10 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requireKey).Get("/platforms", s.platforms)
 		r.With(s.requireKey).Post("/analyze", s.analyze)
 		r.With(s.requireKey).Post("/download", s.download)
+		r.With(s.requireKey).Post("/playlist", s.playlist)
+		r.With(s.requireKey).Post("/summarize", s.summarize)
+		r.With(s.requireKey).Post("/pair", s.createPair)
+		r.Get("/pair/{code}", s.readPair)
 		r.Get("/download/{job_id}", s.jobStatus)
 		r.Get("/files/{token}", s.file)
 	})

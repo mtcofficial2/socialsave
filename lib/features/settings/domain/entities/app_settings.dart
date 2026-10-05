@@ -18,6 +18,8 @@ class AppSettings extends Equatable {
     this.fontFamily = 'Inter',
     this.autoPlayNextInGallery = true,
     this.lastChosenQuality,
+    this.qualityByPlatform = const {},
+    this.useDynamicColor = true,
   });
 
   final ThemeMode themeMode;
@@ -30,6 +32,8 @@ class AppSettings extends Equatable {
   final String fontFamily;
   final bool autoPlayNextInGallery;
   final String? lastChosenQuality;
+  final Map<String, String> qualityByPlatform;
+  final bool useDynamicColor;
 
   AppSettings copyWith({
     ThemeMode? themeMode,
@@ -42,6 +46,8 @@ class AppSettings extends Equatable {
     String? fontFamily,
     bool? autoPlayNextInGallery,
     String? lastChosenQuality,
+    Map<String, String>? qualityByPlatform,
+    bool? useDynamicColor,
   }) {
     return AppSettings(
       themeMode: themeMode ?? this.themeMode,
@@ -54,6 +60,8 @@ class AppSettings extends Equatable {
       fontFamily: fontFamily ?? this.fontFamily,
       autoPlayNextInGallery: autoPlayNextInGallery ?? this.autoPlayNextInGallery,
       lastChosenQuality: lastChosenQuality ?? this.lastChosenQuality,
+      qualityByPlatform: qualityByPlatform ?? this.qualityByPlatform,
+      useDynamicColor: useDynamicColor ?? this.useDynamicColor,
     );
   }
 
@@ -72,6 +80,8 @@ class AppSettings extends Equatable {
       'fontFamily': fontFamily,
       'autoPlayNextInGallery': autoPlayNextInGallery,
       if (lastChosenQuality != null) 'lastChosenQuality': lastChosenQuality!,
+      'qualityByPlatform': qualityByPlatform,
+      'useDynamicColor': useDynamicColor,
     };
   }
 
@@ -101,6 +111,8 @@ class AppSettings extends Equatable {
           : 'Inter',
       autoPlayNextInGallery: map['autoPlayNextInGallery'] as bool? ?? true,
       lastChosenQuality: map['lastChosenQuality'] as String?,
+      qualityByPlatform: _stringMap(map['qualityByPlatform']),
+      useDynamicColor: map['useDynamicColor'] as bool? ?? true,
     );
   }
 
@@ -116,7 +128,14 @@ class AppSettings extends Equatable {
         fontFamily,
         autoPlayNextInGallery,
         lastChosenQuality,
+        qualityByPlatform,
+        useDynamicColor,
       ];
+}
+
+Map<String, String> _stringMap(Object? value) {
+  if (value is! Map) return const {};
+  return value.map((key, item) => MapEntry('$key', '$item'));
 }
 
 extension VideoQualityPreferenceX on VideoQualityPreference {

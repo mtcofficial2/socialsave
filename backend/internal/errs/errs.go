@@ -73,15 +73,19 @@ func UnsupportedFormat() *Error {
 
 func FileTooLarge(maxBytes int64) *Error {
 	if maxBytes <= 0 {
-		maxBytes = 256 * 1024 * 1024
+		maxBytes = 2 * 1024 * 1024 * 1024
 	}
 	megabytes := maxBytes / (1024 * 1024)
 	if megabytes < 1 {
 		megabytes = 1
 	}
+	limit := itoa(megabytes) + " MB"
+	if megabytes >= 1024 && megabytes%1024 == 0 {
+		limit = itoa(megabytes/1024) + " GB"
+	}
 	return newError(
 		"file_too_large",
-		"This file is larger than the "+itoa(megabytes)+" MB download limit.",
+		"This file is larger than the "+limit+" download limit.",
 		http.StatusRequestEntityTooLarge,
 	)
 }

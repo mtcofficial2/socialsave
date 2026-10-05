@@ -2,6 +2,7 @@ enum DownloadStatus {
   queued,
   running,
   paused,
+  waitingWifi,
   completed,
   failed,
   cancelled;
@@ -9,16 +10,19 @@ enum DownloadStatus {
   bool get isActive =>
       this == DownloadStatus.queued ||
       this == DownloadStatus.running ||
-      this == DownloadStatus.paused;
+      this == DownloadStatus.paused ||
+      this == DownloadStatus.waitingWifi;
 
   bool get canPause => this == DownloadStatus.running;
-  bool get canResume => this == DownloadStatus.paused;
+  bool get canResume =>
+      this == DownloadStatus.paused || this == DownloadStatus.waitingWifi;
   bool get canRetry =>
       this == DownloadStatus.failed || this == DownloadStatus.cancelled;
   bool get canCancel =>
       this == DownloadStatus.queued ||
       this == DownloadStatus.running ||
-      this == DownloadStatus.paused;
+      this == DownloadStatus.paused ||
+      this == DownloadStatus.waitingWifi;
 
   String get label {
     switch (this) {
@@ -28,6 +32,8 @@ enum DownloadStatus {
         return 'Downloading';
       case DownloadStatus.paused:
         return 'Paused';
+      case DownloadStatus.waitingWifi:
+        return 'Waiting for Wi-Fi';
       case DownloadStatus.completed:
         return 'Saved';
       case DownloadStatus.failed:

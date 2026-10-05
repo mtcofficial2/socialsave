@@ -335,6 +335,7 @@ String _speedLine(DownloadTask task, Formatters formatters) {
           task.bytesPerSecond <= 0);
   if (preparing) return 'Preparing on your computer';
   if (task.status == DownloadStatus.paused) return 'Paused';
+  if (task.status == DownloadStatus.waitingWifi) return 'Waiting for Wi-Fi';
   if (task.bytesPerSecond <= 0) return 'Starting the save…';
   return '${formatters.speed(task.bytesPerSecond)} · about ${formatters.eta(task.eta)} left';
 }

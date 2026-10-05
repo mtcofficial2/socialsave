@@ -22,6 +22,9 @@ class MediaFormat extends Equatable {
   final bool hasVideo;
 
   String get label {
+    if (!hasVideo && hasAudio || quality.toLowerCase() == 'audio') {
+      return 'Audio only';
+    }
     if (quality.toLowerCase() == 'auto') {
       return 'Auto';
     }

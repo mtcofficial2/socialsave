@@ -1,8 +1,18 @@
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:social_save/core/constants/app_constants.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:social_save/core/di/providers.dart';
+import 'package:social_save/core/platform/media_events.dart';
+import 'package:social_save/features/downloads/domain/entities/download_record.dart';
+import 'package:social_save/features/library/index_backup.dart';
+import 'package:social_save/features/library/library_catalog.dart';
+import 'package:social_save/core/constants/app_constants.dart';
 import 'package:social_save/core/storage/download_path_service.dart';
 import 'package:social_save/core/theme/app_colors.dart';
 import 'package:social_save/core/theme/app_fonts.dart';
@@ -120,18 +130,14 @@ class SettingsScreen extends ConsumerWidget {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('Accent Color', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                              Text('Archival Teal (#0F766E)', style: TextStyle(fontSize: 12, color: AppColors.muted)),
+                              Text('Wallpaper colors', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                              Text('Material You when the phone provides a palette', style: TextStyle(fontSize: 12, color: AppColors.muted)),
                             ],
                           ),
                         ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: scheme.surfaceContainer,
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: const Text('Default', style: TextStyle(fontSize: 11)),
+                        Switch(
+                          value: settings.useDynamicColor,
+                          onChanged: controller.setUseDynamicColor,
                         ),
                       ],
                     ),
@@ -201,6 +207,40 @@ class SettingsScreen extends ConsumerWidget {
                       'When a video ends, count down 5 seconds to the next one. Tap Rewatch to play it again.',
                   value: settings.autoPlayNextInGallery,
                   onChanged: controller.setAutoPlayNextInGallery,
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            _groupTitle(context, Icons.devices_outlined, 'Library on this phone and a computer'),
+            GlassCard(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    _navRow(
+                      context,
+                      icon: Icons.qr_code_rounded,
+                      title: 'Show titles on a computer',
+                      subtitle: 'A short code lists saved titles. Videos stay on this phone.',
+                      onTap: () => _pairLibrary(context, ref),
+                    ),
+                    const SizedBox(height: 8),
+                    _navRow(
+                      context,
+                      icon: Icons.lock_outline,
+                      title: 'Back up library index',
+                      subtitle: 'Encrypted titles and notes. Video files are not copied.',
+                      onTap: () => _exportIndex(context, ref),
+                    ),
+                    const SizedBox(height: 8),
+                    _navRow(
+                      context,
+                      icon: Icons.restore_rounded,
+                      title: 'Restore library index',
+                      subtitle: 'Open an encrypted SocialSave backup',
+                      onTap: () => _importIndex(context, ref),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -570,4 +610,136 @@ class SettingsScreen extends ConsumerWidget {
     );
     if (value != null) await controller.setDefaultQuality(value);
   }
+}
+
+Future<void> _pairLibrary(BuildContext context, WidgetRef ref) async {
+  try {
+    final records = await ref.read(downloadsRepositoryProvider).getAll();
+    final items = <Map<String, String>>[];
+    for (final record in records) {
+      if (record.status.name != 'completed') continue;
+      items.add({
+        'title': record.title,
+        'platform': record.platform.displayName,
+        'source_url': record.sourceUrl,
+        'quality': record.quality ?? '',
+      });
+    }
+    if (items.isEmpty) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Save a video first. The code lists titles only.')),
+      );
+      return;
+    }
+    final code = await ref.read(mediaRepositoryProvider).createPair(items);
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Library code'),
+        content: Text(
+          'On the SocialSave website, enter $code. It expires in 15 minutes and does not send the video file.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
+        ],
+      ),
+    );
+  } catch (_) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Could not create a library code.')),
+    );
+  }
+}
+
+Future<void> _exportIndex(BuildContext context, WidgetRef ref) async {
+  final passphrase = await _askPassphrase(context, 'Encrypt this backup');
+  if (passphrase == null || !context.mounted) return;
+  try {
+    final records = await ref.read(downloadsRepositoryProvider).getAll();
+    final catalog = ref.read(libraryCatalogProvider);
+    final payload = jsonEncode({
+      'records': records.map((record) => record.toJson()).toList(),
+      'catalog': catalog.encode(),
+    });
+    final bytes = await const IndexBackup().seal(payload, passphrase);
+    final dir = await getTemporaryDirectory();
+    final file = File('${dir.path}${Platform.pathSeparator}socialsave-library.socialsave');
+    await file.writeAsBytes(bytes, flush: true);
+    await Share.shareXFiles([XFile(file.path)], text: 'SocialSave library index');
+  } on FormatException catch (error) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+  } catch (_) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Could not create the backup.')),
+    );
+  }
+}
+
+Future<void> _importIndex(BuildContext context, WidgetRef ref) async {
+  final raw = await MediaEvents.channel.invokeMethod<dynamic>('pickBackup');
+  if (!context.mounted || raw == null) return;
+  final bytes = raw is List ? raw.cast<int>() : null;
+  if (bytes == null) return;
+  final passphrase = await _askPassphrase(context, 'Unlock this backup');
+  if (passphrase == null || !context.mounted) return;
+  try {
+    final text = await const IndexBackup().open(Uint8List.fromList(bytes), passphrase);
+    final data = jsonDecode(text);
+    if (data is! Map) throw const FormatException('This backup could not be read.');
+    final records = data['records'];
+    if (records is List) {
+      final repo = ref.read(downloadsRepositoryProvider);
+      for (final item in records) {
+        if (item is Map) {
+          await repo.upsert(DownloadRecord.fromJson(Map<String, dynamic>.from(item)));
+        }
+      }
+    }
+    final catalog = data['catalog'];
+    if (catalog is String) {
+      await ref.read(libraryCatalogProvider.notifier).replace(LibraryCatalog.decode(catalog));
+    }
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Library index restored. Video files stay where they were saved.')),
+    );
+  } on FormatException catch (error) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+  } catch (_) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Could not restore that backup. Check the passphrase.')),
+    );
+  }
+}
+
+Future<String?> _askPassphrase(BuildContext context, String title) async {
+  final controller = TextEditingController();
+  final value = await showDialog<String>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(title),
+      content: TextField(
+        controller: controller,
+        autofocus: true,
+        obscureText: true,
+        decoration: const InputDecoration(labelText: 'Passphrase'),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, controller.text),
+          child: const Text('Continue'),
+        ),
+      ],
+    ),
+  );
+  controller.dispose();
+  return value?.trim().isEmpty == true ? null : value?.trim();
 }

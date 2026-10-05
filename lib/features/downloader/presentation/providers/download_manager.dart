@@ -1,11 +1,14 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/constants/app_constants.dart';
+import 'package:social_save/core/platform/media_events.dart';
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/storage/download_path_service.dart';
 import 'package:social_save/core/storage/media_store_service.dart';
@@ -60,11 +63,32 @@ class DownloadManagerState {
 class DownloadManager extends Notifier<DownloadManagerState> {
   final Map<String, CancelToken> _tokens = {};
   final Map<String, _SpeedTracker> _speeds = {};
+  final Map<String, StreamSubscription<NetworkAccess>> _wifiWaits = {};
   final ErrorMapper _errorMapper = const ErrorMapper();
   final Uuid _uuid = const Uuid();
+  var _restored = false;
+  DateTime? _lastSignal;
 
   @override
-  DownloadManagerState build() => const DownloadManagerState();
+  DownloadManagerState build() {
+    MediaEvents.on('downloadAction', (args) async {
+      if (args is! Map) return;
+      final action = '${args['action']}';
+      final id = '${args['id']}';
+      if (action == 'pause') await pause(id);
+      if (action == 'cancel') await cancel(id);
+      if (action == 'resume') await resume(id);
+    });
+    ref.onDispose(() {
+      MediaEvents.off('downloadAction');
+      for (final sub in _wifiWaits.values) {
+        unawaited(sub.cancel());
+      }
+      unawaited(_stopSignal());
+    });
+    Future<void>(() => _restore());
+    return const DownloadManagerState();
+  }
 
   Future<DownloadTask> enqueue({
     required MediaInfo media,
@@ -73,6 +97,12 @@ class DownloadManager extends Notifier<DownloadManagerState> {
   }) async {
     final settings = ref.read(settingsControllerProvider);
     await _assertNetwork(settings);
+    if (await _alreadySaved(media.sourceUrl, format.quality)) {
+      throw const AppException(
+        code: AppErrorCode.unknown,
+        message: ErrorMessages.alreadySaved,
+      );
+    }
 
     final allowed = await ref
         .read(permissionServiceProvider)
@@ -129,9 +159,15 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     state = state.copyWithTask(task);
 
     if (start && settings.autoStartDownloads) {
-      unawaited(this.start(id));
+      if (await _wifiBlocked(settings)) {
+        await _parkForWifi(task);
+      } else {
+        unawaited(this.start(id));
+      }
+    } else {
+      await _persist();
     }
-    return task;
+    return state.byId(id) ?? task;
   }
 
   Future<void> start(String id) async {
@@ -139,7 +175,13 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     if (existing == null) {
       return;
     }
-    await _assertNetwork(ref.read(settingsControllerProvider));
+    final settings = ref.read(settingsControllerProvider);
+    await _assertNetwork(settings);
+    if (await _wifiBlocked(settings)) {
+      await _parkForWifi(existing);
+      return;
+    }
+    await _wifiWaits.remove(id)?.cancel();
 
     final token = CancelToken();
     _tokens[id] = token;
@@ -209,14 +251,14 @@ class DownloadManager extends Notifier<DownloadManagerState> {
               }
               final tracker = _speeds[id] ?? _SpeedTracker();
               tracker.record(progress.received);
-              state = state.copyWithTask(
-                current.copyWith(
-                  receivedBytes: progress.received,
-                  totalBytes: progress.total ?? current.totalBytes,
-                  bytesPerSecond: tracker.bytesPerSecond,
-                  downloadUrl: url,
-                ),
+              final next = current.copyWith(
+                receivedBytes: progress.received,
+                totalBytes: progress.total ?? current.totalBytes,
+                bytesPerSecond: tracker.bytesPerSecond,
+                downloadUrl: url,
               );
+              state = state.copyWithTask(next);
+              unawaited(_signal(next));
             },
           );
           downloaded = true;
@@ -245,32 +287,38 @@ class DownloadManager extends Notifier<DownloadManagerState> {
         receivedBytes: completed.totalBytes ?? completed.receivedBytes,
         bytesPerSecond: 0,
       );
-      state = state.copyWithTask(finished);
-      HapticFeedback.lightImpact();
       await ref.read(downloadsRepositoryProvider).upsert(
             DownloadRecord.fromTask(finished),
           );
+      state = state.copyWithTask(finished);
+      await _persist();
+      await _signalActive();
+      try {
+        HapticFeedback.lightImpact();
+      } catch (_) {}
       if (savedPath != null && File(savedPath).existsSync()) {
         unawaited(() async {
-          final published = await MediaStoreService().publishToDownloads(
-            sourcePath: savedPath,
-            fileName: p.basename(savedPath),
-            mimeType: finished.format.format.toLowerCase() == 'webm'
-                ? 'video/webm'
-                : 'video/mp4',
-          );
-          if (published == null || published.isEmpty) {
-            await MediaStoreService().scanFile(savedPath);
-          } else if (!published.startsWith('content:') && published != savedPath) {
-            final latest = state.byId(id);
-            if (latest != null) {
-              final updated = latest.copyWith(localPath: published);
-              state = state.copyWithTask(updated);
-              await ref.read(downloadsRepositoryProvider).upsert(
-                    DownloadRecord.fromTask(updated),
-                  );
+          try {
+            final published = await MediaStoreService().publishToDownloads(
+              sourcePath: savedPath,
+              fileName: p.basename(savedPath),
+              mimeType: finished.format.format.toLowerCase() == 'webm'
+                  ? 'video/webm'
+                  : 'video/mp4',
+            );
+            if (published == null || published.isEmpty) {
+              await MediaStoreService().scanFile(savedPath);
+            } else if (!published.startsWith('content:') && published != savedPath) {
+              final latest = state.byId(id);
+              if (latest != null) {
+                final updated = latest.copyWith(localPath: published);
+                state = state.copyWithTask(updated);
+                await ref.read(downloadsRepositoryProvider).upsert(
+                      DownloadRecord.fromTask(updated),
+                    );
+              }
             }
-          }
+          } catch (_) {}
         }());
       }
       final settings = ref.read(settingsControllerProvider);
@@ -351,9 +399,10 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       return;
     }
     _tokens[id]?.cancel('paused');
-    state = state.copyWithTask(
-      task.copyWith(status: DownloadStatus.paused, bytesPerSecond: 0),
-    );
+    final paused = task.copyWith(status: DownloadStatus.paused, bytesPerSecond: 0);
+    state = state.copyWithTask(paused);
+    await _persist();
+    await _signal(paused);
   }
 
   Future<void> resume(String id) async {
@@ -369,6 +418,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     if (task == null) {
       return;
     }
+    await _wifiWaits.remove(id)?.cancel();
     _tokens[id]?.cancel('cancelled');
     if (deletePartial) {
       await _deletePartial(task.localPath);
@@ -380,6 +430,8 @@ class DownloadManager extends Notifier<DownloadManagerState> {
         errorMessage: 'Download cancelled.',
       ),
     );
+    await _persist();
+    await _signalActive();
   }
 
   Future<void> retry(String id) async {
@@ -437,23 +489,27 @@ class DownloadManager extends Notifier<DownloadManagerState> {
   }
 
   Future<void> _fail(String id, AppException error) async {
-    final task = state.byId(id);
-    if (task == null) {
-      return;
-    }
-    final failed = task.copyWith(
-      status: DownloadStatus.failed,
-      bytesPerSecond: 0,
-      errorMessage: error.message,
-    );
-    state = state.copyWithTask(failed);
-    final settings = ref.read(settingsControllerProvider);
-    if (settings.notificationsEnabled) {
-      await ref.read(notificationServiceProvider).showDownloadFailed(
-            id: failed.id,
-            title: failed.title,
-          );
-    }
+    try {
+      final task = state.byId(id);
+      if (task == null || task.status == DownloadStatus.completed) {
+        return;
+      }
+      final failed = task.copyWith(
+        status: DownloadStatus.failed,
+        bytesPerSecond: 0,
+        errorMessage: error.message,
+      );
+      state = state.copyWithTask(failed);
+      final settings = ref.read(settingsControllerProvider);
+      if (settings.notificationsEnabled) {
+        await ref.read(notificationServiceProvider).showDownloadFailed(
+              id: failed.id,
+              title: failed.title,
+            );
+      }
+      await _persist();
+      await _signalActive();
+    } catch (_) {}
   }
 
   Future<void> _assertNetwork(AppSettings settings) async {
@@ -465,6 +521,142 @@ class DownloadManager extends Notifier<DownloadManagerState> {
         message: ErrorMessages.networkUnavailable,
       );
     }
+  }
+
+  Future<bool> _wifiBlocked(AppSettings settings) async {
+    final connectivity = ref.read(connectivityServiceProvider);
+    final access = await connectivity.current();
+    return !connectivity.canDownload(access: access, wifiOnly: settings.wifiOnly);
+  }
+
+  Future<void> _parkForWifi(DownloadTask task) async {
+    final waiting = task.copyWith(
+      status: DownloadStatus.waitingWifi,
+      bytesPerSecond: 0,
+      errorMessage: 'Waiting for Wi-Fi.',
+    );
+    state = state.copyWithTask(waiting);
+    await _armWifi(task.id);
+    await _persist();
+    await _signal(waiting);
+  }
+
+  Future<void> _armWifi(String id) async {
+    await _wifiWaits.remove(id)?.cancel();
+    _wifiWaits[id] = ref.read(connectivityServiceProvider).onChange.listen((access) {
+      final settings = ref.read(settingsControllerProvider);
+      final allowed = ref.read(connectivityServiceProvider).canDownload(
+            access: access,
+            wifiOnly: settings.wifiOnly,
+          );
+      final task = state.byId(id);
+      if (allowed && task != null && task.status == DownloadStatus.waitingWifi) {
+        unawaited(start(id));
+      }
+    });
+  }
+
+  Future<bool> _alreadySaved(String url, String quality) async {
+    final records = await ref.read(downloadsRepositoryProvider).getAll();
+    for (final record in records) {
+      if (record.status != DownloadStatus.completed) continue;
+      if (record.sourceUrl != url) continue;
+      if ((record.quality ?? '').toLowerCase() != quality.toLowerCase()) continue;
+      final path = record.localPath;
+      if (path == null || !File(path).existsSync()) continue;
+      return true;
+    }
+    return false;
+  }
+
+  Future<void> _persist() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final active = state.tasks.values.where((task) => task.status.isActive).toList();
+      await prefs.setString(
+        'socialsave_active_downloads',
+        jsonEncode(active.map((task) => task.toJson()).toList()),
+      );
+      await prefs.setBool('socialsave_resume_pending', active.isNotEmpty);
+    } catch (_) {}
+  }
+
+  Future<void> _restore() async {
+    if (_restored) return;
+    _restored = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('socialsave_active_downloads');
+      if (raw == null || raw.isEmpty) return;
+      final data = jsonDecode(raw);
+      if (data is! List) return;
+      for (final item in data) {
+        if (item is! Map) continue;
+        final task = DownloadTask.fromJson(Map<String, dynamic>.from(item));
+        if (task.id.isEmpty || !task.status.isActive) continue;
+        if (state.byId(task.id) != null) continue;
+        final resumed = task.status == DownloadStatus.running
+            ? task.copyWith(status: DownloadStatus.paused, bytesPerSecond: 0)
+            : task;
+        state = state.copyWithTask(resumed);
+        if (task.status == DownloadStatus.running || task.status == DownloadStatus.waitingWifi) {
+          unawaited(start(resumed.id));
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _signal(DownloadTask task) async {
+    final now = DateTime.now();
+    if (task.status == DownloadStatus.running &&
+        _lastSignal != null &&
+        now.difference(_lastSignal!) < const Duration(seconds: 1)) {
+      return;
+    }
+    _lastSignal = now;
+    final settings = ref.read(settingsControllerProvider);
+    if (!settings.notificationsEnabled) return;
+    final progress = (task.progress * 100).round().clamp(0, 100);
+    final text = task.status == DownloadStatus.waitingWifi
+        ? 'Waiting for Wi-Fi'
+        : task.status == DownloadStatus.paused
+            ? 'Paused'
+            : task.bytesPerSecond <= 0
+                ? 'Starting'
+                : '${(task.bytesPerSecond / (1024 * 1024)).toStringAsFixed(1)} MB/s';
+    try {
+      await MediaEvents.channel.invokeMethod<void>('keepAlive', {
+        'id': task.id,
+        'title': task.title,
+        'text': text,
+        'progress': progress,
+        'paused': task.status != DownloadStatus.running,
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _signalActive() async {
+    DownloadTask? active;
+    for (final task in state.tasks.values) {
+      if (task.status == DownloadStatus.running ||
+          task.status == DownloadStatus.paused ||
+          task.status == DownloadStatus.waitingWifi) {
+        active = task;
+        break;
+      }
+    }
+    if (active == null) {
+      await _stopSignal();
+      return;
+    }
+    _lastSignal = null;
+    await _signal(active);
+  }
+
+  Future<void> _stopSignal() async {
+    try {
+      await MediaEvents.channel.invokeMethod<void>('stopKeepAlive');
+    } catch (_) {}
   }
 
   Future<int> _existingBytes(String? path) async {

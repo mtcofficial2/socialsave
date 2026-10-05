@@ -135,6 +135,61 @@ class DownloadTask extends Equatable {
     );
   }
 
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'sourceUrl': sourceUrl,
+      'downloadUrl': downloadUrl,
+      'title': title,
+      'thumbnailUrl': thumbnailUrl,
+      'author': author,
+      'platform': platform.id,
+      'format': format.toJson(),
+      'status': status.name,
+      'receivedBytes': receivedBytes,
+      'totalBytes': totalBytes,
+      'localPath': localPath,
+      'errorMessage': errorMessage,
+      'supportsResume': supportsResume,
+      'durationSeconds': durationSeconds,
+      'createdAt': createdAt?.toIso8601String(),
+      'jobId': jobId,
+      'directUrl': directUrl,
+      'requestHeaders': requestHeaders,
+    };
+  }
+
+  factory DownloadTask.fromJson(Map<String, dynamic> json) {
+    final headers = json['requestHeaders'];
+    return DownloadTask(
+      id: json['id'] as String? ?? '',
+      sourceUrl: json['sourceUrl'] as String? ?? '',
+      downloadUrl: json['downloadUrl'] as String? ?? '',
+      title: json['title'] as String? ?? 'Video',
+      thumbnailUrl: json['thumbnailUrl'] as String?,
+      author: json['author'] as String?,
+      platform: SocialPlatform.fromId(json['platform'] as String?),
+      format: MediaFormat.fromJson(
+        json['format'] is Map
+            ? Map<String, dynamic>.from(json['format'] as Map)
+            : const {},
+      ),
+      status: DownloadStatus.fromName(json['status'] as String?),
+      receivedBytes: json['receivedBytes'] as int? ?? 0,
+      totalBytes: json['totalBytes'] as int?,
+      localPath: json['localPath'] as String?,
+      errorMessage: json['errorMessage'] as String?,
+      supportsResume: json['supportsResume'] as bool? ?? false,
+      durationSeconds: json['durationSeconds'] as int?,
+      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? ''),
+      jobId: json['jobId'] as String?,
+      directUrl: json['directUrl'] as String?,
+      requestHeaders: headers is Map
+          ? headers.map((key, value) => MapEntry('$key', '$value'))
+          : null,
+    );
+  }
+
   @override
   List<Object?> get props => [
         id,
