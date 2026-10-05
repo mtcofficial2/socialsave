@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -242,10 +243,22 @@ func objectKey(name string) string {
 	name = strings.TrimSpace(name)
 	name = strings.ReplaceAll(name, "\\", "-")
 	name = strings.ReplaceAll(name, "/", "-")
-	if name == "" || name == "." {
+	name = strings.Trim(name, ". ")
+	if name == "" || name == "." || name == ".." {
 		name = "video.mp4"
 	}
-	return time.Now().UTC().Format("20060102") + "/" + name
+	if len(name) > 180 {
+		name = name[len(name)-180:]
+	}
+	return "videos/" + time.Now().UTC().Format("20060102") + "/" + randomObjectID() + "/" + name
+}
+
+func randomObjectID() string {
+	var buf [8]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return time.Now().UTC().Format("150405.000000000")
+	}
+	return hex.EncodeToString(buf[:])
 }
 
 func escapeKey(key string) string {

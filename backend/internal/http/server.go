@@ -277,7 +277,7 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 	if parsed, err := url.Parse(handle.UpstreamURL); err == nil && parsed.Hostname() != "" {
 		host = parsed.Hostname()
 	}
-	slog.Info("download delivery=direct", "host", host, "size", handle.Filesize, "render_bytes", 0)
+	slog.Info("download delivery=redirect", "host", host, "size", handle.Filesize, "render_bytes", 0)
 	mime := handle.MimeType
 	name := handle.FileName
 	direct := handle.UpstreamURL
@@ -422,6 +422,13 @@ func (s *Server) serveJob(w http.ResponseWriter, r *http.Request, claims tokens.
 		writeError(w, errs.Unauthorized())
 		return
 	}
+	if !s.Config.AllowRenderFileProxy {
+		s.Jobs.Pop(job.ID)
+		jobs.DeleteMedia(job.FilePath)
+		slog.Info("download delivery=proxy_refused", "reason", "ALLOW_RENDER_FILE_PROXY=false")
+		writeError(w, errs.PlatformUnavailable("This file is not available from the app server."))
+		return
+	}
 	file, err := os.Open(job.FilePath)
 	if err != nil {
 		writeError(w, errs.Unauthorized())
@@ -480,18 +487,30 @@ func (s *Server) prepare(jobID, rawURL, formatID, publicBase string) {
 		s.Jobs.MarkFailed(jobID, "file_too_large", errs.FileTooLarge(s.Config.MaxDownloadBytes).Message)
 		return
 	}
+	s.publishPrepared(ctx, jobID, result, publicBase)
+}
+
+// publishPrepared stores a finished file on object storage and deletes the Render copy.
+// The Render file proxy runs only when ALLOW_RENDER_FILE_PROXY=true.
+func (s *Server) publishPrepared(ctx context.Context, jobID string, result providers.DownloadResult, publicBase string) {
 	size := result.Filesize
-	if s.Objects != nil && s.Objects.Enabled() {
-		signed, putErr := s.Objects.Put(ctx, result.Path, result.Name, result.MIME)
-		if putErr == nil {
-			if _, valid := s.Validator.Validate(ctx, signed); valid == nil {
-				s.Jobs.MarkReady(jobID, "", result.MIME, result.Name, signed, &size)
-				jobs.DeleteMedia(result.Path)
-				slog.Info("download delivery=object_storage", "size", size)
-				return
-			}
+	stored, putErr := s.putObject(ctx, result)
+	if putErr == nil {
+		s.Jobs.MarkReady(jobID, "", result.MIME, result.Name, stored, &size)
+		jobs.DeleteMedia(result.Path)
+		slog.Info("download delivery=object_storage", "host", urlHost(stored), "size", size, "render_bytes", 0)
+		return
+	}
+	slog.Info("object storage upload failed", "err", safeStorageErr(putErr))
+	if !s.Config.AllowRenderFileProxy {
+		jobs.DeleteMedia(result.Path)
+		message := "The prepared file could not be stored. Try again later."
+		if putErr != nil && putErr.Error() == "object storage disabled" {
+			message = "Object storage is not configured."
 		}
-		slog.Info("object storage skipped", "err", putErr)
+		s.Jobs.MarkFailed(jobID, "platform_unavailable", message)
+		slog.Info("download delivery=prepare_local_failed", "code", "platform_unavailable", "message", "object storage required")
+		return
 	}
 	token, err := s.Tokens.IssueJob(jobID, result.MIME, result.Name)
 	if err != nil {
@@ -501,6 +520,50 @@ func (s *Server) prepare(jobID, rawURL, formatID, publicBase string) {
 	}
 	s.Jobs.MarkReady(jobID, result.Path, result.MIME, result.Name, strings.TrimRight(publicBase, "/")+"/api/v1/files/"+token, &size)
 	slog.Info("download delivery=proxy_file", "size", size)
+}
+
+func (s *Server) putObject(ctx context.Context, result providers.DownloadResult) (string, error) {
+	if s.Objects == nil || !s.Objects.Enabled() {
+		return "", errors.New("object storage disabled")
+	}
+	stored, err := s.Objects.Put(ctx, result.Path, result.Name, result.MIME)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(stored) == "" {
+		return "", errors.New("object storage returned an empty url")
+	}
+	validator := s.Validator
+	if validator == nil {
+		validator = security.NewValidator()
+	}
+	if _, err := validator.Validate(ctx, stored); err != nil {
+		return "", errors.New("stored url rejected")
+	}
+	return stored, nil
+}
+
+func urlHost(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Hostname() == "" {
+		return "unknown"
+	}
+	return parsed.Hostname()
+}
+
+func safeStorageErr(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	lower := strings.ToLower(msg)
+	if strings.Contains(msg, "X-Amz-") || strings.Contains(lower, "secret") || strings.Contains(msg, "Signature=") || strings.Contains(lower, "aws4-hmac-sha256") {
+		return "object storage error"
+	}
+	if len(msg) > 180 {
+		msg = msg[:180]
+	}
+	return msg
 }
 
 func (s *Server) failJob(id string, err error) {

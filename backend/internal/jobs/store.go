@@ -222,13 +222,20 @@ func DeleteMedia(path string) {
 	if path == "" {
 		return
 	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		slog.Warn("cleanup failed", "path_kind", "temp")
-		return
-	}
+	removeErr := os.Remove(path)
 	parent := filepath.Dir(path)
 	if strings.HasPrefix(filepath.Base(parent), "socialsave-") {
-		_ = os.RemoveAll(parent)
+		if err := os.RemoveAll(parent); err != nil {
+			if removeErr == nil || os.IsNotExist(removeErr) {
+				removeErr = err
+			}
+		} else {
+			removeErr = nil
+		}
+	}
+	if removeErr != nil && !os.IsNotExist(removeErr) {
+		slog.Warn("cleanup failed", "path_kind", "temp")
+		return
 	}
 	slog.Info("cleanup success", "path_kind", "temp")
 }

@@ -14,9 +14,11 @@ services:
       - key: SECRET_KEY
         generateValue: true
       - key: MAX_DOWNLOAD_BYTES
-        value: "2147483647"
+        value: "524288000"
       - key: JOB_TTL_SECONDS
         value: "600"
+      - key: ALLOW_RENDER_FILE_PROXY
+        value: "false"
       - key: S3_ENDPOINT
         sync: false
       - key: S3_REGION
@@ -26,6 +28,8 @@ services:
       - key: S3_ACCESS_KEY_ID
         sync: false
       - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_PUBLIC_BASE_URL
         sync: false
       - key: S3_URL_TTL_SECONDS
         value: "3600"

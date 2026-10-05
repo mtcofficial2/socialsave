@@ -22,35 +22,36 @@ const (
 
 // Config is the process configuration. Zero values are replaced by Load.
 type Config struct {
-	AppName           string
-	Environment       string
-	SecretKey         string
-	PublicBaseURL     string
-	RequireAPIKey     bool
-	APIKeys           []string
-	EnabledPlatforms  map[string]struct{}
-	MaxDownloadBytes  int64
-	DefaultMaxHeight  int
-	TokenTTL          time.Duration
-	JobTTL            time.Duration
-	RequestTimeout    time.Duration
-	MaxRedirects      int
-	AnalyzeRateLimit  int
-	DownloadRateLimit int
-	ObjectStorageURL  string
-	S3Endpoint        string
-	S3Region          string
-	S3Bucket          string
-	S3AccessKeyID     string
-	S3SecretAccessKey string
-	S3PublicBaseURL   string
-	S3URLTTL          time.Duration
-	YouTubeAPIKey     string
-	InstagramToken    string
-	FacebookToken     string
-	XBearerToken      string
-	Port              string
-	WebRoot           string
+	AppName              string
+	Environment          string
+	SecretKey            string
+	PublicBaseURL        string
+	RequireAPIKey        bool
+	APIKeys              []string
+	EnabledPlatforms     map[string]struct{}
+	MaxDownloadBytes     int64
+	DefaultMaxHeight     int
+	TokenTTL             time.Duration
+	JobTTL               time.Duration
+	RequestTimeout       time.Duration
+	MaxRedirects         int
+	AnalyzeRateLimit     int
+	DownloadRateLimit    int
+	ObjectStorageURL     string
+	AllowRenderFileProxy bool
+	S3Endpoint           string
+	S3Region             string
+	S3Bucket             string
+	S3AccessKeyID        string
+	S3SecretAccessKey    string
+	S3PublicBaseURL      string
+	S3URLTTL             time.Duration
+	YouTubeAPIKey        string
+	InstagramToken       string
+	FacebookToken        string
+	XBearerToken         string
+	Port                 string
+	WebRoot              string
 }
 
 // Enabled reports whether a platform id is turned on.
@@ -68,35 +69,36 @@ func Load() Config {
 		set[strings.ToLower(item)] = struct{}{}
 	}
 	return Config{
-		AppName:           getenv("APP_NAME", "SocialSave API"),
-		Environment:       getenv("ENVIRONMENT", "development"),
-		SecretKey:         getenv("SECRET_KEY", "change-me-in-production"),
-		PublicBaseURL:     publicBaseURL(),
-		RequireAPIKey:     parseBool(os.Getenv("REQUIRE_API_KEY"), false),
-		APIKeys:           splitCSV(os.Getenv("API_KEYS")),
-		EnabledPlatforms:  set,
-		MaxDownloadBytes:  parseInt64(os.Getenv("MAX_DOWNLOAD_BYTES"), defaultMaxDownloadBytes),
-		DefaultMaxHeight:  parseInt(os.Getenv("DEFAULT_MAX_HEIGHT"), defaultMaxHeight),
-		TokenTTL:          time.Duration(parseInt(os.Getenv("TOKEN_TTL_SECONDS"), defaultTokenTTL)) * time.Second,
-		JobTTL:            time.Duration(parseInt(os.Getenv("JOB_TTL_SECONDS"), defaultJobTTL)) * time.Second,
-		RequestTimeout:    time.Duration(parseInt(os.Getenv("REQUEST_TIMEOUT_SECONDS"), defaultTimeoutSeconds)) * time.Second,
-		MaxRedirects:      parseInt(os.Getenv("MAX_REDIRECTS"), defaultMaxRedirects),
-		AnalyzeRateLimit:  parseRate(os.Getenv("ANALYZE_RATE_LIMIT"), defaultAnalyzeRate),
-		DownloadRateLimit: parseRate(os.Getenv("DOWNLOAD_RATE_LIMIT"), defaultDownloadRate),
-		ObjectStorageURL:  strings.TrimSpace(os.Getenv("OBJECT_STORAGE_URL")),
-		S3Endpoint:        strings.TrimRight(strings.TrimSpace(os.Getenv("S3_ENDPOINT")), "/"),
-		S3Region:          getenv("S3_REGION", "us-east-1"),
-		S3Bucket:          strings.TrimSpace(os.Getenv("S3_BUCKET")),
-		S3AccessKeyID:     strings.TrimSpace(os.Getenv("S3_ACCESS_KEY_ID")),
-		S3SecretAccessKey: strings.TrimSpace(os.Getenv("S3_SECRET_ACCESS_KEY")),
-		S3PublicBaseURL:   strings.TrimRight(strings.TrimSpace(os.Getenv("S3_PUBLIC_BASE_URL")), "/"),
-		S3URLTTL:          time.Duration(parseInt(os.Getenv("S3_URL_TTL_SECONDS"), defaultTokenTTL)) * time.Second,
-		YouTubeAPIKey:     strings.TrimSpace(os.Getenv("YOUTUBE_API_KEY")),
-		InstagramToken:    strings.TrimSpace(os.Getenv("INSTAGRAM_ACCESS_TOKEN")),
-		FacebookToken:     strings.TrimSpace(os.Getenv("FACEBOOK_ACCESS_TOKEN")),
-		XBearerToken:      strings.TrimSpace(os.Getenv("X_BEARER_TOKEN")),
-		Port:              getenv("PORT", "8080"),
-		WebRoot:           strings.TrimSpace(os.Getenv("WEB_ROOT")),
+		AppName:              getenv("APP_NAME", "SocialSave API"),
+		Environment:          getenv("ENVIRONMENT", "development"),
+		SecretKey:            getenv("SECRET_KEY", "change-me-in-production"),
+		PublicBaseURL:        publicBaseURL(),
+		RequireAPIKey:        parseBool(os.Getenv("REQUIRE_API_KEY"), false),
+		APIKeys:              splitCSV(os.Getenv("API_KEYS")),
+		EnabledPlatforms:     set,
+		MaxDownloadBytes:     parseInt64(os.Getenv("MAX_DOWNLOAD_BYTES"), defaultMaxDownloadBytes),
+		DefaultMaxHeight:     parseInt(os.Getenv("DEFAULT_MAX_HEIGHT"), defaultMaxHeight),
+		TokenTTL:             time.Duration(parseInt(os.Getenv("TOKEN_TTL_SECONDS"), defaultTokenTTL)) * time.Second,
+		JobTTL:               time.Duration(parseInt(os.Getenv("JOB_TTL_SECONDS"), defaultJobTTL)) * time.Second,
+		RequestTimeout:       time.Duration(parseInt(os.Getenv("REQUEST_TIMEOUT_SECONDS"), defaultTimeoutSeconds)) * time.Second,
+		MaxRedirects:         parseInt(os.Getenv("MAX_REDIRECTS"), defaultMaxRedirects),
+		AnalyzeRateLimit:     parseRate(os.Getenv("ANALYZE_RATE_LIMIT"), defaultAnalyzeRate),
+		DownloadRateLimit:    parseRate(os.Getenv("DOWNLOAD_RATE_LIMIT"), defaultDownloadRate),
+		ObjectStorageURL:     strings.TrimSpace(os.Getenv("OBJECT_STORAGE_URL")),
+		AllowRenderFileProxy: parseBool(os.Getenv("ALLOW_RENDER_FILE_PROXY"), false),
+		S3Endpoint:           strings.TrimRight(strings.TrimSpace(os.Getenv("S3_ENDPOINT")), "/"),
+		S3Region:             getenv("S3_REGION", "us-east-1"),
+		S3Bucket:             strings.TrimSpace(os.Getenv("S3_BUCKET")),
+		S3AccessKeyID:        strings.TrimSpace(os.Getenv("S3_ACCESS_KEY_ID")),
+		S3SecretAccessKey:    strings.TrimSpace(os.Getenv("S3_SECRET_ACCESS_KEY")),
+		S3PublicBaseURL:      strings.TrimRight(strings.TrimSpace(os.Getenv("S3_PUBLIC_BASE_URL")), "/"),
+		S3URLTTL:             time.Duration(parseInt(os.Getenv("S3_URL_TTL_SECONDS"), defaultTokenTTL)) * time.Second,
+		YouTubeAPIKey:        strings.TrimSpace(os.Getenv("YOUTUBE_API_KEY")),
+		InstagramToken:       strings.TrimSpace(os.Getenv("INSTAGRAM_ACCESS_TOKEN")),
+		FacebookToken:        strings.TrimSpace(os.Getenv("FACEBOOK_ACCESS_TOKEN")),
+		XBearerToken:         strings.TrimSpace(os.Getenv("X_BEARER_TOKEN")),
+		Port:                 getenv("PORT", "8080"),
+		WebRoot:              strings.TrimSpace(os.Getenv("WEB_ROOT")),
 	}
 }
 
