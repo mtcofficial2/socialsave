@@ -236,7 +236,8 @@ func TestR2FailureDoesNotProxyWhenDisabled(t *testing.T) {
 	}
 }
 
-func TestMissingStorageDoesNotProxyWhenDisabled(t *testing.T) {
+func TestMissingStorageServesThePreparedFile(t *testing.T) {
+	logs := captureLogs(t)
 	app := testApp(t)
 	app.Config.AllowRenderFileProxy = false
 	app.Objects = storage.New("")
@@ -246,11 +247,20 @@ func TestMissingStorageDoesNotProxyWhenDisabled(t *testing.T) {
 		Path: path, MIME: "video/mp4", Name: "clip.mp4", Filesize: 11,
 	}, "https://socialsave-api.onrender.com")
 	got, _ := app.Jobs.Get(job.ID)
-	if got.State != "failed" || got.ErrorMessage != "Object storage is not configured." || strings.Contains(got.DownloadURL, "/api/v1/files/") {
+	if got.State != "ready" || !strings.Contains(got.DownloadURL, "/api/v1/files/") || got.FilePath == "" {
 		t.Fatalf("job = %#v", got)
 	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatal("temp file survived missing storage")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logs.String(), "download delivery=proxy_file") {
+		t.Fatalf("logs = %s", logs.String())
+	}
+	request := httptest.NewRequest(http.MethodGet, strings.TrimPrefix(got.DownloadURL, "https://socialsave-api.onrender.com"), nil)
+	response := httptest.NewRecorder()
+	app.Router().ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "video-bytes") {
+		t.Fatalf("download %d %s", response.Code, response.Body.String())
 	}
 }
 
@@ -309,6 +319,7 @@ func TestProxyEnabledFallsBackAndStillPrefersR2(t *testing.T) {
 func TestServeJobProxiesOnlyWhenEnabled(t *testing.T) {
 	app := testApp(t)
 	app.Config.AllowRenderFileProxy = false
+	app.Objects = &fakeUploader{enabled: true}
 	job := app.Jobs.Create()
 	path := writeJobVideo(t, app, "secret-video")
 	size := int64(12)

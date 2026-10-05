@@ -358,7 +358,11 @@ String _failureTitle(String message) {
   if (lower.contains('too long') || lower.contains('timed out')) {
     return 'This took too long';
   }
-  if (lower.contains('storage')) return 'Not enough space';
+  if (lower.contains('not enough storage') ||
+      lower.contains('no space left') ||
+      lower.contains('not enough space')) {
+    return 'Not enough space';
+  }
   return 'Could not save this video';
 }
 

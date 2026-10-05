@@ -427,7 +427,7 @@ func (s *Server) serveJob(w http.ResponseWriter, r *http.Request, claims tokens.
 		writeError(w, errs.Unauthorized())
 		return
 	}
-	if !s.Config.AllowRenderFileProxy {
+	if !s.preparedProxyAllowed() {
 		s.Jobs.Pop(job.ID)
 		jobs.DeleteMedia(job.FilePath)
 		slog.Info("download delivery=proxy_refused", "reason", "ALLOW_RENDER_FILE_PROXY=false")
@@ -496,7 +496,7 @@ func (s *Server) prepare(jobID, rawURL, formatID, publicBase string) {
 }
 
 // publishPrepared stores a finished file on object storage and deletes the Render copy.
-// The Render file proxy runs only when ALLOW_RENDER_FILE_PROXY=true.
+// With no object storage configured, the temp file is served once so the download can finish.
 func (s *Server) publishPrepared(ctx context.Context, jobID string, result providers.DownloadResult, publicBase string) {
 	size := result.Filesize
 	stored, putErr := s.putObject(ctx, result)
@@ -507,7 +507,7 @@ func (s *Server) publishPrepared(ctx context.Context, jobID string, result provi
 		return
 	}
 	slog.Info("object storage upload failed", "err", safeStorageErr(putErr))
-	if !s.Config.AllowRenderFileProxy {
+	if !s.preparedProxyAllowed() {
 		jobs.DeleteMedia(result.Path)
 		message := "The prepared file could not be stored. Try again later."
 		if putErr != nil && putErr.Error() == "object storage disabled" {
@@ -525,6 +525,16 @@ func (s *Server) publishPrepared(ctx context.Context, jobID string, result provi
 	}
 	s.Jobs.MarkReady(jobID, result.Path, result.MIME, result.Name, strings.TrimRight(publicBase, "/")+"/api/v1/files/"+token, &size)
 	slog.Info("download delivery=proxy_file", "size", size)
+}
+
+// preparedProxyAllowed serves the temp file when object storage is not
+// configured, so a Chrome download can finish. A configured store that fails
+// still fails the job unless ALLOW_RENDER_FILE_PROXY is true.
+func (s *Server) preparedProxyAllowed() bool {
+	if s.Config.AllowRenderFileProxy {
+		return true
+	}
+	return s.Objects == nil || !s.Objects.Enabled()
 }
 
 func (s *Server) putObject(ctx context.Context, result providers.DownloadResult) (string, error) {

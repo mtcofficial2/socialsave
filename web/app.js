@@ -575,15 +575,12 @@
       if (!downloadUrl && !directUrl) throw new Error("No download link was issued for this public video.");
       if (data.filesize) task.total = data.filesize;
       const external = usableExternal(directUrl);
-      if (external) {
-        try {
-          await fetchToDevice(task, external, fileName || filenameFor(task));
-          return;
-        } catch {
-          /* The source blocked the browser. The redirect ticket is the fallback. */
-        }
-      }
-      await fetchToDevice(task, downloadUrl, fileName || filenameFor(task));
+      const saveUrl = external || downloadUrl;
+      // Chrome saves the file itself. Holding the video in a page blob runs out of space.
+      saveWithBrowser(saveUrl, fileName || filenameFor(task));
+      task.savedByBrowser = true;
+      task.progress = 1;
+      completeDownload(false);
     } catch (err) {
       if (task.status === "cancelled") return;
       failDownload(err.message || "The download failed.");
@@ -793,15 +790,23 @@
     return `${base}_${task.quality}.mp4`;
   }
 
-  function triggerBrowserDownload(url, filename) {
+  function saveWithBrowser(url, filename) {
     const a = document.createElement("a");
     a.href = url;
-    a.download = filename;
+    a.download = filename || "video.mp4";
     a.rel = "noopener";
-    a.target = "_blank";
+    try {
+      if (new URL(url, location.href).origin !== location.origin) a.target = "_blank";
+    } catch {
+      a.target = "_blank";
+    }
     document.body.appendChild(a);
     a.click();
     a.remove();
+  }
+
+  function triggerBrowserDownload(url, filename) {
+    saveWithBrowser(url, filename);
   }
 
   async function notify(title, body) {
@@ -857,7 +862,9 @@
       return;
     }
     if (task.status === "completed") {
-      $("active-meta").textContent = `${formatBytes(task.total)} · ${qualityOf(task.quality, task.media).label}`;
+      $("active-meta").textContent = task.savedByBrowser
+        ? "Chrome is saving this video to your downloads."
+        : `${formatBytes(task.total)} · ${qualityOf(task.quality, task.media).label}`;
       return;
     }
     $("active-meta").textContent = `${formatSpeed(task.speed)} · ${formatBytes(task.received)} of ${formatBytes(task.total)}`;
