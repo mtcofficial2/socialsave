@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 /// Runtime configuration. Secrets never belong in source control.
 ///
 /// Supply values with `--dart-define` or `--dart-define-from-file`.
@@ -35,6 +37,11 @@ class EnvConfig {
     defaultValue: 2147483648, // 2 GiB
   );
 
+  /// Live API used by release builds. A debug build still uses the local
+  /// computer unless API_BASE_URL is passed at compile time.
+  static const String productionApiBaseUrl =
+      'https://socialsave-api-p2tm.onrender.com';
+
   static String get apiBaseUrl {
     if (_apiBaseUrlDefine.isNotEmpty) {
       return _stripTrailingSlash(_apiBaseUrlDefine);
@@ -45,7 +52,10 @@ class EnvConfig {
   static bool get hasApiKey => apiKey.isNotEmpty;
 
   static String _defaultBaseUrl() {
-    // Android emulator maps host loopback to 10.0.2.2.
+    if (!kDebugMode) {
+      return productionApiBaseUrl;
+    }
+    // Android emulator maps the computer's loopback to 10.0.2.2.
     if (Platform.isAndroid) {
       return 'http://10.0.2.2:8000';
     }
