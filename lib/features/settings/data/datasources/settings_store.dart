@@ -29,6 +29,19 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
       '${AppConstants.settingsPrefsPrefix}qualityByPlatform';
   static const _dynamicColor =
       '${AppConstants.settingsPrefsPrefix}useDynamicColor';
+  static const _onlyWhileCharging =
+      '${AppConstants.settingsPrefsPrefix}onlyWhileCharging';
+  static const _pauseBelowBattery =
+      '${AppConstants.settingsPrefsPrefix}pauseBelowBattery';
+  static const _pocketPause = '${AppConstants.settingsPrefsPrefix}pocketPause';
+  static const _headsetControls =
+      '${AppConstants.settingsPrefsPrefix}headsetControls';
+  static const _volumeKeysSeek =
+      '${AppConstants.settingsPrefsPrefix}volumeKeysSeek';
+  static const _hapticAlerts =
+      '${AppConstants.settingsPrefsPrefix}hapticAlerts';
+  static const _saveTreeUri =
+      '${AppConstants.settingsPrefsPrefix}saveTreeUri';
 
   @override
   Future<AppSettings> load() async {
@@ -45,6 +58,13 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
       'lastChosenQuality': _prefs.getString(_lastQuality),
       'qualityByPlatform': _decodePlatforms(_prefs.getString(_qualityByPlatform)),
       'useDynamicColor': _prefs.getBool(_dynamicColor),
+      'onlyWhileCharging': _prefs.getBool(_onlyWhileCharging),
+      'pauseBelowBattery': _prefs.getBool(_pauseBelowBattery),
+      'pocketPause': _prefs.getBool(_pocketPause),
+      'headsetControls': _prefs.getBool(_headsetControls),
+      'volumeKeysSeek': _prefs.getBool(_volumeKeysSeek),
+      'hapticAlerts': _prefs.getBool(_hapticAlerts),
+      'saveTreeUri': _prefs.getString(_saveTreeUri),
     });
   }
 
@@ -73,6 +93,18 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
       jsonEncode(settings.qualityByPlatform),
     );
     await _prefs.setBool(_dynamicColor, settings.useDynamicColor);
+    await _prefs.setBool(_onlyWhileCharging, settings.onlyWhileCharging);
+    await _prefs.setBool(_pauseBelowBattery, settings.pauseBelowBattery);
+    await _prefs.setBool(_pocketPause, settings.pocketPause);
+    await _prefs.setBool(_headsetControls, settings.headsetControls);
+    await _prefs.setBool(_volumeKeysSeek, settings.volumeKeysSeek);
+    await _prefs.setBool(_hapticAlerts, settings.hapticAlerts);
+    final tree = settings.saveTreeUri;
+    if (tree == null || tree.isEmpty) {
+      await _prefs.remove(_saveTreeUri);
+    } else {
+      await _prefs.setString(_saveTreeUri, tree);
+    }
   }
 
   Map<String, String> _decodePlatforms(String? raw) {

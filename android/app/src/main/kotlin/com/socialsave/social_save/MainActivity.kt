@@ -21,6 +21,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileInputStream
@@ -36,6 +37,8 @@ class MainActivity : FlutterFragmentActivity() {
     private var pipHeight = 9
     private val io = Executors.newFixedThreadPool(3)
     private var backupResult: MethodChannel.Result? = null
+    private var folderResult: MethodChannel.Result? = null
+    private var phoneBody: PhoneBody? = null
     private val openBackup = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val pending = backupResult
         backupResult = null
@@ -51,9 +54,29 @@ class MainActivity : FlutterFragmentActivity() {
             pending.error("read_failed", error.message, null)
         }
     }
+    private val openFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        val pending = folderResult
+        folderResult = null
+        if (pending == null) return@registerForActivityResult
+        if (uri == null) {
+            pending.success(null)
+            return@registerForActivityResult
+        }
+        try {
+            val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            contentResolver.takePersistableUriPermission(uri, flags)
+            pending.success(uri.toString())
+        } catch (error: Exception) {
+            pending.error("folder_failed", error.message, null)
+        }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        phoneBody?.stop()
+        val body = PhoneBody(this)
+        phoneBody = body
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, "socialsave/phone").setStreamHandler(body)
         channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
         DownloadEvents.channel = channel
         channel?.setMethodCallHandler { call, result ->
@@ -224,6 +247,95 @@ class MainActivity : FlutterFragmentActivity() {
                     backupResult = result
                     openBackup.launch(arrayOf("application/octet-stream", "application/*", "*/*"))
                 }
+                "setPlaybackSession" -> {
+                    phoneBody?.setPlayback(
+                        call.argument<Boolean>("active") == true,
+                        call.argument<Boolean>("playing") == true,
+                        call.argument<String>("title"),
+                        call.argument<Boolean>("headset") != false,
+                        call.argument<Boolean>("volumeSeek") != false,
+                    )
+                    result.success(true)
+                }
+                "vibrate" -> {
+                    phoneBody?.vibrate(call.argument<String>("pattern"))
+                    result.success(true)
+                }
+                "pickSaveFolder" -> {
+                    if (folderResult != null) {
+                        result.error("busy", "A folder picker is already open", null)
+                        return@setMethodCallHandler
+                    }
+                    folderResult = result
+                    openFolder.launch(null)
+                }
+                "copyIntoFolder" -> {
+                    val tree = call.argument<String>("treeUri")
+                    val path = call.argument<String>("path")
+                    val name = call.argument<String>("name") ?: "video.mp4"
+                    if (tree.isNullOrBlank() || path.isNullOrBlank()) {
+                        result.error("missing", "No folder", null)
+                        return@setMethodCallHandler
+                    }
+                    io.execute {
+                        try {
+                            val saved = phoneBody?.copyIntoTree(tree, path, name)
+                            runOnUiThread { result.success(saved) }
+                        } catch (error: Exception) {
+                            runOnUiThread { result.error("copy_failed", error.message, null) }
+                        }
+                    }
+                }
+                "playOnTv" -> {
+                    val path = call.argument<String>("path")
+                    if (path.isNullOrBlank()) {
+                        result.error("missing", "No video", null)
+                        return@setMethodCallHandler
+                    }
+                    result.success(playOnTv(path, call.argument<String>("title")))
+                }
+                "clipSound" -> {
+                    val path = call.argument<String>("path")
+                    val kind = call.argument<String>("kind") ?: "ringtone"
+                    if (path.isNullOrBlank()) {
+                        result.error("missing", "No video", null)
+                        return@setMethodCallHandler
+                    }
+                    io.execute {
+                        val outcome = try {
+                            phoneBody?.clipSound(path, kind) ?: mapOf(
+                                "ok" to false,
+                                "needsSettings" to false,
+                                "message" to "Could not make that sound.",
+                            )
+                        } catch (error: Exception) {
+                            mapOf(
+                                "ok" to false,
+                                "needsSettings" to false,
+                                "message" to (error.message ?: "Could not make that sound."),
+                            )
+                        }
+                        runOnUiThread {
+                            if (outcome["needsSettings"] == true) {
+                                try {
+                                    startActivity(
+                                        Intent(
+                                            Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                                            Uri.parse("package:$packageName"),
+                                        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                    )
+                                } catch (_: Exception) {
+                                }
+                            }
+                            result.success(outcome)
+                        }
+                    }
+                }
+                "setBrightness" -> {
+                    val value = call.argument<Double>("value") ?: -1.0
+                    phoneBody?.setBrightness(value)
+                    result.success(true)
+                }
                 else -> result.notImplemented()
             }
         }
@@ -232,6 +344,12 @@ class MainActivity : FlutterFragmentActivity() {
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
         captureShare(intent)
+    }
+
+    override fun onDestroy() {
+        phoneBody?.stop()
+        phoneBody = null
+        super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -590,6 +708,27 @@ class MainActivity : FlutterFragmentActivity() {
             null,
         )
         return true
+    }
+
+    private fun playOnTv(path: String, title: String?): Boolean {
+        val file = File(path)
+        if (!file.exists()) return false
+        return try {
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+            val mime = if (path.endsWith(".webm", ignoreCase = true)) "video/webm" else "video/*"
+            val view = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, mime)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                putExtra(Intent.EXTRA_TITLE, title ?: file.name)
+            }
+            val chooser = Intent.createChooser(view, "Play on TV").apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(chooser)
+            true
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun installApk(path: String): Boolean {

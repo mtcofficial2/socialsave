@@ -6,10 +6,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:social_save/core/di/providers.dart';
+import 'package:social_save/core/platform/phone_body.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
 import 'package:social_save/features/library/device_media.dart';
 import 'package:social_save/features/library/library_catalog.dart';
+import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:social_save/features/library/summarize_sheet.dart';
+import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
 import 'package:social_save/features/library/vault_service.dart';
 import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/features/player/player_session.dart';
@@ -43,6 +46,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   List<DeviceVideo> _device = [];
   List<VaultItem> _vault = [];
   final Map<String, String> _vaultPaths = {};
+  PlayerSession? _docked;
 
   @override
   void initState() {
@@ -124,8 +128,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
         )
         .toList();
     final index = _device.indexWhere((item) => item.id == video.id);
-    await openPreviewPlayer(
-      context,
+    await _openSession(
       PlayerSession(
         title: video.title,
         platform: SocialPlatform.direct,
@@ -135,6 +138,15 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
         heroTag: 'library-${video.id}',
       ),
     );
+  }
+
+  Future<void> _openSession(PlayerSession session) async {
+    final wide = MediaQuery.sizeOf(context).width >= 900;
+    if (wide) {
+      setState(() => _docked = session);
+      return;
+    }
+    await openPreviewPlayer(context, session);
   }
 
   Future<void> _playVault(VaultItem item) async {
@@ -156,8 +168,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
         )
         .toList();
     final index = _vault.indexWhere((entry) => entry.id == item.id);
-    await openPreviewPlayer(
-      context,
+    await _openSession(
       PlayerSession(
         title: item.title,
         platform: SocialPlatform.direct,
@@ -208,6 +219,14 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
                             fontSize: 20,
                           ),
                     ),
+                  ),
+                  IconButton(
+                    tooltip: 'Receive from another phone',
+                    onPressed: () async {
+                      await showReceiveFromPhone(context);
+                      if (mounted) await _reload();
+                    },
+                    icon: const Icon(Icons.qr_code_scanner_rounded),
                   ),
                   IconButton(
                     tooltip: 'Refresh',
@@ -302,28 +321,56 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
             ),
             const SizedBox(height: 8),
             Expanded(
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _error != null
-                      ? EmptyState(
-                          icon: Icons.videocam_off_outlined,
-                          title: 'Cannot open library',
-                          message: _error!,
-                        )
-                      : _tab == 0
-                          ? _DeviceList(
-                              videos: _device.where(_matchesVideo).toList(),
-                              onPlay: _playDevice,
-                              onVault: (video) => _confirmVault(video),
-                              onActions: _deviceActions,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final twoPane = MediaQuery.sizeOf(context).width >= 900;
+                  final list = _loading
+                      ? const Center(child: CircularProgressIndicator())
+                      : _error != null
+                          ? EmptyState(
+                              icon: Icons.videocam_off_outlined,
+                              title: 'Cannot open library',
+                              message: _error!,
                             )
-                          : _VaultGate(
-                              items: _vault.where(_matchesVault).toList(),
-                              paths: _vaultPaths,
-                              onPlay: _playVault,
-                              onActions: _vaultItemActions,
-                              onReload: _reload,
-                            ),
+                          : _tab == 0
+                              ? _DeviceList(
+                                  videos: _device.where(_matchesVideo).toList(),
+                                  onPlay: _playDevice,
+                                  onVault: (video) => _confirmVault(video),
+                                  onActions: _deviceActions,
+                                )
+                              : _VaultGate(
+                                  items: _vault.where(_matchesVault).toList(),
+                                  paths: _vaultPaths,
+                                  onPlay: _playVault,
+                                  onActions: _vaultItemActions,
+                                  onReload: _reload,
+                                );
+                  if (!twoPane) return list;
+                  final docked = _docked;
+                  return Row(
+                    children: [
+                      Expanded(child: list),
+                      const VerticalDivider(width: 1),
+                      SizedBox(
+                        width: (constraints.maxWidth * 0.56).clamp(360, 760),
+                        child: docked == null
+                            ? const Center(
+                                child: Text('Choose a video to play it beside the library.'),
+                              )
+                            : InAppPlayerScreen(
+                                key: ValueKey(
+                                  '${docked.filePath ?? docked.title}-${docked.queueIndex}',
+                                ),
+                                session: docked,
+                                embedded: true,
+                                onClose: () => setState(() => _docked = null),
+                              ),
+                      ),
+                    ],
+                  );
+                },
+              ),
             ),
           ],
         ),
@@ -527,6 +574,30 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
               onTap: () => Navigator.pop(context, 'share'),
             ),
             ListTile(
+              leading: const Icon(Icons.tv_rounded),
+              title: const Text('Play on TV'),
+              subtitle: const Text('Opens the video already on this phone'),
+              onTap: () => Navigator.pop(context, 'tv'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.qr_code_rounded),
+              title: const Text('Send to another phone'),
+              subtitle: const Text('A code on this Wi-Fi. The video does not go through the internet.'),
+              onTap: () => Navigator.pop(context, 'handoff'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.phonelink_rounded),
+              title: const Text('Hold phones together'),
+              subtitle: const Text('Quick Share between the two phones'),
+              onTap: () => Navigator.pop(context, 'near'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.ring_volume_outlined),
+              title: const Text('Use 30 seconds as a sound'),
+              subtitle: const Text('Ringtone, notification, or alarm'),
+              onTap: () => Navigator.pop(context, 'sound'),
+            ),
+            ListTile(
               leading: Icon(
                 ref.read(libraryCatalogProvider).isFavorite('device:${video.id}')
                     ? Icons.favorite_rounded
@@ -573,10 +644,28 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
       await _renameDevice(video);
       return;
     }
-    if (action == 'share') {
+    if (action == 'share' || action == 'near' || action == 'tv' || action == 'handoff' || action == 'sound') {
       final path = await DeviceMediaService().resolvePlayablePath(video);
       if (path == null || !mounted) return;
-      await Share.shareXFiles([XFile(path)], text: video.title);
+      if (action == 'share' || action == 'near') {
+        await Share.shareXFiles([XFile(path)], text: video.title);
+        return;
+      }
+      if (action == 'tv') {
+        final ok = await PhoneBody.playOnTv(path: path, title: video.title);
+        if (!mounted) return;
+        if (!ok) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No TV app on this phone could open the video.')),
+          );
+        }
+        return;
+      }
+      if (action == 'handoff') {
+        await showSendToPhone(context, File(path), video.title);
+        return;
+      }
+      await showSoundClip(context, path);
       return;
     }
     if (action == 'favorite') {

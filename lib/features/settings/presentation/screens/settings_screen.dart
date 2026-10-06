@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/platform/media_events.dart';
+import 'package:social_save/core/platform/phone_body.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
 import 'package:social_save/features/library/index_backup.dart';
 import 'package:social_save/features/library/library_catalog.dart';
@@ -207,6 +208,81 @@ class SettingsScreen extends ConsumerWidget {
                       'When a video ends, count down 5 seconds to the next one. Tap Rewatch to play it again.',
                   value: settings.autoPlayNextInGallery,
                   onChanged: controller.setAutoPlayNextInGallery,
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            _groupTitle(context, Icons.phone_android_rounded, 'Phone'),
+            GlassCard(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    _toggleRow(
+                      context,
+                      icon: Icons.battery_charging_full_rounded,
+                      title: 'Only while charging',
+                      subtitle: 'Saves wait until the phone is plugged in',
+                      value: settings.onlyWhileCharging,
+                      onChanged: controller.setOnlyWhileCharging,
+                    ),
+                    const SizedBox(height: 16),
+                    _toggleRow(
+                      context,
+                      icon: Icons.battery_alert_rounded,
+                      title: 'Pause under 15% battery',
+                      subtitle: 'A save on a charger keeps going',
+                      value: settings.pauseBelowBattery,
+                      onChanged: controller.setPauseBelowBattery,
+                    ),
+                    const SizedBox(height: 16),
+                    _toggleRow(
+                      context,
+                      icon: Icons.stay_current_portrait_rounded,
+                      title: 'Pause in a pocket',
+                      subtitle: 'Face down or covered pauses playback and the current save',
+                      value: settings.pocketPause,
+                      onChanged: controller.setPocketPause,
+                    ),
+                    const SizedBox(height: 16),
+                    _toggleRow(
+                      context,
+                      icon: Icons.headphones_rounded,
+                      title: 'Earphone button',
+                      subtitle: 'One press plays or pauses. Two presses play the next video.',
+                      value: settings.headsetControls,
+                      onChanged: controller.setHeadsetControls,
+                    ),
+                    const SizedBox(height: 16),
+                    _toggleRow(
+                      context,
+                      icon: Icons.volume_up_rounded,
+                      title: 'Volume keys seek',
+                      subtitle: 'While the screen is off, volume keys move 10 seconds',
+                      value: settings.volumeKeysSeek,
+                      onChanged: controller.setVolumeKeysSeek,
+                    ),
+                    const SizedBox(height: 16),
+                    _toggleRow(
+                      context,
+                      icon: Icons.vibration_rounded,
+                      title: 'Vibrate when a save finishes',
+                      subtitle: 'One pulse when saved, two pulses when it fails',
+                      value: settings.hapticAlerts,
+                      onChanged: controller.setHapticAlerts,
+                    ),
+                    const SizedBox(height: 12),
+                    _navRow(
+                      context,
+                      icon: Icons.folder_open_rounded,
+                      title: 'Save folder',
+                      subtitle: settings.saveTreeUri == null
+                          ? 'Phone storage, SD card, or USB'
+                          : 'Finished videos are also copied into the folder you chose',
+                      trailing: settings.saveTreeUri == null ? 'Choose' : 'Change',
+                      onTap: () => _pickSaveFolder(context, controller, settings),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -556,6 +632,43 @@ class SettingsScreen extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _pickSaveFolder(
+    BuildContext context,
+    SettingsController controller,
+    AppSettings settings,
+  ) async {
+    if (settings.saveTreeUri != null) {
+      final choice = await showModalBottomSheet<String>(
+        context: context,
+        builder: (context) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.folder_open_rounded),
+                title: const Text('Choose another folder'),
+                onTap: () => Navigator.pop(context, 'pick'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.folder_off_outlined),
+                title: const Text('Stop copying into that folder'),
+                onTap: () => Navigator.pop(context, 'clear'),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (!context.mounted || choice == null) return;
+      if (choice == 'clear') {
+        await controller.setSaveTree(null);
+        return;
+      }
+    }
+    final uri = await PhoneBody.pickFolder();
+    if (uri == null) return;
+    await controller.setSaveTree(uri);
   }
 
   Future<void> _pickLocation(

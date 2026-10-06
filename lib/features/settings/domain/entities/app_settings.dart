@@ -20,6 +20,13 @@ class AppSettings extends Equatable {
     this.lastChosenQuality,
     this.qualityByPlatform = const {},
     this.useDynamicColor = true,
+    this.onlyWhileCharging = false,
+    this.pauseBelowBattery = true,
+    this.pocketPause = true,
+    this.headsetControls = true,
+    this.volumeKeysSeek = true,
+    this.hapticAlerts = true,
+    this.saveTreeUri,
   });
 
   final ThemeMode themeMode;
@@ -34,6 +41,13 @@ class AppSettings extends Equatable {
   final String? lastChosenQuality;
   final Map<String, String> qualityByPlatform;
   final bool useDynamicColor;
+  final bool onlyWhileCharging;
+  final bool pauseBelowBattery;
+  final bool pocketPause;
+  final bool headsetControls;
+  final bool volumeKeysSeek;
+  final bool hapticAlerts;
+  final String? saveTreeUri;
 
   AppSettings copyWith({
     ThemeMode? themeMode,
@@ -48,6 +62,14 @@ class AppSettings extends Equatable {
     String? lastChosenQuality,
     Map<String, String>? qualityByPlatform,
     bool? useDynamicColor,
+    bool? onlyWhileCharging,
+    bool? pauseBelowBattery,
+    bool? pocketPause,
+    bool? headsetControls,
+    bool? volumeKeysSeek,
+    bool? hapticAlerts,
+    String? saveTreeUri,
+    bool clearSaveTree = false,
   }) {
     return AppSettings(
       themeMode: themeMode ?? this.themeMode,
@@ -62,6 +84,13 @@ class AppSettings extends Equatable {
       lastChosenQuality: lastChosenQuality ?? this.lastChosenQuality,
       qualityByPlatform: qualityByPlatform ?? this.qualityByPlatform,
       useDynamicColor: useDynamicColor ?? this.useDynamicColor,
+      onlyWhileCharging: onlyWhileCharging ?? this.onlyWhileCharging,
+      pauseBelowBattery: pauseBelowBattery ?? this.pauseBelowBattery,
+      pocketPause: pocketPause ?? this.pocketPause,
+      headsetControls: headsetControls ?? this.headsetControls,
+      volumeKeysSeek: volumeKeysSeek ?? this.volumeKeysSeek,
+      hapticAlerts: hapticAlerts ?? this.hapticAlerts,
+      saveTreeUri: clearSaveTree ? null : (saveTreeUri ?? this.saveTreeUri),
     );
   }
 
@@ -82,6 +111,13 @@ class AppSettings extends Equatable {
       if (lastChosenQuality != null) 'lastChosenQuality': lastChosenQuality!,
       'qualityByPlatform': qualityByPlatform,
       'useDynamicColor': useDynamicColor,
+      'onlyWhileCharging': onlyWhileCharging,
+      'pauseBelowBattery': pauseBelowBattery,
+      'pocketPause': pocketPause,
+      'headsetControls': headsetControls,
+      'volumeKeysSeek': volumeKeysSeek,
+      'hapticAlerts': hapticAlerts,
+      if (saveTreeUri != null) 'saveTreeUri': saveTreeUri!,
     };
   }
 
@@ -113,6 +149,15 @@ class AppSettings extends Equatable {
       lastChosenQuality: map['lastChosenQuality'] as String?,
       qualityByPlatform: _stringMap(map['qualityByPlatform']),
       useDynamicColor: map['useDynamicColor'] as bool? ?? true,
+      onlyWhileCharging: map['onlyWhileCharging'] as bool? ?? false,
+      pauseBelowBattery: map['pauseBelowBattery'] as bool? ?? true,
+      pocketPause: map['pocketPause'] as bool? ?? true,
+      headsetControls: map['headsetControls'] as bool? ?? true,
+      volumeKeysSeek: map['volumeKeysSeek'] as bool? ?? true,
+      hapticAlerts: map['hapticAlerts'] as bool? ?? true,
+      saveTreeUri: (map['saveTreeUri'] as String?)?.trim().isNotEmpty == true
+          ? map['saveTreeUri'] as String
+          : null,
     );
   }
 
@@ -130,6 +175,13 @@ class AppSettings extends Equatable {
         lastChosenQuality,
         qualityByPlatform,
         useDynamicColor,
+        onlyWhileCharging,
+        pauseBelowBattery,
+        pocketPause,
+        headsetControls,
+        volumeKeysSeek,
+        hapticAlerts,
+        saveTreeUri,
       ];
 }
 

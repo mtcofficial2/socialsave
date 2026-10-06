@@ -10,9 +10,11 @@ import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:social_save/core/platform/phone_body.dart';
 import 'package:social_save/core/theme/app_colors.dart';
 import 'package:social_save/features/library/device_media.dart';
 import 'package:social_save/features/player/pip.dart';
+import 'package:social_save/features/player/playback_bridge.dart';
 import 'package:social_save/features/player/player_session.dart';
 import 'package:social_save/features/player/resume_position.dart';
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
@@ -21,9 +23,16 @@ import 'package:social_save/shared/widgets/platform_logo.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 class InAppPlayerScreen extends ConsumerStatefulWidget {
-  const InAppPlayerScreen({super.key, required this.session});
+  const InAppPlayerScreen({
+    super.key,
+    required this.session,
+    this.embedded = false,
+    this.onClose,
+  });
 
   final PlayerSession session;
+  final bool embedded;
+  final VoidCallback? onClose;
 
   @override
   ConsumerState<InAppPlayerScreen> createState() => _InAppPlayerScreenState();
@@ -44,6 +53,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   Timer? _chromeTimer;
   Timer? _sleepTimer;
   int? _sleepMinutes;
+  bool _sleepAtEnd = false;
+  bool _dimmed = false;
+  bool _pocketPaused = false;
   bool _loop = false;
   bool _muted = false;
   bool _completed = false;
@@ -163,8 +175,69 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     PipController.listen((inPip) {
       if (mounted) setState(() => _inPip = inPip);
     });
+    _bindPhone();
     _open();
     _showChrome();
+  }
+
+  void _bindPhone() {
+    PhoneBody.ensure();
+    PlaybackBridge.bind(
+      owner: this,
+      title: () => _session.title,
+      playing: () => _player.state.playing,
+      toggle: () async {
+        if (_player.state.playing) {
+          await _player.pause();
+        } else {
+          await _player.play();
+        }
+      },
+      seek: _skip,
+      next: () async {
+        if (_hasNext) await _playNext();
+      },
+    );
+    _subs.add(PhoneBody.snapshots.stream.listen((snap) async {
+      if (!mounted) return;
+      final settings = ref.read(settingsControllerProvider);
+      if (!settings.pocketPause) return;
+      if (snap.pocket) {
+        if (_player.state.playing) {
+          _pocketPaused = true;
+          await _player.pause();
+        }
+      } else if (_pocketPaused) {
+        _pocketPaused = false;
+        await _player.play();
+      }
+    }));
+    _subs.add(PhoneBody.actions.stream.listen((action) async {
+      if (!mounted) return;
+      final settings = ref.read(settingsControllerProvider);
+      if (action.name == 'toggle' && settings.headsetControls) {
+        if (_player.state.playing) {
+          await _player.pause();
+        } else {
+          await _player.play();
+        }
+      } else if (action.name == 'next' && settings.headsetControls) {
+        if (_hasNext) await _playNext();
+      } else if (action.name == 'seek' && settings.volumeKeysSeek) {
+        await _skip(action.delta);
+      }
+    }));
+    _subs.add(_player.stream.playing.listen((playing) {
+      if (!mounted) return;
+      final settings = ref.read(settingsControllerProvider);
+      unawaited(PhoneBody.setPlayback(
+        active: true,
+        playing: playing,
+        title: _session.title,
+        headset: settings.headsetControls,
+        volumeSeek: settings.volumeKeysSeek,
+      ));
+    }));
   }
 
   void _showChrome() {
@@ -182,12 +255,56 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
 
   void _setSleep(int minutes) {
     _sleepTimer?.cancel();
+    _sleepAtEnd = false;
     setState(() => _sleepMinutes = minutes);
     _sleepTimer = Timer(Duration(minutes: minutes), () {
-      if (!mounted) return;
-      unawaited(_player.pause());
-      setState(() => _sleepMinutes = null);
+      unawaited(_fireSleep());
     });
+  }
+
+  void _setSleepAtEnd() {
+    _sleepTimer?.cancel();
+    setState(() {
+      _sleepMinutes = null;
+      _sleepAtEnd = true;
+    });
+  }
+
+  void _clearSleep() {
+    _sleepTimer?.cancel();
+    _sleepAtEnd = false;
+    final wasDimmed = _dimmed;
+    _dimmed = false;
+    if (wasDimmed) unawaited(PhoneBody.setBrightness(-1));
+    if (mounted) setState(() => _sleepMinutes = null);
+  }
+
+  Future<void> _fireSleep() async {
+    _sleepTimer?.cancel();
+    _sleepAtEnd = false;
+    await _player.pause();
+    await PhoneBody.setBrightness(0.05);
+    _dimmed = true;
+    if (!mounted) return;
+    setState(() => _sleepMinutes = null);
+  }
+
+  Future<void> _playOnTv() async {
+    final path = _session.filePath;
+    if (path == null || !File(path).existsSync()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Save the video on this phone before playing it on a TV.')),
+        );
+      }
+      return;
+    }
+    final ok = await PhoneBody.playOnTv(path: path, title: _session.title);
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No TV app on this phone could open the video.')),
+      );
+    }
   }
 
   @override
@@ -534,6 +651,10 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   }
 
   Future<void> _onFinished() async {
+    if (_sleepAtEnd) {
+      await _fireSleep();
+      return;
+    }
     if (_loop || _showEndCard) return;
     final autoNext = ref.read(settingsControllerProvider).autoPlayNextInGallery;
     setState(() {
@@ -645,16 +766,39 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                       'Sleep timer',
                       style: TextStyle(color: Colors.white70, fontSize: 12),
                     ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'The screen dims when the timer ends.',
+                      style: TextStyle(color: Colors.white54, fontSize: 12),
+                    ),
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
+                      runSpacing: 8,
                       children: [
-                        for (final minutes in [15, 30, 45])
+                        for (final minutes in [15, 20, 30, 45])
                           ChoiceChip(
                             label: Text('$minutes min'),
-                            selected: _sleepMinutes == minutes,
+                            selected: _sleepMinutes == minutes && !_sleepAtEnd,
                             onSelected: (_) {
                               _setSleep(minutes);
+                              setSheet(() {});
+                            },
+                          ),
+                        ChoiceChip(
+                          label: const Text('End of this video'),
+                          selected: _sleepAtEnd,
+                          onSelected: (_) {
+                            _setSleepAtEnd();
+                            setSheet(() {});
+                          },
+                        ),
+                        if (_sleepMinutes != null || _sleepAtEnd)
+                          ChoiceChip(
+                            label: const Text('Off'),
+                            selected: false,
+                            onSelected: (_) {
+                              _clearSleep();
                               setSheet(() {});
                             },
                           ),
@@ -916,6 +1060,15 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     _cancelCountdown();
     _chromeTimer?.cancel();
     _sleepTimer?.cancel();
+    PlaybackBridge.clear(this);
+    unawaited(PhoneBody.setPlayback(
+      active: false,
+      playing: false,
+      title: _session.title,
+      headset: false,
+      volumeSeek: false,
+    ));
+    if (_dimmed) unawaited(PhoneBody.setBrightness(-1));
     unawaited(_saveResume());
     for (final sub in _subs) {
       unawaited(sub.cancel());
@@ -973,7 +1126,13 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
               child: Row(
                 children: [
                   IconButton(
-                    onPressed: () => Navigator.maybePop(context),
+                    onPressed: () {
+                      if (widget.embedded) {
+                        widget.onClose?.call();
+                      } else {
+                        Navigator.maybePop(context);
+                      }
+                    },
                     icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
                   ),
                   PlatformLogo(platform: _session.platform, size: 22),
@@ -1022,6 +1181,12 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                       tooltip: 'Play over other apps',
                       onPressed: _playOverApps,
                       icon: const Icon(Icons.picture_in_picture_alt_rounded, color: Colors.white),
+                    ),
+                  if (_session.filePath != null && !_session.isVault)
+                    IconButton(
+                      tooltip: 'Play on TV',
+                      onPressed: () => unawaited(_playOnTv()),
+                      icon: const Icon(Icons.tv_rounded, color: Colors.white),
                     ),
                   if (_session.filePath != null && !_session.isVault)
                     IconButton(

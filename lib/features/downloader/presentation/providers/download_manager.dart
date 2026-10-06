@@ -3,12 +3,13 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/constants/app_constants.dart';
 import 'package:social_save/core/platform/media_events.dart';
+import 'package:social_save/core/platform/phone_body.dart';
+import 'package:social_save/core/platform/phone_power.dart';
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/storage/download_path_service.dart';
 import 'package:social_save/core/storage/media_store_service.dart';
@@ -64,9 +65,12 @@ class DownloadManager extends Notifier<DownloadManagerState> {
   final Map<String, CancelToken> _tokens = {};
   final Map<String, _SpeedTracker> _speeds = {};
   final Map<String, StreamSubscription<NetworkAccess>> _wifiWaits = {};
+  final Set<String> _powerHolds = {};
+  StreamSubscription<PhoneSnapshot>? _phoneSub;
   final ErrorMapper _errorMapper = const ErrorMapper();
   final Uuid _uuid = const Uuid();
   var _restored = false;
+  var _alive = true;
   DateTime? _lastSignal;
 
   @override
@@ -79,14 +83,25 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       if (action == 'cancel') await cancel(id);
       if (action == 'resume') await resume(id);
     });
+    PhoneBody.ensure();
+    _phoneSub = PhoneBody.snapshots.stream.listen((_) {
+      unawaited(_applyPower());
+    });
     ref.onDispose(() {
+      _alive = false;
       MediaEvents.off('downloadAction');
+      unawaited(_phoneSub?.cancel());
       for (final sub in _wifiWaits.values) {
         unawaited(sub.cancel());
       }
       unawaited(_stopSignal());
     });
-    Future<void>(() => _restore());
+    Future<void>(() async {
+      if (!_alive) return;
+      await _restore();
+      if (!_alive) return;
+      await _applyPower();
+    });
     return const DownloadManagerState();
   }
 
@@ -159,8 +174,11 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     state = state.copyWithTask(task);
 
     if (start && settings.autoStartDownloads) {
+      final power = _powerReason(settings);
       if (await _wifiBlocked(settings)) {
         await _parkForWifi(task);
+      } else if (power != null) {
+        await _holdForPower(task, power);
       } else {
         unawaited(this.start(id));
       }
@@ -181,6 +199,12 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       await _parkForWifi(existing);
       return;
     }
+    final power = _powerReason(settings);
+    if (power != null) {
+      await _holdForPower(existing, power);
+      return;
+    }
+    _powerHolds.remove(id);
     await _wifiWaits.remove(id)?.cancel();
 
     final token = CancelToken();
@@ -293,9 +317,10 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       state = state.copyWithTask(finished);
       await _persist();
       await _signalActive();
-      try {
-        HapticFeedback.lightImpact();
-      } catch (_) {}
+      final doneSettings = ref.read(settingsControllerProvider);
+      if (doneSettings.hapticAlerts) {
+        unawaited(PhoneBody.vibrate(saved: true));
+      }
       if (savedPath != null && File(savedPath).existsSync()) {
         unawaited(() async {
           try {
@@ -306,6 +331,14 @@ class DownloadManager extends Notifier<DownloadManagerState> {
                   ? 'video/webm'
                   : 'video/mp4',
             );
+            final tree = ref.read(settingsControllerProvider).saveTreeUri;
+            if (tree != null && tree.isNotEmpty) {
+              await PhoneBody.copyIntoFolder(
+                treeUri: tree,
+                path: savedPath,
+                name: p.basename(savedPath),
+              );
+            }
             if (published == null || published.isEmpty) {
               await MediaStoreService().scanFile(savedPath);
             } else if (!published.startsWith('content:') && published != savedPath) {
@@ -398,6 +431,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     if (task == null || !task.status.canPause) {
       return;
     }
+    _powerHolds.remove(id);
     _tokens[id]?.cancel('paused');
     final paused = task.copyWith(status: DownloadStatus.paused, bytesPerSecond: 0);
     state = state.copyWithTask(paused);
@@ -501,6 +535,9 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       );
       state = state.copyWithTask(failed);
       final settings = ref.read(settingsControllerProvider);
+      if (settings.hapticAlerts) {
+        unawaited(PhoneBody.vibrate(saved: false));
+      }
       if (settings.notificationsEnabled) {
         await ref.read(notificationServiceProvider).showDownloadFailed(
               id: failed.id,
@@ -527,6 +564,53 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     final connectivity = ref.read(connectivityServiceProvider);
     final access = await connectivity.current();
     return !connectivity.canDownload(access: access, wifiOnly: settings.wifiOnly);
+  }
+
+  String? _powerReason(AppSettings settings) {
+    final snap = PhoneBody.latest;
+    return powerHoldReason(
+      onlyWhileCharging: settings.onlyWhileCharging,
+      pauseBelowBattery: settings.pauseBelowBattery,
+      pocketPause: settings.pocketPause,
+      known: snap.known,
+      battery: snap.battery,
+      charging: snap.charging,
+      pocket: snap.pocket,
+    );
+  }
+
+  Future<void> _holdForPower(DownloadTask task, String reason) async {
+    _powerHolds.add(task.id);
+    _tokens[task.id]?.cancel('power');
+    final waiting = task.copyWith(
+      status: DownloadStatus.waitingPower,
+      bytesPerSecond: 0,
+      errorMessage: reason,
+    );
+    state = state.copyWithTask(waiting);
+    await _persist();
+    await _signal(waiting);
+  }
+
+  Future<void> _applyPower() async {
+    if (!_alive) return;
+    final settings = ref.read(settingsControllerProvider);
+    final reason = _powerReason(settings);
+    for (final task in state.tasks.values.toList()) {
+      if (reason != null && task.status == DownloadStatus.running) {
+        final latest = state.byId(task.id) ?? task;
+        if (latest.status == DownloadStatus.running) {
+          await _holdForPower(latest, reason);
+        }
+      } else if (reason == null &&
+          task.status == DownloadStatus.waitingPower &&
+          _powerHolds.contains(task.id) &&
+          !_tokens.containsKey(task.id)) {
+        if (!await _wifiBlocked(settings)) {
+          unawaited(start(task.id));
+        }
+      }
+    }
   }
 
   Future<void> _parkForWifi(DownloadTask task) async {
@@ -582,15 +666,17 @@ class DownloadManager extends Notifier<DownloadManagerState> {
   }
 
   Future<void> _restore() async {
-    if (_restored) return;
+    if (_restored || !_alive) return;
     _restored = true;
     try {
       final prefs = await SharedPreferences.getInstance();
+      if (!_alive) return;
       final raw = prefs.getString('socialsave_active_downloads');
       if (raw == null || raw.isEmpty) return;
       final data = jsonDecode(raw);
-      if (data is! List) return;
+      if (data is! List || !_alive) return;
       for (final item in data) {
+        if (!_alive) return;
         if (item is! Map) continue;
         final task = DownloadTask.fromJson(Map<String, dynamic>.from(item));
         if (task.id.isEmpty || !task.status.isActive) continue;
@@ -599,7 +685,12 @@ class DownloadManager extends Notifier<DownloadManagerState> {
             ? task.copyWith(status: DownloadStatus.paused, bytesPerSecond: 0)
             : task;
         state = state.copyWithTask(resumed);
-        if (task.status == DownloadStatus.running || task.status == DownloadStatus.waitingWifi) {
+        if (task.status == DownloadStatus.running ||
+            task.status == DownloadStatus.waitingWifi ||
+            task.status == DownloadStatus.waitingPower) {
+          if (task.status == DownloadStatus.waitingPower) {
+            _powerHolds.add(resumed.id);
+          }
           unawaited(start(resumed.id));
         }
       }
@@ -619,11 +710,13 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     final progress = (task.progress * 100).round().clamp(0, 100);
     final text = task.status == DownloadStatus.waitingWifi
         ? 'Waiting for Wi-Fi'
-        : task.status == DownloadStatus.paused
-            ? 'Paused'
-            : task.bytesPerSecond <= 0
-                ? 'Starting'
-                : '${(task.bytesPerSecond / (1024 * 1024)).toStringAsFixed(1)} MB/s';
+        : task.status == DownloadStatus.waitingPower
+            ? (task.errorMessage ?? 'Waiting for the phone')
+            : task.status == DownloadStatus.paused
+                ? 'Paused'
+                : task.bytesPerSecond <= 0
+                    ? 'Starting'
+                    : '${(task.bytesPerSecond / (1024 * 1024)).toStringAsFixed(1)} MB/s';
     try {
       await MediaEvents.channel.invokeMethod<void>('keepAlive', {
         'id': task.id,
@@ -640,7 +733,8 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     for (final task in state.tasks.values) {
       if (task.status == DownloadStatus.running ||
           task.status == DownloadStatus.paused ||
-          task.status == DownloadStatus.waitingWifi) {
+          task.status == DownloadStatus.waitingWifi ||
+          task.status == DownloadStatus.waitingPower) {
         active = task;
         break;
       }

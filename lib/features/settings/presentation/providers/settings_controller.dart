@@ -66,6 +66,37 @@ class SettingsController extends Notifier<AppSettings> {
     return _commit(state.copyWith(useDynamicColor: value));
   }
 
+  Future<void> setOnlyWhileCharging(bool value) {
+    return _commit(state.copyWith(onlyWhileCharging: value));
+  }
+
+  Future<void> setPauseBelowBattery(bool value) {
+    return _commit(state.copyWith(pauseBelowBattery: value));
+  }
+
+  Future<void> setPocketPause(bool value) {
+    return _commit(state.copyWith(pocketPause: value));
+  }
+
+  Future<void> setHeadsetControls(bool value) {
+    return _commit(state.copyWith(headsetControls: value));
+  }
+
+  Future<void> setVolumeKeysSeek(bool value) {
+    return _commit(state.copyWith(volumeKeysSeek: value));
+  }
+
+  Future<void> setHapticAlerts(bool value) {
+    return _commit(state.copyWith(hapticAlerts: value));
+  }
+
+  Future<void> setSaveTree(String? uri) {
+    if (uri == null || uri.isEmpty) {
+      return _commit(state.copyWith(clearSaveTree: true));
+    }
+    return _commit(state.copyWith(saveTreeUri: uri));
+  }
+
   Future<void> _commit(AppSettings next) async {
     state = next;
     await ref.read(settingsRepositoryProvider).save(next);
