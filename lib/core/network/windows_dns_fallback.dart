@@ -13,7 +13,8 @@ class WindowsDnsFallback {
   static final Map<String, List<InternetAddress>> _cache = {};
 
   static void install() {
-    if (!Platform.isWindows) return;
+    // Android too: some ISPs, routers and VPNs block *.onrender.com in DNS.
+    if (!Platform.isWindows && !Platform.isAndroid) return;
     HttpOverrides.global = _FallbackOverrides();
   }
 

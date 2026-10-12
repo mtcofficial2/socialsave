@@ -77,13 +77,41 @@ class DioClient {
     );
   }
 
+  /// True while we wait for the free Render server to wake up.
+  static final ValueNotifier<bool> waking = ValueNotifier<bool>(false);
+
+  static bool _isColdStart(DioException e) {
+    final code = e.response?.statusCode;
+    return e.type == DioExceptionType.connectionError ||
+        e.type == DioExceptionType.connectionTimeout ||
+        code == 502 ||
+        code == 503 ||
+        code == 504;
+  }
+
   Future<T> _guard<T>(Future<T> Function() action) async {
+    final started = DateTime.now();
     try {
-      return await action();
-    } on DioException catch (error) {
-      throw _errorMapper.fromDio(error);
+      while (true) {
+        try {
+          return await action();
+        } on DioException catch (error) {
+          final waited = DateTime.now().difference(started);
+          if (error.type == DioExceptionType.cancel ||
+              !_isColdStart(error) ||
+              waited > const Duration(seconds: 60)) {
+            throw _errorMapper.fromDio(error);
+          }
+          waking.value = true;
+          await Future<void>.delayed(const Duration(seconds: 4));
+        }
+      }
+    } on AppException {
+      rethrow;
     } catch (error) {
       throw _errorMapper.fromObject(error);
+    } finally {
+      waking.value = false;
     }
   }
 }

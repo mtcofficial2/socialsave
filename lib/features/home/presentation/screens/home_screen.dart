@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:social_save/core/network/dio_client.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -133,6 +134,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             const SizedBox(height: 16),
             const UpdateCard(),
             UrlInputCard(onAnalyze: _analyze, onPaste: _paste),
+            ValueListenableBuilder<bool>(
+              valueListenable: DioClient.waking,
+              builder: (context, waking, _) => !waking
+                  ? const SizedBox.shrink()
+                  : const Padding(
+                      padding: EdgeInsets.only(top: 8),
+                      child: Row(
+                        children: [
+                          SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                          SizedBox(width: 10),
+                          Expanded(child: Text('Waking the SocialSave server… this can take up to a minute.')),
+                        ],
+                      ),
+                    ),
+            ),
             Align(
               alignment: Alignment.centerLeft,
               child: TextButton.icon(

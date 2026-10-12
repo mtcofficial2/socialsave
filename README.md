@@ -4,7 +4,7 @@
 
 Get the newest build from [Releases](https://github.com/aviation256444-boop/socialsave/releases/latest):
 
-- **Android:** `SocialSave-1.0.6+11.apk`. Open it on the phone and allow installing from unknown sources when asked.
+- **Android:** `SocialSave.apk`. Open it on the phone and allow installing from unknown sources when asked.
 - **Windows:** `SocialSave-Windows-1.0.6.zip`. Unzip it, run `SocialSave.exe`, and if SmartScreen appears click **More info > Run anyway**.
 
 Use SocialSave in a PC browser at [https://socialsave-api-p2tm.onrender.com](https://socialsave-api-p2tm.onrender.com).

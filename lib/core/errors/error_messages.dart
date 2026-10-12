@@ -31,7 +31,7 @@ class ErrorMessages {
       'This platform does not allow third-party apps to download the file. SocialSave will not bypass that restriction.';
 
   static const String networkUnavailable =
-      'You appear to be offline. Connect to the internet and try again.';
+      'Could not reach the SocialSave server. Check your internet (or turn a VPN off/on) and tap Retry.';
 
   static const String computerAsleep =
       'This computer looks asleep, or SocialSave is not running on it. Wake it and stay on the same Wi-Fi.';
