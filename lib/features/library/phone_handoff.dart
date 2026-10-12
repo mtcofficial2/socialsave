@@ -5,6 +5,7 @@ import 'dart:math';
 
 import 'package:dio/dio.dart';
 import 'package:file_selector/file_selector.dart';
+import 'package:social_save/features/library/transfer_meter.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:path/path.dart' as p;
@@ -439,13 +440,12 @@ class PhoneHandoff {
       drop.value = DropState(title: title, received: 0, total: total, busy: true);
       final sink = dest.openWrite();
       var got = 0;
-      var lastTick = DateTime.now();
+      final meter = TransferMeter();
       await for (final chunk in req) {
         sink.add(chunk);
         got += chunk.length;
-        if (DateTime.now().difference(lastTick).inMilliseconds > 150) {
-          lastTick = DateTime.now();
-          drop.value = DropState(title: title, received: got, total: total, busy: true);
+        if (meter.update(got, total)) {
+          drop.value = DropState(title: title, received: got, total: total, busy: true, detail: meter.label);
         }
       }
       await sink.close();
@@ -464,7 +464,7 @@ class PhoneHandoff {
       res.headers.contentType = ContentType.json;
       res.write(jsonEncode({'ok': true, 'path': dest.path}));
       await res.close();
-      drop.value = DropState(title: title, received: got, total: total, file: dest);
+      drop.value = DropState(title: title, received: got, total: total, file: dest, detail: meter.doneLabel);
     } catch (_) {
       drop.value = const DropState(title: 'Video', received: 0, total: 0, failed: true);
       try {
@@ -571,8 +571,10 @@ class DropState {
     this.busy = false,
     this.failed = false,
     this.file,
+    this.detail = '',
   });
 
+  final String detail;
   final String title;
   final int received;
   final int total;
@@ -649,14 +651,15 @@ Future<void> showSendToPhone(BuildContext context, File file, String title) asyn
             status = 'Looking for that code on this Wi-Fi…';
             pushProgress = null;
           });
+          final meter = TransferMeter();
           final error = await PhoneHandoff.push(
             file,
             codeCtrl.text,
             title: title,
             onProgress: (sent, total) {
-              if (!context.mounted) return;
+              if (!context.mounted || !meter.update(sent, total)) return;
               setState(() {
-                status = 'Sending… ${(sent * 100 / (total == 0 ? 1 : total)).toStringAsFixed(0)}%';
+                status = 'Sending… ${(sent * 100 / (total == 0 ? 1 : total)).toStringAsFixed(0)}% · ${meter.label}';
                 pushProgress = total > 0 ? sent / total : null;
               });
             },
@@ -665,7 +668,7 @@ Future<void> showSendToPhone(BuildContext context, File file, String title) asyn
           setState(() {
             pushing = false;
             pushProgress = error == null ? 1 : null;
-            status = error ?? 'Sent. It is saved on the other device.';
+            status = error ?? 'Sent. It is saved on the other device. ${meter.doneLabel}';
           });
         }
 
@@ -915,7 +918,7 @@ Future<bool> _showDropProgress(BuildContext context) async {
             const SizedBox(height: 12),
             LinearProgressIndicator(value: v?.fraction),
             const SizedBox(height: 6),
-            Text(v?.fraction == null ? '' : '${(v!.fraction! * 100).toStringAsFixed(0)}% of ${_sizeText(v.total)}'),
+            Text(v == null ? '' : '${v.fraction == null ? '' : '${(v.fraction! * 100).toStringAsFixed(0)}% · '}${v.detail}'),
           ],
         ),
       ),
@@ -928,7 +931,7 @@ Future<bool> _showDropProgress(BuildContext context) async {
   await dialog;
   final file = result.file;
   messenger.showSnackBar(SnackBar(
-    content: Text(file == null ? 'The copy did not finish. Try again on the same Wi-Fi.' : 'Saved to ${file.parent.path}. It is in your Library.'),
+    content: Text(file == null ? 'The copy did not finish. Try again on the same Wi-Fi.' : 'Saved to ${file.parent.path}. ${result.detail}'),
     action: file == null
         ? null
         : SnackBarAction(
@@ -989,6 +992,8 @@ Future<bool> receiveHandoff(BuildContext context, String raw, {String? mode}) as
     return false;
   }
   final progress = ValueNotifier<double?>(null);
+  final detail = ValueNotifier<String>('');
+  final meter = TransferMeter();
   final cancel = CancelToken();
   final dialog = showDialog<void>(
     context: context,
@@ -1004,7 +1009,12 @@ Future<bool> receiveHandoff(BuildContext context, String raw, {String? mode}) as
             const SizedBox(height: 12),
             LinearProgressIndicator(value: value),
             const SizedBox(height: 6),
-            Text(value == null ? '' : '${(value * 100).toStringAsFixed(0)}% of ${_sizeText(target.size)}'),
+            ValueListenableBuilder<String>(
+              valueListenable: detail,
+              builder: (context, d, _) => Text(
+                '${value == null ? '' : '${(value * 100).toStringAsFixed(0)}% · '}$d',
+              ),
+            ),
           ],
         ),
       ),
@@ -1024,7 +1034,11 @@ Future<bool> receiveHandoff(BuildContext context, String raw, {String? mode}) as
     file = await PhoneHandoff.download(
       target,
       cancel: cancel,
-      onProgress: (r, t) => progress.value = t > 0 ? r / t : null,
+      onProgress: (r, t) {
+        if (!meter.update(r, t)) return;
+        progress.value = t > 0 ? r / t : null;
+        detail.value = meter.label;
+      },
     );
   } catch (_) {
     file = null;
@@ -1036,7 +1050,7 @@ Future<bool> receiveHandoff(BuildContext context, String raw, {String? mode}) as
   messenger.showSnackBar(SnackBar(
     content: Text(file == null
         ? 'The copy did not finish. Stay on the same Wi-Fi and try again.'
-        : 'Saved to ${file.parent.path}. It is in your Library.'),
+        : 'Saved to ${file.parent.path}. ${meter.doneLabel}.'),
   ));
   return file != null;
 }

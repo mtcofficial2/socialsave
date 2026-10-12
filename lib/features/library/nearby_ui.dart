@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:social_save/features/library/transfer_meter.dart';
 import 'package:flutter/material.dart';
 import 'package:social_save/features/library/nearby_service.dart';
 import 'package:social_save/features/player/player_session.dart';
@@ -96,6 +97,8 @@ class NearbyIncomingCard extends StatelessWidget {
                               style: const TextStyle(fontWeight: FontWeight.w700),
                             ),
                             Text(v.fileName, maxLines: 1, overflow: TextOverflow.ellipsis),
+                            if (v.detail.isNotEmpty)
+                              Text(v.detail, style: Theme.of(context).textTheme.bodySmall),
                             if (!v.done) ...[
                               const SizedBox(height: 6),
                               LinearProgressIndicator(value: v.fraction),
@@ -237,17 +240,19 @@ Future<void> sendToNearby(BuildContext context, NearbyDevice device, File file) 
       ],
     ),
   );
+  final meter = TransferMeter();
   final error = await NearbyService.sendTo(
     device,
     file,
     onStatus: (s) => status.value = s,
     onProgress: (sent, total) {
+      if (!meter.update(sent, total)) return;
       progress.value = total > 0 ? sent / total : null;
-      status.value = 'Sending… ${total > 0 ? (sent * 100 ~/ total) : 0}%';
+      status.value = 'Sending… ${total > 0 ? (sent * 100 ~/ total) : 0}% · ${meter.label}';
     },
   );
   finished = true;
   progress.value = error == null ? 1 : 0;
-  status.value = error ?? 'Sent. It is saved on ${device.name}.';
+  status.value = error ?? 'Sent. It is saved on ${device.name}. ${meter.doneLabel}';
   await dialog;
 }

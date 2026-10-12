@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:social_save/features/library/transfer_meter.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
@@ -55,8 +56,10 @@ class IncomingProgress {
     required this.total,
     this.done = false,
     this.file,
+    this.detail = '',
   });
 
+  final String detail;
   final String fromName;
   final String fileName;
   final int received;
@@ -304,15 +307,20 @@ class NearbyService {
     final dest = await PhoneHandoff.destFor(offer.fileName);
     final sink = dest.openWrite();
     var got = 0;
-    var tick = DateTime.now();
+    final meter = TransferMeter();
     incoming.value = IncomingProgress(fromName: offer.fromName, fileName: offer.fileName, received: 0, total: total);
     try {
       await for (final chunk in req) {
         sink.add(chunk);
         got += chunk.length;
-        if (DateTime.now().difference(tick).inMilliseconds > 150) {
-          tick = DateTime.now();
-          incoming.value = IncomingProgress(fromName: offer.fromName, fileName: offer.fileName, received: got, total: total);
+        if (meter.update(got, total)) {
+          incoming.value = IncomingProgress(
+            fromName: offer.fromName,
+            fileName: offer.fileName,
+            received: got,
+            total: total,
+            detail: meter.label,
+          );
         }
       }
       await sink.close();
@@ -340,6 +348,7 @@ class NearbyService {
       total: total,
       done: true,
       file: dest,
+      detail: meter.doneLabel,
     );
   }
 

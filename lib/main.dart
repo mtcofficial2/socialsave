@@ -15,6 +15,7 @@ import 'package:social_save/features/downloads/data/datasources/download_history
 import 'package:social_save/features/library/nearby_service.dart';
 import 'package:social_save/features/library/nearby_ui.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
+import 'package:social_save/features/library/transfer_meter.dart';
 import 'package:social_save/features/library/presentation/library_screen.dart';
 import 'package:social_save/features/library/vault_service.dart';
 import 'package:social_save/features/settings/data/datasources/settings_store.dart';
@@ -41,8 +42,9 @@ Future<void> main(List<String> args) async {
     NearbyService.incoming.addListener(() {
       final v = NearbyService.incoming.value;
       if (v == null) return;
+      if (!v.done) print('debug recv progress ${v.detail}');
       if (v.done) {
-        print('debug received ${v.received}/${v.total} file=${v.file?.path}');
+        print('debug received ${v.received}/${v.total} file=${v.file?.path} ${v.detail}');
         Future<void>.delayed(const Duration(seconds: 2), () => exit(v.file == null ? 1 : 0));
       }
     });
@@ -59,8 +61,13 @@ Future<void> main(List<String> args) async {
     final list = NearbyService.devices.value;
     print('debug found ${list.map((d) => '${d.name}(${d.kind})@${d.host}:${d.port}').toList()} after ${sw.elapsedMilliseconds}ms');
     if (list.isEmpty) exit(1);
+    final meter = TransferMeter();
     final err = await NearbyService.sendTo(list.first, File(args[ns + 2]),
-        onStatus: (s) => print('debug status $s'));
+        onStatus: (s) => print('debug status $s'),
+        onProgress: (s, t) {
+          if (meter.update(s, t)) print('debug send progress ${meter.label}');
+        });
+    print('debug send ${meter.doneLabel}');
     print('debug nearby-send result=${err ?? 'ok'}');
     exit(err == null ? 0 : 1);
   }
