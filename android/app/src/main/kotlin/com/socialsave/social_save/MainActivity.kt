@@ -31,6 +31,7 @@ import java.util.concurrent.Executors
 class MainActivity : FlutterFragmentActivity() {
     private val channelName = "socialsave/media"
     private var channel: MethodChannel? = null
+    private var multicastLock: android.net.wifi.WifiManager.MulticastLock? = null
     private var pendingShare: String? = null
     private var pipAllowed = false
     private var pipWidth = 16
@@ -81,6 +82,32 @@ class MainActivity : FlutterFragmentActivity() {
         DownloadEvents.channel = channel
         channel?.setMethodCallHandler { call, result ->
             when (call.method) {
+                "nearbyLock" -> {
+                    // Lets UDP broadcast beacons from other SocialSave apps through.
+                    try {
+                        val wifi = applicationContext.getSystemService(android.content.Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+                        if (call.argument<Boolean>("on") == true) {
+                            if (multicastLock == null) {
+                                multicastLock = wifi.createMulticastLock("socialsave-nearby").apply {
+                                    setReferenceCounted(false)
+                                    acquire()
+                                }
+                            }
+                        } else {
+                            multicastLock?.release()
+                            multicastLock = null
+                        }
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.success(false)
+                    }
+                }
+                "deviceName" -> {
+                    val name = try {
+                        android.provider.Settings.Global.getString(contentResolver, "device_name")
+                    } catch (e: Exception) { null }
+                    result.success(if (name.isNullOrBlank()) "${Build.MANUFACTURER} ${Build.MODEL}" else name)
+                }
                 "scanFile" -> {
                     val path = call.argument<String>("path")
                     if (path.isNullOrBlank()) {

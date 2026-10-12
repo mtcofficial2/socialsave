@@ -82,6 +82,11 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   int _countdown = 5;
   Timer? _nextTimer;
   late List<PlayerQueueItem> _queue;
+  // Desktop keyboard / mouse.
+  final GlobalKey<VideoState> _videoKey = GlobalKey<VideoState>();
+  final FocusNode _keyFocus = FocusNode(debugLabel: 'player-keys');
+  String? _osd;
+  Timer? _osdTimer;
   late int _queueIndex;
 
   PlayerSession get _session {
@@ -725,6 +730,158 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     await _player.play();
   }
 
+  void _flash(String text) {
+    _osdTimer?.cancel();
+    if (mounted) setState(() => _osd = text);
+    _osdTimer = Timer(const Duration(milliseconds: 900), () {
+      if (mounted) setState(() => _osd = null);
+    });
+  }
+
+  Future<void> _seekKey(int seconds) async {
+    await _skip(seconds);
+    _flash('${seconds > 0 ? '+' : '−'}${seconds.abs()} s');
+  }
+
+  Future<void> _volumeKey(double delta) async {
+    final next = (_player.state.volume + delta).clamp(0.0, 100.0);
+    await _player.setVolume(next);
+    _volume = next;
+    _flash('Volume ${next.round()}%');
+  }
+
+  Future<void> _rateKey(double delta) async {
+    final next = ((_rate + delta) * 4).round() / 4;
+    final clamped = next.clamp(0.25, 3.0);
+    await _setRate(clamped);
+    _flash('Speed ${clamped}x');
+  }
+
+  Future<void> _jumpPercent(int tenth) async {
+    final d = _player.state.duration;
+    if (d <= Duration.zero) return;
+    await _player.seek(d * (tenth / 10));
+    _flash('${tenth * 10}%');
+  }
+
+  Future<void> _frameStep(bool forward) async {
+    try {
+      await _player.pause();
+      final native = _player.platform;
+      if (native is NativePlayer) {
+        await native.command([forward ? 'frame-step' : 'frame-back-step']);
+      }
+      _flash(forward ? 'Next frame' : 'Previous frame');
+    } catch (_) {}
+  }
+
+  Future<void> _playPrevious() async {
+    if (_queueIndex <= 0 || _queue.isEmpty) {
+      await _player.seek(Duration.zero);
+      return;
+    }
+    setState(() => _queueIndex -= 2);
+    await _playNext();
+  }
+
+  Future<void> _toggleFullscreenKey() async {
+    final state = _videoKey.currentState;
+    if (state == null) return;
+    await state.toggleFullscreen();
+  }
+
+  Future<void> _showShortcuts() async {
+    const rows = [
+      ['Space / K / click', 'Play or pause'],
+      ['← / →', 'Back / forward 5 s'],
+      ['J / L', 'Back / forward 10 s'],
+      ['↑ / ↓  or mouse wheel', 'Volume'],
+      ['M', 'Mute'],
+      ['F / double-click', 'Full screen'],
+      ['Esc', 'Leave full screen / go back'],
+      ['N / P', 'Next / previous video'],
+      ['< / >', 'Slower / faster'],
+      [', / .', 'Frame back / forward (paused)'],
+      ['0 – 9', 'Jump to 0 – 90 %'],
+      ['?', 'This list'],
+    ];
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Keyboard shortcuts'),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final row in rows)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 170,
+                        child: Text(row[0], style: const TextStyle(fontWeight: FontWeight.w700)),
+                      ),
+                      Expanded(child: Text(row[1])),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))],
+      ),
+    );
+    _keyFocus.requestFocus();
+  }
+
+  Map<ShortcutActivator, VoidCallback> _desktopKeys() {
+    void play() {
+      unawaited(_player.playOrPause());
+      _flash(_player.state.playing ? 'Pause' : 'Play');
+    }
+    return {
+      const SingleActivator(LogicalKeyboardKey.space): play,
+      const SingleActivator(LogicalKeyboardKey.keyK): play,
+      const SingleActivator(LogicalKeyboardKey.mediaPlayPause): play,
+      const SingleActivator(LogicalKeyboardKey.mediaPlay): () => unawaited(_player.play()),
+      const SingleActivator(LogicalKeyboardKey.mediaPause): () => unawaited(_player.pause()),
+      const SingleActivator(LogicalKeyboardKey.arrowLeft): () => unawaited(_seekKey(-5)),
+      const SingleActivator(LogicalKeyboardKey.arrowRight): () => unawaited(_seekKey(5)),
+      const SingleActivator(LogicalKeyboardKey.keyJ): () => unawaited(_seekKey(-10)),
+      const SingleActivator(LogicalKeyboardKey.keyL): () => unawaited(_seekKey(10)),
+      const SingleActivator(LogicalKeyboardKey.arrowUp): () => unawaited(_volumeKey(5)),
+      const SingleActivator(LogicalKeyboardKey.arrowDown): () => unawaited(_volumeKey(-5)),
+      const SingleActivator(LogicalKeyboardKey.keyM): () {
+        unawaited(_toggleMute());
+        _flash(_muted ? 'Sound on' : 'Muted');
+      },
+      const SingleActivator(LogicalKeyboardKey.keyF): () => unawaited(_toggleFullscreenKey()),
+      const SingleActivator(LogicalKeyboardKey.escape): () {
+        final state = _videoKey.currentState;
+        if (state != null && state.isFullscreen()) {
+          unawaited(state.exitFullscreen());
+        } else if (widget.embedded) {
+          widget.onClose?.call();
+        } else {
+          unawaited(Navigator.maybePop(context));
+        }
+      },
+      const SingleActivator(LogicalKeyboardKey.keyN): () => unawaited(_playNext()),
+      const SingleActivator(LogicalKeyboardKey.mediaTrackNext): () => unawaited(_playNext()),
+      const SingleActivator(LogicalKeyboardKey.keyP): () => unawaited(_playPrevious()),
+      const SingleActivator(LogicalKeyboardKey.mediaTrackPrevious): () => unawaited(_playPrevious()),
+      const CharacterActivator('<'): () => unawaited(_rateKey(-0.25)),
+      const CharacterActivator('>'): () => unawaited(_rateKey(0.25)),
+      const SingleActivator(LogicalKeyboardKey.comma): () => unawaited(_frameStep(false)),
+      const SingleActivator(LogicalKeyboardKey.period): () => unawaited(_frameStep(true)),
+      const CharacterActivator('?'): () => unawaited(_showShortcuts()),
+      for (var i = 0; i <= 9; i++)
+        SingleActivator(LogicalKeyboardKey(LogicalKeyboardKey.digit0.keyId + i)): () => unawaited(_jumpPercent(i)),
+    };
+  }
+
   Future<void> _playNext() async {
     if (!_hasNext) return;
     HapticFeedback.lightImpact();
@@ -1021,6 +1178,58 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     return '${rate}x';
   }
 
+  /// Windows: desktop controls (click = play/pause, double-click = full
+  /// screen, wheel = volume, cursor hides) plus our keyboard map.
+  Widget _desktopVideo() {
+    final keys = _desktopKeys();
+    final desktop = MaterialDesktopVideoControlsThemeData(
+      playAndPauseOnTap: true,
+      toggleFullscreenOnDoublePress: true,
+      modifyVolumeOnScroll: true,
+      hideMouseOnControlsRemoval: true,
+      keyboardShortcuts: keys,
+    );
+    return Focus(
+      focusNode: _keyFocus,
+      autofocus: true,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          MaterialDesktopVideoControlsTheme(
+            normal: desktop,
+            fullscreen: desktop,
+            child: Video(
+              key: _videoKey,
+              controller: _video,
+              fill: Colors.black,
+              fit: _fit,
+              controls: _locked ? _hiddenControls : MaterialDesktopVideoControls,
+            ),
+          ),
+          if (_osd != null)
+            IgnorePointer(
+              child: Align(
+                alignment: const Alignment(0, -0.6),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.65),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: Text(
+                      _osd!,
+                      style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   MaterialVideoControlsThemeData _theme() {
     return MaterialVideoControlsThemeData(
       displaySeekBar: true,
@@ -1094,6 +1303,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     WidgetsBinding.instance.removeObserver(this);
     _cancelCountdown();
     _chromeTimer?.cancel();
+    _osdTimer?.cancel();
+    _keyFocus.dispose();
     _sleepTimer?.cancel();
     PlaybackBridge.clear(this);
     unawaited(PhoneBody.setPlayback(
@@ -1119,7 +1330,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   @override
   Widget build(BuildContext context) {
     final theme = _theme();
-    final video = MaterialVideoControlsTheme(
+    final Widget video = DesktopSupport.isWindows ? _desktopVideo() : MaterialVideoControlsTheme(
       normal: theme,
       fullscreen: theme.copyWith(
         bottomButtonBarMargin: const EdgeInsets.only(left: 8, right: 8, bottom: 24),
@@ -1191,7 +1402,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                               ? 'Preview · not saved yet'
                               : _session.isVault
                                   ? 'Vault · PIN protected'
-                                  : 'Tap video for skip, speed, loop, and fill',
+                                  : DesktopSupport.isWindows
+                                      ? 'Space play · ←/→ seek · ↑/↓ volume · F full screen · ? shortcuts'
+                                      : 'Tap video for skip, speed, loop, and fill',
                           style: const TextStyle(color: Colors.white70, fontSize: 11),
                         ),
                       ],

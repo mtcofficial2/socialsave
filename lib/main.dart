@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -11,6 +12,8 @@ import 'package:social_save/core/network/windows_dns_fallback.dart';
 import 'package:social_save/core/notifications/notification_service.dart';
 import 'package:social_save/core/storage/hive_init.dart';
 import 'package:social_save/features/downloads/data/datasources/download_history_store.dart';
+import 'package:social_save/features/library/nearby_service.dart';
+import 'package:social_save/features/library/nearby_ui.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:social_save/features/library/presentation/library_screen.dart';
 import 'package:social_save/features/library/vault_service.dart';
@@ -23,6 +26,45 @@ Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   // Test hook: a sender with no UI and no database, so it can run next to
   // the normal app on the same PC. `SocialSave.exe --send-only <file>`
+  // Nearby test hooks (no UI, no database):
+  //   --nearby-recv <name>         announce, auto-accept, print progress
+  //   --nearby-send <name> <file>  wait for a device, send the file to it
+  final nr = args.indexOf('--nearby-recv');
+  if (nr >= 0 && nr + 1 < args.length) {
+    NearbyService.onOffer = (o) async {
+      print('debug offer from ${o.fromName}: ${o.fileName} ${o.size}');
+      return true;
+    };
+    await NearbyService.start(testId: 'recv${args[nr + 1]}', testName: args[nr + 1]);
+    print('debug nearby-recv started as ${NearbyService.name}');
+    NearbyService.devices.addListener(() => print('debug sees ${NearbyService.devices.value.map((d) => '${d.name}@${d.host}:${d.port}').toList()}'));
+    NearbyService.incoming.addListener(() {
+      final v = NearbyService.incoming.value;
+      if (v == null) return;
+      if (v.done) {
+        print('debug received ${v.received}/${v.total} file=${v.file?.path}');
+        Future<void>.delayed(const Duration(seconds: 2), () => exit(v.file == null ? 1 : 0));
+      }
+    });
+    await Future<void>.delayed(const Duration(minutes: 5));
+    exit(2);
+  }
+  final ns = args.indexOf('--nearby-send');
+  if (ns >= 0 && ns + 2 < args.length) {
+    await NearbyService.start(testId: 'send${args[ns + 1]}', testName: args[ns + 1]);
+    final sw = Stopwatch()..start();
+    while (NearbyService.devices.value.isEmpty && sw.elapsed.inSeconds < 20) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+    final list = NearbyService.devices.value;
+    print('debug found ${list.map((d) => '${d.name}(${d.kind})@${d.host}:${d.port}').toList()} after ${sw.elapsedMilliseconds}ms');
+    if (list.isEmpty) exit(1);
+    final err = await NearbyService.sendTo(list.first, File(args[ns + 2]),
+        onStatus: (s) => print('debug status $s'));
+    print('debug nearby-send result=${err ?? 'ok'}');
+    exit(err == null ? 0 : 1);
+  }
+
   // `--drop-only` waits for a pushed video; `--push-only <file> <code>` sends one.
   if (args.contains('--drop-only')) {
     final code = await PhoneHandoff.openDrop();
@@ -81,6 +123,8 @@ Future<void> main(List<String> args) async {
       child: const SocialSaveApp(),
     ),
   );
+  installNearbyUi();
+  unawaited(NearbyService.start());
 
   // Desktop test hook: `SocialSave.exe --download <url>` runs the normal
   // analyze + save flow and prints each step.

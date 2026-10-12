@@ -392,6 +392,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
               child: NearbyShareBar(
                 onSend: _pickLibraryVideoToSend,
+                pickFile: _chooseFileToSend,
                 onReceived: () => _reload(rescan: DesktopSupport.isWindows),
               ),
             ),
@@ -732,6 +733,47 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     final path = await DeviceMediaService().resolvePlayablePath(video);
     if (path == null || !mounted) return;
     await showSendToPhone(context, File(path), video.title);
+  }
+
+  /// For a tapped nearby device: choose from this Library or browse.
+  Future<File?> _chooseFileToSend() async {
+    final videos = _device.where(_matchesVideo).toList();
+    final choice = await showModalBottomSheet<Object>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.sizeOf(context).height * 0.7,
+          child: Column(
+            children: [
+              const ListTile(title: Text('Send which video?')),
+              ListTile(
+                leading: const Icon(Icons.folder_open_rounded),
+                title: const Text('Browse for a file…'),
+                onTap: () => Navigator.pop(context, 'browse'),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: videos.length,
+                  itemBuilder: (context, i) => ListTile(
+                    leading: const Icon(Icons.movie_outlined),
+                    title: Text(videos[i].title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    onTap: () => Navigator.pop(context, videos[i]),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (choice == null) return null;
+    if (choice is DeviceVideo) {
+      final path = await DeviceMediaService().resolvePlayablePath(choice);
+      return path == null ? null : File(path);
+    }
+    return pickVideoFile();
   }
 
   /// "Send video" in the Nearby share bar: choose from this Library,

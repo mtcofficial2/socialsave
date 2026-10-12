@@ -1,3 +1,7 @@
+import 'package:social_save/features/library/nearby_ui.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/gestures.dart';
+import 'dart:io';
 import 'package:dynamic_color/dynamic_color.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -34,7 +38,8 @@ class SocialSaveApp extends ConsumerWidget {
           fit: StackFit.expand,
           children: [
             const GlassBackground(),
-            if (child != null) Positioned.fill(child: child),
+            if (child != null) Positioned.fill(child: _desktopKeys(child)),
+            const NearbyIncomingCard(),
           ],
         );
       },
@@ -43,4 +48,21 @@ class SocialSaveApp extends ConsumerWidget {
       },
     );
   }
+}
+
+/// Windows: Esc and the mouse "back" button go back a screen.
+Widget _desktopKeys(Widget child) {
+  if (!Platform.isWindows) return child;
+  void back() {
+    if (appRouter.canPop()) appRouter.pop();
+  }
+  return Listener(
+    onPointerDown: (event) {
+      if (event.buttons & kBackMouseButton != 0) back();
+    },
+    child: CallbackShortcuts(
+      bindings: {const SingleActivator(LogicalKeyboardKey.escape): back},
+      child: child,
+    ),
+  );
 }

@@ -13,6 +13,7 @@ import 'package:social_save/core/platform/desktop_support.dart';
 import 'package:social_save/core/platform/phone_body.dart';
 import 'package:social_save/core/storage/download_path_service.dart';
 import 'package:social_save/core/storage/media_store_service.dart';
+import 'package:social_save/features/library/nearby_ui.dart';
 import 'package:social_save/features/player/player_session.dart';
 import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/routing/app_router.dart';
@@ -328,6 +329,9 @@ class PhoneHandoff {
     await _publish(dest);
     return dest;
   }
+
+  static Future<File> destFor(String rawName) => _destFor(rawName);
+  static Future<void> publish(File dest) => _publish(dest);
 
   static Future<File> _destFor(String rawName) async {
     final Directory folder;
@@ -676,6 +680,12 @@ Future<void> showSendToPhone(BuildContext context, File file, String title) asyn
               children: [
                 Text(title, maxLines: 2, overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 12),
+                Text('Nearby devices — tap one to send', style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: 4),
+                NearbyDeviceChips(file: file),
+                const Divider(height: 24),
+                Text('No device listed? Use a code', style: Theme.of(context).textTheme.labelLarge),
+                const SizedBox(height: 6),
                 Text('1. Is the other device showing a code?', style: Theme.of(context).textTheme.titleSmall),
                 const SizedBox(height: 4),
                 Row(
@@ -1072,6 +1082,21 @@ Future<void> showSoundClip(BuildContext context, String path) async {
 }
 
 
+/// Opens the system file picker for one video.
+Future<File?> pickVideoFile() async {
+  final picked = await openFile(acceptedTypeGroups: _videoTypes);
+  return picked == null ? null : File(picked.path);
+}
+
+const _videoTypes = [
+  XTypeGroup(
+    label: 'Videos',
+    extensions: ['mp4', 'mkv', 'webm', 'mov', 'avi', 'm4v', '3gp', 'mp3', 'm4a'],
+    mimeTypes: ['video/*', 'audio/*'],
+    uniformTypeIdentifiers: ['public.movie'],
+  ),
+];
+
 /// Lets the user pick any video file, then shows the send code.
 Future<void> pickAndSend(BuildContext context) async {
   final picked = await openFile(acceptedTypeGroups: const [
@@ -1088,7 +1113,10 @@ Future<void> pickAndSend(BuildContext context) async {
 
 /// Two big buttons: Send and Receive, phone or PC, same Wi-Fi.
 class NearbyShareBar extends StatelessWidget {
-  const NearbyShareBar({super.key, this.onReceived, this.onSend});
+  const NearbyShareBar({super.key, this.onReceived, this.onSend, this.pickFile});
+
+  /// Picks the video to send when a nearby device is tapped.
+  final Future<File?> Function()? pickFile;
 
   final VoidCallback? onReceived;
 
@@ -1117,6 +1145,8 @@ class NearbyShareBar extends StatelessWidget {
                 ),
               ],
             ),
+            const SizedBox(height: 6),
+            NearbyDeviceChips(pickFile: pickFile ?? () => pickVideoFile()),
             const SizedBox(height: 8),
             Row(
               children: [

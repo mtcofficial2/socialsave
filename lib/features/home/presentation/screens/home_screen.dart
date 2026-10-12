@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -114,6 +115,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   @override
   Widget build(BuildContext context) {
+    if (Platform.isWindows) {
+      return CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.keyV, control: true): () => unawaited(_paste()),
+        },
+        child: Focus(autofocus: true, child: _scaffold(context)),
+      );
+    }
+    return _scaffold(context);
+  }
+
+  Widget _scaffold(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       body: SafeArea(
