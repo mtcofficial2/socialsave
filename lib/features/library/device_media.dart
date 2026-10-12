@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/services.dart';
+import 'package:social_save/core/platform/desktop_support.dart';
 
 class DeviceVideo {
   const DeviceVideo({
@@ -11,6 +12,7 @@ class DeviceVideo {
     this.durationMs = 0,
     this.size = 0,
     this.addedAt = 0,
+    this.folder,
   });
 
   final String id;
@@ -20,6 +22,9 @@ class DeviceVideo {
   final int durationMs;
   final int size;
   final int addedAt;
+
+  /// Containing folder. Set on Windows only.
+  final String? folder;
 
   factory DeviceVideo.fromMap(Map<dynamic, dynamic> map) {
     return DeviceVideo(
@@ -32,6 +37,7 @@ class DeviceVideo {
       durationMs: (map['durationMs'] as num?)?.toInt() ?? 0,
       size: (map['size'] as num?)?.toInt() ?? 0,
       addedAt: (map['addedAt'] as num?)?.toInt() ?? 0,
+      folder: map['folder'] as String?,
     );
   }
 }
@@ -41,19 +47,37 @@ class DeviceMediaService {
 
   Future<List<DeviceVideo>> listVideos() async {
     try {
-      final raw = await _channel.invokeMethod<List<dynamic>>('listVideos');
-      return (raw ?? [])
-          .whereType<Map<dynamic, dynamic>>()
-          .map(DeviceVideo.fromMap)
-          .where((video) {
-            final path = video.path ?? '';
-            return !path.contains('${Platform.pathSeparator}vault${Platform.pathSeparator}') &&
-                !path.contains('/vault/');
-          })
-          .toList();
+      final raw = DesktopSupport.isWindows
+          ? await DesktopSupport.listVideos()
+          : await _channel.invokeMethod<List<dynamic>>('listVideos');
+      return _fromRaw(raw);
     } catch (_) {
       return [];
     }
+  }
+
+  List<DeviceVideo> _fromRaw(List<dynamic>? raw) {
+    return (raw ?? [])
+        .whereType<Map<dynamic, dynamic>>()
+        .map(DeviceVideo.fromMap)
+        .where((video) {
+          final path = video.path ?? '';
+          return !path.contains('${Platform.pathSeparator}vault${Platform.pathSeparator}') &&
+              !path.contains('/vault/');
+        })
+        .toList();
+  }
+
+  /// Windows only: a fresh scan of the PC's video folders, emitting the
+  /// list so far after each folder.
+  Stream<List<DeviceVideo>> scanWindows() {
+    return DesktopSupport.scanVideos().map(_fromRaw);
+  }
+
+  /// Windows only: the last finished scan, or null.
+  List<DeviceVideo>? get cachedWindows {
+    final cached = DesktopSupport.cachedVideos;
+    return cached == null ? null : _fromRaw(cached);
   }
 
   Future<String?> resolvePlayablePath(DeviceVideo video) async {
@@ -73,6 +97,10 @@ class DeviceMediaService {
   }
 
   Future<bool> renamePublic(DeviceVideo video, String name) async {
+    if (DesktopSupport.isWindows) {
+      final path = video.path;
+      return path != null && await DesktopSupport.rename(path, name);
+    }
     try {
       return await _channel.invokeMethod<bool>('renamePublicVideo', {
             'id': video.id,
@@ -87,6 +115,10 @@ class DeviceMediaService {
   }
 
   Future<bool> deletePublic(DeviceVideo video) async {
+    if (DesktopSupport.isWindows) {
+      final path = video.path;
+      return path != null && await DesktopSupport.delete(path);
+    }
     try {
       return await _channel.invokeMethod<bool>('deletePublicVideo', {
             'id': video.id,
@@ -110,6 +142,9 @@ class DeviceMediaService {
     String? path,
     String? uri,
   }) async {
+    if (DesktopSupport.isWindows) {
+      return path == null ? null : DesktopSupport.thumbnail(path);
+    }
     try {
       return await _channel.invokeMethod<String>('videoThumbnail', {
         'id': id,

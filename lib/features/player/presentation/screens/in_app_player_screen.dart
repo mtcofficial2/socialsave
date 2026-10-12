@@ -2,11 +2,13 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:open_filex/open_filex.dart';
+import 'package:social_save/core/platform/desktop_support.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -225,19 +227,39 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         if (_hasNext) await _playNext();
       } else if (action.name == 'seek' && settings.volumeKeysSeek) {
         await _skip(action.delta);
+      } else if (action.name == 'play') {
+        // Lock screen / media notification controls.
+        await _player.play();
+      } else if (action.name == 'pause') {
+        await _player.pause();
+      } else if (action.name == 'skip') {
+        await _skip(action.delta);
+        _pushSession();
+      } else if (action.name == 'seekTo') {
+        await _player.seek(Duration(milliseconds: action.delta));
+        _pushSession();
+      } else if (action.name == 'skipNext') {
+        if (_hasNext) await _playNext();
       }
     }));
-    _subs.add(_player.stream.playing.listen((playing) {
-      if (!mounted) return;
-      final settings = ref.read(settingsControllerProvider);
-      unawaited(PhoneBody.setPlayback(
-        active: true,
-        playing: playing,
-        title: _session.title,
-        headset: settings.headsetControls,
-        volumeSeek: settings.volumeKeysSeek,
-      ));
-    }));
+    _subs.add(_player.stream.playing.listen((_) => _pushSession()));
+    _subs.add(_player.stream.duration.listen((_) => _pushSession()));
+  }
+
+  /// Media session state for the lock screen and the background service.
+  void _pushSession() {
+    if (!mounted) return;
+    final settings = ref.read(settingsControllerProvider);
+    unawaited(PhoneBody.setPlayback(
+      active: true,
+      playing: _player.state.playing,
+      title: _session.title,
+      headset: settings.headsetControls,
+      volumeSeek: settings.volumeKeysSeek,
+      background: Platform.isAndroid && settings.backgroundPlay && !_session.isVault,
+      positionMs: _player.state.position.inMilliseconds,
+      durationMs: _player.state.duration.inMilliseconds,
+    ));
   }
 
   void _showChrome() {
@@ -313,6 +335,15 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       unawaited(_saveResume());
+    }
+    // With "Keep playing when screen is off" turned off, stop when the app
+    // leaves the screen (not in picture-in-picture).
+    if (state == AppLifecycleState.paused &&
+        Platform.isAndroid &&
+        !_inPip &&
+        !ref.read(settingsControllerProvider).backgroundPlay &&
+        _player.state.playing) {
+      unawaited(_player.pause());
     }
   }
 
@@ -623,6 +654,10 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
           ),
         );
       }
+      return;
+    }
+    if (DesktopSupport.isWindows) {
+      await DesktopSupport.open(path);
       return;
     }
     await OpenFilex.open(path, type: 'video/*');
@@ -1176,11 +1211,19 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                     onPressed: _showTools,
                     icon: const Icon(Icons.tune_rounded, color: Colors.white),
                   ),
-                  if (!_session.isVault)
+                  if (!_session.isVault && !DesktopSupport.isWindows)
                     IconButton(
                       tooltip: 'Play over other apps',
                       onPressed: _playOverApps,
                       icon: const Icon(Icons.picture_in_picture_alt_rounded, color: Colors.white),
+                    ),
+                  if (_session.filePath != null && !_session.isVault)
+                    IconButton(
+                      tooltip: 'Send to another device',
+                      onPressed: () => unawaited(
+                        showSendToPhone(context, File(_session.filePath!), _session.title),
+                      ),
+                      icon: const Icon(Icons.send_to_mobile_rounded, color: Colors.white),
                     ),
                   if (_session.filePath != null && !_session.isVault)
                     IconButton(

@@ -254,6 +254,9 @@ class MainActivity : FlutterFragmentActivity() {
                         call.argument<String>("title"),
                         call.argument<Boolean>("headset") != false,
                         call.argument<Boolean>("volumeSeek") != false,
+                        call.argument<Boolean>("background") == true,
+                        (call.argument<Number>("positionMs") ?: -1).toLong(),
+                        (call.argument<Number>("durationMs") ?: 0).toLong(),
                     )
                     result.success(true)
                 }

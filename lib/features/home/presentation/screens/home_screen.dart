@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:social_save/core/platform/desktop_support.dart';
 import 'package:social_save/core/constants/app_constants.dart';
 import 'package:social_save/features/home/presentation/providers/home_controller.dart';
 import 'package:social_save/features/home/presentation/widgets/recent_downloads_list.dart';
@@ -53,8 +55,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   Future<bool> _consumeShare() async {
     if (!mounted) return false;
+    // Windows has no share intent; links come from paste / clipboard instead.
+    if (DesktopSupport.isWindows) return false;
     const channel = MethodChannel('socialsave/media');
-    final text = await channel.invokeMethod<String>('consumeSharedText');
+    String? text;
+    try {
+      text = await channel.invokeMethod<String>('consumeSharedText');
+    } catch (_) {
+      return false;
+    }
     if (text == null || text.trim().isEmpty || !mounted) return false;
     ref.read(homeControllerProvider.notifier).setUrl(text);
     final url = ref.read(homeControllerProvider.notifier).validatedUrl();
@@ -132,6 +141,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 label: const Text('Save a public playlist'),
               ),
             ),
+            const SizedBox(height: 8),
+            const NearbyShareBar(),
             const SizedBox(height: 12),
             const SaveQueueSection(),
             const SizedBox(height: 16),

@@ -52,6 +52,8 @@ class UpdateController extends Notifier<UpdateState> {
   Future<void> check() async {
     if (_checked) return;
     _checked = true;
+    // Releases ship an APK; the Windows build is installed separately.
+    if (!Platform.isAndroid) return;
     try {
       final current = AppConstants.appVersion;
       final response = await Dio(

@@ -1,9 +1,12 @@
+import 'dart:io';
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
+import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:social_save/core/di/providers.dart';
+import 'package:social_save/core/platform/desktop_support.dart';
 import 'package:social_save/core/errors/exceptions.dart';
 import 'package:social_save/features/downloads/presentation/providers/downloads_controller.dart';
 import 'package:social_save/features/library/vault_actions.dart';
@@ -86,6 +89,22 @@ class DownloadDetailScreen extends ConsumerWidget {
                     ),
                   ),
                 ],
+              ),
+              if (DesktopSupport.isWindows && record.localPath != null) ...[
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: () => DesktopSupport.revealInFolder(record.localPath!),
+                  icon: const Icon(Icons.folder_open_outlined),
+                  label: const Text('Show in folder'),
+                ),
+              ],
+              const SizedBox(height: 8),
+              FilledButton.tonalIcon(
+                onPressed: record.localPath == null
+                    ? null
+                    : () => showSendToPhone(context, File(record.localPath!), record.title),
+                icon: const Icon(Icons.send_to_mobile_rounded),
+                label: const Text('Send to another phone or PC'),
               ),
               const SizedBox(height: 8),
               OutlinedButton.icon(

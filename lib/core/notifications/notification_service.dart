@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 class NotificationService {
@@ -17,9 +18,19 @@ class NotificationService {
       requestBadgePermission: false,
       requestSoundPermission: false,
     );
-    await _plugin.initialize(
-      const InitializationSettings(android: android, iOS: ios),
+    const windows = WindowsInitializationSettings(
+      appName: 'SocialSave',
+      appUserModelId: 'com.socialsave.SocialSave',
+      guid: '6f1c2b8e-4d3a-4a5e-9b7c-2e8f0a1d5c43',
     );
+    try {
+      await _plugin.initialize(
+        const InitializationSettings(android: android, iOS: ios, windows: windows),
+      );
+    } catch (_) {
+      // Desktop notifications are best-effort; never block app start.
+      if (defaultTargetPlatform != TargetPlatform.windows) rethrow;
+    }
     _initialized = true;
   }
 
@@ -39,6 +50,17 @@ class NotificationService {
   }) async {
     if (!_initialized) {
       await init();
+    }
+    if (defaultTargetPlatform == TargetPlatform.windows) {
+      try {
+        await _plugin.show(
+          id.hashCode & 0x7fffffff,
+          'Download complete',
+          title,
+          null,
+        );
+      } catch (_) {}
+      return;
     }
     await _plugin.show(
       id.hashCode,
@@ -63,6 +85,17 @@ class NotificationService {
   }) async {
     if (!_initialized) {
       await init();
+    }
+    if (defaultTargetPlatform == TargetPlatform.windows) {
+      try {
+        await _plugin.show(
+          id.hashCode & 0x7fffffff,
+          'Download failed',
+          title,
+          null,
+        );
+      } catch (_) {}
+      return;
     }
     await _plugin.show(
       id.hashCode,

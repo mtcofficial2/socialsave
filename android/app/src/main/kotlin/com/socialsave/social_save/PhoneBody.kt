@@ -169,6 +169,9 @@ class PhoneBody(
         session?.isActive = false
         session?.release()
         session = null
+        PlaybackEvents.handler = null
+        PlaybackEvents.token = null
+        PlaybackService.stop(activity)
     }
 
     fun setPlayback(
@@ -177,7 +180,11 @@ class PhoneBody(
         title: String?,
         headset: Boolean,
         volumeSeek: Boolean,
+        background: Boolean = false,
+        positionMs: Long = -1L,
+        durationMs: Long = 0L,
     ) {
+        val wasActive = playbackActive
         playbackActive = active
         this.playing = playing
         headsetEnabled = headset
@@ -185,11 +192,18 @@ class PhoneBody(
         if (!title.isNullOrBlank()) this.title = title
         ensureSession()
         val current = session ?: return
-        current.setMetadata(
-            MediaMetadata.Builder()
-                .putString(MediaMetadata.METADATA_KEY_TITLE, this.title)
-                .build(),
-        )
+        val metadata = MediaMetadata.Builder()
+            .putString(MediaMetadata.METADATA_KEY_TITLE, this.title)
+            .putString(MediaMetadata.METADATA_KEY_ARTIST, "SocialSave")
+        if (durationMs > 0) metadata.putLong(MediaMetadata.METADATA_KEY_DURATION, durationMs)
+        try {
+            metadata.putBitmap(
+                MediaMetadata.METADATA_KEY_ART,
+                android.graphics.BitmapFactory.decodeResource(activity.resources, R.mipmap.ic_launcher),
+            )
+        } catch (_: Exception) {
+        }
+        current.setMetadata(metadata.build())
         val state = if (playing) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED
         current.setPlaybackState(
             PlaybackState.Builder()
@@ -198,13 +212,26 @@ class PhoneBody(
                         PlaybackState.ACTION_PAUSE or
                         PlaybackState.ACTION_PLAY_PAUSE or
                         PlaybackState.ACTION_SKIP_TO_NEXT or
+                        PlaybackState.ACTION_FAST_FORWARD or
+                        PlaybackState.ACTION_REWIND or
                         PlaybackState.ACTION_SEEK_TO,
                 )
-                .setState(state, PlaybackState.PLAYBACK_POSITION_UNKNOWN, if (playing) 1f else 0f)
+                .setState(
+                    state,
+                    if (positionMs >= 0) positionMs else PlaybackState.PLAYBACK_POSITION_UNKNOWN,
+                    if (playing) 1f else 0f,
+                )
                 .build(),
         )
         current.isActive = active
         updateVolumeRoute()
+        // Keep audio going with the screen off / app in the background.
+        PlaybackEvents.token = current.sessionToken
+        if (active && background && (playing || wasActive)) {
+            PlaybackService.update(activity, this.title ?: "SocialSave", playing)
+        } else {
+            PlaybackService.stop(activity)
+        }
     }
 
     fun vibrate(pattern: String?) {
@@ -454,9 +481,10 @@ class PhoneBody(
         val created = MediaSession(activity, "SocialSave")
         created.setCallback(object : MediaSession.Callback() {
             override fun onMediaButtonEvent(mediaButtonIntent: Intent): Boolean {
-                if (!headsetEnabled || !playbackActive) {
+                if (!playbackActive) {
                     return super.onMediaButtonEvent(mediaButtonIntent)
                 }
+                if (!headsetEnabled) return true
                 val event = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     mediaButtonIntent.getParcelableExtra(Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
                 } else {
@@ -488,8 +516,32 @@ class PhoneBody(
                 }
                 return super.onMediaButtonEvent(mediaButtonIntent)
             }
+
+            override fun onPlay() = emitTransport("play")
+            override fun onPause() = emitTransport("pause")
+            override fun onSkipToNext() = emitTransport("next")
+            override fun onFastForward() = emitTransport("forward")
+            override fun onRewind() = emitTransport("rewind")
+            override fun onSeekTo(pos: Long) = emitAction("seekTo", pos.toInt())
         })
+        created.setFlags(
+            @Suppress("DEPRECATION")
+            (MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS),
+        )
         session = created
+        PlaybackEvents.token = created.sessionToken
+        PlaybackEvents.handler = { name -> emitTransport(name) }
+    }
+
+    /** Lock-screen / notification controls (always on, not tied to the earphone setting). */
+    private fun emitTransport(name: String) {
+        when (name) {
+            "play" -> emitAction("play", 0)
+            "pause" -> emitAction("pause", 0)
+            "next" -> emitAction("skipNext", 0)
+            "rewind" -> emitAction("skip", -10)
+            "forward" -> emitAction("skip", 10)
+        }
     }
 
     private fun updateVolumeRoute() {

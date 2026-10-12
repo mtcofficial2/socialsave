@@ -24,6 +24,7 @@ class AppSettings extends Equatable {
     this.pauseBelowBattery = true,
     this.pocketPause = true,
     this.headsetControls = true,
+    this.backgroundPlay = true,
     this.volumeKeysSeek = true,
     this.hapticAlerts = true,
     this.saveTreeUri,
@@ -45,6 +46,9 @@ class AppSettings extends Equatable {
   final bool pauseBelowBattery;
   final bool pocketPause;
   final bool headsetControls;
+
+  /// Android: keep playing audio when the screen is off or the app is in the background.
+  final bool backgroundPlay;
   final bool volumeKeysSeek;
   final bool hapticAlerts;
   final String? saveTreeUri;
@@ -66,6 +70,7 @@ class AppSettings extends Equatable {
     bool? pauseBelowBattery,
     bool? pocketPause,
     bool? headsetControls,
+    bool? backgroundPlay,
     bool? volumeKeysSeek,
     bool? hapticAlerts,
     String? saveTreeUri,
@@ -88,6 +93,7 @@ class AppSettings extends Equatable {
       pauseBelowBattery: pauseBelowBattery ?? this.pauseBelowBattery,
       pocketPause: pocketPause ?? this.pocketPause,
       headsetControls: headsetControls ?? this.headsetControls,
+      backgroundPlay: backgroundPlay ?? this.backgroundPlay,
       volumeKeysSeek: volumeKeysSeek ?? this.volumeKeysSeek,
       hapticAlerts: hapticAlerts ?? this.hapticAlerts,
       saveTreeUri: clearSaveTree ? null : (saveTreeUri ?? this.saveTreeUri),
@@ -115,6 +121,7 @@ class AppSettings extends Equatable {
       'pauseBelowBattery': pauseBelowBattery,
       'pocketPause': pocketPause,
       'headsetControls': headsetControls,
+      'backgroundPlay': backgroundPlay,
       'volumeKeysSeek': volumeKeysSeek,
       'hapticAlerts': hapticAlerts,
       if (saveTreeUri != null) 'saveTreeUri': saveTreeUri!,
@@ -153,6 +160,7 @@ class AppSettings extends Equatable {
       pauseBelowBattery: map['pauseBelowBattery'] as bool? ?? true,
       pocketPause: map['pocketPause'] as bool? ?? true,
       headsetControls: map['headsetControls'] as bool? ?? true,
+      backgroundPlay: map['backgroundPlay'] as bool? ?? true,
       volumeKeysSeek: map['volumeKeysSeek'] as bool? ?? true,
       hapticAlerts: map['hapticAlerts'] as bool? ?? true,
       saveTreeUri: (map['saveTreeUri'] as String?)?.trim().isNotEmpty == true
@@ -179,6 +187,7 @@ class AppSettings extends Equatable {
         pauseBelowBattery,
         pocketPause,
         headsetControls,
+        backgroundPlay,
         volumeKeysSeek,
         hapticAlerts,
         saveTreeUri,

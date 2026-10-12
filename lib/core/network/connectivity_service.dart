@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:social_save/core/network/windows_dns_fallback.dart';
 
 enum NetworkAccess { offline, wifi, cellular, other }
 
@@ -10,12 +13,26 @@ class ConnectivityService {
 
   Future<NetworkAccess> current() async {
     final results = await _connectivity.checkConnectivity();
-    return fromResults(results);
+    final access = fromResults(results);
+    // Windows can report "none" behind VPN adapters (Surfshark, VeePN) while
+    // the internet works. Confirm with a quick DNS lookup before giving up.
+    if (access == NetworkAccess.offline && Platform.isWindows) {
+      try {
+        final found = await WindowsDnsFallback.resolve(
+          'socialsave-api-p2tm.onrender.com',
+        ).timeout(const Duration(seconds: 15));
+        if (found.isNotEmpty) return NetworkAccess.other;
+      } catch (_) {}
+    }
+    return access;
   }
 
   Stream<NetworkAccess> get onChange async* {
     await for (final results in _connectivity.onConnectivityChanged) {
-      yield fromResults(results);
+      final access = fromResults(results);
+      yield access == NetworkAccess.offline && Platform.isWindows
+          ? await current()
+          : access;
     }
   }
 

@@ -2,12 +2,14 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:social_save/core/di/providers.dart';
+import 'package:social_save/core/platform/desktop_support.dart';
 import 'package:social_save/core/platform/media_events.dart';
 import 'package:social_save/core/platform/phone_body.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
@@ -245,6 +247,17 @@ class SettingsScreen extends ConsumerWidget {
                       onChanged: controller.setPocketPause,
                     ),
                     const SizedBox(height: 16),
+                    if (Platform.isAndroid) ...[
+                      _toggleRow(
+                        context,
+                        icon: Icons.screen_lock_portrait_rounded,
+                        title: 'Keep playing when screen is off',
+                        subtitle: 'Sound keeps going with the screen locked or the app in the background, with controls on the lock screen',
+                        value: settings.backgroundPlay,
+                        onChanged: controller.setBackgroundPlay,
+                      ),
+                      const SizedBox(height: 16),
+                    ],
                     _toggleRow(
                       context,
                       icon: Icons.headphones_rounded,
@@ -778,6 +791,17 @@ Future<void> _exportIndex(BuildContext context, WidgetRef ref) async {
       'catalog': catalog.encode(),
     });
     final bytes = await const IndexBackup().seal(payload, passphrase);
+    if (DesktopSupport.isWindows) {
+      final folder = await DesktopSupport.saveFolder();
+      final saved = File('${folder.path}${Platform.pathSeparator}socialsave-library.socialsave');
+      await saved.writeAsBytes(bytes, flush: true);
+      await DesktopSupport.revealInFolder(saved.path);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Backup saved to ${saved.path}')),
+      );
+      return;
+    }
     final dir = await getTemporaryDirectory();
     final file = File('${dir.path}${Platform.pathSeparator}socialsave-library.socialsave');
     await file.writeAsBytes(bytes, flush: true);
@@ -794,7 +818,17 @@ Future<void> _exportIndex(BuildContext context, WidgetRef ref) async {
 }
 
 Future<void> _importIndex(BuildContext context, WidgetRef ref) async {
-  final raw = await MediaEvents.channel.invokeMethod<dynamic>('pickBackup');
+  dynamic raw;
+  if (DesktopSupport.isWindows) {
+    final picked = await openFile(
+      acceptedTypeGroups: const [
+        XTypeGroup(label: 'SocialSave backup', extensions: ['socialsave']),
+      ],
+    );
+    raw = picked == null ? null : await picked.readAsBytes();
+  } else {
+    raw = await MediaEvents.channel.invokeMethod<dynamic>('pickBackup');
+  }
   if (!context.mounted || raw == null) return;
   final bytes = raw is List ? raw.cast<int>() : null;
   if (bytes == null) return;

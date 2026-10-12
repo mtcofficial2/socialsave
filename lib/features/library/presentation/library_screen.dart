@@ -1,4 +1,7 @@
+import 'dart:async';
 import 'dart:io';
+
+import 'package:file_selector/file_selector.dart' show getDirectoryPath;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:social_save/core/di/providers.dart';
+import 'package:social_save/core/platform/desktop_support.dart';
 import 'package:social_save/core/platform/phone_body.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
 import 'package:social_save/features/library/device_media.dart';
@@ -47,6 +51,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   List<VaultItem> _vault = [];
   final Map<String, String> _vaultPaths = {};
   PlayerSession? _docked;
+  bool _scanning = false;
+  StreamSubscription<List<DeviceVideo>>? _scanSub;
 
   @override
   void initState() {
@@ -58,6 +64,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _scanSub?.cancel();
     super.dispose();
   }
 
@@ -69,15 +76,22 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     }
   }
 
-  Future<void> _reload() async {
+  Future<void> _reload({bool rescan = false}) async {
+    if (DesktopSupport.isWindows) {
+      await _reloadWindows(rescan: rescan);
+      return;
+    }
     setState(() {
       _loading = true;
       _error = null;
     });
-    final videos = await Permission.videos.request();
-    final storage = await Permission.storage.request();
-    final allowed =
-        videos.isGranted || videos.isLimited || storage.isGranted || storage.isLimited;
+    var allowed = true;
+    if (!DesktopSupport.isWindows) {
+      final videos = await Permission.videos.request();
+      final storage = await Permission.storage.request();
+      allowed =
+          videos.isGranted || videos.isLimited || storage.isGranted || storage.isLimited;
+    }
     try {
       final device = await DeviceMediaService().listVideos();
       final vaultService = ref.read(vaultServiceProvider);
@@ -105,6 +119,138 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
         _loading = false;
       });
     }
+  }
+
+  /// Windows: every video in the PC's usual folders, streamed in as each
+  /// folder finishes. The finished list is cached until Refresh.
+  Future<void> _reloadWindows({bool rescan = false}) async {
+    final media = DeviceMediaService();
+    final cached = media.cachedWindows;
+    setState(() {
+      _error = null;
+      if (cached != null && !rescan) {
+        _device = cached;
+        _loading = false;
+      } else if (_device.isEmpty) {
+        _loading = true;
+      }
+    });
+    try {
+      final vaultService = ref.read(vaultServiceProvider);
+      final vault = await vaultService.list();
+      final vaultPaths = <String, String>{};
+      for (final item in vault) {
+        vaultPaths[item.id] = (await vaultService.fileFor(item)).path;
+      }
+      if (!mounted) return;
+      setState(() {
+        _vault = vault;
+        _vaultPaths
+          ..clear()
+          ..addAll(vaultPaths);
+      });
+    } catch (_) {}
+    if (cached != null && !rescan) return;
+    await _scanSub?.cancel();
+    if (!mounted) return;
+    setState(() => _scanning = true);
+    _scanSub = media.scanWindows().listen(
+      (batch) {
+        if (!mounted) return;
+        setState(() {
+          _device = batch;
+          _loading = false;
+        });
+      },
+      onError: (_) {
+        if (!mounted) return;
+        setState(() {
+          _scanning = false;
+          _loading = false;
+        });
+      },
+      onDone: () {
+        if (!mounted) return;
+        setState(() {
+          _scanning = false;
+          _loading = false;
+        });
+      },
+    );
+  }
+
+  Future<void> _manageWindowsFolders() async {
+    final defaults = await DesktopSupport.defaultFolders();
+    var extra = [...await DesktopSupport.extraFolders()];
+    if (!mounted) return;
+    var changed = false;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheet) => SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.8,
+            ),
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                const ListTile(
+                  title: Text('Video folders on this PC'),
+                  subtitle: Text('SocialSave looks for videos in these folders and the folders inside them.'),
+                ),
+                for (final folder in defaults)
+                  ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.folder_special_outlined),
+                    title: Text(folder),
+                    subtitle: const Text('Default'),
+                  ),
+                for (final folder in extra)
+                  ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.folder_outlined),
+                    title: Text(folder),
+                    subtitle: const Text('Added by you'),
+                    trailing: IconButton(
+                      tooltip: 'Remove folder',
+                      icon: const Icon(Icons.close_rounded),
+                      onPressed: () async {
+                        extra = extra.where((item) => item != folder).toList();
+                        await DesktopSupport.setExtraFolders(extra);
+                        changed = true;
+                        setSheet(() {});
+                      },
+                    ),
+                  ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                  child: FilledButton.icon(
+                    icon: const Icon(Icons.create_new_folder_outlined),
+                    label: const Text('Add folder'),
+                    onPressed: () async {
+                      final picked = await getDirectoryPath(confirmButtonText: 'Add folder');
+                      if (picked == null || picked.isEmpty) return;
+                      final lower = picked.toLowerCase();
+                      if (extra.any((item) => item.toLowerCase() == lower) ||
+                          defaults.any((item) => item.toLowerCase() == lower)) {
+                        return;
+                      }
+                      extra = [...extra, picked];
+                      await DesktopSupport.setExtraFolders(extra);
+                      changed = true;
+                      setSheet(() {});
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (changed && mounted) await _reload(rescan: true);
   }
 
   Future<void> _playDevice(DeviceVideo video) async {
@@ -221,19 +367,32 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
                     ),
                   ),
                   IconButton(
-                    tooltip: 'Receive from another phone',
+                    tooltip: 'Receive from another phone or PC',
                     onPressed: () async {
                       await showReceiveFromPhone(context);
-                      if (mounted) await _reload();
+                      if (mounted) await _reload(rescan: DesktopSupport.isWindows);
                     },
                     icon: const Icon(Icons.qr_code_scanner_rounded),
                   ),
+                  if (DesktopSupport.isWindows)
+                    IconButton(
+                      tooltip: 'Video folders',
+                      onPressed: _manageWindowsFolders,
+                      icon: const Icon(Icons.create_new_folder_outlined),
+                    ),
                   IconButton(
                     tooltip: 'Refresh',
-                    onPressed: _reload,
+                    onPressed: () => _reload(rescan: true),
                     icon: const Icon(Icons.refresh_rounded),
                   ),
                 ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+              child: NearbyShareBar(
+                onSend: _pickLibraryVideoToSend,
+                onReceived: () => _reload(rescan: DesktopSupport.isWindows),
               ),
             ),
             Padding(
@@ -249,7 +408,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
                 ),
                 child: Row(
                   children: [
-                    _seg('On this phone', 0),
+                    _seg(DesktopSupport.isWindows ? 'On this PC' : 'On this phone', 0),
                     _seg('Vault', 1),
                   ],
                 ),
@@ -320,6 +479,24 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
               ),
             ),
             const SizedBox(height: 8),
+            if (DesktopSupport.isWindows && _scanning && _tab == 0)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Row(
+                  children: [
+                    const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Looking for videos on this PC… ${_device.length} found',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
             Expanded(
               child: LayoutBuilder(
                 builder: (context, constraints) {
@@ -338,6 +515,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
                                   onPlay: _playDevice,
                                   onVault: (video) => _confirmVault(video),
                                   onActions: _deviceActions,
+                                  onSend: _sendDevice,
                                 )
                               : _VaultGate(
                                   items: _vault.where(_matchesVault).toList(),
@@ -550,6 +728,57 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     await _reload();
   }
 
+  Future<void> _sendDevice(DeviceVideo video) async {
+    final path = await DeviceMediaService().resolvePlayablePath(video);
+    if (path == null || !mounted) return;
+    await showSendToPhone(context, File(path), video.title);
+  }
+
+  /// "Send video" in the Nearby share bar: choose from this Library,
+  /// or browse for any file.
+  Future<void> _pickLibraryVideoToSend() async {
+    final videos = _device.where(_matchesVideo).toList();
+    final choice = await showModalBottomSheet<Object>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.sizeOf(context).height * 0.7,
+          child: Column(
+            children: [
+              const ListTile(
+                title: Text('Send which video?'),
+                subtitle: Text('The other phone or PC can watch it or save a copy.'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.folder_open_rounded),
+                title: const Text('Browse for a file…'),
+                onTap: () => Navigator.pop(context, 'browse'),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: videos.length,
+                  itemBuilder: (context, i) => ListTile(
+                    leading: const Icon(Icons.movie_outlined),
+                    title: Text(videos[i].title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    onTap: () => Navigator.pop(context, videos[i]),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted || choice == null) return;
+    if (choice is DeviceVideo) {
+      await _sendDevice(choice);
+    } else {
+      await pickAndSend(context);
+    }
+  }
+
   Future<void> _deviceActions(DeviceVideo video) async {
     final action = await showModalBottomSheet<String>(
       context: context,
@@ -573,6 +802,13 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
               title: const Text('Share file'),
               onTap: () => Navigator.pop(context, 'share'),
             ),
+            if (DesktopSupport.isWindows)
+              ListTile(
+                leading: const Icon(Icons.folder_open_outlined),
+                title: const Text('Show in folder'),
+                subtitle: Text(video.path ?? ''),
+                onTap: () => Navigator.pop(context, 'reveal'),
+              ),
             ListTile(
               leading: const Icon(Icons.tv_rounded),
               title: const Text('Play on TV'),
@@ -581,8 +817,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
             ),
             ListTile(
               leading: const Icon(Icons.qr_code_rounded),
-              title: const Text('Send to another phone'),
-              subtitle: const Text('A code on this Wi-Fi. The video does not go through the internet.'),
+              title: const Text('Send to another device'),
+              subtitle: const Text('Phone or PC on this Wi-Fi: QR or 6-letter code. Watch or save.'),
               onTap: () => Navigator.pop(context, 'handoff'),
             ),
             ListTile(
@@ -628,7 +864,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
             ),
             ListTile(
               leading: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
-              title: const Text('Delete from phone'),
+              title: Text(DesktopSupport.isWindows ? 'Delete from PC' : 'Delete from phone'),
               onTap: () => Navigator.pop(context, 'delete'),
             ),
           ],
@@ -642,6 +878,11 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     }
     if (action == 'rename') {
       await _renameDevice(video);
+      return;
+    }
+    if (action == 'reveal') {
+      final path = video.path;
+      if (path != null) await DesktopSupport.revealInFolder(path);
       return;
     }
     if (action == 'share' || action == 'near' || action == 'tv' || action == 'handoff' || action == 'sound') {
@@ -713,7 +954,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('Delete this video?'),
-          content: Text('“${video.title}” will be removed from this phone.'),
+          content: Text(DesktopSupport.isWindows
+              ? '“${video.title}” will be deleted from this PC.\n${video.path ?? ''}'
+              : '“${video.title}” will be removed from this phone.'),
           actions: [
             TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
             FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
@@ -870,8 +1113,10 @@ class _DeviceList extends StatelessWidget {
     required this.onPlay,
     required this.onVault,
     required this.onActions,
+    required this.onSend,
   });
 
+  final ValueChanged<DeviceVideo> onSend;
   final List<DeviceVideo> videos;
   final ValueChanged<DeviceVideo> onPlay;
   final ValueChanged<DeviceVideo> onVault;
@@ -880,6 +1125,13 @@ class _DeviceList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (videos.isEmpty) {
+      if (DesktopSupport.isWindows) {
+        return const EmptyState(
+          icon: Icons.video_library_outlined,
+          title: 'No videos found on this PC',
+          message: 'Add a folder with the folder button above, or download a video, then refresh.',
+        );
+      }
       return const EmptyState(
         icon: Icons.video_library_outlined,
         title: 'No videos on this phone',
@@ -904,20 +1156,48 @@ class _DeviceList extends StatelessWidget {
           path: video.path,
           uri: video.uri,
           title: video.title,
-          caption: _durationLabel(seconds, video.size),
-          durationLabel: _clock(seconds),
+          caption: DesktopSupport.isWindows
+              ? _pcCaption(video)
+              : _durationLabel(seconds, video.size),
+          durationLabel: DesktopSupport.isWindows && seconds == 0 ? null : _clock(seconds),
           onTap: () => onPlay(video),
           onLongPress: () => onActions(video),
           heroTag: 'library-${video.id}',
-          action: IconButton(
-            tooltip: 'Add to vault',
-            onPressed: () => onVault(video),
-            icon: const Icon(Icons.lock_outline, color: Colors.white),
+          action: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: 'Send to another device',
+                visualDensity: VisualDensity.compact,
+                onPressed: () => onSend(video),
+                icon: const Icon(Icons.send_to_mobile_rounded, color: Colors.white),
+              ),
+              IconButton(
+                tooltip: 'Add to vault',
+                visualDensity: VisualDensity.compact,
+                onPressed: () => onVault(video),
+                icon: const Icon(Icons.lock_outline, color: Colors.white),
+              ),
+              IconButton(
+                tooltip: 'More',
+                visualDensity: VisualDensity.compact,
+                onPressed: () => onActions(video),
+                icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
+              ),
+            ],
           ),
         );
       },
     );
   }
+}
+
+/// Windows: size and the folder the video is in.
+String _pcCaption(DeviceVideo video) {
+  final folder = video.folder ?? (video.path == null ? '' : File(video.path!).parent.path);
+  final name = folder.isEmpty ? '' : folder.split(Platform.pathSeparator).last;
+  final size = video.size <= 0 ? '' : '${(video.size / (1024 * 1024)).toStringAsFixed(1)} MB';
+  return [size, if (name.isNotEmpty) name].where((part) => part.isNotEmpty).join('  •  ');
 }
 
 String _clock(int seconds) {

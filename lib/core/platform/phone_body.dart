@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/services.dart';
+import 'package:social_save/core/platform/desktop_support.dart';
 import 'package:social_save/core/platform/media_events.dart';
 
 class PhoneSnapshot {
@@ -106,6 +107,9 @@ class PhoneBody {
     required String title,
     required bool headset,
     required bool volumeSeek,
+    bool background = false,
+    int positionMs = -1,
+    int durationMs = 0,
   }) async {
     try {
       await MediaEvents.channel.invokeMethod<void>('setPlaybackSession', {
@@ -114,6 +118,9 @@ class PhoneBody {
         'title': title,
         'headset': headset,
         'volumeSeek': volumeSeek,
+        'background': background,
+        'positionMs': positionMs,
+        'durationMs': durationMs,
       });
     } catch (_) {}
   }
@@ -155,6 +162,8 @@ class PhoneBody {
   }
 
   static Future<bool> playOnTv({required String path, String? title}) async {
+    // On Windows, the default player (Films & TV / Media Player) has "Cast to device".
+    if (DesktopSupport.isWindows) return DesktopSupport.open(path);
     try {
       final ok = await MediaEvents.channel.invokeMethod<bool>('playOnTv', {
         'path': path,

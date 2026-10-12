@@ -78,6 +78,10 @@ class SettingsController extends Notifier<AppSettings> {
     return _commit(state.copyWith(pocketPause: value));
   }
 
+  Future<void> setBackgroundPlay(bool value) {
+    return _commit(state.copyWith(backgroundPlay: value));
+  }
+
   Future<void> setHeadsetControls(bool value) {
     return _commit(state.copyWith(headsetControls: value));
   }

