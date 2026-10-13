@@ -21,6 +21,9 @@ String debugInitialLocation = '/';
 /// Set by the --open-vault test switch: Library starts on the Vault tab.
 bool debugOpenVault = false;
 
+/// Set by --open-menu: Library opens the first video's menu (screenshots).
+bool debugOpenMenu = false;
+
 final appRouter = GoRouter(
   initialLocation: debugInitialLocation,
   routes: [

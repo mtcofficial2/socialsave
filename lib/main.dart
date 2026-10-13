@@ -162,6 +162,7 @@ Future<void> main(List<String> args) async {
   final op = args.indexOf('--open');
   if (op >= 0 && op + 1 < args.length) debugInitialLocation = args[op + 1];
   if (args.contains('--open-vault')) debugOpenVault = true;
+  if (args.contains('--open-menu')) debugOpenMenu = true;
   final notifications = NotificationService();
   await notifications.init();
 

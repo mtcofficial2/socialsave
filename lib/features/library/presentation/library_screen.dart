@@ -19,7 +19,7 @@ import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:social_save/features/library/summarize_sheet.dart';
 import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
 import 'package:social_save/features/library/vault_service.dart';
-import 'package:social_save/shared/routing/app_router.dart' show debugOpenVault;
+import 'package:social_save/shared/routing/app_router.dart' show debugOpenVault, debugOpenMenu;
 import 'package:social_save/shared/widgets/skeleton.dart';
 import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/features/player/player_session.dart';
@@ -52,6 +52,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   String? _collection;
   List<DeviceVideo> _device = [];
   final Set<String> _selected = {};
+  bool _selectMode = false;
   List<VaultItem> _vault = [];
   final Map<String, String> _vaultPaths = {};
   PlayerSession? _docked;
@@ -165,6 +166,13 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
           _device = batch;
           _loading = false;
         });
+        // Screenshot hook (`--open-menu`): open the first video's menu once.
+        if (debugOpenMenu && batch.isNotEmpty) {
+          debugOpenMenu = false;
+          Future<void>.delayed(const Duration(seconds: 2), () {
+            if (mounted && _device.isNotEmpty) _deviceActions(_device.first);
+          });
+        }
       },
       onError: (_) {
         if (!mounted) return;
@@ -351,6 +359,26 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
 
   @override
   Widget build(BuildContext context) {
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.delete): () {
+          if (_tab != 0 || _selected.isEmpty) return;
+          _deleteVideos(_device.where((v) => _selected.contains(v.id)).toList());
+        },
+        const SingleActivator(LogicalKeyboardKey.escape): () {
+          if (_selectMode || _selected.isNotEmpty) {
+            setState(() {
+              _selected.clear();
+              _selectMode = false;
+            });
+          }
+        },
+      },
+      child: Focus(autofocus: DesktopSupport.isWindows, child: _body(context)),
+    );
+  }
+
+  Widget _body(BuildContext context) {
     return Scaffold(
       body: SafeArea(
         child: Column(
@@ -369,6 +397,16 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
                           ),
                     ),
                   ),
+                  if (_tab == 0)
+                    TextButton.icon(
+                      key: const ValueKey('library-select'),
+                      onPressed: () => setState(() {
+                        _selectMode = !_selectMode;
+                        if (!_selectMode) _selected.clear();
+                      }),
+                      icon: Icon(_selectMode ? Icons.close_rounded : Icons.checklist_rounded, size: 20),
+                      label: Text(_selectMode ? 'Done' : 'Select'),
+                    ),
                   FilledButton.tonalIcon(
                     key: const ValueKey('library-share'),
                     style: FilledButton.styleFrom(minimumSize: const Size(0, 40)),
@@ -474,7 +512,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
               ),
             ),
             const SizedBox(height: 8),
-            if (_selected.isNotEmpty && _tab == 0)
+            if ((_selectMode || _selected.isNotEmpty) && _tab == 0)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                 child: Material(
@@ -484,7 +522,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
                     children: [
                       IconButton(
                         tooltip: 'Cancel',
-                        onPressed: () => setState(_selected.clear),
+                        onPressed: () => setState(() {
+                          _selected.clear();
+                          _selectMode = false;
+                        }),
                         icon: const Icon(Icons.close_rounded),
                       ),
                       Expanded(child: Text('${_selected.length} selected', style: const TextStyle(fontWeight: FontWeight.w700))),
@@ -539,6 +580,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
                           : _tab == 0
                               ? _DeviceList(
                                   selected: _selected,
+                                  selecting: _selectMode || _selected.isNotEmpty,
+                                  onDelete: (video) => _deleteVideos([video]),
                                   onToggle: _toggleSelect,
                                   videos: _device.where(_matchesVideo).toList(),
                                   onPlay: _playDevice,
@@ -826,17 +869,30 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   }
 
   Future<void> _deviceActions(DeviceVideo video) async {
-    final action = await showModalBottomSheet<String>(
-      context: context,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(title: Text(video.title), subtitle: Text(_durationLabel((video.durationMs / 1000).round(), video.size))),
+    final action = await _showItemMenu(
+      builder: (context) => [
+            ListTile(
+              title: Text(video.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+              subtitle: Text(_durationLabel((video.durationMs / 1000).round(), video.size)),
+              trailing: IconButton(
+                tooltip: 'Delete',
+                icon: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
+                onPressed: () => Navigator.pop(context, 'delete'),
+              ),
+            ),
             ListTile(
               leading: const Icon(Icons.play_arrow_rounded),
               title: const Text('Play'),
               onTap: () => Navigator.pop(context, 'play'),
+            ),
+            ListTile(
+              key: const ValueKey('menu-delete'),
+              leading: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
+              title: Text(
+                DesktopSupport.isWindows ? 'Delete (Recycle Bin)' : 'Delete from phone',
+                style: TextStyle(color: Theme.of(context).colorScheme.error, fontWeight: FontWeight.w600),
+              ),
+              onTap: () => Navigator.pop(context, 'delete'),
             ),
             ListTile(
               leading: const Icon(Icons.drive_file_rename_outline),
@@ -913,14 +969,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
               title: const Text('Select (for deleting several)'),
               onTap: () => Navigator.pop(context, 'select'),
             ),
-            ListTile(
-              leading: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
-              title: Text(DesktopSupport.isWindows ? 'Delete from PC' : 'Delete from phone'),
-              onTap: () => Navigator.pop(context, 'delete'),
-            ),
           ],
-        ),
-      ),
     );
     if (!mounted || action == null) return;
     if (action == 'play') {
@@ -1001,12 +1050,46 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
       return;
     }
     if (action == 'select') {
-      setState(() => _selected.add(video.id));
+      setState(() {
+        _selectMode = true;
+        _selected.add(video.id);
+      });
       return;
     }
     if (action == 'delete') {
       await _deleteVideos([video]);
     }
+  }
+
+  /// Item menu that always fits: a centred scrollable dialog on PC, a
+  /// scrollable sheet (max 85% of the screen) on phones.
+  Future<String?> _showItemMenu({required List<Widget> Function(BuildContext) builder}) {
+    final size = MediaQuery.sizeOf(context);
+    if (DesktopSupport.isWindows || size.width >= 700) {
+      return showDialog<String>(
+        context: context,
+        builder: (context) => Dialog(
+          clipBehavior: Clip.antiAlias,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: 440, maxHeight: size.height * 0.85),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Column(mainAxisSize: MainAxisSize.min, children: builder(context)),
+            ),
+          ),
+        ),
+      );
+    }
+    return showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      constraints: BoxConstraints(maxHeight: size.height * 0.85),
+      builder: (context) => SafeArea(
+        child: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: builder(context)),
+        ),
+      ),
+    );
   }
 
   void _toggleSelect(DeviceVideo video) {
@@ -1058,7 +1141,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
       }
     } catch (_) {}
     if (!mounted) return;
-    setState(_selected.clear);
+    setState(() {
+      _selected.clear();
+      _selectMode = false;
+    });
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(deleted >= videos.length
           ? 'Deleted ${videos.length == 1 ? '1 video' : '${videos.length} videos'}${DesktopSupport.isWindows ? ' (moved to the Recycle Bin)' : ''}.'
@@ -1206,6 +1292,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
 class _DeviceList extends StatelessWidget {
   const _DeviceList({
     required this.selected,
+    required this.selecting,
+    required this.onDelete,
     required this.onToggle,
     required this.videos,
     required this.onPlay,
@@ -1216,6 +1304,8 @@ class _DeviceList extends StatelessWidget {
 
   final ValueChanged<DeviceVideo> onSend;
   final Set<String> selected;
+  final bool selecting;
+  final ValueChanged<DeviceVideo> onDelete;
   final ValueChanged<DeviceVideo> onToggle;
   final List<DeviceVideo> videos;
   final ValueChanged<DeviceVideo> onPlay;
@@ -1260,10 +1350,10 @@ class _DeviceList extends StatelessWidget {
               ? _pcCaption(video)
               : _durationLabel(seconds, video.size),
           durationLabel: DesktopSupport.isWindows && seconds == 0 ? null : _clock(seconds),
-          onTap: () => selected.isNotEmpty ? onToggle(video) : onPlay(video),
-          onLongPress: () => selected.isNotEmpty ? onToggle(video) : onActions(video),
+          onTap: () => selecting ? onToggle(video) : onPlay(video),
+          onLongPress: () => onToggle(video),
           heroTag: 'library-${video.id}',
-          action: selected.isNotEmpty
+          action: selecting
               ? Checkbox(
                   value: selected.contains(video.id),
                   onChanged: (_) => onToggle(video),
@@ -1283,6 +1373,13 @@ class _DeviceList extends StatelessWidget {
                 visualDensity: VisualDensity.compact,
                 onPressed: () => onVault(video),
                 icon: const Icon(Icons.lock_outline, color: Colors.white),
+              ),
+              IconButton(
+                key: ValueKey('card-delete-${video.id}'),
+                tooltip: 'Delete',
+                visualDensity: VisualDensity.compact,
+                onPressed: () => onDelete(video),
+                icon: const Icon(Icons.delete_outline, color: Colors.white),
               ),
               IconButton(
                 tooltip: 'More',
