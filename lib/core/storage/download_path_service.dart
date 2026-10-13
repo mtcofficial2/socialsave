@@ -19,7 +19,9 @@ class DownloadPathService {
         Directory('/storage/emulated/0/Download/${AppConstants.defaultFolderName}'),
         Directory('/sdcard/Download/${AppConstants.defaultFolderName}'),
       ];
-      final systemDownloads = await getDownloadsDirectory();
+      // Android: write straight to the public Download/SocialSave (one copy).
+      // The app-private downloads folder is only used on other platforms.
+      final systemDownloads = Platform.isAndroid ? null : await getDownloadsDirectory();
       if (systemDownloads != null) {
         candidates.insert(
           0,

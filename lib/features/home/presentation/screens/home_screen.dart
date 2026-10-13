@@ -8,6 +8,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:social_save/core/platform/desktop_support.dart';
+import 'package:social_save/core/storage/storage_migration.dart';
+import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/constants/app_constants.dart';
 import 'package:social_save/features/home/presentation/providers/home_controller.dart';
 import 'package:social_save/features/home/presentation/widgets/recent_downloads_list.dart';
@@ -32,6 +34,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      unawaited(StorageMigration.run(ref.read(downloadsRepositoryProvider)));
       await _onArrive();
     });
   }
