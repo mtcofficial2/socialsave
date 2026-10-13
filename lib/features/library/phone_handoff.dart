@@ -5,6 +5,8 @@ import 'dart:math';
 
 import 'package:dio/dio.dart';
 import 'package:file_selector/file_selector.dart';
+import 'package:social_save/features/library/bundle_transfer.dart';
+import 'package:social_save/features/library/bundle_ui.dart';
 import 'package:social_save/features/library/transfer_boost.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
 import 'package:flutter/material.dart';
@@ -346,6 +348,11 @@ class PhoneHandoff {
   static Future<void> publish(File dest) => _publish(dest);
 
   static Future<File> _destFor(String rawName) async {
+    final base = p.basename(rawName.replaceAll('\\', '/'));
+    if (p.extension(base).isNotEmpty && !isVideoName(base)) {
+      // Any other file type goes to the Received folder, never over a file.
+      return destInside(await receivedRoot(), base);
+    }
     final Directory folder;
     if (DesktopSupport.isWindows) {
       folder = Directory(p.join(Platform.environment['USERPROFILE'] ?? '.', 'Documents', 'SocialSave'));
@@ -366,6 +373,10 @@ class PhoneHandoff {
   }
 
   static Future<void> _publish(File dest) async {
+    if (!isVideoName(dest.path)) {
+      await indexReceived(dest);
+      return;
+    }
     if (!DesktopSupport.isWindows) {
       try {
         await MediaStoreService().publishToDownloads(
@@ -387,6 +398,8 @@ class PhoneHandoff {
   static HttpServer? _dropServer;
   static RawDatagramSocket? _dropUdp;
   static final ValueNotifier<DropState?> drop = ValueNotifier<DropState?>(null);
+  static final Map<String, Directory> _dropDirs = {};
+  static String? _dropBundle;
 
   /// Starts listening and returns the code to show, or null without Wi-Fi.
   static Future<String?> openDrop() async {
@@ -439,7 +452,9 @@ class PhoneHandoff {
         await res.close();
         return;
       }
-      if (parts[0] != 'drop' || req.method != 'POST' || drop.value?.busy == true) {
+      final bundleHdr = req.headers.value('x-bundle');
+      final sameBundle = bundleHdr != null && bundleHdr == _dropBundle;
+      if (parts[0] != 'drop' || req.method != 'POST' || (drop.value?.busy == true && !sameBundle)) {
         res.statusCode = parts[0] == 'drop' ? HttpStatus.conflict : HttpStatus.notFound;
         await res.close();
         return;
@@ -447,7 +462,20 @@ class PhoneHandoff {
       final name = Uri.decodeComponent(req.headers.value('x-name') ?? 'video.mp4');
       final title = Uri.decodeComponent(req.headers.value('x-title') ?? p.basenameWithoutExtension(name));
       final total = req.contentLength;
-      final dest = await _destFor(name);
+      final bundle = req.headers.value('x-bundle');
+      final rel = Uri.decodeComponent(req.headers.value('x-rel') ?? name);
+      File dest;
+      final count = int.tryParse(req.headers.value('x-count') ?? '') ?? 1;
+      final index = int.tryParse(req.headers.value('x-index') ?? '') ?? 0;
+      final more = bundle != null && index < count - 1;
+      _dropBundle = more ? bundle : null;
+      if (bundle != null && bundle.isNotEmpty) {
+        final key = Uri.decodeComponent(bundle);
+        final dir = _dropDirs[key] ??= await newReceiveDir(key.split('\u0000').last);
+        dest = await destInside(dir, rel);
+      } else {
+        dest = await _destFor(name);
+      }
       drop.value = DropState(title: title, received: 0, total: total, busy: true);
       final sink = dest.openWrite();
       var got = 0;
@@ -462,7 +490,7 @@ class PhoneHandoff {
       }
       await sink.close();
       await TransferBoost.end();
-      final ok = got > 32 && (total <= 0 || got == total);
+      final ok = total >= 0 ? got == total : got > 32;
       if (!ok) {
         try {
           await dest.delete();
@@ -477,7 +505,15 @@ class PhoneHandoff {
       res.headers.contentType = ContentType.json;
       res.write(jsonEncode({'ok': true, 'path': dest.path}));
       await res.close();
-      drop.value = DropState(title: title, received: got, total: total, file: dest, detail: meter.doneLabel);
+      drop.value = more
+          ? DropState(title: '$title (${index + 1}/$count)', received: got, total: total, busy: true, detail: meter.doneLabel)
+          : DropState(
+              title: bundle != null ? '$count files' : title,
+              received: got,
+              total: total,
+              file: bundle != null ? File(_dropDirs[Uri.decodeComponent(bundle)]!.path) : dest,
+              detail: meter.doneLabel,
+            );
     } catch (_) {
       drop.value = const DropState(title: 'Video', received: 0, total: 0, failed: true);
       try {
@@ -529,6 +565,59 @@ class PhoneHandoff {
     } catch (_) {
       return 'The copy stopped. Stay on the same Wi-Fi and try again.';
     } finally {
+      await TransferBoost.end();
+      client.close(force: true);
+    }
+  }
+
+  /// Sends several files / a folder to the device showing [rawCode], one
+  /// upload per file (older receivers simply save each file).
+  static Future<String?> pushBundle(SendBundle bundle, String rawCode,
+      {void Function(int sent, int total, int index, String rel)? onProgress, ValueNotifier<bool>? cancel}) async {
+    final code = normalizeCode(rawCode);
+    if (code == null) return 'The code has 6 letters or numbers.';
+    final target = await _discoverUdp(code, role: 'receiver') ??
+        await _sweep(code, port: dropPort, role: 'receiver');
+    if (target == null) return 'Could not find that code on this Wi-Fi.';
+    final key = '${DateTime.now().millisecondsSinceEpoch}\u0000${bundle.label}';
+    final total = bundle.total;
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
+    void abort() => client.close(force: true);
+    cancel?.addListener(abort);
+    await TransferBoost.begin();
+    var done = 0;
+    try {
+      for (var i = 0; i < bundle.items.length; i++) {
+        if (cancel?.value == true) return 'Cancelled.';
+        final it = bundle.items[i];
+        final req = await client.postUrl(Uri.http('${target.host}:${target.port}', '/drop/$code'));
+        req.headers.set('x-name', Uri.encodeComponent(p.basename(it.rel)));
+        req.headers.set('x-title', Uri.encodeComponent(it.rel));
+        if (bundle.isFolder || bundle.count > 1) {
+          req.headers.set('x-bundle', Uri.encodeComponent(key));
+          req.headers.set('x-rel', Uri.encodeComponent(bundle.isFolder ? it.rel : p.basename(it.rel)));
+          req.headers.set('x-count', '${bundle.count}');
+          req.headers.set('x-index', '$i');
+        }
+        req.headers.contentType = ContentType.binary;
+        req.contentLength = it.size;
+        var sent = 0;
+        await req.addStream(TransferBoost.read(it.file).map((chunk) {
+          sent += chunk.length;
+          onProgress?.call(done + sent, total, i, it.rel);
+          return chunk;
+        }));
+        final res = await req.close();
+        await res.drain<void>();
+        if (res.statusCode == HttpStatus.conflict) return 'The other device is busy receiving.';
+        if (res.statusCode != 200) return 'The other device could not save ${it.rel}.';
+        done += it.size;
+      }
+      return null;
+    } catch (_) {
+      return cancel?.value == true ? 'Cancelled.' : 'The copy stopped. Stay on the same Wi-Fi and try again.';
+    } finally {
+      cancel?.removeListener(abort);
       await TransferBoost.end();
       client.close(force: true);
     }
@@ -946,16 +1035,20 @@ Future<bool> _showDropProgress(BuildContext context) async {
   await dialog;
   final file = result.file;
   messenger.showSnackBar(SnackBar(
-    content: Text(file == null ? 'The copy did not finish. Try again on the same Wi-Fi.' : 'Saved to ${file.parent.path}. ${result.detail}'),
+    content: Text(file == null
+        ? 'The copy did not finish. Try again on the same Wi-Fi.'
+        : 'Saved to ${FileSystemEntity.isDirectorySync(file.path) ? file.path : file.parent.path}. ${result.detail}'),
     action: file == null
         ? null
-        : SnackBarAction(
-            label: 'Play',
-            onPressed: () => appRouter.push(
-              '/player',
-              extra: PlayerSession(title: result.title, platform: SocialPlatform.direct, filePath: file.path),
-            ),
-          ),
+        : !isVideoName(file.path)
+            ? SnackBarAction(label: 'Open', onPressed: () => openWithSystem(file.path))
+            : SnackBarAction(
+                label: 'Play',
+                onPressed: () => appRouter.push(
+                  '/player',
+                  extra: PlayerSession(title: result.title, platform: SocialPlatform.direct, filePath: file.path),
+                ),
+              ),
   ));
   return file != null;
 }
@@ -1197,6 +1290,37 @@ class NearbyShareBar extends StatelessWidget {
                     },
                     icon: const Icon(Icons.qr_code_scanner_rounded),
                     label: const Text('Receive'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    key: const ValueKey('nearby-files'),
+                    onPressed: () => pickAndSendBundle(context, folder: false),
+                    icon: const Icon(Icons.file_present_rounded),
+                    label: const Text('Pick files'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    key: const ValueKey('nearby-folder'),
+                    onPressed: () => pickAndSendBundle(context, folder: true),
+                    icon: const Icon(Icons.drive_folder_upload_rounded),
+                    label: const Text('Pick folder'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextButton.icon(
+                    key: const ValueKey('nearby-received'),
+                    onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ReceivedScreen())),
+                    icon: const Icon(Icons.inventory_2_rounded),
+                    label: const Text('Received'),
                   ),
                 ),
               ],

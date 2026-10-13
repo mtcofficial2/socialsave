@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:social_save/features/library/bundle_transfer.dart';
 import 'package:social_save/features/library/transfer_boost.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
 import 'package:flutter/foundation.dart';
@@ -46,7 +47,24 @@ class IncomingOffer {
     required this.fromName,
     required this.fileName,
     required this.size,
+    this.count = 1,
+    this.files = const [],
+    this.isFolder = false,
   });
+
+  /// Number of files (1 for a single video/file).
+  final int count;
+
+  /// (relative path, size) for multi-file / folder transfers.
+  final List<(String, int)> files;
+  final bool isFolder;
+
+  /// Filled in while a bundle is being received.
+  Directory? dir;
+  final Set<int> doneFiles = {};
+  int doneBytes = 0;
+  TransferMeter? meter;
+  final List<File> saved = [];
 
   final String fromId;
   final String fromName;
@@ -65,8 +83,13 @@ class IncomingProgress {
     this.done = false,
     this.file,
     this.detail = '',
+    this.dir,
+    this.count = 1,
   });
 
+  /// Folder holding a received bundle (several files / a folder).
+  final Directory? dir;
+  final int count;
   final String detail;
   final String fromName;
   final String fileName;
@@ -349,6 +372,72 @@ class NearbyService {
         }
         return;
       }
+      if (req.method == 'POST' && parts.length == 1 && parts[0] == 'askb') {
+        final body = jsonDecode(await utf8.decoder.bind(req).join()) as Map<String, dynamic>;
+        final files = <(String, int)>[
+          for (final f in (body['files'] as List? ?? const []))
+            ('${(f as Map)['path']}', (f['size'] as num?)?.toInt() ?? 0),
+        ];
+        final offer = IncomingOffer(
+          fromId: '${body['id'] ?? ''}',
+          fromName: '${body['name'] ?? 'Another device'}',
+          fileName: safeSegment('${body['label'] ?? 'Files'}'),
+          size: files.fold(0, (a, b) => a + b.$2),
+          count: files.length,
+          files: files,
+          isFolder: body['folder'] == true,
+        );
+        var ok = false;
+        if (files.isEmpty || files.length > 100000) {
+          ok = false;
+        } else if (_busy) {
+          ok = false;
+        } else if (await isTrusted(offer.fromId)) {
+          ok = true;
+        } else {
+          final ask = onOffer;
+          ok = ask != null && await ask(offer).timeout(const Duration(seconds: 90), onTimeout: () => false);
+        }
+        res.headers.contentType = ContentType.json;
+        if (ok) {
+          final token = PhoneHandoff.newCode() + PhoneHandoff.newCode() + PhoneHandoff.newCode();
+          _bundles[token] = offer;
+          _bundleSeen[token] = DateTime.now();
+          res.write(jsonEncode({'ok': true, 'token': token}));
+        } else {
+          res.write(jsonEncode({'ok': false, 'busy': _busy}));
+        }
+        await res.close();
+        return;
+      }
+      if (req.method == 'POST' && parts.length == 3 && parts[0] == 'uploadb') {
+        final offer = _bundles[parts[1]];
+        final index = int.tryParse(parts[2]) ?? -1;
+        if (offer == null || index < 0 || index >= offer.files.length || offer.doneFiles.contains(index)) {
+          res.statusCode = HttpStatus.forbidden;
+          await res.close();
+          return;
+        }
+        _bundleSeen[parts[1]] = DateTime.now();
+        _busy = true;
+        await TransferBoost.begin();
+        try {
+          await _receiveBundleFile(req, parts[1], offer, index);
+        } finally {
+          _busy = false;
+          await TransferBoost.end();
+        }
+        return;
+      }
+      if (req.method == 'POST' && parts.length == 2 && parts[0] == 'endb') {
+        final offer = _bundles.remove(parts[1]);
+        _bundleSeen.remove(parts[1]);
+        if (offer != null) _finishBundle(offer, cancelled: req.uri.queryParameters['cancel'] == '1');
+        res.headers.contentType = ContentType.json;
+        res.write(jsonEncode({'ok': offer != null}));
+        await res.close();
+        return;
+      }
       if (req.method == 'POST' && parts.length == 1 && parts[0] == 'usbpeer') {
         // A PC reached us over a USB (adb) tunnel and set up a reverse port.
         final body = jsonDecode(await utf8.decoder.bind(req).join()) as Map<String, dynamic>;
@@ -408,7 +497,7 @@ class NearbyService {
     } catch (_) {
       await sink.close();
     }
-    final ok = got > 32 && (total <= 0 || got == total);
+    final ok = total >= 0 ? got == total : got > 32;
     if (!ok) {
       try {
         await dest.delete();
@@ -430,6 +519,82 @@ class NearbyService {
       done: true,
       file: dest,
       detail: meter.doneLabel,
+    );
+  }
+
+  static final Map<String, IncomingOffer> _bundles = {};
+  static final Map<String, DateTime> _bundleSeen = {};
+
+  static Future<void> _receiveBundleFile(HttpRequest req, String token, IncomingOffer offer, int index) async {
+    final res = req.response;
+    final (rel, size) = offer.files[index];
+    offer.dir ??= await newReceiveDir(offer.isFolder || offer.count > 1 ? offer.fileName : offer.fromName);
+    final meter = offer.meter ??= TransferMeter();
+    final dest = await destInside(offer.dir!, offer.isFolder ? rel : p.basename(rel));
+    final sink = dest.openWrite();
+    var got = 0;
+    String status() => '${index + 1}/${offer.count} · ${p.basename(rel)}';
+    try {
+      await for (final chunk in req) {
+        sink.add(chunk);
+        got += chunk.length;
+        if (meter.update(offer.doneBytes + got, offer.size)) {
+          incoming.value = IncomingProgress(
+            fromName: offer.fromName,
+            fileName: '${offer.fileName} — ${status()}',
+            received: offer.doneBytes + got,
+            total: offer.size,
+            detail: meter.label,
+            count: offer.count,
+          );
+        }
+      }
+    } catch (_) {}
+    await sink.close();
+    if (got != size) {
+      // Cancelled or cut off: never leave a partial file behind.
+      try {
+        await dest.delete();
+      } catch (_) {}
+      res.statusCode = HttpStatus.badRequest;
+      await res.close();
+      incoming.value = IncomingProgress(
+        fromName: offer.fromName,
+        fileName: '${offer.fileName} — stopped at ${status()}',
+        received: offer.doneBytes,
+        total: offer.size,
+        count: offer.count,
+      );
+      return;
+    }
+    offer.doneFiles.add(index);
+    offer.doneBytes += got;
+    offer.saved.add(dest);
+    unawaited(indexReceived(dest));
+    res.headers.contentType = ContentType.json;
+    res.write(jsonEncode({'ok': true}));
+    await res.close();
+    if (offer.doneFiles.length == offer.count) {
+      _bundles.remove(token);
+      _bundleSeen.remove(token);
+      _finishBundle(offer);
+    }
+  }
+
+  static void _finishBundle(IncomingOffer offer, {bool cancelled = false}) {
+    final complete = offer.doneFiles.length == offer.count;
+    incoming.value = IncomingProgress(
+      fromName: offer.fromName,
+      fileName: complete
+          ? offer.fileName
+          : '${offer.fileName} — ${cancelled ? 'cancelled' : 'stopped'} (${offer.doneFiles.length}/${offer.count} files kept)',
+      received: offer.doneBytes,
+      total: offer.size,
+      done: true,
+      file: complete && offer.saved.isNotEmpty ? offer.saved.first : null,
+      dir: offer.dir,
+      count: offer.count,
+      detail: complete ? (offer.meter?.doneLabel ?? '') : '',
     );
   }
 
@@ -494,6 +659,94 @@ class NearbyService {
     } catch (_) {
       return 'The transfer stopped. Try again.';
     } finally {
+      await TransferBoost.end();
+      client.close(force: true);
+    }
+  }
+
+  /// Sends several files or a folder. [onProgress] gets overall bytes plus
+  /// the current file. Set [cancel] to true to stop; the receiver deletes the
+  /// partial file. Returns null on success, otherwise the reason.
+  static Future<String?> sendBundle(
+    NearbyDevice device,
+    SendBundle bundle, {
+    void Function(String status)? onStatus,
+    void Function(int sent, int total, int index, String rel)? onProgress,
+    ValueNotifier<bool>? cancel,
+  }) async {
+    final total = bundle.total;
+    var client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
+    void abort() => client.close(force: true);
+    cancel?.addListener(abort);
+    String? token;
+    await TransferBoost.begin();
+    try {
+      onStatus?.call('Waiting for ${device.name} to accept…');
+      final ask = await client.postUrl(Uri.http('${device.host}:${device.port}', '/askb'));
+      ask.headers.contentType = ContentType.json;
+      ask.write(jsonEncode({
+        'id': id,
+        'name': name,
+        'label': bundle.label,
+        'folder': bundle.isFolder,
+        'files': [for (final it in bundle.items) {'path': it.rel, 'size': it.size}],
+      }));
+      final askRes = await ask.close().timeout(const Duration(seconds: 100));
+      if (askRes.statusCode == HttpStatus.notFound) {
+        await askRes.drain<void>();
+        if (bundle.count == 1) {
+          return await sendTo(device, bundle.items.first.file,
+              onStatus: onStatus, onProgress: (s, t) => onProgress?.call(s, t, 0, bundle.items.first.rel));
+        }
+        return 'Update SocialSave on ${device.name} to 1.0.10 or newer to receive several files or folders.';
+      }
+      final answer = jsonDecode(await utf8.decoder.bind(askRes).join()) as Map<String, dynamic>;
+      if (answer['ok'] != true) {
+        return answer['busy'] == true ? '${device.name} is busy receiving.' : '${device.name} declined.';
+      }
+      token = '${answer['token']}';
+      var done = 0;
+      for (var i = 0; i < bundle.items.length; i++) {
+        if (cancel?.value == true) return 'Cancelled.';
+        final it = bundle.items[i];
+        onStatus?.call('Sending ${i + 1}/${bundle.count}: ${it.rel}');
+        final up = await client.postUrl(Uri.http('${device.host}:${device.port}', '/uploadb/$token/$i'));
+        up.headers.contentType = ContentType.binary;
+        up.contentLength = it.size;
+        var sent = 0;
+        await up.addStream(TransferBoost.read(it.file).map((chunk) {
+          sent += chunk.length;
+          onProgress?.call(done + sent, total, i, it.rel);
+          return chunk;
+        }));
+        final upRes = await up.close();
+        await upRes.drain<void>();
+        if (upRes.statusCode != 200) return '${device.name} could not save ${it.rel}.';
+        done += it.size;
+        onProgress?.call(done, total, i, it.rel);
+      }
+      token = null;
+      return null;
+    } on SocketException {
+      if (cancel?.value == true) return 'Cancelled.';
+      return 'Could not connect to ${device.name}.';
+    } on HttpException {
+      if (cancel?.value == true) return 'Cancelled.';
+      return 'The transfer stopped. Try again.';
+    } on TimeoutException {
+      return '${device.name} did not answer.';
+    } catch (_) {
+      return cancel?.value == true ? 'Cancelled.' : 'The transfer stopped. Try again.';
+    } finally {
+      cancel?.removeListener(abort);
+      if (token != null) {
+        // Tell the receiver we stopped, so it shows what was kept.
+        try {
+          client = HttpClient()..connectionTimeout = const Duration(seconds: 3);
+          final end = await client.postUrl(Uri.http('${device.host}:${device.port}', '/endb/$token', {'cancel': '1'}));
+          await (await end.close().timeout(const Duration(seconds: 3))).drain<void>();
+        } catch (_) {}
+      }
       await TransferBoost.end();
       client.close(force: true);
     }

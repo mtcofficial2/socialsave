@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:social_save/features/library/bundle_transfer.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
 import 'package:flutter/material.dart';
 import 'package:social_save/features/library/nearby_service.dart';
@@ -28,13 +29,23 @@ void installNearbyUi() {
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
           icon: const Icon(Icons.download_for_offline_rounded),
-          title: Text('${offer.fromName} wants to send you a video'),
+          title: Text(offer.isFolder
+              ? '${offer.fromName} wants to send you a folder'
+              : offer.count > 1
+                  ? '${offer.fromName} wants to send you ${offer.count} files'
+                  : isVideoName(offer.fileName)
+                      ? '${offer.fromName} wants to send you a video'
+                      : '${offer.fromName} wants to send you a file'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(offer.fileName, maxLines: 3, overflow: TextOverflow.ellipsis),
-              if (offer.size > 0) Text(_size(offer.size), style: Theme.of(context).textTheme.bodySmall),
+              if (offer.size > 0 || offer.count > 1)
+                Text(
+                  [if (offer.count > 1) '${offer.count} files', if (offer.size > 0) _size(offer.size)].join(' · '),
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
               const SizedBox(height: 8),
               CheckboxListTile(
                 contentPadding: EdgeInsets.zero,
@@ -66,7 +77,8 @@ class NearbyIncomingCard extends StatelessWidget {
       valueListenable: NearbyService.incoming,
       builder: (context, v, _) {
         if (v == null) return const SizedBox.shrink();
-        final saved = v.done && v.file != null;
+        final saved = v.done && (v.file != null || v.dir != null);
+        final openable = v.dir != null || (v.file != null && !isVideoName(v.file!.path));
         return Positioned(
           left: 12,
           right: 12,
@@ -107,7 +119,19 @@ class NearbyIncomingCard extends StatelessWidget {
                           ],
                         ),
                       ),
-                      if (saved)
+                      if (saved && openable) ...[
+                        TextButton(
+                          onPressed: () => openWithSystem((v.dir ?? v.file!).path),
+                          child: const Text('Open'),
+                        ),
+                        if (Platform.isWindows)
+                          IconButton(
+                            tooltip: 'Show in folder',
+                            onPressed: () => showInFolder((v.dir ?? v.file!).path),
+                            icon: const Icon(Icons.folder_open_rounded),
+                          ),
+                      ],
+                      if (saved && !openable)
                         TextButton(
                           onPressed: () {
                             NearbyService.incoming.value = null;

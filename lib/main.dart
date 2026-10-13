@@ -13,6 +13,7 @@ import 'package:social_save/core/notifications/notification_service.dart';
 import 'package:social_save/core/storage/hive_init.dart';
 import 'package:social_save/features/downloads/data/datasources/download_history_store.dart';
 import 'package:social_save/features/library/nearby_service.dart';
+import 'package:social_save/features/library/bundle_transfer.dart';
 import 'package:social_save/features/library/nearby_ui.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
@@ -44,12 +45,37 @@ Future<void> main(List<String> args) async {
       if (v == null) return;
       if (!v.done) print('debug recv progress ${v.detail}');
       if (v.done) {
-        print('debug received ${v.received}/${v.total} file=${v.file?.path} ${v.detail}');
-        Future<void>.delayed(const Duration(seconds: 2), () => exit(v.file == null ? 1 : 0));
+        print('debug received ${v.received}/${v.total} file=${v.file?.path} dir=${v.dir?.path} ${v.fileName} ${v.detail}');
+        Future<void>.delayed(const Duration(seconds: 2), () => exit(v.file == null && v.dir == null ? 1 : 0));
       }
     });
     await Future<void>.delayed(const Duration(minutes: 5));
     exit(2);
+  }
+  // `--nearby-send-dir <name> <folder-or-file>`: send a folder / file bundle.
+  final nd = args.indexOf('--nearby-send-dir');
+  if (nd >= 0 && nd + 2 < args.length) {
+    await NearbyService.start(testId: 'send${args[nd + 1]}', testName: args[nd + 1]);
+    final sw = Stopwatch()..start();
+    while (NearbyService.devices.value.isEmpty && sw.elapsed.inSeconds < 20) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+    final list = NearbyService.devices.value;
+    if (list.isEmpty) exit(1);
+    final src = args[nd + 2];
+    final bundle = FileSystemEntity.isDirectorySync(src)
+        ? await SendBundle.fromFolder(Directory(src))
+        : await SendBundle.fromFiles([File(src)]);
+    print('debug bundle ${bundle?.summary} ${bundle?.total} bytes');
+    final meter = TransferMeter();
+    final err = await NearbyService.sendBundle(list.first, bundle!,
+        onStatus: (s) => print('debug status $s'),
+        onProgress: (s, t, i, r) {
+          if (meter.update(s, t)) print('debug send progress ${meter.label}');
+        });
+    print('debug send ${meter.doneLabel}');
+    print('debug nearby-send result=${err ?? 'ok'}');
+    exit(err == null ? 0 : 1);
   }
   final ns = args.indexOf('--nearby-send');
   if (ns >= 0 && ns + 2 < args.length) {

@@ -57,6 +57,128 @@ class MainActivity : FlutterFragmentActivity() {
             pending.error("read_failed", error.message, null)
         }
     }
+    private var sendFilesResult: MethodChannel.Result? = null
+    private var sendFolderResult: MethodChannel.Result? = null
+    private val openSendFiles = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        val pending = sendFilesResult
+        sendFilesResult = null
+        if (pending == null) return@registerForActivityResult
+        if (uris.isNullOrEmpty()) {
+            pending.success(null)
+            return@registerForActivityResult
+        }
+        io.execute {
+            try {
+                val root = freshSendDir()
+                val used = HashSet<String>()
+                val paths = ArrayList<String>()
+                for (uri in uris) {
+                    var name = safeName(displayName(uri) ?: "file")
+                    var i = 1
+                    val base = name.substringBeforeLast('.', name)
+                    val ext = if (name.contains('.')) "." + name.substringAfterLast('.') else ""
+                    while (!used.add(name.lowercase())) { name = "$base ($i)$ext"; i++ }
+                    val out = File(root, name)
+                    contentResolver.openInputStream(uri)?.use { input ->
+                        FileOutputStream(out).use { input.copyTo(it, 1 shl 20) }
+                    }
+                    paths.add(out.absolutePath)
+                }
+                runOnUiThread { pending.success(paths) }
+            } catch (error: Exception) {
+                runOnUiThread { pending.error("pick_failed", error.message, null) }
+            }
+        }
+    }
+    private val openSendFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        val pending = sendFolderResult
+        sendFolderResult = null
+        if (pending == null) return@registerForActivityResult
+        if (uri == null) {
+            pending.success(null)
+            return@registerForActivityResult
+        }
+        io.execute {
+            try {
+                val docId = android.provider.DocumentsContract.getTreeDocumentId(uri)
+                val rootName = safeName(docId.substringAfterLast(':').substringAfterLast('/').ifBlank { "Folder" })
+                val out = File(freshSendDir(), rootName)
+                out.mkdirs()
+                copyTree(uri, docId, out, 0)
+                runOnUiThread { pending.success(out.absolutePath) }
+            } catch (error: Exception) {
+                runOnUiThread { pending.error("pick_failed", error.message, null) }
+            }
+        }
+    }
+
+    /// Copies of picked items live in cache/send and are replaced on each pick.
+    private fun freshSendDir(): File {
+        val dir = File(cacheDir, "send")
+        dir.deleteRecursively()
+        val run = File(dir, System.currentTimeMillis().toString())
+        run.mkdirs()
+        return run
+    }
+
+    private fun safeName(raw: String): String {
+        val s = raw.replace(Regex("[\\\\/:*?\"<>|\\x00-\\x1f]"), "_").trim().trimEnd('.', ' ')
+        return if (s.isEmpty() || s == "." || s == "..") "_" else s.take(120)
+    }
+
+    private fun displayName(uri: Uri): String? {
+        contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+            if (it.moveToFirst()) return it.getString(0)
+        }
+        return uri.lastPathSegment
+    }
+
+    private fun copyTree(tree: Uri, parentId: String, dest: File, depth: Int) {
+        if (depth > 32) return
+        val children = android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId)
+        val cols = arrayOf(
+            android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            android.provider.DocumentsContract.Document.COLUMN_MIME_TYPE,
+        )
+        contentResolver.query(children, cols, null, null, null)?.use { c ->
+            while (c.moveToNext()) {
+                val id = c.getString(0)
+                val name = safeName(c.getString(1) ?: "file")
+                val mime = c.getString(2) ?: ""
+                if (mime == android.provider.DocumentsContract.Document.MIME_TYPE_DIR) {
+                    val sub = File(dest, name)
+                    sub.mkdirs()
+                    copyTree(tree, id, sub, depth + 1)
+                } else {
+                    val doc = android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, id)
+                    contentResolver.openInputStream(doc)?.use { input ->
+                        FileOutputStream(File(dest, name)).use { input.copyTo(it, 1 shl 20) }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun openWithApp(path: String): Boolean {
+        val file = File(path)
+        if (!file.exists()) return false
+        return try {
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+            val ext = file.extension.lowercase()
+            val mime = if (file.isDirectory) "resource/folder"
+                else android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "*/*"
+            val view = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, mime)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(view, file.name).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private val openFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         val pending = folderResult
         folderResult = null
@@ -319,6 +441,26 @@ class MainActivity : FlutterFragmentActivity() {
                 "vibrate" -> {
                     phoneBody?.vibrate(call.argument<String>("pattern"))
                     result.success(true)
+                }
+                "pickSendFiles" -> {
+                    if (sendFilesResult != null) {
+                        result.error("busy", "A file picker is already open", null)
+                        return@setMethodCallHandler
+                    }
+                    sendFilesResult = result
+                    openSendFiles.launch(arrayOf("*/*"))
+                }
+                "pickSendFolder" -> {
+                    if (sendFolderResult != null) {
+                        result.error("busy", "A folder picker is already open", null)
+                        return@setMethodCallHandler
+                    }
+                    sendFolderResult = result
+                    openSendFolder.launch(null)
+                }
+                "openFile" -> {
+                    val path = call.argument<String>("path")
+                    result.success(if (path.isNullOrBlank()) false else openWithApp(path))
                 }
                 "pickSaveFolder" -> {
                     if (folderResult != null) {
