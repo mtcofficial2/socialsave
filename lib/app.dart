@@ -1,3 +1,4 @@
+import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
 import 'package:social_save/features/library/nearby_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/gestures.dart';
@@ -61,7 +62,13 @@ Widget _desktopKeys(Widget child) {
       if (event.buttons & kBackMouseButton != 0) back();
     },
     child: CallbackShortcuts(
-      bindings: {const SingleActivator(LogicalKeyboardKey.escape): back},
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.escape): () {
+          // The full-screen player handles Esc itself (exit full screen first).
+          if (InAppPlayerScreen.openCount > 0) return;
+          back();
+        },
+      },
       child: child,
     ),
   );

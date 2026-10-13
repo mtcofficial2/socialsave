@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:social_save/core/theme/app_theme.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -145,6 +146,9 @@ Future<void> main(List<String> args) async {
   WindowsDnsFallback.install();
   MediaKit.ensureInitialized();
 
+  if (args.contains('--test-data')) {
+    HiveInit.debugDir = '${Directory.systemTemp.path}${Platform.pathSeparator}ss_testdata';
+  }
   final box = await const HiveInit().openDownloadsBox();
   final prefs = await SharedPreferences.getInstance();
   final settingsStore = SharedPreferencesSettingsStore(prefs);
@@ -262,6 +266,9 @@ Future<void> main(List<String> args) async {
       print('debug saved ${file?.path} ${file?.lengthSync()}');
     });
   }
+
+  // `--key-log`: print every key the player handles (keyboard tests).
+  if (args.contains('--key-log')) InAppPlayerScreen.keyLog = true;
 
   // Desktop test hook: `SocialSave.exe --play <file>` opens the in-app player.
   final at = args.indexOf('--play');

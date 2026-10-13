@@ -87,6 +87,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   Future<void> _importClipboard() async {
     if (!mounted) return;
+    // Only when Home is on screen: never push a preview over the player or
+    // another page (that stole the player's keyboard on PC).
+    if (!(ModalRoute.of(context)?.isCurrent ?? true)) return;
     final result = await ref
         .read(homeControllerProvider.notifier)
         .importClipboardAndAnalyze(auto: true);

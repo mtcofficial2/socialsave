@@ -11,6 +11,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:social_save/core/platform/desktop_support.dart';
+import 'package:social_save/core/platform/win_focus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -27,6 +28,10 @@ import 'package:social_save/shared/widgets/platform_logo.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 class InAppPlayerScreen extends ConsumerStatefulWidget {
+  static bool keyLog = false;
+
+  /// Open (non-docked) players; the app-wide Esc = back is off meanwhile.
+  static int openCount = 0;
   const InAppPlayerScreen({
     super.key,
     required this.session,
@@ -197,6 +202,11 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       if (mounted) setState(() => _inPip = inPip);
     });
     _bindPhone();
+    if (DesktopSupport.isWindows) {
+      _keyMap = _desktopKeys();
+      HardwareKeyboard.instance.addHandler(_onHardwareKey);
+      if (!widget.embedded) InAppPlayerScreen.openCount++;
+    }
     _open();
     _showChrome();
   }
@@ -810,6 +820,20 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
 
   Future<void> _toggleFs() => _setFs(!_fs);
 
+  /// Win32 focus back on our Flutter view, then the player's focus node,
+  /// again after the next frames (the window style change settles late).
+  void _refocus() {
+    WinFocus.focusSelf();
+    _keyFocus.requestFocus();
+    for (final ms in const [50, 250, 700]) {
+      Future<void>.delayed(Duration(milliseconds: ms), () {
+        if (!mounted) return;
+        WinFocus.focusSelf();
+        _keyFocus.requestFocus();
+      });
+    }
+  }
+
   Future<void> _setFs(bool on) async {
     if (on == _fs || !mounted) return;
     if (widget.embedded && DesktopSupport.isWindows) {
@@ -829,7 +853,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       }
     } catch (_) {}
     if (on) _showChrome();
-    _keyFocus.requestFocus();
+    _refocus();
     _flash(on ? 'Full screen' : 'Full screen off',
         icon: on ? Icons.fullscreen_rounded : Icons.fullscreen_exit_rounded);
   }
@@ -1077,6 +1101,41 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       ),
     );
     _keyFocus.requestFocus();
+  }
+
+  /// Set by the `--key-log` test switch: prints every key the player handles.
+
+  Map<ShortcutActivator, VoidCallback> _keyMap = const {};
+
+  /// PC keys are handled here, globally, while the player is on screen, so
+  /// they work whatever widget has focus (also in full screen and after
+  /// clicks). Skipped while typing in a text field or when a dialog/menu is
+  /// on top of the player.
+  bool _onHardwareKey(KeyEvent event) {
+    if (!mounted || event is KeyUpEvent) return false;
+    final route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) return false;
+    final focusCtx = FocusManager.instance.primaryFocus?.context;
+    if (focusCtx != null &&
+        (focusCtx.widget is EditableText || focusCtx.findAncestorWidgetOfExactType<EditableText>() != null)) {
+      return false;
+    }
+    if (widget.embedded) {
+      // Docked beside the Library: only when the player area has focus.
+      if (!_keyFocus.hasFocus) return false;
+    }
+    final keyboard = HardwareKeyboard.instance;
+    for (final entry in _keyMap.entries) {
+      if (entry.key.accepts(event, keyboard)) {
+        if (InAppPlayerScreen.keyLog) {
+          // ignore: avoid_print
+          print('debug key ${event.logicalKey.keyLabel} fs=$_fs pos=${_player.state.position.inSeconds}s vol=${_player.state.volume.round()}');
+        }
+        entry.value();
+        return true;
+      }
+    }
+    return false;
   }
 
   Map<ShortcutActivator, VoidCallback> _desktopKeys() {
@@ -1461,9 +1520,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
               ),
       ],
     );
-    return CallbackShortcuts(
-      bindings: keys,
-      child: Focus(
+    _keyMap = keys;
+    return Builder(
+      builder: (_) => Focus(
       focusNode: _keyFocus,
       autofocus: true,
       child: Stack(
@@ -1567,6 +1626,10 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     _cancelCountdown();
     _chromeTimer?.cancel();
     _osdTimer?.cancel();
+    if (DesktopSupport.isWindows) {
+      HardwareKeyboard.instance.removeHandler(_onHardwareKey);
+      if (!widget.embedded) InAppPlayerScreen.openCount--;
+    }
     _keyFocus.dispose();
     _sleepTimer?.cancel();
     if (_fs || _forceLandscape) {
