@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
+import 'package:social_save/features/library/usb_link.dart';
 
 /// Another SocialSave app seen on this Wi-Fi.
 class NearbyDevice {
@@ -20,6 +21,7 @@ class NearbyDevice {
     required this.host,
     required this.port,
     required this.lastSeen,
+    this.link = 'wifi',
   });
 
   final String id;
@@ -29,7 +31,12 @@ class NearbyDevice {
   final int port;
   DateTime lastSeen;
 
+  /// 'usb' (adb cable), 'cable' (USB tethering / Ethernet) or 'wifi'.
+  final String link;
+
   bool get isPc => kind == 'pc';
+  bool get isCable => link != 'wifi';
+  int get rank => link == 'usb' ? 2 : (link == 'cable' ? 1 : 0);
 }
 
 /// A transfer offer waiting for the user's answer on this device.
@@ -97,6 +104,7 @@ class NearbyService {
   static bool _started = false;
   static RawDatagramSocket? _udp;
   static HttpServer? _inbox;
+  static int get inboxBoundPort => _inbox?.port ?? inboxPort;
   static Timer? _beacon;
   static final Map<String, NearbyDevice> _seen = {};
   static final Map<String, IncomingOffer> _tokens = {};
@@ -123,6 +131,7 @@ class NearbyService {
       }
       await _openInbox();
       await _openBeacon();
+      if (Platform.isWindows) UsbLink.start();
     } catch (error) {
       debugPrint('nearby start failed: $error');
     }
@@ -154,26 +163,23 @@ class NearbyService {
         final json = jsonDecode(utf8.decode(dg.data)) as Map<String, dynamic>;
         if (json['ss'] != 1 || json['id'] == id) return;
         final devId = json['id'] as String;
-        final known = _seen[devId];
-        if (known != null && known.host == dg.address.address) {
-          known.lastSeen = DateTime.now();
-        } else {
-          _seen[devId] = NearbyDevice(
-            id: devId,
-            name: (json['name'] as String?) ?? 'Device',
-            kind: (json['kind'] as String?) ?? 'phone',
-            host: dg.address.address,
-            port: (json['port'] as num?)?.toInt() ?? inboxPort,
-            lastSeen: DateTime.now(),
-          );
-          _publishList();
-        }
+        _offer(NearbyDevice(
+          id: devId,
+          name: (json['name'] as String?) ?? 'Device',
+          kind: (json['kind'] as String?) ?? 'phone',
+          host: dg.address.address,
+          port: (json['port'] as num?)?.toInt() ?? inboxPort,
+          lastSeen: DateTime.now(),
+          link: _linkFor(dg.address.address),
+        ));
         // Answer a newcomer right away so lists fill in quickly.
         if (json['hello'] == true) _sendBeacon(to: dg.address);
       } catch (_) {}
     });
+    unawaited(_refreshIfaces());
     _sendBeacon(hello: true);
     _beacon = Timer.periodic(const Duration(seconds: 2), (_) {
+      unawaited(_refreshIfaces());
       _sendBeacon();
       final before = _seen.length;
       _seen.removeWhere((_, d) => DateTime.now().difference(d.lastSeen) > const Duration(seconds: 8));
@@ -181,8 +187,63 @@ class NearbyService {
     });
   }
 
+  /// Local IPv4 interfaces (name, address), used to tell cable links from Wi-Fi.
+  static List<(String, String)> _ifaces = const [];
+
+  static Future<void> _refreshIfaces() async {
+    try {
+      final list = await NetworkInterface.list(type: InternetAddressType.IPv4);
+      _ifaces = [
+        for (final i in list)
+          for (final a in i.addresses) (i.name.toLowerCase(), a.address),
+      ];
+    } catch (_) {}
+  }
+
+  static String _linkFor(String host) {
+    if (host == '127.0.0.1') return 'usb';
+    if (host.startsWith('192.168.42.')) return 'cable'; // Android USB tethering
+    final net = host.substring(0, host.lastIndexOf('.') + 1);
+    for (final (name, ip) in _ifaces) {
+      if (!ip.startsWith(net)) continue;
+      final wireless = name.contains('wi') || name.contains('wlan') || name.contains('wireless');
+      final wired = name.contains('ethernet') || name.contains('rndis') || name.contains('usb') ||
+          name.contains('ncm') || name.startsWith('eth') || name.startsWith('en');
+      if (wired && !wireless) return 'cable';
+    }
+    return 'wifi';
+  }
+
+  /// Adds or refreshes a route to a device, keeping the fastest live link
+  /// (USB cable > tethering/Ethernet > Wi-Fi).
+  static void _offer(NearbyDevice d) {
+    final known = _seen[d.id];
+    if (known != null && known.host == d.host && known.port == d.port) {
+      known.lastSeen = DateTime.now();
+      return;
+    }
+    final knownFresh = known != null && DateTime.now().difference(known.lastSeen) < const Duration(seconds: 5);
+    if (knownFresh && known.rank > d.rank) return;
+    _seen[d.id] = d;
+    _publishList();
+  }
+
+  /// Called by [UsbLink] for a device reached through an adb tunnel.
+  static void addUsbRoute({required String id, required String name, required String kind, required int port}) {
+    if (id.isEmpty || id == NearbyService.id) return;
+    _offer(NearbyDevice(
+      id: id,
+      name: name.endsWith('(USB)') ? name : '$name (USB)',
+      kind: kind,
+      host: '127.0.0.1',
+      port: port,
+      lastSeen: DateTime.now(),
+      link: 'usb',
+    ));
+  }
+
   static void _publishList() {
-    final list = _seen.values.toList()..sort((a, b) => a.name.compareTo(b.name));
+    final list = _seen.values.toList()..sort((a, b) => b.rank != a.rank ? b.rank - a.rank : a.name.compareTo(b.name));
     devices.value = list;
   }
 
@@ -286,6 +347,23 @@ class NearbyService {
           _busy = false;
           await TransferBoost.end();
         }
+        return;
+      }
+      if (req.method == 'POST' && parts.length == 1 && parts[0] == 'usbpeer') {
+        // A PC reached us over a USB (adb) tunnel and set up a reverse port.
+        final body = jsonDecode(await utf8.decoder.bind(req).join()) as Map<String, dynamic>;
+        final from = req.connectionInfo?.remoteAddress;
+        if (from != null && from.isLoopback) {
+          addUsbRoute(
+            id: '${body['id'] ?? ''}',
+            name: '${body['name'] ?? 'PC'}',
+            kind: '${body['kind'] ?? 'pc'}',
+            port: (body['port'] as num?)?.toInt() ?? 0,
+          );
+        }
+        res.headers.contentType = ContentType.json;
+        res.write(jsonEncode({'ok': true, 'id': id, 'name': name, 'kind': kind}));
+        await res.close();
         return;
       }
       if (req.method == 'GET' && parts.length == 1 && parts[0] == 'hello') {

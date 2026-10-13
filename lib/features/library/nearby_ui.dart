@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:social_save/features/library/transfer_meter.dart';
 import 'package:flutter/material.dart';
 import 'package:social_save/features/library/nearby_service.dart';
+import 'package:social_save/features/library/usb_link.dart';
 import 'package:social_save/features/player/player_session.dart';
 import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/routing/app_router.dart';
@@ -182,10 +183,13 @@ class _NearbyDeviceChipsState extends State<NearbyDeviceChips> {
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
+                const SizedBox(width: 8),
+                const Flexible(child: UsbHint()),
               ],
             ),
           );
         }
+        final cable = list.any((d) => d.isCable);
         return Wrap(
           spacing: 8,
           runSpacing: 4,
@@ -193,11 +197,12 @@ class _NearbyDeviceChipsState extends State<NearbyDeviceChips> {
             for (final d in list)
               ActionChip(
                 key: ValueKey('nearby-${d.id}'),
-                avatar: Icon(d.isPc ? Icons.computer_rounded : Icons.smartphone_rounded, size: 18),
+                avatar: Icon(d.isCable ? Icons.cable_rounded : (d.isPc ? Icons.computer_rounded : Icons.smartphone_rounded), size: 18),
                 label: Text(d.name),
                 tooltip: 'Send a video to ${d.name}',
                 onPressed: () => _tap(d),
               ),
+            if (!cable) const UsbHint(),
           ],
         );
       },
@@ -255,4 +260,27 @@ Future<void> sendToNearby(BuildContext context, NearbyDevice device, File file) 
   progress.value = error == null ? 1 : 0;
   status.value = error ?? 'Sent. It is saved on ${device.name}. ${meter.doneLabel}';
   await dialog;
+}
+
+
+/// "Turn on USB debugging…" hint for cable transfers (or the adb status on PC).
+class UsbHint extends StatelessWidget {
+  const UsbHint({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<String>(
+      valueListenable: UsbLink.hint,
+      builder: (context, h, _) => h.isEmpty
+          ? const SizedBox.shrink()
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.cable_rounded, size: 14),
+                const SizedBox(width: 4),
+                Flexible(child: Text(h, style: Theme.of(context).textTheme.bodySmall)),
+              ],
+            ),
+    );
+  }
 }
