@@ -78,7 +78,7 @@ String formatBytes(int bytes) {
 
 String formatEta(Duration d) {
   final s = d.inSeconds;
-  if (s < 1) return '${d.inMilliseconds} ms'.replaceFirst(RegExp(r'^0 ms$'), '<1 s');
+  if (s < 1) return '<1 s';
   if (s < 60) return '$s s';
   final m = s ~/ 60;
   final r = (s % 60).toString().padLeft(2, '0');

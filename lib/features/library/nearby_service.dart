@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:social_save/features/library/transfer_boost.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -278,10 +279,12 @@ class NearbyService {
           return;
         }
         _busy = true;
+        await TransferBoost.begin();
         try {
           await _receive(req, offer);
         } finally {
           _busy = false;
+          await TransferBoost.end();
         }
         return;
       }
@@ -380,6 +383,7 @@ class NearbyService {
   }) async {
     final total = await file.length();
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
+    await TransferBoost.begin();
     try {
       onStatus?.call('Waiting for ${device.name} to accept…');
       final ask = await client.postUrl(Uri.http('${device.host}:${device.port}', '/ask'));
@@ -395,7 +399,7 @@ class NearbyService {
       up.headers.contentType = ContentType.binary;
       up.contentLength = total;
       var sent = 0;
-      await up.addStream(file.openRead().map((chunk) {
+      await up.addStream(TransferBoost.read(file).map((chunk) {
         sent += chunk.length;
         onProgress?.call(sent, total);
         return chunk;
@@ -412,6 +416,7 @@ class NearbyService {
     } catch (_) {
       return 'The transfer stopped. Try again.';
     } finally {
+      await TransferBoost.end();
       client.close(force: true);
     }
   }

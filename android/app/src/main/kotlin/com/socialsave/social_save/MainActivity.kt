@@ -31,6 +31,8 @@ import java.util.concurrent.Executors
 class MainActivity : FlutterFragmentActivity() {
     private val channelName = "socialsave/media"
     private var channel: MethodChannel? = null
+    private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
+    private var wifiLockPerf: android.net.wifi.WifiManager.WifiLock? = null
     private var multicastLock: android.net.wifi.WifiManager.MulticastLock? = null
     private var pendingShare: String? = null
     private var pipAllowed = false
@@ -96,6 +98,33 @@ class MainActivity : FlutterFragmentActivity() {
                         } else {
                             multicastLock?.release()
                             multicastLock = null
+                        }
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.success(false)
+                    }
+                }
+                "wifiLock" -> {
+                    // Full-speed Wi-Fi during transfers (no power-save throttling).
+                    try {
+                        val wifi = applicationContext.getSystemService(android.content.Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+                        if (call.argument<Boolean>("on") == true) {
+                            if (wifiLock == null) {
+                                @Suppress("DEPRECATION")
+                                val mode = if (Build.VERSION.SDK_INT >= 29) android.net.wifi.WifiManager.WIFI_MODE_FULL_LOW_LATENCY else android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF
+                                wifiLock = wifi.createWifiLock(mode, "socialsave-transfer").apply {
+                                    setReferenceCounted(false)
+                                    acquire()
+                                }
+                                @Suppress("DEPRECATION")
+                                wifiLockPerf = wifi.createWifiLock(android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "socialsave-transfer-perf").apply {
+                                    setReferenceCounted(false)
+                                    acquire()
+                                }
+                            }
+                        } else {
+                            wifiLock?.release(); wifiLock = null
+                            wifiLockPerf?.release(); wifiLockPerf = null
                         }
                         result.success(true)
                     } catch (e: Exception) {

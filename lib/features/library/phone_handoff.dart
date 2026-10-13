@@ -5,6 +5,7 @@ import 'dart:math';
 
 import 'package:dio/dio.dart';
 import 'package:file_selector/file_selector.dart';
+import 'package:social_save/features/library/transfer_boost.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -150,7 +151,12 @@ class PhoneHandoff {
         await res.close();
         return;
       }
-      await res.addStream(file.openRead(start, end + 1));
+      await TransferBoost.begin();
+      try {
+        await res.addStream(TransferBoost.read(file, start, end + 1));
+      } finally {
+        await TransferBoost.end();
+      }
       await res.close();
     } catch (_) {
       try {
@@ -320,12 +326,17 @@ class PhoneHandoff {
   static Future<File?> download(HandoffTarget target,
       {void Function(int received, int total)? onProgress, CancelToken? cancel}) async {
     final dest = await _destFor(target.fileName);
+    await TransferBoost.begin();
+    try {
     await Dio().download(
       target.videoUrl,
       dest.path,
       cancelToken: cancel,
       onReceiveProgress: (r, t) => onProgress?.call(r, t > 0 ? t : target.size),
     );
+    } finally {
+      await TransferBoost.end();
+    }
     if (!dest.existsSync() || await dest.length() < 32) return null;
     await _publish(dest);
     return dest;
@@ -441,6 +452,7 @@ class PhoneHandoff {
       final sink = dest.openWrite();
       var got = 0;
       final meter = TransferMeter();
+      await TransferBoost.begin();
       await for (final chunk in req) {
         sink.add(chunk);
         got += chunk.length;
@@ -449,6 +461,7 @@ class PhoneHandoff {
         }
       }
       await sink.close();
+      await TransferBoost.end();
       final ok = got > 32 && (total <= 0 || got == total);
       if (!ok) {
         try {
@@ -496,6 +509,7 @@ class PhoneHandoff {
     if (target == null) return 'Could not find that code on this Wi-Fi.';
     final total = await file.length();
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
+    await TransferBoost.begin();
     try {
       final req = await client.postUrl(Uri.http('${target.host}:${target.port}', '/drop/$code'));
       req.headers.set('x-name', Uri.encodeComponent(p.basename(file.path)));
@@ -503,7 +517,7 @@ class PhoneHandoff {
       req.headers.contentType = ContentType.binary;
       req.contentLength = total;
       var sent = 0;
-      await req.addStream(file.openRead().map((chunk) {
+      await req.addStream(TransferBoost.read(file).map((chunk) {
         sent += chunk.length;
         onProgress?.call(sent, total);
         return chunk;
@@ -515,6 +529,7 @@ class PhoneHandoff {
     } catch (_) {
       return 'The copy stopped. Stay on the same Wi-Fi and try again.';
     } finally {
+      await TransferBoost.end();
       client.close(force: true);
     }
   }
