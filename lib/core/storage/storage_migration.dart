@@ -5,7 +5,9 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:social_save/core/storage/vault_recovery.dart';
 import 'package:social_save/features/downloads/domain/repositories/downloads_repository.dart';
+import 'package:social_save/features/library/vault_service.dart';
 
 /// 1.0.13: videos used to be saved twice on Android (the app's private
 /// folder plus a public copy in Download/SocialSave). This keeps one public
@@ -20,7 +22,7 @@ class StorageMigration {
   static const publicRoot = '/storage/emulated/0/Download/SocialSave';
   static bool _running = false;
 
-  static Future<void> run(DownloadsRepository repo) async {
+  static Future<void> run(DownloadsRepository repo, {VaultService? vault}) async {
     if (!Platform.isAndroid || _running) return;
     _running = true;
     try {
@@ -43,6 +45,11 @@ class StorageMigration {
           final rel = p.relative(f.path, from: private.path);
           if (rel.split('/').contains('vault')) continue;
           try {
+            // 1.0.14: a leftover copy of a vault video must never go public.
+            if (vault != null && await VaultRecovery.isVaultCopy(vault, f)) {
+              await f.delete();
+              continue;
+            }
             final target = await _settle(f, p.join(public.path, rel));
             moved[f.path] = target;
           } catch (error) {

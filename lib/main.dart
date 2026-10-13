@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:social_save/core/theme/app_theme.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:social_save/features/downloader/presentation/providers/download_manager.dart';
 import 'package:media_kit/media_kit.dart';
@@ -146,9 +148,29 @@ Future<void> main(List<String> args) async {
   final box = await const HiveInit().openDownloadsBox();
   final prefs = await SharedPreferences.getInstance();
   final settingsStore = SharedPreferencesSettingsStore(prefs);
-  final settings = await settingsStore.load();
+  var settings = await settingsStore.load();
+  // 1.0.14: dark theme with the SocialSave colors is the new default. Move
+  // installs that were still on the old defaults (system + dynamic) once.
+  if (prefs.getBool('ui_v14_defaults') != true) {
+    if (settings.themeMode == ThemeMode.system && settings.useDynamicColor) {
+      settings = settings.copyWith(themeMode: ThemeMode.dark, useDynamicColor: false);
+      await settingsStore.save(settings);
+    }
+    await prefs.setBool('ui_v14_defaults', true);
+  }
+  // Screenshot hook: `--open /library` starts on that tab.
+  final op = args.indexOf('--open');
+  if (op >= 0 && op + 1 < args.length) debugInitialLocation = args[op + 1];
   final notifications = NotificationService();
   await notifications.init();
+
+  // Load the theme fonts before the first frame so chips and segmented
+  // buttons are measured with the real font (they don't re-measure later).
+  AppTheme.dark(fontFamily: settings.fontFamily);
+  AppTheme.light(fontFamily: settings.fontFamily);
+  try {
+    await GoogleFonts.pendingFonts().timeout(const Duration(seconds: 4));
+  } catch (_) {}
 
   runApp(
     ProviderScope(

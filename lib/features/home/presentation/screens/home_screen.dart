@@ -9,6 +9,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:social_save/core/platform/desktop_support.dart';
 import 'package:social_save/core/storage/storage_migration.dart';
+import 'package:social_save/core/storage/vault_recovery.dart';
+import 'package:social_save/features/library/presentation/library_screen.dart' show vaultServiceProvider;
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/constants/app_constants.dart';
 import 'package:social_save/features/home/presentation/providers/home_controller.dart';
@@ -34,7 +36,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      unawaited(StorageMigration.run(ref.read(downloadsRepositoryProvider)));
+      final repo = ref.read(downloadsRepositoryProvider);
+      final vault = ref.read(vaultServiceProvider);
+      unawaited(() async {
+        await StorageMigration.run(repo, vault: vault);
+        await VaultRecovery.run(vault, repo);
+      }());
       await _onArrive();
     });
   }
@@ -133,7 +140,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       body: SafeArea(
-        child: ListView(
+        child: Center(
+          child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 860),
+          child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
           children: [
             const BrandHeader(),
@@ -174,7 +184,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
               ),
             ),
             const SizedBox(height: 8),
-            const NearbyShareBar(),
+            const NearbyShareBar(compact: true),
             const SizedBox(height: 12),
             const SaveQueueSection(),
             const SizedBox(height: 16),
@@ -184,6 +194,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             const SizedBox(height: 20),
             const RecentDownloadsSection(),
           ],
+        ),
+        ),
         ),
       ),
     );

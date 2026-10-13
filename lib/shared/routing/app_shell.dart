@@ -27,7 +27,7 @@ class AppShell extends ConsumerWidget {
         current.status != DownloadStatus.completed &&
         current.status != DownloadStatus.cancelled;
 
-    final wide = MediaQuery.sizeOf(context).width >= 1100;
+    final wide = MediaQuery.sizeOf(context).width >= 840;
     void selectTab(int index) {
       if (index != 1) {
         ref.read(vaultUnlockedProvider.notifier).state = false;
@@ -74,6 +74,8 @@ class AppShell extends ConsumerWidget {
               selectedIndex: navigationShell.currentIndex,
               onDestinationSelected: selectTab,
               labelType: NavigationRailLabelType.all,
+              minWidth: 84,
+              groupAlignment: -0.9,
               destinations: const [
                 NavigationRailDestination(
                   icon: Icon(Icons.home_outlined),
@@ -97,6 +99,7 @@ class AppShell extends ConsumerWidget {
                 ),
               ],
             ),
+            VerticalDivider(width: 1, color: Theme.of(context).colorScheme.outline),
             Expanded(
               child: Column(
                 children: [

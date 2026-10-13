@@ -41,7 +41,7 @@ class AppColors {
   static const Color canvasDark = Color(0xFF0B1219);
   static const Color cardDark = Color(0xFF141C28);
   static const Color inkDark = Color(0xFFE8EEF6);
-  static const Color mutedDark = Color(0xFF93A0B5);
+  static const Color mutedDark = Color(0xFFAAB6C8);
 
   static ColorScheme lightScheme() {
     return const ColorScheme(
@@ -65,6 +65,9 @@ class AppColors {
       onSurfaceVariant: muted,
       outline: outlineSoft,
       outlineVariant: Color(0xFFBDC9C6),
+      inverseSurface: Color(0xFF1E293B),
+      onInverseSurface: Color(0xFFF1F5F9),
+      inversePrimary: seedDark,
       surfaceContainerLowest: card,
       surfaceContainerLow: surfaceLow,
       surfaceContainer: surfaceContainer,
@@ -93,8 +96,11 @@ class AppColors {
       surface: canvasDark,
       onSurface: inkDark,
       onSurfaceVariant: mutedDark,
-      outline: Color(0xFF243044),
-      outlineVariant: Color(0xFF3A4658),
+      outline: Color(0xFF263345),
+      outlineVariant: Color(0xFF3D4B60),
+      inverseSurface: Color(0xFFE8EEF6),
+      onInverseSurface: Color(0xFF131B2E),
+      inversePrimary: primary,
       surfaceContainerLowest: cardDark,
       surfaceContainerLow: Color(0xFF121A26),
       surfaceContainer: Color(0xFF1B2433),

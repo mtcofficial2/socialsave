@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:social_save/shared/widgets/page_layout.dart';
 import 'package:social_save/core/constants/app_constants.dart';
 import 'package:social_save/shared/widgets/app_logo.dart';
 import 'package:social_save/shared/widgets/compliance_notice.dart';
@@ -12,7 +13,7 @@ class AboutScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('About')),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: pagePadding(context, top: 16, maxWidth: 720),
         children: [
           const Center(child: AppLogo(size: 72)),
           const SizedBox(height: 12),

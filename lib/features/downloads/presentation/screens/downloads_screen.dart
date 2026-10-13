@@ -13,6 +13,8 @@ import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/shared/models/download_status.dart';
 import 'package:social_save/shared/widgets/brand_header.dart';
 import 'package:social_save/shared/widgets/glass.dart';
+import 'package:social_save/shared/widgets/page_layout.dart';
+import 'package:social_save/shared/widgets/skeleton.dart';
 import 'package:social_save/shared/widgets/empty_state.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
 import 'package:social_save/shared/widgets/video_thumbnail.dart';
@@ -38,8 +40,17 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
     return Scaffold(
       body: SafeArea(
         child: history.when(
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (error, _) => Center(child: Text('$error')),
+          loading: () => const SkeletonList(),
+          error: (error, _) => EmptyState(
+            icon: Icons.error_outline_rounded,
+            title: 'Could not load your downloads',
+            message: '$error',
+            action: FilledButton.icon(
+              onPressed: () => ref.invalidate(downloadsControllerProvider),
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('Try again'),
+            ),
+          ),
           data: (records) {
             final q = _query.toLowerCase();
             var filtered = records.where((item) {
@@ -62,58 +73,34 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
               children: [
                 const BrandHeader(),
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  padding: pagePadding(context, bottom: 8),
                   child: Row(
                     children: [
                       Expanded(
-                        child: Container(
-                          height: 46,
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          decoration: BoxDecoration(
-                            color: scheme.surfaceContainerLow,
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(Icons.search, color: scheme.onSurfaceVariant, size: 20),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: TextField(
-                                  onChanged: (value) => setState(() => _query = value),
-                                  decoration: const InputDecoration(
-                                    hintText: 'Search downloads, platforms, files...',
-                                    border: InputBorder.none,
-                                    enabledBorder: InputBorder.none,
-                                    focusedBorder: InputBorder.none,
-                                    filled: false,
-                                    isDense: true,
-                                    contentPadding: EdgeInsets.zero,
-                                  ),
-                                ),
-                              ),
-                              Icon(Icons.mic_none, color: scheme.onSurfaceVariant, size: 18),
-                            ],
-                          ),
+                        child: Text(
+                          'Downloads',
+                          style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      Container(
-                        width: 46,
-                        height: 46,
-                        decoration: BoxDecoration(
-                          color: scheme.surfaceContainerLow,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(Icons.tune, size: 20),
                       ),
                     ],
+                  ),
+                ),
+                Padding(
+                  padding: pagePadding(context, bottom: 8),
+                  child: TextField(
+                    onChanged: (value) => setState(() => _query = value),
+                    decoration: const InputDecoration(
+                      hintText: 'Search downloads',
+                      prefixIcon: Icon(Icons.search_rounded),
+                      isDense: true,
+                    ),
                   ),
                 ),
                 SizedBox(
                   height: 44,
                   child: ListView(
                     scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    padding: pagePadding(context, bottom: 0),
                     children: [
                       _FilterChip(
                         label: 'All',
@@ -145,14 +132,22 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                 const SizedBox(height: 8),
                 Expanded(
                   child: empty
-                      ? const EmptyState(
+                      ? EmptyState(
                           icon: Icons.download_outlined,
-                          title: 'No downloads yet',
-                          message:
-                              'Paste a link like https://www.youtube.com/watch?v=… or a TikTok link, then tap Paste link.',
+                          title: q.isNotEmpty || _filter != 'All' ? 'Nothing matches' : 'No downloads yet',
+                          message: q.isNotEmpty || _filter != 'All'
+                              ? 'Try another search or filter.'
+                              : 'Copy a public video link, then paste it on Home to save it here.',
+                          action: q.isNotEmpty || _filter != 'All'
+                              ? null
+                              : FilledButton.icon(
+                                  onPressed: () => context.go('/'),
+                                  icon: const Icon(Icons.add_link_rounded),
+                                  label: const Text('Paste a link'),
+                                ),
                         )
                       : ListView(
-                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                          padding: pagePadding(context, top: 8),
                           children: [
                             if (showActive)
                               ...active.map((task) {

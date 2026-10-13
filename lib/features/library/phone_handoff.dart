@@ -791,7 +791,9 @@ Future<void> showSendToPhone(BuildContext context, File file, String title) asyn
         final small = Theme.of(context).textTheme.bodySmall;
         return AlertDialog(
           title: const Text('Send to another device'),
-          content: SingleChildScrollView(
+          content: SizedBox(
+            width: 440,
+            child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -841,12 +843,13 @@ Future<void> showSendToPhone(BuildContext context, File file, String title) asyn
                       color: Colors.white,
                       child: Padding(
                         padding: const EdgeInsets.all(8),
-                        child: QrImageView(data: offer.url, size: 180),
+                        child: QrImageView(data: offer.url, size: 168),
                       ),
                     ),
                   ),
                   const SizedBox(height: 8),
-                  Center(
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
                     child: SelectableText(
                       spaced,
                       style: Theme.of(context).textTheme.headlineMedium?.copyWith(
@@ -869,6 +872,7 @@ Future<void> showSendToPhone(BuildContext context, File file, String title) asyn
                 ],
               ],
             ),
+          ),
           ),
           actions: [
             TextButton(
@@ -1245,8 +1249,45 @@ Future<void> pickAndSend(BuildContext context) async {
 }
 
 /// Two big buttons: Send and Receive, phone or PC, same Wi-Fi.
+/// Opens the full Nearby share panel (send / receive / files / folder /
+/// received) in a bottom sheet. Used by the compact "Share" buttons.
+Future<void> showNearbySheet(
+  BuildContext context, {
+  VoidCallback? onReceived,
+  Future<void> Function()? onSend,
+  Future<File?> Function()? pickFile,
+}) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    builder: (sheet) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        child: NearbyShareBar(
+          onReceived: onReceived,
+          onSend: onSend == null
+              ? null
+              : () async {
+                  Navigator.of(sheet).pop();
+                  await onSend();
+                },
+          pickFile: pickFile,
+          flat: true,
+        ),
+      ),
+    ),
+  );
+}
+
 class NearbyShareBar extends StatelessWidget {
-  const NearbyShareBar({super.key, this.onReceived, this.onSend, this.pickFile});
+  const NearbyShareBar({
+    super.key,
+    this.onReceived,
+    this.onSend,
+    this.pickFile,
+    this.compact = false,
+    this.flat = false,
+  });
 
   /// Picks the video to send when a nearby device is tapped.
   final Future<File?> Function()? pickFile;
@@ -1256,13 +1297,27 @@ class NearbyShareBar extends StatelessWidget {
   /// Optional custom "send" (e.g. choose from the Library list).
   final Future<void> Function()? onSend;
 
-  @override
-  Widget build(BuildContext context) {
+  /// One slim row: nearby devices + Send / Receive / more.
+  final bool compact;
+
+  /// No card around it (inside a sheet).
+  final bool flat;
+
+  Future<void> _receive(BuildContext context) async {
+    final saved = await showReceiveFromPhone(context);
+    if (saved) onReceived?.call();
+  }
+
+  void _openReceived(BuildContext context) {
+    Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ReceivedScreen()));
+  }
+
+  Widget _compact(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+        padding: const EdgeInsets.fromLTRB(14, 10, 6, 10),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1272,7 +1327,68 @@ class NearbyShareBar extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Nearby share  •  phone ↔ PC on the same Wi-Fi',
+                    'Nearby share',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                FilledButton.tonalIcon(
+                  key: const ValueKey('nearby-send'),
+                  style: FilledButton.styleFrom(minimumSize: const Size(0, 40)),
+                  onPressed: () => onSend != null ? onSend!() : pickAndSend(context),
+                  icon: const Icon(Icons.send_rounded, size: 18),
+                  label: const Text('Send'),
+                ),
+                const SizedBox(width: 6),
+                OutlinedButton.icon(
+                  key: const ValueKey('nearby-receive'),
+                  style: OutlinedButton.styleFrom(minimumSize: const Size(0, 40)),
+                  onPressed: () => _receive(context),
+                  icon: const Icon(Icons.download_rounded, size: 18),
+                  label: const Text('Receive'),
+                ),
+                PopupMenuButton<String>(
+                  tooltip: 'More sharing options',
+                  onSelected: (value) {
+                    switch (value) {
+                      case 'files':
+                        pickAndSendBundle(context, folder: false);
+                      case 'folder':
+                        pickAndSendBundle(context, folder: true);
+                      case 'received':
+                        _openReceived(context);
+                    }
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'files', child: ListTile(leading: Icon(Icons.file_present_rounded), title: Text('Send files'))),
+                    PopupMenuItem(value: 'folder', child: ListTile(leading: Icon(Icons.drive_folder_upload_rounded), title: Text('Send a folder'))),
+                    PopupMenuItem(value: 'received', child: ListTile(leading: Icon(Icons.inventory_2_rounded), title: Text('Received files'))),
+                  ],
+                ),
+              ],
+            ),
+            NearbyDeviceChips(pickFile: pickFile ?? () => pickVideoFile()),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (compact) return _compact(context);
+    final scheme = Theme.of(context).colorScheme;
+    final body = Padding(
+        padding: flat ? EdgeInsets.zero : const EdgeInsets.fromLTRB(12, 10, 12, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.wifi_tethering_rounded, color: scheme.primary, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Nearby share · same Wi-Fi or USB cable',
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
                   ),
                 ),
@@ -1338,7 +1454,7 @@ class NearbyShareBar extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
+      );
+    return flat ? body : Card(margin: EdgeInsets.zero, child: body);
   }
 }

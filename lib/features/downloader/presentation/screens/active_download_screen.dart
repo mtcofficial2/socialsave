@@ -2,6 +2,7 @@ import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:social_save/shared/widgets/page_layout.dart';
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/theme/app_colors.dart';
 import 'package:social_save/features/downloader/presentation/providers/download_manager.dart';
@@ -47,7 +48,7 @@ class ActiveDownloadScreen extends ConsumerWidget {
     return Scaffold(
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+          padding: pagePadding(context),
           children: [
             const BrandHeader(),
             Row(

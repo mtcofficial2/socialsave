@@ -18,6 +18,7 @@ import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:social_save/features/library/summarize_sheet.dart';
 import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
 import 'package:social_save/features/library/vault_service.dart';
+import 'package:social_save/shared/widgets/skeleton.dart';
 import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/features/player/player_session.dart';
 import 'package:social_save/shared/models/social_platform.dart';
@@ -348,7 +349,6 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       body: SafeArea(
         child: Column(
@@ -367,14 +367,19 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
                           ),
                     ),
                   ),
-                  IconButton(
-                    tooltip: 'Receive from another phone or PC',
-                    onPressed: () async {
-                      await showReceiveFromPhone(context);
-                      if (mounted) await _reload(rescan: DesktopSupport.isWindows);
-                    },
-                    icon: const Icon(Icons.qr_code_scanner_rounded),
+                  FilledButton.tonalIcon(
+                    key: const ValueKey('library-share'),
+                    style: FilledButton.styleFrom(minimumSize: const Size(0, 40)),
+                    onPressed: () => showNearbySheet(
+                      context,
+                      onSend: _pickLibraryVideoToSend,
+                      pickFile: _chooseFileToSend,
+                      onReceived: () => _reload(rescan: DesktopSupport.isWindows),
+                    ),
+                    icon: const Icon(Icons.wifi_tethering_rounded, size: 18),
+                    label: const Text('Share'),
                   ),
+                  const SizedBox(width: 4),
                   if (DesktopSupport.isWindows)
                     IconButton(
                       tooltip: 'Video folders',
@@ -390,42 +395,37 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-              child: NearbyShareBar(
-                onSend: _pickLibraryVideoToSend,
-                pickFile: _chooseFileToSend,
-                onReceived: () => _reload(rescan: DesktopSupport.isWindows),
-              ),
-            ),
-            Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Container(
-                padding: const EdgeInsets.all(4),
-                decoration: BoxDecoration(
-                  color: scheme.brightness == Brightness.dark
-                      ? const Color(0x661C2633)
-                      : const Color(0xB3FFFFFF),
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(color: Colors.white.withValues(alpha: 0.55)),
-                ),
-                child: Row(
-                  children: [
-                    _seg(DesktopSupport.isWindows ? 'On this PC' : 'On this phone', 0),
-                    _seg('Vault', 1),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: TextField(
-                onChanged: (value) => setState(() => _query = value),
-                decoration: const InputDecoration(
-                  hintText: 'Search by title',
-                  prefixIcon: Icon(Icons.search_rounded),
-                  isDense: true,
-                ),
+              child: Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  SegmentedButton<int>(
+                    showSelectedIcon: false,
+                    segments: [
+                      ButtonSegment(
+                        value: 0,
+                        icon: Icon(DesktopSupport.isWindows ? Icons.computer_rounded : Icons.smartphone_rounded, size: 18),
+                        label: Text(DesktopSupport.isWindows ? 'This PC' : 'This phone'),
+                      ),
+                      const ButtonSegment(value: 1, icon: Icon(Icons.lock_rounded, size: 18), label: Text('Vault')),
+                    ],
+                    selected: {_tab},
+                    onSelectionChanged: (value) => _selectTab(value.first),
+                  ),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 360),
+                    child: TextField(
+                      onChanged: (value) => setState(() => _query = value),
+                      decoration: const InputDecoration(
+                        hintText: 'Search by title',
+                        prefixIcon: Icon(Icons.search_rounded),
+                        isDense: true,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 8),
@@ -444,16 +444,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
                         onSelected: (_) => setState(() => _platform = name),
                       ),
                     ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 40,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                children: [
+                  const SizedBox(height: 24, child: VerticalDivider(width: 16)),
                   Padding(
                     padding: const EdgeInsets.only(right: 8),
                     child: FilterChip(
@@ -531,12 +522,17 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
                 builder: (context, constraints) {
                   final twoPane = MediaQuery.sizeOf(context).width >= 900;
                   final list = _loading
-                      ? const Center(child: CircularProgressIndicator())
+                      ? const SkeletonGrid()
                       : _error != null
                           ? EmptyState(
                               icon: Icons.videocam_off_outlined,
                               title: 'Cannot open library',
                               message: _error!,
+                              action: FilledButton.icon(
+                                onPressed: () => _reload(rescan: true),
+                                icon: const Icon(Icons.refresh_rounded),
+                                label: const Text('Try again'),
+                              ),
                             )
                           : _tab == 0
                               ? _DeviceList(
@@ -609,31 +605,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     return blob.contains(_platform.toLowerCase());
   }
 
-  Widget _seg(String label, int value) {
-    final selected = _tab == value;
-    final scheme = Theme.of(context).colorScheme;
-    return Expanded(
-      child: Material(
-        color: selected ? scheme.primary : Colors.transparent,
-        borderRadius: BorderRadius.circular(12),
-        child: InkWell(
-          onTap: () => setState(() => _tab = value),
-          borderRadius: BorderRadius.circular(12),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            child: Text(
-              label,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontWeight: FontWeight.w700,
-                color: selected ? Colors.white : scheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  void _selectTab(int value) => setState(() => _tab = value);
 
   Future<void> _vaultItemActions(VaultItem item) async {
     final action = await showModalBottomSheet<String>(
@@ -1262,8 +1234,8 @@ class _DeviceList extends StatelessWidget {
     }
     return GridView.builder(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: MediaQuery.sizeOf(context).width >= 700 ? 3 : 2,
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 240,
         mainAxisSpacing: 12,
         crossAxisSpacing: 12,
         childAspectRatio: 0.78,

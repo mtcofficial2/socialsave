@@ -15,8 +15,11 @@ import 'package:social_save/features/settings/presentation/screens/settings_scre
 import 'package:social_save/shared/models/media_info.dart';
 import 'package:social_save/shared/routing/app_shell.dart';
 
+/// Set before runApp by the `--open <path>` test switch.
+String debugInitialLocation = '/';
+
 final appRouter = GoRouter(
-  initialLocation: '/',
+  initialLocation: debugInitialLocation,
   routes: [
     StatefulShellRoute.indexedStack(
       builder: (context, state, navigationShell) {

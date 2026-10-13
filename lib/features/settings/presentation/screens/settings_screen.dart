@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:social_save/shared/widgets/page_layout.dart';
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/platform/desktop_support.dart';
 import 'package:social_save/core/platform/media_events.dart';
@@ -37,7 +38,7 @@ class SettingsScreen extends ConsumerWidget {
     return Scaffold(
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
+          padding: pagePadding(context, bottom: 32),
           children: [
             const BrandHeader(),
             Row(

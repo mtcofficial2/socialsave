@@ -8,7 +8,7 @@ enum VideoFormatPreference { mp4, webm, original }
 
 class AppSettings extends Equatable {
   const AppSettings({
-    this.themeMode = ThemeMode.system,
+    this.themeMode = ThemeMode.dark,
     this.downloadLocation = DownloadLocation.publicDownloads,
     this.wifiOnly = false,
     this.autoStartDownloads = true,
@@ -19,7 +19,7 @@ class AppSettings extends Equatable {
     this.autoPlayNextInGallery = true,
     this.lastChosenQuality,
     this.qualityByPlatform = const {},
-    this.useDynamicColor = true,
+    this.useDynamicColor = false,
     this.onlyWhileCharging = false,
     this.pauseBelowBattery = true,
     this.pocketPause = true,

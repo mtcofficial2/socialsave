@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:social_save/shared/widgets/page_layout.dart';
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/utils/platform_detector.dart';
 import 'package:social_save/shared/models/social_platform.dart';
@@ -123,7 +124,7 @@ class _PreviewBody extends ConsumerWidget {
     return Scaffold(
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+          padding: pagePadding(context, top: 4),
           children: [
             Row(
               children: [
@@ -503,7 +504,7 @@ class _LookupScaffold extends StatelessWidget {
     return Scaffold(
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+          padding: pagePadding(context, top: 4),
           children: [
             Row(
               children: [

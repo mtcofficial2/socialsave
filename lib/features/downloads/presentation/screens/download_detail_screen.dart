@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
+import 'package:social_save/shared/widgets/page_layout.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -42,7 +43,7 @@ class DownloadDetailScreen extends ConsumerWidget {
         return Scaffold(
           appBar: AppBar(title: const Text('Saved video')),
           body: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+            padding: pagePadding(context, top: 8, bottom: 32),
             children: [
               VideoThumbnail(
                 url: record.thumbnailUrl,
