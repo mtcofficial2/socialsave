@@ -32,6 +32,9 @@ class InAppPlayerScreen extends ConsumerStatefulWidget {
 
   /// Open (non-docked) players; the app-wide Esc = back is off meanwhile.
   static int openCount = 0;
+
+  /// Test copies (--test-data) never write resume positions.
+  static bool noPersist = false;
   const InAppPlayerScreen({
     super.key,
     required this.session,
@@ -195,6 +198,14 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         unawaited(_player.seek(a));
         return;
       }
+      if (InAppPlayerScreen.keyLog) {
+        final prev = _logPos;
+        _logPos = pos;
+        if (prev != null && (pos - prev).abs() > const Duration(seconds: 2)) {
+          // ignore: avoid_print
+          print('debug jump ${prev.inSeconds}s -> ${pos.inSeconds}s resume=$_resumeTargetMs');
+        }
+      }
       _guardResume(pos);
       _saveResumeThrottled();
     }));
@@ -205,7 +216,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     if (DesktopSupport.isWindows) {
       _keyMap = _desktopKeys();
       HardwareKeyboard.instance.addHandler(_onHardwareKey);
-      if (!widget.embedded) InAppPlayerScreen.openCount++;
+      InAppPlayerScreen.openCount++;
     }
     _open();
     _showChrome();
@@ -394,7 +405,13 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     );
   }
 
+  Duration? _logPos;
+
   Future<void> _open() async {
+    if (InAppPlayerScreen.keyLog) {
+      // ignore: avoid_print
+      print('debug open ${_session.filePath ?? _session.networkUrl} embedded=${widget.embedded}');
+    }
     final session = _session;
     String? uri;
     Map<String, String>? headers;
@@ -509,6 +526,10 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       return;
     }
     _lastForceSeek = now;
+    if (InAppPlayerScreen.keyLog) {
+      // ignore: avoid_print
+      print('debug resume-seek ${target.inSeconds}s');
+    }
     await _player.seek(target);
   }
 
@@ -545,6 +566,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   }
 
   Future<void> _saveResume() async {
+    if (InAppPlayerScreen.noPersist) return;
     final key = _resumeKey;
     if (key == null || !_ready) return;
     final pos = _player.state.position.inMilliseconds;
@@ -566,6 +588,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   }
 
   Future<void> _clearResume() async {
+    if (InAppPlayerScreen.noPersist) return;
     final key = _resumeKey;
     if (key == null) return;
     final prefs = await SharedPreferences.getInstance();
@@ -911,7 +934,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
             now.difference(last) < const Duration(milliseconds: 350) &&
             (e.position - pos).distance < 24) {
           _lastClick = null;
-          unawaited(_toggleFs());
+          // Docked: media_kit's own double-click already toggles.
+          if (!widget.embedded) unawaited(_toggleFs());
         } else {
           _lastClick = now;
           _lastClickPos = e.position;
@@ -1113,14 +1137,17 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   /// on top of the player.
   bool _onHardwareKey(KeyEvent event) {
     if (!mounted || event is KeyUpEvent) return false;
+    // Docked player in media_kit's own full-screen page: that page is a
+    // separate route on top, so take every player key while it is open.
+    final dockedFs = widget.embedded && (_videoKey.currentState?.isFullscreen() ?? false);
     final route = ModalRoute.of(context);
-    if (route != null && !route.isCurrent) return false;
+    if (!dockedFs && route != null && !route.isCurrent) return false;
     final focusCtx = FocusManager.instance.primaryFocus?.context;
     if (focusCtx != null &&
         (focusCtx.widget is EditableText || focusCtx.findAncestorWidgetOfExactType<EditableText>() != null)) {
       return false;
     }
-    if (widget.embedded) {
+    if (widget.embedded && !dockedFs) {
       // Docked beside the Library: only when the player area has focus.
       if (!_keyFocus.hasFocus) return false;
     }
@@ -1525,6 +1552,16 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       builder: (_) => Focus(
       focusNode: _keyFocus,
       autofocus: true,
+      // PC: player buttons never hold keyboard focus, so Space can't also
+      // press a focused button; keys are handled once, globally.
+      descendantsAreFocusable: false,
+      onKeyEvent: (node, event) {
+        final kb = HardwareKeyboard.instance;
+        for (final a in _keyMap.keys) {
+          if (a.accepts(event, kb)) return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
       child: Stack(
         fit: StackFit.expand,
         children: [
@@ -1628,7 +1665,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     _osdTimer?.cancel();
     if (DesktopSupport.isWindows) {
       HardwareKeyboard.instance.removeHandler(_onHardwareKey);
-      if (!widget.embedded) InAppPlayerScreen.openCount--;
+      InAppPlayerScreen.openCount--;
     }
     _keyFocus.dispose();
     _sleepTimer?.cancel();
@@ -1715,8 +1752,11 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         right: !_fs,
         child: Column(
           children: [
-            if ((_chrome || _showEndCard) && !_fs)
-            Padding(
+            // Always laid out (only faded) so showing it never shifts the video:
+            // the shift moved the seek bar under the mouse mid-click and the
+            // click then seeked to 0:00.
+            if (!_fs)
+            Visibility(visible: _chrome || _showEndCard, maintainSize: true, maintainAnimation: true, maintainState: true, child: Padding(
               padding: const EdgeInsets.fromLTRB(4, 4, 8, 8),
               child: Row(
                 children: [
@@ -1824,7 +1864,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                     ),
                 ],
               ),
-            ),
+            )),
             Expanded(
               child: Stack(
                 fit: StackFit.expand,

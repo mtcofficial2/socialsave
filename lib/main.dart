@@ -147,6 +147,7 @@ Future<void> main(List<String> args) async {
   MediaKit.ensureInitialized();
 
   if (args.contains('--test-data')) {
+    InAppPlayerScreen.noPersist = true;
     HiveInit.debugDir = '${Directory.systemTemp.path}${Platform.pathSeparator}ss_testdata';
   }
   final box = await const HiveInit().openDownloadsBox();
