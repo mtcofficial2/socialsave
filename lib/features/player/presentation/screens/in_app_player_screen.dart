@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
+
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:flutter/services.dart';
@@ -86,7 +88,19 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   final GlobalKey<VideoState> _videoKey = GlobalKey<VideoState>();
   final FocusNode _keyFocus = FocusNode(debugLabel: 'player-keys');
   String? _osd;
+  IconData? _osdIcon;
+  bool _osdVisible = false;
   Timer? _osdTimer;
+  // Our own full screen (same page, so the OSD and keys keep working).
+  bool _fs = false;
+  bool _forceLandscape = false;
+  double _preMuteVolume = 100;
+  // Pinch (phone): two pointers, distance at start.
+  final Map<int, Offset> _touches = {};
+  double? _pinchStartDist;
+  DateTime? _lastClick;
+  Offset? _lastClickPos;
+  static const _mkChannel = MethodChannel('com.alexmercerind/media_kit_video');
   late int _queueIndex;
 
   PlayerSession get _session {
@@ -232,6 +246,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         if (_hasNext) await _playNext();
       } else if (action.name == 'seek' && settings.volumeKeysSeek) {
         await _skip(action.delta);
+        _flash('${action.delta > 0 ? '+' : '−'}${action.delta.abs()} s',
+            icon: action.delta > 0 ? Icons.fast_forward_rounded : Icons.fast_rewind_rounded);
       } else if (action.name == 'play') {
         // Lock screen / media notification controls.
         await _player.play();
@@ -247,7 +263,12 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         if (_hasNext) await _playNext();
       }
     }));
-    _subs.add(_player.stream.playing.listen((_) => _pushSession()));
+    _subs.add(_player.stream.playing.listen((playing) {
+      _pushSession();
+      if (_ready && mounted && !_completed) {
+        _flash(playing ? 'Play' : 'Pause', icon: playing ? Icons.play_arrow_rounded : Icons.pause_rounded);
+      }
+    }));
     _subs.add(_player.stream.duration.listen((_) => _pushSession()));
   }
 
@@ -564,11 +585,16 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   }
 
   Future<void> _toggleMute() async {
+    // Bug fix: the volume stream overwrote the saved level with 0, so
+    // unmuting always jumped to 100 %.
     if (_muted) {
-      await _player.setVolume(_volume <= 0 ? 100 : _volume);
+      final back = _preMuteVolume <= 0 ? 100.0 : _preMuteVolume;
+      await _player.setVolume(back);
+      _flash('Volume ${back.round()}%', icon: Icons.volume_up_rounded);
     } else {
-      _volume = _player.state.volume;
+      _preMuteVolume = _player.state.volume;
       await _player.setVolume(0);
+      _flash('Muted', icon: Icons.volume_off_rounded);
     }
   }
 
@@ -730,38 +756,257 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     await _player.play();
   }
 
-  void _flash(String text) {
+  void _flash(String text, {IconData? icon}) {
     _osdTimer?.cancel();
-    if (mounted) setState(() => _osd = text);
-    _osdTimer = Timer(const Duration(milliseconds: 900), () {
-      if (mounted) setState(() => _osd = null);
+    if (mounted) {
+      setState(() {
+        _osd = text;
+        _osdIcon = icon;
+        _osdVisible = true;
+      });
+    }
+    _osdTimer = Timer(const Duration(milliseconds: 1100), () {
+      if (mounted) setState(() => _osdVisible = false);
     });
+  }
+
+  /// On-screen feedback drawn above the video (both platforms, also in
+  /// full screen because full screen is this same page).
+  Widget _osdLayer() {
+    return IgnorePointer(
+      child: Align(
+        alignment: const Alignment(0, -0.45),
+        child: AnimatedOpacity(
+          opacity: _osdVisible && _osd != null ? 1 : 0,
+          duration: Duration(milliseconds: _osdVisible ? 90 : 350),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.62),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_osdIcon != null) ...[
+                    Icon(_osdIcon, color: Colors.white, size: 26),
+                    const SizedBox(width: 10),
+                  ],
+                  Text(
+                    _osd ?? '',
+                    style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  bool get _landscapeVideo => (_frameWidth ?? 16) >= (_frameHeight ?? 9);
+
+  Future<void> _toggleFs() => _setFs(!_fs);
+
+  Future<void> _setFs(bool on) async {
+    if (on == _fs || !mounted) return;
+    if (widget.embedded && DesktopSupport.isWindows) {
+      // Docked beside the Library: use the video's own full-screen page.
+      final state = _videoKey.currentState;
+      if (state != null) await state.toggleFullscreen();
+      return;
+    }
+    setState(() => _fs = on);
+    try {
+      if (DesktopSupport.isWindows) {
+        // Real window full screen (no title bar / taskbar); the plugin
+        // restores the old size and position on exit.
+        await _mkChannel.invokeMethod<void>(on ? 'Utils.EnterNativeFullscreen' : 'Utils.ExitNativeFullscreen');
+      } else {
+        await _applyOrientation();
+      }
+    } catch (_) {}
+    if (on) _showChrome();
+    _keyFocus.requestFocus();
+    _flash(on ? 'Full screen' : 'Full screen off',
+        icon: on ? Icons.fullscreen_rounded : Icons.fullscreen_exit_rounded);
+  }
+
+  /// Phone: landscape videos go landscape in full screen, portrait videos
+  /// stay portrait; the rotate button flips it.
+  Future<void> _applyOrientation() async {
+    if (DesktopSupport.isWindows) return;
+    if (_fs) {
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      final landscape = _forceLandscape || (_landscapeVideo && !_forcePortrait);
+      await SystemChrome.setPreferredOrientations(landscape
+          ? const [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]
+          : const [DeviceOrientation.portraitUp]);
+    } else {
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      await SystemChrome.setPreferredOrientations(_forceLandscape
+          ? const [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]
+          : const []);
+    }
+  }
+
+  bool _forcePortrait = false;
+
+  Future<void> _rotate() async {
+    final landscapeNow = MediaQuery.orientationOf(context) == Orientation.landscape;
+    setState(() {
+      _forceLandscape = !landscapeNow;
+      _forcePortrait = landscapeNow;
+    });
+    if (!_fs && !_forceLandscape) {
+      await SystemChrome.setPreferredOrientations(const [DeviceOrientation.portraitUp]);
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      await SystemChrome.setPreferredOrientations(const []);
+      return;
+    }
+    await _applyOrientation();
+  }
+
+  // Pointer bookkeeping shared by phone (pinch) and PC (focus, double-click,
+  // right-click menu, wheel feedback).
+  void _onPointerDown(PointerDownEvent e) {
+    _showChrome();
+    if (DesktopSupport.isWindows) {
+      _keyFocus.requestFocus();
+      if (e.kind == PointerDeviceKind.mouse && e.buttons == kSecondaryMouseButton) {
+        unawaited(_contextMenu(e.position));
+        return;
+      }
+      if (e.buttons == kPrimaryMouseButton) {
+        final now = DateTime.now();
+        final last = _lastClick;
+        final pos = _lastClickPos;
+        if (last != null && pos != null &&
+            now.difference(last) < const Duration(milliseconds: 350) &&
+            (e.position - pos).distance < 24) {
+          _lastClick = null;
+          unawaited(_toggleFs());
+        } else {
+          _lastClick = now;
+          _lastClickPos = e.position;
+        }
+      }
+      return;
+    }
+    _touches[e.pointer] = e.position;
+    if (_touches.length == 2) {
+      final p = _touches.values.toList();
+      _pinchStartDist = (p[0] - p[1]).distance;
+    }
+  }
+
+  void _onPointerMove(PointerMoveEvent e) {
+    if (!_touches.containsKey(e.pointer)) return;
+    _touches[e.pointer] = e.position;
+    final start = _pinchStartDist;
+    if (_touches.length != 2 || start == null || start <= 0) return;
+    final p = _touches.values.toList();
+    final ratio = (p[0] - p[1]).distance / start;
+    if (ratio > 1.18 && _fit != BoxFit.cover) {
+      setState(() => _fit = BoxFit.cover);
+      _flash('Fill screen', icon: Icons.fit_screen_rounded);
+      _pinchStartDist = null;
+    } else if (ratio < 0.85 && _fit != BoxFit.contain) {
+      setState(() => _fit = BoxFit.contain);
+      _flash('Fit to screen', icon: Icons.aspect_ratio_rounded);
+      _pinchStartDist = null;
+    }
+  }
+
+  void _onPointerUp(PointerEvent e) {
+    _touches.remove(e.pointer);
+    if (_touches.length < 2) _pinchStartDist = null;
+  }
+
+  void _onPointerSignal(PointerSignalEvent e) {
+    if (e is! PointerScrollEvent || !DesktopSupport.isWindows) return;
+    // The controls change the volume on scroll; show it.
+    Future<void>.delayed(const Duration(milliseconds: 60), () {
+      if (!mounted) return;
+      final v = _player.state.volume.round();
+      _flash('Volume $v%', icon: v == 0 ? Icons.volume_off_rounded : Icons.volume_up_rounded);
+    });
+  }
+
+  Future<void> _contextMenu(Offset at) async {
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
+    if (overlay == null) return;
+    final choice = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(at & const Size(1, 1), Offset.zero & overlay.size),
+      items: [
+        PopupMenuItem(value: 'play', child: Text(_player.state.playing ? 'Pause' : 'Play')),
+        PopupMenuItem(value: 'fs', child: Text(_fs ? 'Exit full screen   (F / Esc)' : 'Full screen   (F)')),
+        const PopupMenuDivider(),
+        for (final rate in _rates)
+          CheckedPopupMenuItem(value: 'rate:$rate', checked: _rate == rate, child: Text('Speed ${_rateLabel(rate)}')),
+        const PopupMenuDivider(),
+        CheckedPopupMenuItem(value: 'fit', checked: _fit == BoxFit.cover, child: const Text('Fill window (crop)')),
+        CheckedPopupMenuItem(value: 'loop', checked: _loop, child: const Text('Loop')),
+        PopupMenuItem(value: 'mute', child: Text(_muted ? 'Unmute   (M)' : 'Mute   (M)')),
+        const PopupMenuItem(value: 'frame', child: Text('Save this frame')),
+        if (_hasNext) const PopupMenuItem(value: 'next', child: Text('Next video   (N)')),
+        const PopupMenuItem(value: 'keys', child: Text('Keyboard shortcuts   (?)')),
+      ],
+    );
+    _keyFocus.requestFocus();
+    if (choice == null || !mounted) return;
+    if (choice == 'play') {
+      unawaited(_player.playOrPause());
+    } else if (choice == 'fs') {
+      await _toggleFs();
+    } else if (choice.startsWith('rate:')) {
+      final rate = double.parse(choice.substring(5));
+      await _setRate(rate);
+      _flash('Speed ${_rateLabel(rate)}', icon: Icons.speed_rounded);
+    } else if (choice == 'fit') {
+      _cycleFit();
+    } else if (choice == 'loop') {
+      await _toggleLoop();
+      _flash(_loop ? 'Loop on' : 'Loop off', icon: Icons.repeat_rounded);
+    } else if (choice == 'mute') {
+      await _toggleMute();
+    } else if (choice == 'frame') {
+      await _saveFrame();
+    } else if (choice == 'next') {
+      await _playNext();
+    } else if (choice == 'keys') {
+      await _showShortcuts();
+    }
   }
 
   Future<void> _seekKey(int seconds) async {
     await _skip(seconds);
-    _flash('${seconds > 0 ? '+' : '−'}${seconds.abs()} s');
+    _flash('${seconds > 0 ? '+' : '−'}${seconds.abs()} s',
+        icon: seconds > 0 ? Icons.fast_forward_rounded : Icons.fast_rewind_rounded);
   }
 
   Future<void> _volumeKey(double delta) async {
     final next = (_player.state.volume + delta).clamp(0.0, 100.0);
     await _player.setVolume(next);
     _volume = next;
-    _flash('Volume ${next.round()}%');
+    _flash('Volume ${next.round()}%', icon: next <= 0 ? Icons.volume_off_rounded : Icons.volume_up_rounded);
   }
 
   Future<void> _rateKey(double delta) async {
     final next = ((_rate + delta) * 4).round() / 4;
     final clamped = next.clamp(0.25, 3.0);
     await _setRate(clamped);
-    _flash('Speed ${clamped}x');
+    _flash('Speed ${_rateLabel(clamped)}', icon: Icons.speed_rounded);
   }
 
   Future<void> _jumpPercent(int tenth) async {
     final d = _player.state.duration;
     if (d <= Duration.zero) return;
     await _player.seek(d * (tenth / 10));
-    _flash('${tenth * 10}%');
+    _flash('${tenth * 10}%', icon: Icons.linear_scale_rounded);
   }
 
   Future<void> _frameStep(bool forward) async {
@@ -771,7 +1016,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       if (native is NativePlayer) {
         await native.command([forward ? 'frame-step' : 'frame-back-step']);
       }
-      _flash(forward ? 'Next frame' : 'Previous frame');
+      _flash(forward ? 'Next frame' : 'Previous frame',
+          icon: forward ? Icons.skip_next_rounded : Icons.skip_previous_rounded);
     } catch (_) {}
   }
 
@@ -784,11 +1030,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     await _playNext();
   }
 
-  Future<void> _toggleFullscreenKey() async {
-    final state = _videoKey.currentState;
-    if (state == null) return;
-    await state.toggleFullscreen();
-  }
+  Future<void> _toggleFullscreenKey() => _toggleFs();
 
   Future<void> _showShortcuts() async {
     const rows = [
@@ -797,7 +1039,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       ['J / L', 'Back / forward 10 s'],
       ['↑ / ↓  or mouse wheel', 'Volume'],
       ['M', 'Mute'],
-      ['F / double-click', 'Full screen'],
+      ['F / F11 / double-click', 'Full screen'],
+      ['Right-click', 'Speed, fill, loop, mute, save frame'],
       ['Esc', 'Leave full screen / go back'],
       ['N / P', 'Next / previous video'],
       ['< / >', 'Slower / faster'],
@@ -837,10 +1080,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   }
 
   Map<ShortcutActivator, VoidCallback> _desktopKeys() {
-    void play() {
-      unawaited(_player.playOrPause());
-      _flash(_player.state.playing ? 'Pause' : 'Play');
-    }
+    void play() => unawaited(_player.playOrPause());
     return {
       const SingleActivator(LogicalKeyboardKey.space): play,
       const SingleActivator(LogicalKeyboardKey.keyK): play,
@@ -853,14 +1093,15 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       const SingleActivator(LogicalKeyboardKey.keyL): () => unawaited(_seekKey(10)),
       const SingleActivator(LogicalKeyboardKey.arrowUp): () => unawaited(_volumeKey(5)),
       const SingleActivator(LogicalKeyboardKey.arrowDown): () => unawaited(_volumeKey(-5)),
-      const SingleActivator(LogicalKeyboardKey.keyM): () {
-        unawaited(_toggleMute());
-        _flash(_muted ? 'Sound on' : 'Muted');
-      },
+      const SingleActivator(LogicalKeyboardKey.keyM): () => unawaited(_toggleMute()),
       const SingleActivator(LogicalKeyboardKey.keyF): () => unawaited(_toggleFullscreenKey()),
+      const SingleActivator(LogicalKeyboardKey.enter, alt: true): () => unawaited(_toggleFs()),
+      const SingleActivator(LogicalKeyboardKey.f11): () => unawaited(_toggleFs()),
       const SingleActivator(LogicalKeyboardKey.escape): () {
         final state = _videoKey.currentState;
-        if (state != null && state.isFullscreen()) {
+        if (_fs) {
+          unawaited(_setFs(false));
+        } else if (state != null && state.isFullscreen()) {
           unawaited(state.exitFullscreen());
         } else if (widget.embedded) {
           widget.onClose?.call();
@@ -1184,12 +1425,45 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     final keys = _desktopKeys();
     final desktop = MaterialDesktopVideoControlsThemeData(
       playAndPauseOnTap: true,
-      toggleFullscreenOnDoublePress: true,
+      // Double-click is ours (real window full screen).
+      toggleFullscreenOnDoublePress: widget.embedded,
       modifyVolumeOnScroll: true,
       hideMouseOnControlsRemoval: true,
-      keyboardShortcuts: keys,
+      controlsHoverDuration: const Duration(seconds: 2),
+      seekBarPositionColor: AppColors.secondaryContainer,
+      seekBarThumbColor: AppColors.secondaryContainer,
+      // Keys are handled once, by our CallbackShortcuts above, so they
+      // work no matter which child has focus.
+      keyboardShortcuts: const {},
+      bottomButtonBar: [
+        MaterialDesktopCustomButton(
+          icon: const Icon(Icons.skip_previous_rounded),
+          onPressed: () => unawaited(_playPrevious()),
+        ),
+        const MaterialDesktopPlayOrPauseButton(),
+        if (_hasNext)
+          MaterialDesktopCustomButton(
+            icon: const Icon(Icons.skip_next_rounded),
+            onPressed: () => unawaited(_playNext()),
+          ),
+        const MaterialDesktopVolumeButton(),
+        const MaterialDesktopPositionIndicator(),
+        const Spacer(),
+        MaterialDesktopCustomButton(
+          icon: Text(_rateLabel(_rate), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13)),
+          onPressed: () => unawaited(_rateKey(_rate >= 2 ? -(_rate - 1) : 0.25)),
+        ),
+        widget.embedded
+            ? const MaterialDesktopFullscreenButton()
+            : MaterialDesktopCustomButton(
+                icon: Icon(_fs ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded),
+                onPressed: () => unawaited(_toggleFs()),
+              ),
+      ],
     );
-    return Focus(
+    return CallbackShortcuts(
+      bindings: keys,
+      child: Focus(
       focusNode: _keyFocus,
       autofocus: true,
       child: Stack(
@@ -1206,26 +1480,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
               controls: _locked ? _hiddenControls : MaterialDesktopVideoControls,
             ),
           ),
-          if (_osd != null)
-            IgnorePointer(
-              child: Align(
-                alignment: const Alignment(0, -0.6),
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.65),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    child: Text(
-                      _osd!,
-                      style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                ),
-              ),
-            ),
         ],
+      ),
       ),
     );
   }
@@ -1293,7 +1549,14 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
           ),
           onPressed: _cycleFit,
         ),
-        const MaterialFullscreenButton(),
+        MaterialCustomButton(
+          icon: const Icon(Icons.screen_rotation_rounded),
+          onPressed: () => unawaited(_rotate()),
+        ),
+        MaterialCustomButton(
+          icon: Icon(_fs ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded),
+          onPressed: () => unawaited(_toggleFs()),
+        ),
       ],
     );
   }
@@ -1306,6 +1569,14 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     _osdTimer?.cancel();
     _keyFocus.dispose();
     _sleepTimer?.cancel();
+    if (_fs || _forceLandscape) {
+      if (DesktopSupport.isWindows) {
+        unawaited(_mkChannel.invokeMethod<void>('Utils.ExitNativeFullscreen').catchError((_) {}));
+      } else {
+        unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
+        unawaited(SystemChrome.setPreferredOrientations(const []));
+      }
+    }
     PlaybackBridge.clear(this);
     unawaited(PhoneBody.setPlayback(
       active: false,
@@ -1359,14 +1630,29 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       );
     }
 
-    return Scaffold(
+    final narrow = MediaQuery.sizeOf(context).width < 560;
+    return PopScope(
+      // Back leaves full screen first.
+      canPop: !_fs,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _fs) unawaited(_setFs(false));
+      },
+      child: Scaffold(
       backgroundColor: Colors.black,
       body: Listener(
-        onPointerDown: (_) => _showChrome(),
+        onPointerDown: _onPointerDown,
+        onPointerMove: _onPointerMove,
+        onPointerUp: _onPointerUp,
+        onPointerCancel: _onPointerUp,
+        onPointerSignal: _onPointerSignal,
         child: SafeArea(
+        top: !_fs,
+        bottom: !_fs,
+        left: !_fs,
+        right: !_fs,
         child: Column(
           children: [
-            if (_chrome || _showEndCard)
+            if ((_chrome || _showEndCard) && !_fs)
             Padding(
               padding: const EdgeInsets.fromLTRB(4, 4, 8, 8),
               child: Row(
@@ -1398,13 +1684,16 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                           ),
                         ),
                         Text(
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          softWrap: false,
                           _session.isPreview
                               ? 'Preview · not saved yet'
                               : _session.isVault
                                   ? 'Vault · PIN protected'
                                   : DesktopSupport.isWindows
                                       ? 'Space play · ←/→ seek · ↑/↓ volume · F full screen · ? shortcuts'
-                                      : 'Tap video for skip, speed, loop, and fill',
+                                      : 'Double-tap sides to skip · pinch to fill',
                           style: const TextStyle(color: Colors.white70, fontSize: 11),
                         ),
                       ],
@@ -1424,13 +1713,33 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                     onPressed: _showTools,
                     icon: const Icon(Icons.tune_rounded, color: Colors.white),
                   ),
-                  if (!_session.isVault && !DesktopSupport.isWindows)
+                  if (narrow)
+                    PopupMenuButton<String>(
+                      tooltip: 'More',
+                      icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
+                      onSelected: (v) {
+                        if (v == 'pip') unawaited(_playOverApps());
+                        if (v == 'send') unawaited(showSendToPhone(context, File(_session.filePath!), _session.title));
+                        if (v == 'tv') unawaited(_playOnTv());
+                        if (v == 'open') unawaited(_openExternal());
+                      },
+                      itemBuilder: (_) => [
+                        if (!_session.isVault && !DesktopSupport.isWindows)
+                          const PopupMenuItem(value: 'pip', child: Text('Play over other apps')),
+                        if (_session.filePath != null && !_session.isVault) ...const [
+                          PopupMenuItem(value: 'send', child: Text('Send to another device')),
+                          PopupMenuItem(value: 'tv', child: Text('Play on TV')),
+                          PopupMenuItem(value: 'open', child: Text('Open in another app')),
+                        ],
+                      ],
+                    ),
+                  if (!narrow && !_session.isVault && !DesktopSupport.isWindows)
                     IconButton(
                       tooltip: 'Play over other apps',
                       onPressed: _playOverApps,
                       icon: const Icon(Icons.picture_in_picture_alt_rounded, color: Colors.white),
                     ),
-                  if (_session.filePath != null && !_session.isVault)
+                  if (!narrow && _session.filePath != null && !_session.isVault)
                     IconButton(
                       tooltip: 'Send to another device',
                       onPressed: () => unawaited(
@@ -1438,13 +1747,13 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                       ),
                       icon: const Icon(Icons.send_to_mobile_rounded, color: Colors.white),
                     ),
-                  if (_session.filePath != null && !_session.isVault)
+                  if (!narrow && _session.filePath != null && !_session.isVault)
                     IconButton(
                       tooltip: 'Play on TV',
                       onPressed: () => unawaited(_playOnTv()),
                       icon: const Icon(Icons.tv_rounded, color: Colors.white),
                     ),
-                  if (_session.filePath != null && !_session.isVault)
+                  if (!narrow && _session.filePath != null && !_session.isVault)
                     IconButton(
                       tooltip: 'Open in another app',
                       onPressed: _openExternal,
@@ -1524,6 +1833,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                             : const SizedBox.expand(),
                       ),
                     ),
+                  _osdLayer(),
                   if (_showEndCard) _EndCard(
                     countdown: _countdown,
                     hasNext: _hasNext,
@@ -1543,6 +1853,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
           ],
         ),
         ),
+      ),
       ),
     );
   }
