@@ -18,6 +18,9 @@ import 'package:social_save/shared/routing/app_shell.dart';
 /// Set before runApp by the `--open <path>` test switch.
 String debugInitialLocation = '/';
 
+/// Set by the --open-vault test switch: Library starts on the Vault tab.
+bool debugOpenVault = false;
+
 final appRouter = GoRouter(
   initialLocation: debugInitialLocation,
   routes: [

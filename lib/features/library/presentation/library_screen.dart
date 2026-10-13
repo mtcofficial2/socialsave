@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:async';
 import 'dart:io';
 
@@ -18,6 +19,7 @@ import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:social_save/features/library/summarize_sheet.dart';
 import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
 import 'package:social_save/features/library/vault_service.dart';
+import 'package:social_save/shared/routing/app_router.dart' show debugOpenVault;
 import 'package:social_save/shared/widgets/skeleton.dart';
 import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/features/player/player_session.dart';
@@ -41,7 +43,7 @@ class LibraryScreen extends ConsumerStatefulWidget {
 
 class _LibraryScreenState extends ConsumerState<LibraryScreen>
     with WidgetsBindingObserver {
-  int _tab = 0;
+  int _tab = debugOpenVault ? 1 : 0;
   bool _loading = true;
   String? _error;
   String _query = '';
@@ -1041,8 +1043,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     // Forget download records for these files (and the app's own copy).
     try {
       final repo = ref.read(downloadsRepositoryProvider);
-      final names = {for (final v in videos) if (v.path != null) v.path!.split(Platform.pathSeparator).last.split('/').last};
-      final paths = {for (final v in videos) if (v.path != null) v.path!};
+      // Only files that are really gone (the user may decline the system prompt).
+      final gonePaths = [for (final v in videos) if (v.path != null && !File(v.path!).existsSync()) v.path!];
+      final names = {for (final p in gonePaths) p.split(Platform.pathSeparator).last.split('/').last};
+      final paths = gonePaths.toSet();
       for (final record in await repo.getAll()) {
         final local = record.localPath;
         if (local == null || local.isEmpty) continue;
@@ -1056,11 +1060,13 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     if (!mounted) return;
     setState(_selected.clear);
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(deleted == videos.length
-          ? 'Deleted ${videos.length == 1 ? '' : '${videos.length} videos'}${DesktopSupport.isWindows ? ' (in the Recycle Bin)' : ''}.'
-          : 'Deleted $deleted of ${videos.length}.'),
+      content: Text(deleted >= videos.length
+          ? 'Deleted ${videos.length == 1 ? '1 video' : '${videos.length} videos'}${DesktopSupport.isWindows ? ' (moved to the Recycle Bin)' : ''}.'
+          : deleted == 0
+              ? 'Nothing was deleted.'
+              : 'Deleted $deleted of ${videos.length}. The rest were kept.'),
     ));
-    await _reload();
+    await _reload(rescan: DesktopSupport.isWindows);
   }
 
   Future<void> _renameDevice(DeviceVideo video) async {
@@ -1555,12 +1561,30 @@ class VaultLockPane extends ConsumerStatefulWidget {
   ConsumerState<VaultLockPane> createState() => _VaultLockPaneState();
 }
 
-class _VaultLockPaneState extends ConsumerState<VaultLockPane> {
+class _VaultLockPaneState extends ConsumerState<VaultLockPane> with SingleTickerProviderStateMixin {
   static const _length = 4;
   String _pin = '';
   String _first = '';
   bool _confirming = false;
   String? _error;
+  final FocusNode _focus = FocusNode();
+  late final AnimationController _shake = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 420),
+  );
+
+  @override
+  void dispose() {
+    _shake.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  void _wrong() {
+    HapticFeedback.heavyImpact();
+    HapticFeedback.vibrate();
+    _shake.forward(from: 0);
+  }
 
   Future<void> _press(String digit) async {
     if (_pin.length >= _length) return;
@@ -1570,7 +1594,9 @@ class _VaultLockPaneState extends ConsumerState<VaultLockPane> {
       _error = null;
     });
     if (_pin.length == _length) {
-      await _submit(_pin);
+      // Let the last dot fill before checking.
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      if (mounted) await _submit(_pin);
     }
   }
 
@@ -1581,6 +1607,11 @@ class _VaultLockPaneState extends ConsumerState<VaultLockPane> {
       _pin = _pin.substring(0, _pin.length - 1);
       _error = null;
     });
+  }
+
+  void _cancel() {
+    final nav = Navigator.of(context);
+    if (nav.canPop()) nav.pop(false);
   }
 
   Future<void> _submit(String pin) async {
@@ -1600,8 +1631,9 @@ class _VaultLockPaneState extends ConsumerState<VaultLockPane> {
         return;
       }
       if (pin != _first) {
+        _wrong();
         setState(() {
-          _error = 'PINs do not match. Enter 4 digits again.';
+          _error = 'Passcodes did not match. Try again.';
           _pin = '';
           _first = '';
           _confirming = false;
@@ -1618,108 +1650,243 @@ class _VaultLockPaneState extends ConsumerState<VaultLockPane> {
       widget.onUnlocked?.call();
       return;
     }
+    _wrong();
     setState(() {
-      _error = 'Wrong PIN.';
+      _error = 'Wrong passcode';
       _pin = '';
     });
+  }
+
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
+    final key = event.logicalKey;
+    final ch = event.character;
+    if (ch != null && ch.length == 1 && '0123456789'.contains(ch)) {
+      _press(ch);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.backspace || key == LogicalKeyboardKey.delete) {
+      _backspace();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
+      if (_pin.length == _length) _submit(_pin);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.escape) {
+      _cancel();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
   }
 
   @override
   Widget build(BuildContext context) {
     final vault = ref.watch(vaultServiceProvider);
-    final scheme = Theme.of(context).colorScheme;
     final creating = !vault.hasPin;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
-      child: Column(
-        children: [
-          CircleAvatar(
-            radius: 32,
-            backgroundColor: scheme.primaryContainer,
-            child: const Icon(Icons.lock_rounded, color: Colors.white, size: 28),
+    final title = creating
+        ? (_confirming ? 'Confirm Passcode' : 'Create Passcode')
+        : 'Enter Passcode';
+    final subtitle = _error ??
+        (creating
+            ? (_confirming ? 'Enter the same 4 digits again' : 'Choose 4 digits to lock your vault')
+            : 'Unlock your SocialSave vault');
+    return Focus(
+      focusNode: _focus,
+      autofocus: true,
+      onKeyEvent: _onKey,
+      child: DecoratedBox(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF14202E), Color(0xFF0A1118)],
           ),
-          const SizedBox(height: 12),
-          Text(
-            creating
-                ? (_confirming ? 'Confirm your PIN' : 'Create a vault PIN')
-                : 'Enter vault PIN',
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            creating
-                ? '4 digits only. You will need them to open the vault.'
-                : 'Videos in the vault stay inside SocialSave.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: scheme.onSurfaceVariant),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              for (var i = 0; i < _length; i++)
-                Container(
-                  width: 14,
-                  height: 14,
-                  margin: const EdgeInsets.symmetric(horizontal: 8),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: i < _pin.length ? scheme.primary : scheme.surfaceContainerHighest,
+        ),
+        child: LayoutBuilder(
+          builder: (context, box) {
+            // 3 keys of 78 + 2 gaps of 26 = 286 wide; ~600 tall in total.
+            return Center(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: SizedBox(
+                  width: 320,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.lock_rounded, color: Colors.white, size: 26),
+                        const SizedBox(height: 14),
+                        Text(
+                          title,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w400,
+                            letterSpacing: 0.2,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        SizedBox(
+                          height: 20,
+                          child: Text(
+                            subtitle,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: _error != null ? const Color(0xFFFF8A80) : Colors.white70,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+                        AnimatedBuilder(
+                          animation: _shake,
+                          builder: (context, child) {
+                            final t = _shake.value;
+                            final dx = t == 0 ? 0.0 : 14 * (1 - t) * math.sin(t * math.pi * 6);
+                            return Transform.translate(offset: Offset(dx, 0), child: child);
+                          },
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              for (var i = 0; i < _length; i++)
+                                AnimatedContainer(
+                                  duration: const Duration(milliseconds: 120),
+                                  width: 13,
+                                  height: 13,
+                                  margin: const EdgeInsets.symmetric(horizontal: 11),
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: i < _pin.length ? Colors.white : Colors.transparent,
+                                    border: Border.all(color: Colors.white, width: 1.3),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 40),
+                        for (final row in const [
+                          [['1', ''], ['2', 'ABC'], ['3', 'DEF']],
+                          [['4', 'GHI'], ['5', 'JKL'], ['6', 'MNO']],
+                          [['7', 'PQRS'], ['8', 'TUV'], ['9', 'WXYZ']],
+                        ]) ...[
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              for (var c = 0; c < 3; c++) ...[
+                                if (c > 0) const SizedBox(width: _PinKey.gap),
+                                _PinKey(
+                                  digit: row[c][0],
+                                  letters: row[c][1],
+                                  onTap: () => _press(row[c][0]),
+                                ),
+                              ],
+                            ],
+                          ),
+                          const SizedBox(height: 18),
+                        ],
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            // Left slot: no biometric support in this app, so empty.
+                            const SizedBox(width: _PinKey.size, height: _PinKey.size),
+                            const SizedBox(width: _PinKey.gap),
+                            _PinKey(digit: '0', letters: '', onTap: () => _press('0')),
+                            const SizedBox(width: _PinKey.gap),
+                            SizedBox(
+                              width: _PinKey.size,
+                              height: _PinKey.size,
+                              child: TextButton(
+                                style: TextButton.styleFrom(
+                                  foregroundColor: Colors.white,
+                                  shape: const CircleBorder(),
+                                  padding: EdgeInsets.zero,
+                                ),
+                                onPressed: _pin.isEmpty ? _cancel : _backspace,
+                                child: Text(
+                                  _pin.isEmpty ? 'Cancel' : 'Delete',
+                                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w400),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-            ],
-          ),
-          if (_error != null) ...[
-            const SizedBox(height: 10),
-            Text(_error!, textAlign: TextAlign.center, style: TextStyle(color: scheme.error)),
-          ],
-          const SizedBox(height: 12),
-          for (final row in const [
-            ['1', '2', '3'],
-            ['4', '5', '6'],
-            ['7', '8', '9'],
-          ])
-            Row(
-              children: [
-                for (final digit in row)
-                  Expanded(child: _PinKey(label: digit, onTap: () => _press(digit))),
-              ],
-            ),
-          Row(
-            children: [
-              const Expanded(child: SizedBox(height: 64)),
-              Expanded(child: _PinKey(label: '0', onTap: () => _press('0'))),
-              Expanded(
-                child: _PinKey(
-                  icon: Icons.backspace_outlined,
-                  onTap: _backspace,
-                ),
               ),
-            ],
-          ),
-        ],
+            );
+          },
+        ),
       ),
     );
   }
 }
 
-class _PinKey extends StatelessWidget {
-  const _PinKey({this.label, this.icon, required this.onTap});
+/// iPhone-style passcode key: translucent circle, big light digit, letters.
+class _PinKey extends StatefulWidget {
+  const _PinKey({required this.digit, required this.letters, required this.onTap});
 
-  final String? label;
-  final IconData? icon;
+  static const size = 78.0;
+  static const gap = 26.0;
+
+  final String digit;
+  final String letters;
   final VoidCallback onTap;
 
   @override
+  State<_PinKey> createState() => _PinKeyState();
+}
+
+class _PinKeyState extends State<_PinKey> {
+  bool _down = false;
+
+  @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(6),
-      child: SizedBox(
-        height: 56,
-        child: FilledButton.tonal(
-          onPressed: onTap,
-          child: icon != null ? Icon(icon) : Text(label!, style: const TextStyle(fontSize: 22)),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => setState(() => _down = true),
+      onTapCancel: () => setState(() => _down = false),
+      onTapUp: (_) {
+        setState(() => _down = false);
+        widget.onTap();
+      },
+      child: AnimatedContainer(
+        duration: Duration(milliseconds: _down ? 40 : 260),
+        curve: Curves.easeOut,
+        width: _PinKey.size,
+        height: _PinKey.size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Colors.white.withValues(alpha: _down ? 0.45 : 0.17),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              widget.digit,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 34,
+                fontWeight: FontWeight.w300,
+                height: 1.05,
+              ),
+            ),
+            if (widget.letters.isNotEmpty)
+              Text(
+                widget.letters,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 2,
+                  height: 1.2,
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -1731,12 +1898,14 @@ Future<bool> ensureVaultUnlocked(BuildContext context, WidgetRef ref) async {
   final ok = await showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,
+    backgroundColor: const Color(0xFF0A1118),
+    showDragHandle: false,
     builder: (context) => Padding(
       padding: EdgeInsets.only(
         bottom: MediaQuery.of(context).viewInsets.bottom,
       ),
       child: SizedBox(
-        height: 560,
+        height: math.min(MediaQuery.sizeOf(context).height * 0.9, 720),
         child: VaultLockPane(
           onUnlocked: () => Navigator.pop(context, true),
         ),

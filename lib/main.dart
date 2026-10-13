@@ -161,6 +161,7 @@ Future<void> main(List<String> args) async {
   // Screenshot hook: `--open /library` starts on that tab.
   final op = args.indexOf('--open');
   if (op >= 0 && op + 1 < args.length) debugInitialLocation = args[op + 1];
+  if (args.contains('--open-vault')) debugOpenVault = true;
   final notifications = NotificationService();
   await notifications.init();
 
