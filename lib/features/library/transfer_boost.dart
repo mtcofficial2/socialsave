@@ -55,3 +55,28 @@ class TransferBoost {
     }
   }
 }
+
+/// Writes an incoming stream to [dest] with back-pressure: each 1 MB block is
+/// awaited on disk before more is read from the socket, so a fast sender can
+/// never pile gigabytes up in memory on a slower phone.
+/// Returns the bytes written; throws [FileSystemException] on disk errors.
+Future<int> writeStreamToFile(Stream<List<int>> input, File dest, {void Function(int got)? onBytes}) async {
+  final raf = await dest.open(mode: FileMode.write);
+  final buffer = BytesBuilder(copy: false);
+  var got = 0;
+  try {
+    await for (final chunk in input) {
+      buffer.add(chunk);
+      got += chunk.length;
+      if (buffer.length >= (1 << 20)) {
+        await raf.writeFrom(buffer.takeBytes());
+      }
+      onBytes?.call(got);
+    }
+    if (buffer.length > 0) await raf.writeFrom(buffer.takeBytes());
+    await raf.flush();
+  } finally {
+    await raf.close();
+  }
+  return got;
+}

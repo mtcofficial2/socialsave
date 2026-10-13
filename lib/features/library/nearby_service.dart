@@ -475,34 +475,37 @@ class NearbyService {
     final res = req.response;
     final total = req.contentLength > 0 ? req.contentLength : offer.size;
     final dest = await PhoneHandoff.destFor(offer.fileName);
-    final sink = dest.openWrite();
     var got = 0;
+    String? reason;
     final meter = TransferMeter();
     incoming.value = IncomingProgress(fromName: offer.fromName, fileName: offer.fileName, received: 0, total: total);
     try {
-      await for (final chunk in req) {
-        sink.add(chunk);
-        got += chunk.length;
-        if (meter.update(got, total)) {
+      got = await writeStreamToFile(req, dest, onBytes: (n) {
+        got = n;
+        if (meter.update(n, total)) {
           incoming.value = IncomingProgress(
             fromName: offer.fromName,
             fileName: offer.fileName,
-            received: got,
+            received: n,
             total: total,
             detail: meter.label,
           );
         }
-      }
-      await sink.close();
-    } catch (_) {
-      await sink.close();
+      });
+    } on FileSystemException catch (e) {
+      reason = 'could not write the file (${e.osError?.message ?? e.message})';
+    } catch (e) {
+      reason = 'the connection dropped ($e)';
     }
-    final ok = total >= 0 ? got == total : got > 32;
+    if (reason == null && total >= 0 && got != total) reason = 'got $got of $total bytes';
+    final ok = reason == null && (total >= 0 ? got == total : got > 32);
     if (!ok) {
       try {
         await dest.delete();
       } catch (_) {}
       res.statusCode = HttpStatus.badRequest;
+      res.headers.contentType = ContentType.json;
+      res.write(jsonEncode({'ok': false, 'reason': reason ?? 'incomplete'}));
       await res.close();
       incoming.value = IncomingProgress(fromName: offer.fromName, fileName: offer.fileName, received: got, total: total, done: true);
       return;
@@ -533,26 +536,25 @@ class NearbyService {
     offer.dir ??= await newReceiveDir(offer.isFolder || offer.count > 1 ? offer.fileName : offer.fromName);
     final meter = offer.meter ??= TransferMeter();
     final dest = await destInside(offer.dir!, offer.isFolder ? rel : p.basename(rel));
-    final sink = dest.openWrite();
     var got = 0;
     String status() => '${index + 1}/${offer.count} · ${p.basename(rel)}';
     try {
-      await for (final chunk in req) {
-        sink.add(chunk);
-        got += chunk.length;
-        if (meter.update(offer.doneBytes + got, offer.size)) {
+      got = await writeStreamToFile(req, dest, onBytes: (n) {
+        got = n;
+        if (meter.update(offer.doneBytes + n, offer.size)) {
           incoming.value = IncomingProgress(
             fromName: offer.fromName,
             fileName: '${offer.fileName} — ${status()}',
-            received: offer.doneBytes + got,
+            received: offer.doneBytes + n,
             total: offer.size,
             detail: meter.label,
             count: offer.count,
           );
         }
-      }
-    } catch (_) {}
-    await sink.close();
+      });
+    } catch (_) {
+      got = -1;
+    }
     if (got != size) {
       // Cancelled or cut off: never leave a partial file behind.
       try {
@@ -651,8 +653,13 @@ class NearbyService {
       }));
       onStatus?.call('Finishing…');
       final upRes = await up.close().timeout(const Duration(minutes: 5));
-      await upRes.drain<void>().timeout(const Duration(minutes: 1));
-      return upRes.statusCode == 200 ? null : '${device.name} could not save it.';
+      final body = await utf8.decoder.bind(upRes).join().timeout(const Duration(minutes: 1));
+      if (upRes.statusCode == 200) return null;
+      var why = 'HTTP ${upRes.statusCode}';
+      try {
+        why = '${(jsonDecode(body) as Map)['reason'] ?? why}';
+      } catch (_) {}
+      return '${device.name} could not save it: $why.';
     } on SocketException {
       return Platform.isWindows || device.isPc
           ? 'Could not connect to ${device.name}. If it is a PC, allow SocialSave in its Windows firewall prompt.'

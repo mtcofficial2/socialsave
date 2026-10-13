@@ -483,19 +483,21 @@ class PhoneHandoff {
         dest = await _destFor(name);
       }
       drop.value = DropState(title: title, received: 0, total: total, busy: true);
-      final sink = dest.openWrite();
       var got = 0;
       final meter = TransferMeter();
       await TransferBoost.begin();
-      await for (final chunk in req) {
-        sink.add(chunk);
-        got += chunk.length;
-        if (meter.update(got, total)) {
-          drop.value = DropState(title: title, received: got, total: total, busy: true, detail: meter.label);
-        }
+      try {
+        got = await writeStreamToFile(req, dest, onBytes: (n) {
+          got = n;
+          if (meter.update(n, total)) {
+            drop.value = DropState(title: title, received: n, total: total, busy: true, detail: meter.label);
+          }
+        });
+      } catch (_) {
+        got = -1;
+      } finally {
+        await TransferBoost.end();
       }
-      await sink.close();
-      await TransferBoost.end();
       final ok = total >= 0 ? got == total : got > 32;
       if (!ok) {
         try {
