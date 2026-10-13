@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:social_save/features/library/bundle_transfer.dart';
+import 'package:social_save/features/library/device_media.dart';
 import 'package:social_save/features/library/nearby_service.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
@@ -184,6 +185,36 @@ class ReceivedScreen extends StatefulWidget {
 class _ReceivedScreenState extends State<ReceivedScreen> {
   Directory? _dir;
   List<FileSystemEntity> _items = const [];
+  final Set<String> _selected = {};
+
+  Future<void> _delete(List<String> paths) async {
+    if (paths.isEmpty) return;
+    final what = paths.length == 1 ? '“${p.basename(paths.first)}”' : '${paths.length} items';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
+        title: Text('Delete $what?'),
+        content: Text(Platform.isWindows
+            ? 'This removes it from your device (moved to the Recycle Bin). Folders are removed with everything inside.'
+            : 'This removes it from your device. Folders are removed with everything inside.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final n = await DeviceMediaService.deletePaths(paths);
+    if (!mounted) return;
+    _selected.clear();
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(n == paths.length ? 'Deleted.' : 'Deleted $n of ${paths.length}.')));
+    await _load();
+  }
 
   @override
   void initState() {
@@ -218,8 +249,20 @@ class _ReceivedScreenState extends State<ReceivedScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.dir == null ? 'Received files' : p.basename(widget.dir!.path)),
+        title: Text(_selected.isNotEmpty
+            ? '${_selected.length} selected'
+            : widget.dir == null
+                ? 'Received files'
+                : p.basename(widget.dir!.path)),
         actions: [
+          if (_selected.isNotEmpty) ...[
+            IconButton(
+              tooltip: 'Delete',
+              onPressed: () => _delete(_selected.toList()),
+              icon: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
+            ),
+            IconButton(tooltip: 'Cancel', onPressed: () => setState(_selected.clear), icon: const Icon(Icons.close_rounded)),
+          ],
           if (Platform.isWindows && _dir != null)
             IconButton(
               tooltip: 'Open in Explorer',
@@ -237,19 +280,30 @@ class _ReceivedScreenState extends State<ReceivedScreen> {
                 final e = _items[i];
                 final isDir = e is Directory;
                 final stat = e.statSync();
+                void toggle() => setState(() {
+                      if (!_selected.remove(e.path)) _selected.add(e.path);
+                    });
                 return ListTile(
-                  leading: Icon(isDir ? Icons.folder_rounded : _iconFor(e.path)),
+                  selected: _selected.contains(e.path),
+                  onLongPress: toggle,
+                  leading: _selected.isNotEmpty
+                      ? Checkbox(value: _selected.contains(e.path), onChanged: (_) => toggle())
+                      : Icon(isDir ? Icons.folder_rounded : _iconFor(e.path)),
                   title: Text(p.basename(e.path), maxLines: 2, overflow: TextOverflow.ellipsis),
                   subtitle: Text(isDir ? 'Folder' : sizeLabel(stat.size)),
-                  onTap: () => _open(e),
+                  onTap: () => _selected.isNotEmpty ? toggle() : _open(e),
                   trailing: PopupMenuButton<String>(
                     onSelected: (v) {
                       if (v == 'open') unawaited(openWithSystem(e.path));
                       if (v == 'show') unawaited(showInFolder(e.path));
+                      if (v == 'select') toggle();
+                      if (v == 'delete') unawaited(_delete([e.path]));
                     },
                     itemBuilder: (_) => [
                       const PopupMenuItem(value: 'open', child: Text('Open with system app')),
                       if (Platform.isWindows) const PopupMenuItem(value: 'show', child: Text('Show in folder')),
+                      const PopupMenuItem(value: 'select', child: Text('Select')),
+                      const PopupMenuItem(value: 'delete', child: Text('Delete')),
                     ],
                   ),
                 );

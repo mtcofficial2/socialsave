@@ -48,6 +48,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   bool _favoritesOnly = false;
   String? _collection;
   List<DeviceVideo> _device = [];
+  final Set<String> _selected = {};
   List<VaultItem> _vault = [];
   final Map<String, String> _vaultPaths = {};
   PlayerSession? _docked;
@@ -480,6 +481,33 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
               ),
             ),
             const SizedBox(height: 8),
+            if (_selected.isNotEmpty && _tab == 0)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Material(
+                  color: Theme.of(context).colorScheme.secondaryContainer,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        tooltip: 'Cancel',
+                        onPressed: () => setState(_selected.clear),
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                      Expanded(child: Text('${_selected.length} selected', style: const TextStyle(fontWeight: FontWeight.w700))),
+                      TextButton(
+                        onPressed: () => setState(() => _selected.addAll(_device.where(_matchesVideo).map((v) => v.id))),
+                        child: const Text('Select all'),
+                      ),
+                      IconButton(
+                        tooltip: 'Delete',
+                        onPressed: () => _deleteVideos(_device.where((v) => _selected.contains(v.id)).toList()),
+                        icon: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             if (DesktopSupport.isWindows && _scanning && _tab == 0)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
@@ -512,6 +540,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
                             )
                           : _tab == 0
                               ? _DeviceList(
+                                  selected: _selected,
+                                  onToggle: _toggleSelect,
                                   videos: _device.where(_matchesVideo).toList(),
                                   onPlay: _playDevice,
                                   onVault: (video) => _confirmVault(video),
@@ -905,6 +935,11 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
               onTap: () => Navigator.pop(context, 'details'),
             ),
             ListTile(
+              leading: const Icon(Icons.check_box_outlined),
+              title: const Text('Select (for deleting several)'),
+              onTap: () => Navigator.pop(context, 'select'),
+            ),
+            ListTile(
               leading: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
               title: Text(DesktopSupport.isWindows ? 'Delete from PC' : 'Delete from phone'),
               onTap: () => Navigator.pop(context, 'delete'),
@@ -991,28 +1026,69 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
       );
       return;
     }
-    if (action == 'delete') {
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Delete this video?'),
-          content: Text(DesktopSupport.isWindows
-              ? '“${video.title}” will be deleted from this PC.\n${video.path ?? ''}'
-              : '“${video.title}” will be removed from this phone.'),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
-          ],
-        ),
-      );
-      if (ok != true) return;
-      final deleted = await DeviceMediaService().deletePublic(video);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(deleted ? 'Deleted.' : 'Could not delete this video.')),
-      );
-      await _reload();
+    if (action == 'select') {
+      setState(() => _selected.add(video.id));
+      return;
     }
+    if (action == 'delete') {
+      await _deleteVideos([video]);
+    }
+  }
+
+  void _toggleSelect(DeviceVideo video) {
+    setState(() {
+      if (!_selected.remove(video.id)) _selected.add(video.id);
+    });
+  }
+
+  /// Confirms, deletes (Recycle Bin on PC), drops matching download records
+  /// and refreshes the list.
+  Future<void> _deleteVideos(List<DeviceVideo> videos) async {
+    if (videos.isEmpty) return;
+    final what = videos.length == 1 ? '“${videos.first.title}”' : '${videos.length} videos';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
+        title: Text('Delete $what?'),
+        content: Text(DesktopSupport.isWindows
+            ? 'This removes the file${videos.length == 1 ? '' : 's'} from your device (moved to the Recycle Bin).'
+            : 'This removes the file${videos.length == 1 ? '' : 's'} from your device.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final deleted = await DeviceMediaService().deleteMany(videos);
+    // Forget download records for these files (and the app's own copy).
+    try {
+      final repo = ref.read(downloadsRepositoryProvider);
+      final names = {for (final v in videos) if (v.path != null) v.path!.split(Platform.pathSeparator).last.split('/').last};
+      final paths = {for (final v in videos) if (v.path != null) v.path!};
+      for (final record in await repo.getAll()) {
+        final local = record.localPath;
+        if (local == null || local.isEmpty) continue;
+        final name = local.split(Platform.pathSeparator).last.split('/').last;
+        final ownCopy = local.contains('/Android/data/') && names.contains(name);
+        if (paths.contains(local) || ownCopy) {
+          await repo.delete(record.id, deleteFile: ownCopy);
+        }
+      }
+    } catch (_) {}
+    if (!mounted) return;
+    setState(_selected.clear);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(deleted == videos.length
+          ? 'Deleted ${videos.length == 1 ? '' : '${videos.length} videos'}${DesktopSupport.isWindows ? ' (in the Recycle Bin)' : ''}.'
+          : 'Deleted $deleted of ${videos.length}.'),
+    ));
+    await _reload();
   }
 
   Future<void> _renameDevice(DeviceVideo video) async {
@@ -1151,6 +1227,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
 
 class _DeviceList extends StatelessWidget {
   const _DeviceList({
+    required this.selected,
+    required this.onToggle,
     required this.videos,
     required this.onPlay,
     required this.onVault,
@@ -1159,6 +1237,8 @@ class _DeviceList extends StatelessWidget {
   });
 
   final ValueChanged<DeviceVideo> onSend;
+  final Set<String> selected;
+  final ValueChanged<DeviceVideo> onToggle;
   final List<DeviceVideo> videos;
   final ValueChanged<DeviceVideo> onPlay;
   final ValueChanged<DeviceVideo> onVault;
@@ -1202,10 +1282,16 @@ class _DeviceList extends StatelessWidget {
               ? _pcCaption(video)
               : _durationLabel(seconds, video.size),
           durationLabel: DesktopSupport.isWindows && seconds == 0 ? null : _clock(seconds),
-          onTap: () => onPlay(video),
-          onLongPress: () => onActions(video),
+          onTap: () => selected.isNotEmpty ? onToggle(video) : onPlay(video),
+          onLongPress: () => selected.isNotEmpty ? onToggle(video) : onActions(video),
           heroTag: 'library-${video.id}',
-          action: Row(
+          action: selected.isNotEmpty
+              ? Checkbox(
+                  value: selected.contains(video.id),
+                  onChanged: (_) => onToggle(video),
+                  side: const BorderSide(color: Colors.white, width: 2),
+                )
+              : Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               IconButton(

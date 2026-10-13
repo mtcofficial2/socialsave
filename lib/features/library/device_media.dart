@@ -119,6 +119,7 @@ class DeviceMediaService {
       final path = video.path;
       return path != null && await DesktopSupport.delete(path);
     }
+    if (await deleteMany([video]) > 0) return true;
     try {
       return await _channel.invokeMethod<bool>('deletePublicVideo', {
             'id': video.id,
@@ -129,6 +130,60 @@ class DeviceMediaService {
     } catch (_) {
       return false;
     }
+  }
+
+  /// Deletes several videos at once. Windows: Recycle Bin. Android: the
+  /// file, or MediaStore (the system asks once for files the app didn't
+  /// create). Returns how many were deleted.
+  Future<int> deleteMany(List<DeviceVideo> videos) async {
+    if (videos.isEmpty) return 0;
+    if (DesktopSupport.isWindows) {
+      final gone = await DesktopSupport.recycle([for (final v in videos) if (v.path != null) v.path!]);
+      return gone.length;
+    }
+    try {
+      return await _channel.invokeMethod<int>('deleteMedia', {
+            'items': [for (final v in videos) {'id': v.id, 'path': v.path, 'uri': v.uri}],
+          }) ??
+          0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  /// Deletes files/folders by path (Received items). Folders are removed
+  /// with everything inside.
+  static Future<int> deletePaths(List<String> paths) async {
+    if (paths.isEmpty) return 0;
+    if (DesktopSupport.isWindows) return (await DesktopSupport.recycle(paths)).length;
+    var n = 0;
+    final files = <String>[];
+    for (final path in paths) {
+      final dir = Directory(path);
+      if (dir.existsSync()) {
+        final inside = dir.listSync(recursive: true).whereType<File>().map((f) => f.path).toList();
+        try {
+          await dir.delete(recursive: true);
+          n++;
+          for (final f in inside) {
+            try {
+              await _channel.invokeMethod<void>('scanFile', {'path': f});
+            } catch (_) {}
+          }
+        } catch (_) {}
+      } else {
+        files.add(path);
+      }
+    }
+    if (files.isNotEmpty) {
+      try {
+        n += await _channel.invokeMethod<int>('deleteMedia', {
+              'items': [for (final f in files) {'id': null, 'path': f, 'uri': null}],
+            }) ??
+            0;
+      } catch (_) {}
+    }
+    return n;
   }
 
   Future<void> setSecure(bool secure) async {

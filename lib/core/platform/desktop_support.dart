@@ -199,15 +199,50 @@ class DesktopSupport {
     }
   }
 
-  static Future<bool> delete(String path) async {
+  static Future<bool> delete(String path) async => (await recycle([path])).contains(path);
+
+  /// Sends files or folders to the Windows Recycle Bin (undo-able), not a
+  /// permanent delete. Returns the paths that are gone afterwards.
+  static Future<List<String>> recycle(List<String> paths) async {
+    paths = [for (final x in paths) if (File(x).existsSync() || Directory(x).existsSync()) x];
+    if (paths.isEmpty) return const [];
+    final gone = <String>[];
     try {
-      final file = File(path);
-      if (file.existsSync()) await file.delete();
-      _updateCache(path, null);
-      return true;
-    } catch (_) {
-      return false;
+      final list = File(p.join(Directory.systemTemp.path, 'ss_recycle_${DateTime.now().microsecondsSinceEpoch}.txt'));
+      await list.writeAsString(paths.join('\n'), encoding: utf8);
+      const script = r'''
+param($list)
+Add-Type -AssemblyName Microsoft.VisualBasic
+foreach ($p in [IO.File]::ReadAllLines($list, [Text.Encoding]::UTF8)) {
+  if ([string]::IsNullOrWhiteSpace($p)) { continue }
+  try {
+    if ([IO.Directory]::Exists($p)) {
+      [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($p, 'OnlyErrorDialogs', 'SendToRecycleBin')
+    } elseif ([IO.File]::Exists($p)) {
+      [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($p, 'OnlyErrorDialogs', 'SendToRecycleBin')
     }
+  } catch { }
+}
+''';
+      final ps1 = File('${list.path}.ps1');
+      await ps1.writeAsString(script, encoding: utf8);
+      await Process.run('powershell.exe', [
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
+        '-File', ps1.path, list.path,
+      ]).timeout(const Duration(minutes: 5));
+      for (final f in [list, ps1]) {
+        try {
+          await f.delete();
+        } catch (_) {}
+      }
+    } catch (_) {}
+    for (final path in paths) {
+      if (!File(path).existsSync() && !Directory(path).existsSync()) {
+        gone.add(path);
+        _updateCache(path, null);
+      }
+    }
+    return gone;
   }
 }
 

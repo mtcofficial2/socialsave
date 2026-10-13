@@ -14,6 +14,7 @@ import 'package:social_save/core/storage/hive_init.dart';
 import 'package:social_save/features/downloads/data/datasources/download_history_store.dart';
 import 'package:social_save/features/library/nearby_service.dart';
 import 'package:social_save/features/library/bundle_transfer.dart';
+import 'package:social_save/core/platform/desktop_support.dart';
 import 'package:social_save/features/library/nearby_ui.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
@@ -51,6 +52,13 @@ Future<void> main(List<String> args) async {
     });
     await Future<void>.delayed(const Duration(minutes: 5));
     exit(2);
+  }
+  // `--recycle-test <path>...`: send paths to the Recycle Bin (delete test).
+  final rt = args.indexOf('--recycle-test');
+  if (rt >= 0 && rt + 1 < args.length) {
+    final gone = await DesktopSupport.recycle(args.sublist(rt + 1));
+    print('debug recycled ${gone.length}/${args.length - rt - 1}');
+    exit(0);
   }
   // `--nearby-send-dir <name> <folder-or-file>`: send a folder / file bundle.
   final nd = args.indexOf('--nearby-send-dir');

@@ -57,6 +57,73 @@ class MainActivity : FlutterFragmentActivity() {
             pending.error("read_failed", error.message, null)
         }
     }
+    private var deleteResult: MethodChannel.Result? = null
+    private var deleteDone = 0
+    private var deleteAsked = 0
+    private val deleteLauncher = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
+        val pending = deleteResult
+        deleteResult = null
+        pending?.success(if (r.resultCode == RESULT_OK) deleteDone + deleteAsked else deleteDone)
+    }
+
+    /// MediaStore entry for a file: its content uri, video id, or a lookup by path.
+    private fun mediaUriFor(path: String?, id: String?, uriString: String?): Uri? {
+        if (!uriString.isNullOrBlank() && uriString.startsWith("content://")) return Uri.parse(uriString)
+        id?.toLongOrNull()?.let { return ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, it) }
+        if (path.isNullOrBlank()) return null
+        val files = MediaStore.Files.getContentUri("external")
+        contentResolver.query(files, arrayOf(MediaStore.Files.FileColumns._ID), MediaStore.Files.FileColumns.DATA + "=?", arrayOf(path), null)?.use {
+            if (it.moveToFirst()) return ContentUris.withAppendedId(files, it.getLong(0))
+        }
+        return null
+    }
+
+    private fun deleteMedia(items: List<Map<String, Any?>>, result: MethodChannel.Result) {
+        io.execute {
+            var done = 0
+            val ask = ArrayList<Uri>()
+            for (m in items) {
+                val path = m["path"] as String?
+                val id = m["id"]?.toString()
+                val uriS = m["uri"] as String?
+                if (!path.isNullOrBlank()) {
+                    val f = File(path)
+                    try {
+                        if (f.exists() && f.delete()) {
+                            MediaScannerConnection.scanFile(this, arrayOf(path), null, null)
+                            done++
+                            continue
+                        }
+                    } catch (_: Exception) {}
+                }
+                val uri = try { mediaUriFor(path, id, uriS) } catch (_: Exception) { null }
+                if (uri == null) continue
+                try {
+                    if (contentResolver.delete(uri, null, null) > 0) { done++; continue }
+                } catch (_: SecurityException) {
+                } catch (_: Exception) { continue }
+                ask.add(uri)
+            }
+            runOnUiThread {
+                if (ask.isEmpty() || Build.VERSION.SDK_INT < Build.VERSION_CODES.R || deleteResult != null) {
+                    result.success(done)
+                } else {
+                    try {
+                        // The system shows its own "Allow SocialSave to delete…" prompt.
+                        val pi = MediaStore.createDeleteRequest(contentResolver, ask)
+                        deleteResult = result
+                        deleteDone = done
+                        deleteAsked = ask.size
+                        deleteLauncher.launch(androidx.activity.result.IntentSenderRequest.Builder(pi.intentSender).build())
+                    } catch (_: Exception) {
+                        deleteResult = null
+                        result.success(done)
+                    }
+                }
+            }
+        }
+    }
+
     private var sendFilesResult: MethodChannel.Result? = null
     private var sendFolderResult: MethodChannel.Result? = null
     private val openSendFiles = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -441,6 +508,11 @@ class MainActivity : FlutterFragmentActivity() {
                 "vibrate" -> {
                     phoneBody?.vibrate(call.argument<String>("pattern"))
                     result.success(true)
+                }
+                "deleteMedia" -> {
+                    @Suppress("UNCHECKED_CAST")
+                    val items = (call.argument<List<Any?>>("items") ?: emptyList()).mapNotNull { it as? Map<String, Any?> }
+                    deleteMedia(items, result)
                 }
                 "pickSendFiles" -> {
                     if (sendFilesResult != null) {
