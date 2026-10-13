@@ -378,6 +378,12 @@ class PhoneHandoff {
       return;
     }
     if (!DesktopSupport.isWindows) {
+      final path = dest.path.replaceFirst('/sdcard/', '/storage/emulated/0/');
+      if (path.startsWith('/storage/emulated/0/Download/')) {
+        // Already in public Downloads: index it instead of copying it again.
+        await indexReceived(dest);
+        return;
+      }
       try {
         await MediaStoreService().publishToDownloads(
           sourcePath: dest.path,
@@ -500,11 +506,12 @@ class PhoneHandoff {
         await res.close();
         return;
       }
-      await _publish(dest);
-      // Answer the sender first: closing the receive screen stops the server.
+      // Answer the sender first (it waits at 100% for this), then register
+      // the file with the gallery in the background.
       res.headers.contentType = ContentType.json;
       res.write(jsonEncode({'ok': true, 'path': dest.path}));
       await res.close();
+      unawaited(_publish(dest));
       drop.value = more
           ? DropState(title: '$title (${index + 1}/$count)', received: got, total: total, busy: true, detail: meter.doneLabel)
           : DropState(
@@ -558,8 +565,8 @@ class PhoneHandoff {
         onProgress?.call(sent, total);
         return chunk;
       }));
-      final res = await req.close();
-      await res.drain<void>();
+      final res = await req.close().timeout(const Duration(minutes: 5));
+      await res.drain<void>().timeout(const Duration(minutes: 1));
       if (res.statusCode == HttpStatus.conflict) return 'The other device is busy receiving.';
       return res.statusCode == 200 ? null : 'The other device could not save it.';
     } catch (_) {
@@ -607,8 +614,8 @@ class PhoneHandoff {
           onProgress?.call(done + sent, total, i, it.rel);
           return chunk;
         }));
-        final res = await req.close();
-        await res.drain<void>();
+        final res = await req.close().timeout(const Duration(minutes: 5));
+        await res.drain<void>().timeout(const Duration(minutes: 1));
         if (res.statusCode == HttpStatus.conflict) return 'The other device is busy receiving.';
         if (res.statusCode != 200) return 'The other device could not save ${it.rel}.';
         done += it.size;
@@ -763,7 +770,9 @@ Future<void> showSendToPhone(BuildContext context, File file, String title) asyn
             onProgress: (sent, total) {
               if (!context.mounted || !meter.update(sent, total)) return;
               setState(() {
-                status = 'Sending… ${(sent * 100 / (total == 0 ? 1 : total)).toStringAsFixed(0)}% · ${meter.label}';
+                status = sent >= total && total > 0
+                    ? 'Finishing… waiting for the other device to save it'
+                    : 'Sending… ${(sent * 100 / (total == 0 ? 1 : total)).toStringAsFixed(0)}% · ${meter.label}';
                 pushProgress = total > 0 ? sent / total : null;
               });
             },
@@ -772,7 +781,7 @@ Future<void> showSendToPhone(BuildContext context, File file, String title) asyn
           setState(() {
             pushing = false;
             pushProgress = error == null ? 1 : null;
-            status = error ?? 'Sent. It is saved on the other device. ${meter.doneLabel}';
+            status = error ?? 'Sent ✓ Saved on the other device. ${meter.doneLabel}';
           });
         }
 

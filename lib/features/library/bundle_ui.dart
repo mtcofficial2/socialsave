@@ -154,7 +154,9 @@ Future<void> _sendWithProgress(BuildContext context, SendBundle bundle, Object t
     fileMeters[index] = fileSent;
     current.value = 'File ${index + 1}/${bundle.count}: ${p.basename(rel)} '
         '${it.size > 0 ? '${(fileSent.clamp(0, it.size) * 100 ~/ it.size)}%' : ''}';
-    status.value = '${total > 0 ? (sent * 100 ~/ total) : 0}% · ${meter.label}';
+    status.value = sent >= total && total > 0
+        ? 'Finishing… waiting for the receiver to save it'
+        : '${total > 0 ? (sent * 100 ~/ total) : 0}% · ${meter.label}';
   }
 
   final String? error;
@@ -166,7 +168,7 @@ Future<void> _sendWithProgress(BuildContext context, SendBundle bundle, Object t
   }
   finished = true;
   overall.value = error == null ? 1 : overall.value;
-  status.value = error ?? 'Sent ${bundle.count == 1 ? 'it' : '${bundle.count} files'}. ${meter.doneLabel}';
+  status.value = error ?? 'Sent ✓ ${bundle.count == 1 ? '' : '${bundle.count} files. '}${meter.doneLabel}';
   await dialog;
 }
 

@@ -507,10 +507,12 @@ class NearbyService {
       incoming.value = IncomingProgress(fromName: offer.fromName, fileName: offer.fileName, received: got, total: total, done: true);
       return;
     }
-    await PhoneHandoff.publish(dest);
+    // Acknowledge first: the sender sits at 100% until it hears back, and
+    // registering a big video with the gallery can take a while.
     res.headers.contentType = ContentType.json;
     res.write(jsonEncode({'ok': true}));
     await res.close();
+    unawaited(PhoneHandoff.publish(dest));
     incoming.value = IncomingProgress(
       fromName: offer.fromName,
       fileName: offer.fileName,
@@ -647,8 +649,9 @@ class NearbyService {
         onProgress?.call(sent, total);
         return chunk;
       }));
-      final upRes = await up.close();
-      await upRes.drain<void>();
+      onStatus?.call('Finishing…');
+      final upRes = await up.close().timeout(const Duration(minutes: 5));
+      await upRes.drain<void>().timeout(const Duration(minutes: 1));
       return upRes.statusCode == 200 ? null : '${device.name} could not save it.';
     } on SocketException {
       return Platform.isWindows || device.isPc
@@ -719,8 +722,8 @@ class NearbyService {
           onProgress?.call(done + sent, total, i, it.rel);
           return chunk;
         }));
-        final upRes = await up.close();
-        await upRes.drain<void>();
+        final upRes = await up.close().timeout(const Duration(minutes: 5));
+        await upRes.drain<void>().timeout(const Duration(minutes: 1));
         if (upRes.statusCode != 200) return '${device.name} could not save ${it.rel}.';
         done += it.size;
         onProgress?.call(done, total, i, it.rel);

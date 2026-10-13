@@ -239,6 +239,7 @@ Future<void> sendToNearby(BuildContext context, NearbyDevice device, File file) 
   final status = ValueNotifier<String>('Connecting to ${device.name}…');
   final progress = ValueNotifier<double?>(null);
   var finished = false;
+  var dialogClosed = false;
   final dialog = showDialog<void>(
     context: context,
     barrierDismissible: false,
@@ -277,13 +278,23 @@ Future<void> sendToNearby(BuildContext context, NearbyDevice device, File file) 
     onProgress: (sent, total) {
       if (!meter.update(sent, total)) return;
       progress.value = total > 0 ? sent / total : null;
-      status.value = 'Sending… ${total > 0 ? (sent * 100 ~/ total) : 0}% · ${meter.label}';
+      status.value = sent >= total && total > 0
+          ? 'Finishing… waiting for ${device.name} to save it'
+          : 'Sending… ${total > 0 ? (sent * 100 ~/ total) : 0}% · ${meter.label}';
     },
   );
   finished = true;
   progress.value = error == null ? 1 : 0;
-  status.value = error ?? 'Sent. It is saved on ${device.name}. ${meter.doneLabel}';
+  status.value = error ?? 'Sent ✓ Saved on ${device.name}. ${meter.doneLabel}';
+  if (error == null) {
+    // Close by itself shortly after success.
+    Future<void>.delayed(const Duration(seconds: 2), () {
+      final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
+      if (!dialogClosed && ctx != null && ctx.mounted) Navigator.of(ctx, rootNavigator: true).pop();
+    });
+  }
   await dialog;
+  dialogClosed = true;
 }
 
 
