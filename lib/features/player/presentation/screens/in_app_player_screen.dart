@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
@@ -159,57 +158,73 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         enableHardwareAcceleration: false,
       ),
     );
-    _subs.add(_player.stream.error.listen((message) {
-      if (!mounted || message.trim().isEmpty) return;
-      setState(() => _error = 'Playback error. Try Open in another app.');
-    }));
-    _subs.add(_player.stream.completed.listen((done) {
-      if (!mounted) return;
-      setState(() => _completed = done);
-      if (done) {
-        unawaited(_clearResume());
-        unawaited(_onFinished());
-      }
-    }));
-    _subs.add(_player.stream.rate.listen((value) {
-      if (mounted) setState(() => _rate = value);
-    }));
-    _subs.add(_player.stream.volume.listen((value) {
-      if (!mounted) return;
-      setState(() {
-        _volume = value;
-        _muted = value <= 0;
-      });
-    }));
-    _subs.add(_player.stream.width.listen((value) {
-      if (!mounted || value == null || value <= 0) return;
-      setState(() => _frameWidth = value);
-      _syncPipAspect();
-      _nudgeResume();
-    }));
-    _subs.add(_player.stream.height.listen((value) {
-      if (!mounted || value == null || value <= 0) return;
-      setState(() => _frameHeight = value);
-      _syncPipAspect();
-    }));
-    _subs.add(_player.stream.position.listen((pos) {
-      final a = _markA;
-      final b = _markB;
-      if (a != null && b != null && _loopAB && pos >= b) {
-        unawaited(_player.seek(a));
-        return;
-      }
-      if (InAppPlayerScreen.keyLog) {
-        final prev = _logPos;
-        _logPos = pos;
-        if (prev != null && (pos - prev).abs() > const Duration(seconds: 2)) {
-          // ignore: avoid_print
-          print('debug jump ${prev.inSeconds}s -> ${pos.inSeconds}s resume=$_resumeTargetMs');
+    _subs.add(
+      _player.stream.error.listen((message) {
+        if (!mounted || message.trim().isEmpty) return;
+        setState(() => _error = 'Playback error. Try Open in another app.');
+      }),
+    );
+    _subs.add(
+      _player.stream.completed.listen((done) {
+        if (!mounted) return;
+        setState(() => _completed = done);
+        if (done) {
+          unawaited(_clearResume());
+          unawaited(_onFinished());
         }
-      }
-      _guardResume(pos);
-      _saveResumeThrottled();
-    }));
+      }),
+    );
+    _subs.add(
+      _player.stream.rate.listen((value) {
+        if (mounted) setState(() => _rate = value);
+      }),
+    );
+    _subs.add(
+      _player.stream.volume.listen((value) {
+        if (!mounted) return;
+        setState(() {
+          _volume = value;
+          _muted = value <= 0;
+        });
+      }),
+    );
+    _subs.add(
+      _player.stream.width.listen((value) {
+        if (!mounted || value == null || value <= 0) return;
+        setState(() => _frameWidth = value);
+        _syncPipAspect();
+        _nudgeResume();
+      }),
+    );
+    _subs.add(
+      _player.stream.height.listen((value) {
+        if (!mounted || value == null || value <= 0) return;
+        setState(() => _frameHeight = value);
+        _syncPipAspect();
+      }),
+    );
+    _subs.add(
+      _player.stream.position.listen((pos) {
+        final a = _markA;
+        final b = _markB;
+        if (a != null && b != null && _loopAB && pos >= b) {
+          unawaited(_player.seek(a));
+          return;
+        }
+        if (InAppPlayerScreen.keyLog) {
+          final prev = _logPos;
+          _logPos = pos;
+          if (prev != null && (pos - prev).abs() > const Duration(seconds: 2)) {
+            // ignore: avoid_print
+            print(
+              'debug jump ${prev.inSeconds}s -> ${pos.inSeconds}s resume=$_resumeTargetMs',
+            );
+          }
+        }
+        _guardResume(pos);
+        _saveResumeThrottled();
+      }),
+    );
     PipController.listen((inPip) {
       if (mounted) setState(() => _inPip = inPip);
     });
@@ -241,56 +256,69 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         if (_hasNext) await _playNext();
       },
     );
-    _subs.add(PhoneBody.snapshots.stream.listen((snap) async {
-      if (!mounted) return;
-      final settings = ref.read(settingsControllerProvider);
-      if (!settings.pocketPause) return;
-      if (snap.pocket) {
-        if (_player.state.playing) {
-          _pocketPaused = true;
-          await _player.pause();
-        }
-      } else if (_pocketPaused) {
-        _pocketPaused = false;
-        await _player.play();
-      }
-    }));
-    _subs.add(PhoneBody.actions.stream.listen((action) async {
-      if (!mounted) return;
-      final settings = ref.read(settingsControllerProvider);
-      if (action.name == 'toggle' && settings.headsetControls) {
-        if (_player.state.playing) {
-          await _player.pause();
-        } else {
+    _subs.add(
+      PhoneBody.snapshots.stream.listen((snap) async {
+        if (!mounted) return;
+        final settings = ref.read(settingsControllerProvider);
+        if (!settings.pocketPause) return;
+        if (snap.pocket) {
+          if (_player.state.playing) {
+            _pocketPaused = true;
+            await _player.pause();
+          }
+        } else if (_pocketPaused) {
+          _pocketPaused = false;
           await _player.play();
         }
-      } else if (action.name == 'next' && settings.headsetControls) {
-        if (_hasNext) await _playNext();
-      } else if (action.name == 'seek' && settings.volumeKeysSeek) {
-        await _skip(action.delta);
-        _flash('${action.delta > 0 ? '+' : '−'}${action.delta.abs()} s',
-            icon: action.delta > 0 ? Icons.fast_forward_rounded : Icons.fast_rewind_rounded);
-      } else if (action.name == 'play') {
-        // Lock screen / media notification controls.
-        await _player.play();
-      } else if (action.name == 'pause') {
-        await _player.pause();
-      } else if (action.name == 'skip') {
-        await _skip(action.delta);
+      }),
+    );
+    _subs.add(
+      PhoneBody.actions.stream.listen((action) async {
+        if (!mounted) return;
+        final settings = ref.read(settingsControllerProvider);
+        if (action.name == 'toggle' && settings.headsetControls) {
+          if (_player.state.playing) {
+            await _player.pause();
+          } else {
+            await _player.play();
+          }
+        } else if (action.name == 'next' && settings.headsetControls) {
+          if (_hasNext) await _playNext();
+        } else if (action.name == 'seek' && settings.volumeKeysSeek) {
+          await _skip(action.delta);
+          _flash(
+            '${action.delta > 0 ? '+' : '−'}${action.delta.abs()} s',
+            icon: action.delta > 0
+                ? Icons.fast_forward_rounded
+                : Icons.fast_rewind_rounded,
+          );
+        } else if (action.name == 'play') {
+          // Lock screen / media notification controls.
+          await _player.play();
+        } else if (action.name == 'pause') {
+          await _player.pause();
+        } else if (action.name == 'skip') {
+          await _skip(action.delta);
+          _pushSession();
+        } else if (action.name == 'seekTo') {
+          await _player.seek(Duration(milliseconds: action.delta));
+          _pushSession();
+        } else if (action.name == 'skipNext') {
+          if (_hasNext) await _playNext();
+        }
+      }),
+    );
+    _subs.add(
+      _player.stream.playing.listen((playing) {
         _pushSession();
-      } else if (action.name == 'seekTo') {
-        await _player.seek(Duration(milliseconds: action.delta));
-        _pushSession();
-      } else if (action.name == 'skipNext') {
-        if (_hasNext) await _playNext();
-      }
-    }));
-    _subs.add(_player.stream.playing.listen((playing) {
-      _pushSession();
-      if (_ready && mounted && !_completed) {
-        _flash(playing ? 'Play' : 'Pause', icon: playing ? Icons.play_arrow_rounded : Icons.pause_rounded);
-      }
-    }));
+        if (_ready && mounted && !_completed) {
+          _flash(
+            playing ? 'Play' : 'Pause',
+            icon: playing ? Icons.play_arrow_rounded : Icons.pause_rounded,
+          );
+        }
+      }),
+    );
     _subs.add(_player.stream.duration.listen((_) => _pushSession()));
   }
 
@@ -298,16 +326,19 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   void _pushSession() {
     if (!mounted) return;
     final settings = ref.read(settingsControllerProvider);
-    unawaited(PhoneBody.setPlayback(
-      active: true,
-      playing: _player.state.playing,
-      title: _session.title,
-      headset: settings.headsetControls,
-      volumeSeek: settings.volumeKeysSeek,
-      background: Platform.isAndroid && settings.backgroundPlay && !_session.isVault,
-      positionMs: _player.state.position.inMilliseconds,
-      durationMs: _player.state.duration.inMilliseconds,
-    ));
+    unawaited(
+      PhoneBody.setPlayback(
+        active: true,
+        playing: _player.state.playing,
+        title: _session.title,
+        headset: settings.headsetControls,
+        volumeSeek: settings.volumeKeysSeek,
+        background:
+            Platform.isAndroid && settings.backgroundPlay && !_session.isVault,
+        positionMs: _player.state.position.inMilliseconds,
+        durationMs: _player.state.duration.inMilliseconds,
+      ),
+    );
   }
 
   void _showChrome() {
@@ -364,7 +395,11 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     if (path == null || !File(path).existsSync()) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Save the video on this phone before playing it on a TV.')),
+          const SnackBar(
+            content: Text(
+              'Save the video on this phone before playing it on a TV.',
+            ),
+          ),
         );
       }
       return;
@@ -372,7 +407,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     final ok = await PhoneBody.playOnTv(path: path, title: _session.title);
     if (!ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No TV app on this phone could open the video.')),
+        const SnackBar(
+          content: Text('No TV app on this phone could open the video.'),
+        ),
       );
     }
   }
@@ -411,7 +448,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   Future<void> _open() async {
     if (InAppPlayerScreen.keyLog) {
       // ignore: avoid_print
-      print('debug open ${_session.filePath ?? _session.networkUrl} embedded=${widget.embedded}');
+      print(
+        'debug open ${_session.filePath ?? _session.networkUrl} embedded=${widget.embedded}',
+      );
     }
     final session = _session;
     String? uri;
@@ -497,11 +536,13 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     if (_atResume(pos, target)) {
       _resumeLanded = true;
       _announceResume(target);
-      final expired = _resumeUntil != null && DateTime.now().isAfter(_resumeUntil!);
+      final expired =
+          _resumeUntil != null && DateTime.now().isAfter(_resumeUntil!);
       if (expired) _resumeTargetMs = null;
       return;
     }
-    final expired = _resumeUntil != null && DateTime.now().isAfter(_resumeUntil!);
+    final expired =
+        _resumeUntil != null && DateTime.now().isAfter(_resumeUntil!);
     if (expired) {
       _resumeTargetMs = null;
       return;
@@ -663,7 +704,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   Future<void> _jumpToTime() async {
     final pos = _player.state.position;
     final controller = TextEditingController(
-      text: '${pos.inMinutes}:${(pos.inSeconds % 60).toString().padLeft(2, '0')}',
+      text:
+          '${pos.inMinutes}:${(pos.inSeconds % 60).toString().padLeft(2, '0')}',
     );
     final value = await showDialog<String>(
       context: context,
@@ -676,7 +718,10 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
           decoration: const InputDecoration(hintText: 'm:ss or mm:ss'),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
             onPressed: () => Navigator.pop(context, controller.text),
             child: const Text('Go'),
@@ -705,7 +750,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       return;
     }
     final dir = await getTemporaryDirectory();
-    final file = File('${dir.path}/frame_${DateTime.now().millisecondsSinceEpoch}.jpg');
+    final file = File(
+      '${dir.path}/frame_${DateTime.now().millisecondsSinceEpoch}.jpg',
+    );
     await file.writeAsBytes(bytes);
     await Share.shareXFiles([XFile(file.path)], text: _session.title);
   }
@@ -716,7 +763,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Download the video first to open it in another app.'),
+            content: Text(
+              'Download the video first to open it in another app.',
+            ),
           ),
         );
       }
@@ -741,7 +790,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     final ok = await PipController.enter();
     if (!ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('This device cannot play over other apps.')),
+        const SnackBar(
+          content: Text('This device cannot play over other apps.'),
+        ),
       );
     }
   }
@@ -830,7 +881,11 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                   ],
                   Text(
                     _osd ?? '',
-                    style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ],
               ),
@@ -872,15 +927,19 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       if (DesktopSupport.isWindows) {
         // Real window full screen (no title bar / taskbar); the plugin
         // restores the old size and position on exit.
-        await _mkChannel.invokeMethod<void>(on ? 'Utils.EnterNativeFullscreen' : 'Utils.ExitNativeFullscreen');
+        await _mkChannel.invokeMethod<void>(
+          on ? 'Utils.EnterNativeFullscreen' : 'Utils.ExitNativeFullscreen',
+        );
       } else {
         await _applyOrientation();
       }
     } catch (_) {}
     if (on) _showChrome();
     _refocus();
-    _flash(on ? 'Full screen' : 'Full screen off',
-        icon: on ? Icons.fullscreen_rounded : Icons.fullscreen_exit_rounded);
+    _flash(
+      on ? 'Full screen' : 'Full screen off',
+      icon: on ? Icons.fullscreen_rounded : Icons.fullscreen_exit_rounded,
+    );
   }
 
   /// Phone: landscape videos go landscape in full screen, portrait videos
@@ -890,27 +949,40 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     if (_fs) {
       await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
       final landscape = _forceLandscape || (_landscapeVideo && !_forcePortrait);
-      await SystemChrome.setPreferredOrientations(landscape
-          ? const [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]
-          : const [DeviceOrientation.portraitUp]);
+      await SystemChrome.setPreferredOrientations(
+        landscape
+            ? const [
+                DeviceOrientation.landscapeLeft,
+                DeviceOrientation.landscapeRight,
+              ]
+            : const [DeviceOrientation.portraitUp],
+      );
     } else {
       await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-      await SystemChrome.setPreferredOrientations(_forceLandscape
-          ? const [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]
-          : const []);
+      await SystemChrome.setPreferredOrientations(
+        _forceLandscape
+            ? const [
+                DeviceOrientation.landscapeLeft,
+                DeviceOrientation.landscapeRight,
+              ]
+            : const [],
+      );
     }
   }
 
   bool _forcePortrait = false;
 
   Future<void> _rotate() async {
-    final landscapeNow = MediaQuery.orientationOf(context) == Orientation.landscape;
+    final landscapeNow =
+        MediaQuery.orientationOf(context) == Orientation.landscape;
     setState(() {
       _forceLandscape = !landscapeNow;
       _forcePortrait = landscapeNow;
     });
     if (!_fs && !_forceLandscape) {
-      await SystemChrome.setPreferredOrientations(const [DeviceOrientation.portraitUp]);
+      await SystemChrome.setPreferredOrientations(const [
+        DeviceOrientation.portraitUp,
+      ]);
       await Future<void>.delayed(const Duration(milliseconds: 600));
       await SystemChrome.setPreferredOrientations(const []);
       return;
@@ -924,7 +996,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     _showChrome();
     if (DesktopSupport.isWindows) {
       _keyFocus.requestFocus();
-      if (e.kind == PointerDeviceKind.mouse && e.buttons == kSecondaryMouseButton) {
+      if (e.kind == PointerDeviceKind.mouse &&
+          e.buttons == kSecondaryMouseButton) {
         unawaited(_contextMenu(e.position));
         return;
       }
@@ -932,7 +1005,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         final now = DateTime.now();
         final last = _lastClick;
         final pos = _lastClickPos;
-        if (last != null && pos != null &&
+        if (last != null &&
+            pos != null &&
             now.difference(last) < const Duration(milliseconds: 350) &&
             (e.position - pos).distance < 24) {
           _lastClick = null;
@@ -981,29 +1055,63 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     Future<void>.delayed(const Duration(milliseconds: 60), () {
       if (!mounted) return;
       final v = _player.state.volume.round();
-      _flash('Volume $v%', icon: v == 0 ? Icons.volume_off_rounded : Icons.volume_up_rounded);
+      _flash(
+        'Volume $v%',
+        icon: v == 0 ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+      );
     });
   }
 
   Future<void> _contextMenu(Offset at) async {
-    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
     if (overlay == null) return;
     final choice = await showMenu<String>(
       context: context,
-      position: RelativeRect.fromRect(at & const Size(1, 1), Offset.zero & overlay.size),
+      position: RelativeRect.fromRect(
+        at & const Size(1, 1),
+        Offset.zero & overlay.size,
+      ),
       items: [
-        PopupMenuItem(value: 'play', child: Text(_player.state.playing ? 'Pause' : 'Play')),
-        PopupMenuItem(value: 'fs', child: Text(_fs ? 'Exit full screen   (F / Esc)' : 'Full screen   (F)')),
+        PopupMenuItem(
+          value: 'play',
+          child: Text(_player.state.playing ? 'Pause' : 'Play'),
+        ),
+        PopupMenuItem(
+          value: 'fs',
+          child: Text(
+            _fs ? 'Exit full screen   (F / Esc)' : 'Full screen   (F)',
+          ),
+        ),
         const PopupMenuDivider(),
         for (final rate in _rates)
-          CheckedPopupMenuItem(value: 'rate:$rate', checked: _rate == rate, child: Text('Speed ${_rateLabel(rate)}')),
+          CheckedPopupMenuItem(
+            value: 'rate:$rate',
+            checked: _rate == rate,
+            child: Text('Speed ${_rateLabel(rate)}'),
+          ),
         const PopupMenuDivider(),
-        CheckedPopupMenuItem(value: 'fit', checked: _fit == BoxFit.cover, child: const Text('Fill window (crop)')),
-        CheckedPopupMenuItem(value: 'loop', checked: _loop, child: const Text('Loop')),
-        PopupMenuItem(value: 'mute', child: Text(_muted ? 'Unmute   (M)' : 'Mute   (M)')),
+        CheckedPopupMenuItem(
+          value: 'fit',
+          checked: _fit == BoxFit.cover,
+          child: const Text('Fill window (crop)'),
+        ),
+        CheckedPopupMenuItem(
+          value: 'loop',
+          checked: _loop,
+          child: const Text('Loop'),
+        ),
+        PopupMenuItem(
+          value: 'mute',
+          child: Text(_muted ? 'Unmute   (M)' : 'Mute   (M)'),
+        ),
         const PopupMenuItem(value: 'frame', child: Text('Save this frame')),
-        if (_hasNext) const PopupMenuItem(value: 'next', child: Text('Next video   (N)')),
-        const PopupMenuItem(value: 'keys', child: Text('Keyboard shortcuts   (?)')),
+        if (_hasNext)
+          const PopupMenuItem(value: 'next', child: Text('Next video   (N)')),
+        const PopupMenuItem(
+          value: 'keys',
+          child: Text('Keyboard shortcuts   (?)'),
+        ),
       ],
     );
     _keyFocus.requestFocus();
@@ -1034,15 +1142,22 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
 
   Future<void> _seekKey(int seconds) async {
     await _skip(seconds);
-    _flash('${seconds > 0 ? '+' : '−'}${seconds.abs()} s',
-        icon: seconds > 0 ? Icons.fast_forward_rounded : Icons.fast_rewind_rounded);
+    _flash(
+      '${seconds > 0 ? '+' : '−'}${seconds.abs()} s',
+      icon: seconds > 0
+          ? Icons.fast_forward_rounded
+          : Icons.fast_rewind_rounded,
+    );
   }
 
   Future<void> _volumeKey(double delta) async {
     final next = (_player.state.volume + delta).clamp(0.0, 100.0);
     await _player.setVolume(next);
     _volume = next;
-    _flash('Volume ${next.round()}%', icon: next <= 0 ? Icons.volume_off_rounded : Icons.volume_up_rounded);
+    _flash(
+      'Volume ${next.round()}%',
+      icon: next <= 0 ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+    );
   }
 
   Future<void> _rateKey(double delta) async {
@@ -1066,8 +1181,10 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       if (native is NativePlayer) {
         await native.command([forward ? 'frame-step' : 'frame-back-step']);
       }
-      _flash(forward ? 'Next frame' : 'Previous frame',
-          icon: forward ? Icons.skip_next_rounded : Icons.skip_previous_rounded);
+      _flash(
+        forward ? 'Next frame' : 'Previous frame',
+        icon: forward ? Icons.skip_next_rounded : Icons.skip_previous_rounded,
+      );
     } catch (_) {}
   }
 
@@ -1114,7 +1231,10 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                     children: [
                       SizedBox(
                         width: 170,
-                        child: Text(row[0], style: const TextStyle(fontWeight: FontWeight.w700)),
+                        child: Text(
+                          row[0],
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
                       ),
                       Expanded(child: Text(row[1])),
                     ],
@@ -1123,7 +1243,12 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
             ],
           ),
         ),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))],
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
       ),
     );
     _keyFocus.requestFocus();
@@ -1141,12 +1266,14 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     if (!mounted || event is KeyUpEvent) return false;
     // Docked player in media_kit's own full-screen page: that page is a
     // separate route on top, so take every player key while it is open.
-    final dockedFs = widget.embedded && (_videoKey.currentState?.isFullscreen() ?? false);
+    final dockedFs =
+        widget.embedded && (_videoKey.currentState?.isFullscreen() ?? false);
     final route = ModalRoute.of(context);
     if (!dockedFs && route != null && !route.isCurrent) return false;
     final focusCtx = FocusManager.instance.primaryFocus?.context;
     if (focusCtx != null &&
-        (focusCtx.widget is EditableText || focusCtx.findAncestorWidgetOfExactType<EditableText>() != null)) {
+        (focusCtx.widget is EditableText ||
+            focusCtx.findAncestorWidgetOfExactType<EditableText>() != null)) {
       return false;
     }
     if (widget.embedded && !dockedFs) {
@@ -1158,7 +1285,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       if (entry.key.accepts(event, keyboard)) {
         if (InAppPlayerScreen.keyLog) {
           // ignore: avoid_print
-          print('debug key ${event.logicalKey.keyLabel} fs=$_fs pos=${_player.state.position.inSeconds}s vol=${_player.state.volume.round()}');
+          print(
+            'debug key ${event.logicalKey.keyLabel} fs=$_fs pos=${_player.state.position.inSeconds}s vol=${_player.state.volume.round()}',
+          );
         }
         entry.value();
         return true;
@@ -1173,18 +1302,30 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       const SingleActivator(LogicalKeyboardKey.space): play,
       const SingleActivator(LogicalKeyboardKey.keyK): play,
       const SingleActivator(LogicalKeyboardKey.mediaPlayPause): play,
-      const SingleActivator(LogicalKeyboardKey.mediaPlay): () => unawaited(_player.play()),
-      const SingleActivator(LogicalKeyboardKey.mediaPause): () => unawaited(_player.pause()),
-      const SingleActivator(LogicalKeyboardKey.arrowLeft): () => unawaited(_seekKey(-5)),
-      const SingleActivator(LogicalKeyboardKey.arrowRight): () => unawaited(_seekKey(5)),
-      const SingleActivator(LogicalKeyboardKey.keyJ): () => unawaited(_seekKey(-10)),
-      const SingleActivator(LogicalKeyboardKey.keyL): () => unawaited(_seekKey(10)),
-      const SingleActivator(LogicalKeyboardKey.arrowUp): () => unawaited(_volumeKey(5)),
-      const SingleActivator(LogicalKeyboardKey.arrowDown): () => unawaited(_volumeKey(-5)),
-      const SingleActivator(LogicalKeyboardKey.keyM): () => unawaited(_toggleMute()),
-      const SingleActivator(LogicalKeyboardKey.keyF): () => unawaited(_toggleFullscreenKey()),
-      const SingleActivator(LogicalKeyboardKey.enter, alt: true): () => unawaited(_toggleFs()),
-      const SingleActivator(LogicalKeyboardKey.f11): () => unawaited(_toggleFs()),
+      const SingleActivator(LogicalKeyboardKey.mediaPlay): () =>
+          unawaited(_player.play()),
+      const SingleActivator(LogicalKeyboardKey.mediaPause): () =>
+          unawaited(_player.pause()),
+      const SingleActivator(LogicalKeyboardKey.arrowLeft): () =>
+          unawaited(_seekKey(-5)),
+      const SingleActivator(LogicalKeyboardKey.arrowRight): () =>
+          unawaited(_seekKey(5)),
+      const SingleActivator(LogicalKeyboardKey.keyJ): () =>
+          unawaited(_seekKey(-10)),
+      const SingleActivator(LogicalKeyboardKey.keyL): () =>
+          unawaited(_seekKey(10)),
+      const SingleActivator(LogicalKeyboardKey.arrowUp): () =>
+          unawaited(_volumeKey(5)),
+      const SingleActivator(LogicalKeyboardKey.arrowDown): () =>
+          unawaited(_volumeKey(-5)),
+      const SingleActivator(LogicalKeyboardKey.keyM): () =>
+          unawaited(_toggleMute()),
+      const SingleActivator(LogicalKeyboardKey.keyF): () =>
+          unawaited(_toggleFullscreenKey()),
+      const SingleActivator(LogicalKeyboardKey.enter, alt: true): () =>
+          unawaited(_toggleFs()),
+      const SingleActivator(LogicalKeyboardKey.f11): () =>
+          unawaited(_toggleFs()),
       const SingleActivator(LogicalKeyboardKey.escape): () {
         final state = _videoKey.currentState;
         if (_fs) {
@@ -1197,17 +1338,26 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
           unawaited(Navigator.maybePop(context));
         }
       },
-      const SingleActivator(LogicalKeyboardKey.keyN): () => unawaited(_playNext()),
-      const SingleActivator(LogicalKeyboardKey.mediaTrackNext): () => unawaited(_playNext()),
-      const SingleActivator(LogicalKeyboardKey.keyP): () => unawaited(_playPrevious()),
-      const SingleActivator(LogicalKeyboardKey.mediaTrackPrevious): () => unawaited(_playPrevious()),
+      const SingleActivator(LogicalKeyboardKey.keyN): () =>
+          unawaited(_playNext()),
+      const SingleActivator(LogicalKeyboardKey.mediaTrackNext): () =>
+          unawaited(_playNext()),
+      const SingleActivator(LogicalKeyboardKey.keyP): () =>
+          unawaited(_playPrevious()),
+      const SingleActivator(LogicalKeyboardKey.mediaTrackPrevious): () =>
+          unawaited(_playPrevious()),
       const CharacterActivator('<'): () => unawaited(_rateKey(-0.25)),
       const CharacterActivator('>'): () => unawaited(_rateKey(0.25)),
-      const SingleActivator(LogicalKeyboardKey.comma): () => unawaited(_frameStep(false)),
-      const SingleActivator(LogicalKeyboardKey.period): () => unawaited(_frameStep(true)),
+      const SingleActivator(LogicalKeyboardKey.comma): () =>
+          unawaited(_frameStep(false)),
+      const SingleActivator(LogicalKeyboardKey.period): () =>
+          unawaited(_frameStep(true)),
       const CharacterActivator('?'): () => unawaited(_showShortcuts()),
       for (var i = 0; i <= 9; i++)
-        SingleActivator(LogicalKeyboardKey(LogicalKeyboardKey.digit0.keyId + i)): () => unawaited(_jumpPercent(i)),
+        SingleActivator(
+          LogicalKeyboardKey(LogicalKeyboardKey.digit0.keyId + i),
+        ): () =>
+            unawaited(_jumpPercent(i)),
     };
   }
 
@@ -1392,8 +1542,14 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                     ),
                     ListTile(
                       contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.timelapse_rounded, color: Colors.white70),
-                      title: const Text('Jump to time', style: TextStyle(color: Colors.white)),
+                      leading: const Icon(
+                        Icons.timelapse_rounded,
+                        color: Colors.white70,
+                      ),
+                      title: const Text(
+                        'Jump to time',
+                        style: TextStyle(color: Colors.white),
+                      ),
                       onTap: () {
                         Navigator.pop(context);
                         unawaited(_jumpToTime());
@@ -1401,8 +1557,14 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                     ),
                     ListTile(
                       contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.camera_alt_outlined, color: Colors.white70),
-                      title: const Text('Save a still frame', style: TextStyle(color: Colors.white)),
+                      leading: const Icon(
+                        Icons.camera_alt_outlined,
+                        color: Colors.white70,
+                      ),
+                      title: const Text(
+                        'Save a still frame',
+                        style: TextStyle(color: Colors.white),
+                      ),
                       onTap: () {
                         Navigator.pop(context);
                         unawaited(_saveFrame());
@@ -1410,7 +1572,10 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                     ),
                     ListTile(
                       contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.repeat_on_rounded, color: Colors.white70),
+                      leading: const Icon(
+                        Icons.repeat_on_rounded,
+                        color: Colors.white70,
+                      ),
                       title: Text(
                         _loopAB ? 'A–B loop on' : 'Set A–B loop',
                         style: const TextStyle(color: Colors.white),
@@ -1419,7 +1584,10 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                         _loopAB
                             ? 'Playing between the two marks'
                             : 'Mark this moment as A, then again as B',
-                        style: const TextStyle(color: Colors.white54, fontSize: 12),
+                        style: const TextStyle(
+                          color: Colors.white54,
+                          fontSize: 12,
+                        ),
                       ),
                       onTap: () {
                         _toggleAB();
@@ -1427,15 +1595,21 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                       },
                     ),
                     if (_player.state.tracks.audio.length > 1) ...[
-                      const Text('Audio', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                      const Text(
+                        'Audio',
+                        style: TextStyle(color: Colors.white70, fontSize: 12),
+                      ),
                       const SizedBox(height: 4),
                       Wrap(
                         spacing: 8,
                         children: [
                           for (final track in _player.state.tracks.audio)
                             ChoiceChip(
-                              label: Text(track.title ?? track.language ?? track.id),
-                              selected: _player.state.track.audio.id == track.id,
+                              label: Text(
+                                track.title ?? track.language ?? track.id,
+                              ),
+                              selected:
+                                  _player.state.track.audio.id == track.id,
                               onSelected: (_) {
                                 unawaited(_player.setAudioTrack(track));
                                 setSheet(() {});
@@ -1446,7 +1620,10 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                       const SizedBox(height: 12),
                     ],
                     if (_player.state.tracks.subtitle.isNotEmpty) ...[
-                      const Text('Captions', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                      const Text(
+                        'Captions',
+                        style: TextStyle(color: Colors.white70, fontSize: 12),
+                      ),
                       const SizedBox(height: 4),
                       Wrap(
                         spacing: 8,
@@ -1455,14 +1632,19 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                             label: const Text('Off'),
                             selected: _player.state.track.subtitle.id == 'no',
                             onSelected: (_) {
-                              unawaited(_player.setSubtitleTrack(SubtitleTrack.no()));
+                              unawaited(
+                                _player.setSubtitleTrack(SubtitleTrack.no()),
+                              );
                               setSheet(() {});
                             },
                           ),
                           for (final track in _player.state.tracks.subtitle)
                             ChoiceChip(
-                              label: Text(track.title ?? track.language ?? track.id),
-                              selected: _player.state.track.subtitle.id == track.id,
+                              label: Text(
+                                track.title ?? track.language ?? track.id,
+                              ),
+                              selected:
+                                  _player.state.track.subtitle.id == track.id,
                               onSelected: (_) {
                                 unawaited(_player.setSubtitleTrack(track));
                                 setSheet(() {});
@@ -1474,7 +1656,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                     Row(
                       children: [
                         Icon(
-                          _muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+                          _muted
+                              ? Icons.volume_off_rounded
+                              : Icons.volume_up_rounded,
                           color: Colors.white,
                         ),
                         Expanded(
@@ -1538,13 +1722,25 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         const MaterialDesktopPositionIndicator(),
         const Spacer(),
         MaterialDesktopCustomButton(
-          icon: Text(_rateLabel(_rate), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13)),
-          onPressed: () => unawaited(_rateKey(_rate >= 2 ? -(_rate - 1) : 0.25)),
+          icon: Text(
+            _rateLabel(_rate),
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w800,
+              fontSize: 13,
+            ),
+          ),
+          onPressed: () =>
+              unawaited(_rateKey(_rate >= 2 ? -(_rate - 1) : 0.25)),
         ),
         widget.embedded
             ? const MaterialDesktopFullscreenButton()
             : MaterialDesktopCustomButton(
-                icon: Icon(_fs ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded),
+                icon: Icon(
+                  _fs
+                      ? Icons.fullscreen_exit_rounded
+                      : Icons.fullscreen_rounded,
+                ),
                 onPressed: () => unawaited(_toggleFs()),
               ),
       ],
@@ -1552,34 +1748,36 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     _keyMap = keys;
     return Builder(
       builder: (_) => Focus(
-      focusNode: _keyFocus,
-      autofocus: true,
-      // PC: player buttons never hold keyboard focus, so Space can't also
-      // press a focused button; keys are handled once, globally.
-      descendantsAreFocusable: false,
-      onKeyEvent: (node, event) {
-        final kb = HardwareKeyboard.instance;
-        for (final a in _keyMap.keys) {
-          if (a.accepts(event, kb)) return KeyEventResult.handled;
-        }
-        return KeyEventResult.ignored;
-      },
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          MaterialDesktopVideoControlsTheme(
-            normal: desktop,
-            fullscreen: desktop,
-            child: Video(
-              key: _videoKey,
-              controller: _video,
-              fill: Colors.black,
-              fit: _fit,
-              controls: _locked ? _hiddenControls : MaterialDesktopVideoControls,
+        focusNode: _keyFocus,
+        autofocus: true,
+        // PC: player buttons never hold keyboard focus, so Space can't also
+        // press a focused button; keys are handled once, globally.
+        descendantsAreFocusable: false,
+        onKeyEvent: (node, event) {
+          final kb = HardwareKeyboard.instance;
+          for (final a in _keyMap.keys) {
+            if (a.accepts(event, kb)) return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            MaterialDesktopVideoControlsTheme(
+              normal: desktop,
+              fullscreen: desktop,
+              child: Video(
+                key: _videoKey,
+                controller: _video,
+                fill: Colors.black,
+                fit: _fit,
+                controls: _locked
+                    ? _hiddenControls
+                    : MaterialDesktopVideoControls,
+              ),
             ),
-          ),
-        ],
-      ),
+          ],
+        ),
       ),
     );
   }
@@ -1596,64 +1794,105 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       visibleOnMount: true,
       seekBarPositionColor: AppColors.secondaryContainer,
       seekBarThumbColor: AppColors.secondaryContainer,
-      bottomButtonBarMargin: const EdgeInsets.only(left: 8, right: 8, bottom: 12),
-      primaryButtonBar: [
-        const Spacer(flex: 2),
-        MaterialCustomButton(
-          icon: const Icon(Icons.replay_10_rounded),
-          onPressed: () => unawaited(_skip(-10)),
-        ),
-        const Spacer(),
-        MaterialPlayOrPauseButton(iconSize: 56),
-        const Spacer(),
-        MaterialCustomButton(
-          icon: const Icon(Icons.forward_10_rounded),
-          onPressed: () => unawaited(_skip(10)),
-        ),
-        const Spacer(flex: 2),
-      ],
+      // Play, skip, and the other buttons sit with the progress bar.
+      // The same bar is used for portrait and landscape video.
+      primaryButtonBar: const [],
+      buttonBarHeight: 116,
+      bottomButtonBarMargin: const EdgeInsets.only(left: 4, right: 4),
+      seekBarMargin: const EdgeInsets.only(left: 12, right: 12, bottom: 8),
       bottomButtonBar: [
-        const MaterialPositionIndicator(),
-        const Spacer(),
-        MaterialCustomButton(
-          icon: Text(
-            _rateLabel(_rate),
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w800,
-              fontSize: 12,
-            ),
+        Expanded(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  MaterialCustomButton(
+                    icon: const Icon(Icons.replay_10_rounded),
+                    onPressed: () => unawaited(_skip(-10)),
+                  ),
+                  const MaterialPlayOrPauseButton(iconSize: 36),
+                  MaterialCustomButton(
+                    icon: const Icon(Icons.forward_10_rounded),
+                    onPressed: () => unawaited(_skip(10)),
+                  ),
+                ],
+              ),
+              SizedBox(
+                height: 48,
+                child: Row(
+                  children: [
+                    const MaterialPositionIndicator(),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        reverse: true,
+                        child: Row(
+                          children: [
+                            MaterialCustomButton(
+                              icon: Text(
+                                _rateLabel(_rate),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              onPressed: () => unawaited(_showTools()),
+                            ),
+                            if (_hasNext)
+                              MaterialCustomButton(
+                                icon: const Icon(Icons.skip_next_rounded),
+                                onPressed: () => unawaited(_playNext()),
+                              ),
+                            MaterialCustomButton(
+                              icon: Icon(
+                                _loop
+                                    ? Icons.repeat_one_rounded
+                                    : Icons.repeat_rounded,
+                              ),
+                              onPressed: () => unawaited(_toggleLoop()),
+                            ),
+                            MaterialCustomButton(
+                              icon: Icon(
+                                _muted
+                                    ? Icons.volume_off_rounded
+                                    : Icons.volume_up_rounded,
+                              ),
+                              onPressed: () => unawaited(_toggleMute()),
+                            ),
+                            MaterialCustomButton(
+                              icon: Icon(
+                                _fit == BoxFit.cover
+                                    ? Icons.fit_screen_rounded
+                                    : Icons.aspect_ratio_rounded,
+                              ),
+                              onPressed: _cycleFit,
+                            ),
+                            MaterialCustomButton(
+                              icon: const Icon(Icons.screen_rotation_rounded),
+                              onPressed: () => unawaited(_rotate()),
+                            ),
+                            MaterialCustomButton(
+                              icon: Icon(
+                                _fs
+                                    ? Icons.fullscreen_exit_rounded
+                                    : Icons.fullscreen_rounded,
+                              ),
+                              onPressed: () => unawaited(_toggleFs()),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // Leaves the progress line visible under the buttons.
+              const SizedBox(height: 18),
+            ],
           ),
-          onPressed: () => unawaited(_showTools()),
-        ),
-        if (_hasNext)
-          MaterialCustomButton(
-            icon: const Icon(Icons.skip_next_rounded),
-            onPressed: () => unawaited(_playNext()),
-          ),
-        MaterialCustomButton(
-          icon: Icon(_loop ? Icons.repeat_one_rounded : Icons.repeat_rounded),
-          onPressed: () => unawaited(_toggleLoop()),
-        ),
-        MaterialCustomButton(
-          icon: Icon(_muted ? Icons.volume_off_rounded : Icons.volume_up_rounded),
-          onPressed: () => unawaited(_toggleMute()),
-        ),
-        MaterialCustomButton(
-          icon: Icon(
-            _fit == BoxFit.cover
-                ? Icons.fit_screen_rounded
-                : Icons.aspect_ratio_rounded,
-          ),
-          onPressed: _cycleFit,
-        ),
-        MaterialCustomButton(
-          icon: const Icon(Icons.screen_rotation_rounded),
-          onPressed: () => unawaited(_rotate()),
-        ),
-        MaterialCustomButton(
-          icon: Icon(_fs ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded),
-          onPressed: () => unawaited(_toggleFs()),
         ),
       ],
     );
@@ -1673,20 +1912,26 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     _sleepTimer?.cancel();
     if (_fs || _forceLandscape) {
       if (DesktopSupport.isWindows) {
-        unawaited(_mkChannel.invokeMethod<void>('Utils.ExitNativeFullscreen').catchError((_) {}));
+        unawaited(
+          _mkChannel
+              .invokeMethod<void>('Utils.ExitNativeFullscreen')
+              .catchError((_) {}),
+        );
       } else {
         unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
         unawaited(SystemChrome.setPreferredOrientations(const []));
       }
     }
     PlaybackBridge.clear(this);
-    unawaited(PhoneBody.setPlayback(
-      active: false,
-      playing: false,
-      title: _session.title,
-      headset: false,
-      volumeSeek: false,
-    ));
+    unawaited(
+      PhoneBody.setPlayback(
+        active: false,
+        playing: false,
+        title: _session.title,
+        headset: false,
+        volumeSeek: false,
+      ),
+    );
     if (_dimmed) unawaited(PhoneBody.setBrightness(-1));
     unawaited(_saveResume());
     for (final sub in _subs) {
@@ -1703,18 +1948,26 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   @override
   Widget build(BuildContext context) {
     final theme = _theme();
-    final Widget video = DesktopSupport.isWindows ? _desktopVideo() : MaterialVideoControlsTheme(
-      normal: theme,
-      fullscreen: theme.copyWith(
-        bottomButtonBarMargin: const EdgeInsets.only(left: 8, right: 8, bottom: 24),
-      ),
-      child: Video(
-        controller: _video,
-        fill: Colors.black,
-        fit: _fit,
-        controls: _locked || _inPip ? _hiddenControls : MaterialVideoControls,
-      ),
-    );
+    final Widget video = DesktopSupport.isWindows
+        ? _desktopVideo()
+        : MaterialVideoControlsTheme(
+            normal: theme,
+            fullscreen: theme.copyWith(
+              bottomButtonBarMargin: const EdgeInsets.only(
+                left: 8,
+                right: 8,
+                bottom: 24,
+              ),
+            ),
+            child: Video(
+              controller: _video,
+              fill: Colors.black,
+              fit: _fit,
+              controls: _locked || _inPip
+                  ? _hiddenControls
+                  : MaterialVideoControls,
+            ),
+          );
 
     if (_inPip) {
       return Scaffold(
@@ -1740,236 +1993,310 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         if (!didPop && _fs) unawaited(_setFs(false));
       },
       child: Scaffold(
-      backgroundColor: Colors.black,
-      body: Listener(
-        onPointerDown: _onPointerDown,
-        onPointerMove: _onPointerMove,
-        onPointerUp: _onPointerUp,
-        onPointerCancel: _onPointerUp,
-        onPointerSignal: _onPointerSignal,
-        child: SafeArea(
-        top: !_fs,
-        bottom: !_fs,
-        left: !_fs,
-        right: !_fs,
-        child: Column(
-          children: [
-            // Always laid out (only faded) so showing it never shifts the video:
-            // the shift moved the seek bar under the mouse mid-click and the
-            // click then seeked to 0:00.
-            if (!_fs)
-            Visibility(visible: _chrome || _showEndCard, maintainSize: true, maintainAnimation: true, maintainState: true, child: Padding(
-              padding: const EdgeInsets.fromLTRB(4, 4, 8, 8),
-              child: Row(
-                children: [
-                  IconButton(
-                    onPressed: () {
-                      if (widget.embedded) {
-                        widget.onClose?.call();
-                      } else {
-                        Navigator.maybePop(context);
-                      }
-                    },
-                    icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
-                  ),
-                  PlatformLogo(platform: _session.platform, size: 22),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _session.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 15,
+        backgroundColor: Colors.black,
+        body: Listener(
+          onPointerDown: _onPointerDown,
+          onPointerMove: _onPointerMove,
+          onPointerUp: _onPointerUp,
+          onPointerCancel: _onPointerUp,
+          onPointerSignal: _onPointerSignal,
+          child: SafeArea(
+            top: !_fs,
+            bottom: !_fs,
+            left: !_fs,
+            right: !_fs,
+            child: Column(
+              children: [
+                // Always laid out (only faded) so showing it never shifts the video:
+                // the shift moved the seek bar under the mouse mid-click and the
+                // click then seeked to 0:00.
+                if (!_fs)
+                  Visibility(
+                    visible: _chrome || _showEndCard,
+                    maintainSize: true,
+                    maintainAnimation: true,
+                    maintainState: true,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(4, 4, 8, 8),
+                      child: Row(
+                        children: [
+                          IconButton(
+                            onPressed: () {
+                              if (widget.embedded) {
+                                widget.onClose?.call();
+                              } else {
+                                Navigator.maybePop(context);
+                              }
+                            },
+                            icon: const Icon(
+                              Icons.arrow_back_rounded,
+                              color: Colors.white,
+                            ),
                           ),
-                        ),
-                        Text(
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          softWrap: false,
-                          _session.isPreview
-                              ? 'Preview · not saved yet'
-                              : _session.isVault
-                                  ? 'Vault · PIN protected'
-                                  : DesktopSupport.isWindows
+                          PlatformLogo(platform: _session.platform, size: 22),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _session.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 15,
+                                  ),
+                                ),
+                                Text(
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  softWrap: false,
+                                  _session.isPreview
+                                      ? 'Preview · not saved yet'
+                                      : _session.isVault
+                                      ? 'Vault · PIN protected'
+                                      : DesktopSupport.isWindows
                                       ? '$thisPlayerName · Space play · ←/→ seek · ↑/↓ volume · F full screen'
                                       : '$thisPlayerName · Double-tap sides to skip · pinch to fill',
-                          style: const TextStyle(color: Colors.white70, fontSize: 12, height: 1.2),
-                        ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: 'Lock screen',
-                    onPressed: () => setState(() {
-                      _locked = true;
-                      _chrome = false;
-                      _lockHint = true;
-                    }),
-                    icon: const Icon(Icons.lock_outline_rounded, color: Colors.white),
-                  ),
-                  IconButton(
-                    tooltip: 'Playback options',
-                    onPressed: _showTools,
-                    icon: const Icon(Icons.tune_rounded, color: Colors.white),
-                  ),
-                  if (narrow)
-                    PopupMenuButton<String>(
-                      tooltip: 'More',
-                      icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
-                      onSelected: (v) {
-                        if (v == 'pip') unawaited(_playOverApps());
-                        if (v == 'send') unawaited(showSendToPhone(context, File(_session.filePath!), _session.title));
-                        if (v == 'tv') unawaited(_playOnTv());
-                        if (v == 'open') unawaited(_openExternal());
-                      },
-                      itemBuilder: (_) => [
-                        if (!_session.isVault && !DesktopSupport.isWindows)
-                          const PopupMenuItem(value: 'pip', child: Text('Play over other apps')),
-                        if (_session.filePath != null && !_session.isVault) ...const [
-                          PopupMenuItem(value: 'send', child: Text('Send to another device')),
-                          PopupMenuItem(value: 'tv', child: Text('Play on TV')),
-                          PopupMenuItem(value: 'open', child: Text('Open in another app')),
-                        ],
-                      ],
-                    ),
-                  if (!narrow && !_session.isVault && !DesktopSupport.isWindows)
-                    IconButton(
-                      tooltip: 'Play over other apps',
-                      onPressed: _playOverApps,
-                      icon: const Icon(Icons.picture_in_picture_alt_rounded, color: Colors.white),
-                    ),
-                  if (!narrow && _session.filePath != null && !_session.isVault)
-                    IconButton(
-                      tooltip: 'Send to another device',
-                      onPressed: () => unawaited(
-                        showSendToPhone(context, File(_session.filePath!), _session.title),
-                      ),
-                      icon: const Icon(Icons.send_to_mobile_rounded, color: Colors.white),
-                    ),
-                  if (!narrow && _session.filePath != null && !_session.isVault)
-                    IconButton(
-                      tooltip: 'Play on TV',
-                      onPressed: () => unawaited(_playOnTv()),
-                      icon: const Icon(Icons.tv_rounded, color: Colors.white),
-                    ),
-                  if (!narrow && _session.filePath != null && !_session.isVault)
-                    IconButton(
-                      tooltip: 'Open in another app',
-                      onPressed: _openExternal,
-                      icon: const Icon(Icons.open_in_new_rounded, color: Colors.white),
-                    ),
-                ],
-              ),
-            )),
-            Expanded(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  if (_error != null)
-                    Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              _error!,
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                color: Colors.white70,
-                                fontSize: 16,
-                                height: 1.4,
+                                  style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 12,
+                                    height: 1.2,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Lock screen',
+                            onPressed: () => setState(() {
+                              _locked = true;
+                              _chrome = false;
+                              _lockHint = true;
+                            }),
+                            icon: const Icon(
+                              Icons.lock_outline_rounded,
+                              color: Colors.white,
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Playback options',
+                            onPressed: _showTools,
+                            icon: const Icon(
+                              Icons.tune_rounded,
+                              color: Colors.white,
+                            ),
+                          ),
+                          if (narrow)
+                            PopupMenuButton<String>(
+                              tooltip: 'More',
+                              icon: const Icon(
+                                Icons.more_vert_rounded,
+                                color: Colors.white,
+                              ),
+                              onSelected: (v) {
+                                if (v == 'pip') unawaited(_playOverApps());
+                                if (v == 'send')
+                                  unawaited(
+                                    showSendToPhone(
+                                      context,
+                                      File(_session.filePath!),
+                                      _session.title,
+                                    ),
+                                  );
+                                if (v == 'tv') unawaited(_playOnTv());
+                                if (v == 'open') unawaited(_openExternal());
+                              },
+                              itemBuilder: (_) => [
+                                if (!_session.isVault &&
+                                    !DesktopSupport.isWindows)
+                                  const PopupMenuItem(
+                                    value: 'pip',
+                                    child: Text('Play over other apps'),
+                                  ),
+                                if (_session.filePath != null &&
+                                    !_session.isVault) ...const [
+                                  PopupMenuItem(
+                                    value: 'send',
+                                    child: Text('Send to another device'),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 'tv',
+                                    child: Text('Play on TV'),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 'open',
+                                    child: Text('Open in another app'),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          if (!narrow &&
+                              !_session.isVault &&
+                              !DesktopSupport.isWindows)
+                            IconButton(
+                              tooltip: 'Play over other apps',
+                              onPressed: _playOverApps,
+                              icon: const Icon(
+                                Icons.picture_in_picture_alt_rounded,
+                                color: Colors.white,
                               ),
                             ),
-                            if (_session.filePath != null && !_session.isVault) ...[
-                              const SizedBox(height: 16),
-                              FilledButton(
-                                onPressed: _openExternal,
-                                child: const Text('Open in another app'),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                    )
-                  else
-                    HeroMode(
-                      enabled: _heroTag != null,
-                      child: Hero(
-                        tag: _heroTag ?? 'player-idle',
-                        child: _FittedVideo(
-                      width: _frameWidth,
-                      height: _frameHeight,
-                      child: _pinchZoom
-                          ? InteractiveViewer(
-                              minScale: 1,
-                              maxScale: 3,
-                              panEnabled: false,
-                              child: video,
-                            )
-                          : video,
-                        ),
-                      ),
-                    ),
-                  if (_locked)
-                    Positioned.fill(
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () => setState(() => _lockHint = !_lockHint),
-                        child: _lockHint
-                            ? Center(
-                                child: IconButton(
-                                  tooltip: 'Unlock',
-                                  iconSize: 42,
-                                  onPressed: () => setState(() {
-                                    _locked = false;
-                                    _lockHint = false;
-                                    _chrome = true;
-                                  }),
-                                  icon: const Icon(Icons.lock_open_rounded, color: Colors.white),
+                          if (!narrow &&
+                              _session.filePath != null &&
+                              !_session.isVault)
+                            IconButton(
+                              tooltip: 'Send to another device',
+                              onPressed: () => unawaited(
+                                showSendToPhone(
+                                  context,
+                                  File(_session.filePath!),
+                                  _session.title,
                                 ),
-                              )
-                            : const SizedBox.expand(),
+                              ),
+                              icon: const Icon(
+                                Icons.send_to_mobile_rounded,
+                                color: Colors.white,
+                              ),
+                            ),
+                          if (!narrow &&
+                              _session.filePath != null &&
+                              !_session.isVault)
+                            IconButton(
+                              tooltip: 'Play on TV',
+                              onPressed: () => unawaited(_playOnTv()),
+                              icon: const Icon(
+                                Icons.tv_rounded,
+                                color: Colors.white,
+                              ),
+                            ),
+                          if (!narrow &&
+                              _session.filePath != null &&
+                              !_session.isVault)
+                            IconButton(
+                              tooltip: 'Open in another app',
+                              onPressed: _openExternal,
+                              icon: const Icon(
+                                Icons.open_in_new_rounded,
+                                color: Colors.white,
+                              ),
+                            ),
+                        ],
                       ),
                     ),
-                  _osdLayer(),
-                  if (_showEndCard) _EndCard(
-                    countdown: _countdown,
-                    hasNext: _hasNext,
-                    nextTitle: _hasNext ? _queue[_queueIndex + 1].title : null,
-                    autoNext: ref.watch(settingsControllerProvider).autoPlayNextInGallery,
-                    onRewatch: () => unawaited(_rewatch()),
-                    onPlayNext: _hasNext ? () => unawaited(_playNext()) : null,
                   ),
-                ],
-              ),
+                Expanded(
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      if (_error != null)
+                        Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  _error!,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 16,
+                                    height: 1.4,
+                                  ),
+                                ),
+                                if (_session.filePath != null &&
+                                    !_session.isVault) ...[
+                                  const SizedBox(height: 16),
+                                  FilledButton(
+                                    onPressed: _openExternal,
+                                    child: const Text('Open in another app'),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        )
+                      else
+                        HeroMode(
+                          enabled: _heroTag != null,
+                          child: Hero(
+                            tag: _heroTag ?? 'player-idle',
+                            child: _FittedVideo(
+                              width: _frameWidth,
+                              height: _frameHeight,
+                              child: _pinchZoom
+                                  ? InteractiveViewer(
+                                      minScale: 1,
+                                      maxScale: 3,
+                                      panEnabled: false,
+                                      child: video,
+                                    )
+                                  : video,
+                            ),
+                          ),
+                        ),
+                      if (_locked)
+                        Positioned.fill(
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () => setState(() => _lockHint = !_lockHint),
+                            child: _lockHint
+                                ? Center(
+                                    child: IconButton(
+                                      tooltip: 'Unlock',
+                                      iconSize: 42,
+                                      onPressed: () => setState(() {
+                                        _locked = false;
+                                        _lockHint = false;
+                                        _chrome = true;
+                                      }),
+                                      icon: const Icon(
+                                        Icons.lock_open_rounded,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  )
+                                : const SizedBox.expand(),
+                          ),
+                        ),
+                      _osdLayer(),
+                      if (_showEndCard)
+                        _EndCard(
+                          countdown: _countdown,
+                          hasNext: _hasNext,
+                          nextTitle: _hasNext
+                              ? _queue[_queueIndex + 1].title
+                              : null,
+                          autoNext: ref
+                              .watch(settingsControllerProvider)
+                              .autoPlayNextInGallery,
+                          onRewatch: () => unawaited(_rewatch()),
+                          onPlayNext: _hasNext
+                              ? () => unawaited(_playNext())
+                              : null,
+                        ),
+                    ],
+                  ),
+                ),
+                if (!_ready && _error == null)
+                  const LinearProgressIndicator(
+                    color: AppColors.secondaryContainer,
+                    backgroundColor: Colors.white10,
+                  ),
+              ],
             ),
-            if (!_ready && _error == null)
-              const LinearProgressIndicator(
-                color: AppColors.secondaryContainer,
-                backgroundColor: Colors.white10,
-              ),
-          ],
+          ),
         ),
-        ),
-      ),
       ),
     );
   }
 }
 
 class _FittedVideo extends StatelessWidget {
-  const _FittedVideo({
-    required this.child,
-    this.width,
-    this.height,
-  });
+  const _FittedVideo({required this.child, this.width, this.height});
 
   final Widget child;
   final int? width;
@@ -1985,10 +2312,7 @@ class _FittedVideo extends StatelessWidget {
     return ColoredBox(
       color: Colors.black,
       child: Center(
-        child: AspectRatio(
-          aspectRatio: aspect,
-          child: child,
-        ),
+        child: AspectRatio(aspectRatio: aspect, child: child),
       ),
     );
   }
