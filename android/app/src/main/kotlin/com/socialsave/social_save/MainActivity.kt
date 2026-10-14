@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.CancellationSignal
 import android.os.Environment
 import android.provider.MediaStore
+import android.provider.OpenableColumns
 import android.provider.Settings
 import android.util.Rational
 import android.util.Size
@@ -37,6 +38,7 @@ class MainActivity : FlutterFragmentActivity() {
     private var wifiLockPerf: android.net.wifi.WifiManager.WifiLock? = null
     private var multicastLock: android.net.wifi.WifiManager.MulticastLock? = null
     private var pendingShare: String? = null
+    private var openedVideo: Map<String, String>? = null
     private var pipAllowed = false
     private var pipWidth = 16
     private var pipHeight = 9
@@ -442,6 +444,11 @@ class MainActivity : FlutterFragmentActivity() {
                     pendingShare = null
                     result.success(text)
                 }
+                "consumeOpenedVideo" -> {
+                    val video = openedVideo
+                    openedVideo = null
+                    result.success(video)
+                }
                 "setSecure" -> {
                     val secure = call.argument<Boolean>("secure") == true
                     runOnUiThread {
@@ -619,6 +626,7 @@ class MainActivity : FlutterFragmentActivity() {
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
         captureShare(intent)
+        captureOpenedVideo(intent)
     }
 
     override fun onDestroy() {
@@ -632,6 +640,7 @@ class MainActivity : FlutterFragmentActivity() {
         setIntent(intent)
         captureShare(intent)
         channel?.invokeMethod("sharedText", pendingShare)
+        captureOpenedVideo(intent)
     }
 
     private fun captureShare(intent: Intent?) {
@@ -899,6 +908,54 @@ class MainActivity : FlutterFragmentActivity() {
         } catch (_: Exception) {
             null
         }
+    }
+
+    private fun captureOpenedVideo(intent: Intent?) {
+        val uri = when (intent?.action) {
+            Intent.ACTION_VIEW -> intent.data
+            Intent.ACTION_SEND -> {
+                val type = intent.type ?: ""
+                if (!type.startsWith("video/")) {
+                    null
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM)
+                }
+            }
+            else -> null
+        } ?: return
+        io.execute {
+            try {
+                val path = playableFromUri(uri)
+                val title = videoDisplayName(uri) ?: File(path).name
+                val payload = mapOf("path" to path, "title" to title)
+                runOnUiThread {
+                    openedVideo = payload
+                    channel?.invokeMethod("openedVideo", payload)
+                }
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun playableFromUri(uri: Uri): String {
+        if (uri.scheme == "file") {
+            val path = uri.path
+            if (!path.isNullOrBlank() && File(path).canRead()) return path
+        }
+        return copyVideo(null, null, uri.toString())
+    }
+
+    private fun videoDisplayName(uri: Uri): String? {
+        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (index >= 0) return cursor.getString(index)
+            }
+        }
+        return uri.lastPathSegment
     }
 
     private fun copyVideo(id: String?, path: String?, uriString: String?): String {

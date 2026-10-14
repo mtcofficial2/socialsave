@@ -24,9 +24,11 @@ class NotificationService {
       guid: '6f1c2b8e-4d3a-4a5e-9b7c-2e8f0a1d5c43',
     );
     try {
-      await _plugin.initialize(
-        const InitializationSettings(android: android, iOS: ios, windows: windows),
-      );
+      await _plugin
+          .initialize(
+            const InitializationSettings(android: android, iOS: ios, windows: windows),
+          )
+          .timeout(const Duration(seconds: 3));
     } catch (_) {
       // Desktop notifications are best-effort; never block app start.
       if (defaultTargetPlatform != TargetPlatform.windows) rethrow;

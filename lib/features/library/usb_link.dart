@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
+import 'package:social_save/core/platform/player_identity.dart';
 import 'package:social_save/features/library/nearby_service.dart';
 
 /// USB cable mode (Windows): finds phones plugged in with USB debugging on,
@@ -126,6 +127,7 @@ class UsbLink {
         'id': NearbyService.id,
         'name': NearbyService.name,
         'kind': NearbyService.kind,
+        'player': thisPlayerName,
         'port': reversePort,
       }));
       final res = await req.close().timeout(const Duration(seconds: 3));

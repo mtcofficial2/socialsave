@@ -137,7 +137,7 @@ class PlaybackService : Service() {
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setLargeIcon(BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher))
             .setContentTitle(title)
-            .setContentText("SocialSave")
+            .setContentText("Phone player")
             .setContentIntent(open)
             .setOngoing(playing)
             .setOnlyAlertOnce(true)

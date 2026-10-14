@@ -194,7 +194,8 @@ class PhoneBody(
         val current = session ?: return
         val metadata = MediaMetadata.Builder()
             .putString(MediaMetadata.METADATA_KEY_TITLE, this.title)
-            .putString(MediaMetadata.METADATA_KEY_ARTIST, "SocialSave")
+            .putString(MediaMetadata.METADATA_KEY_ARTIST, "Phone player")
+            .putString(MediaMetadata.METADATA_KEY_ALBUM, "SocialSave")
         if (durationMs > 0) metadata.putLong(MediaMetadata.METADATA_KEY_DURATION, durationMs)
         try {
             metadata.putBitmap(
@@ -478,7 +479,7 @@ class PhoneBody(
 
     private fun ensureSession() {
         if (session != null) return
-        val created = MediaSession(activity, "SocialSave")
+        val created = MediaSession(activity, "Phone player")
         created.setCallback(object : MediaSession.Callback() {
             override fun onMediaButtonEvent(mediaButtonIntent: Intent): Boolean {
                 if (!playbackActive) {

@@ -46,5 +46,31 @@ Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs 
 Name: "{group}\SocialSave"; Filename: "{app}\SocialSave.exe"; WorkingDir: "{app}"
 Name: "{autodesktop}\SocialSave"; Filename: "{app}\SocialSave.exe"; WorkingDir: "{app}"
 
+[Registry]
+; Listed under Open with. Does not replace the default video player.
+Root: HKCU; Subkey: "Software\Classes\SocialSave.Video"; ValueType: string; ValueName: ""; ValueData: "SocialSave"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\SocialSave.Video\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: """{app}\SocialSave.exe"",0"
+Root: HKCU; Subkey: "Software\Classes\SocialSave.Video\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\SocialSave.exe"" ""%1"""
+Root: HKCU; Subkey: "Software\Classes\Applications\SocialSave.exe"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "SocialSave"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Applications\SocialSave.exe\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\SocialSave.exe"" ""%1"""
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\App Paths\SocialSave.exe"; ValueType: string; ValueName: ""; ValueData: "{app}\SocialSave.exe"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\App Paths\SocialSave.exe"; ValueType: string; ValueName: "Path"; ValueData: "{app}"
+Root: HKCU; Subkey: "Software\Classes\Applications\SocialSave.exe\SupportedTypes"; ValueType: string; ValueName: ".mp4"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\SocialSave.exe\SupportedTypes"; ValueType: string; ValueName: ".mkv"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\SocialSave.exe\SupportedTypes"; ValueType: string; ValueName: ".webm"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\SocialSave.exe\SupportedTypes"; ValueType: string; ValueName: ".mov"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\SocialSave.exe\SupportedTypes"; ValueType: string; ValueName: ".m4v"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\video\OpenWithProgids"; ValueType: none; ValueName: "SocialSave.Video"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.mp4\OpenWithProgids"; ValueType: none; ValueName: "SocialSave.Video"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.mkv\OpenWithProgids"; ValueType: none; ValueName: "SocialSave.Video"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.webm\OpenWithProgids"; ValueType: none; ValueName: "SocialSave.Video"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.mov\OpenWithProgids"; ValueType: none; ValueName: "SocialSave.Video"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.m4v\OpenWithProgids"; ValueType: none; ValueName: "SocialSave.Video"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.mp4\OpenWithProgids"; ValueType: none; ValueName: "SocialSave.Video"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.mkv\OpenWithProgids"; ValueType: none; ValueName: "SocialSave.Video"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.webm\OpenWithProgids"; ValueType: none; ValueName: "SocialSave.Video"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.mov\OpenWithProgids"; ValueType: none; ValueName: "SocialSave.Video"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.m4v\OpenWithProgids"; ValueType: none; ValueName: "SocialSave.Video"; Flags: uninsdeletevalue
+
 [Run]
 Filename: "{app}\SocialSave.exe"; Description: "Open SocialSave"; Flags: nowait postinstall skipifsilent

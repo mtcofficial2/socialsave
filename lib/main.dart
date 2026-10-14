@@ -18,6 +18,7 @@ import 'package:social_save/features/downloads/data/datasources/download_history
 import 'package:social_save/features/library/nearby_service.dart';
 import 'package:social_save/features/library/bundle_transfer.dart';
 import 'package:social_save/core/platform/desktop_support.dart';
+import 'package:social_save/core/platform/open_with.dart';
 import 'package:social_save/features/library/nearby_ui.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
@@ -30,6 +31,9 @@ import 'package:social_save/shared/routing/app_router.dart';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Before the database. A second Open with launch must still be listed,
+  // even when another SocialSave already holds the downloads box.
+  if (Platform.isWindows) unawaited(registerWindowsVideoPlayer());
   // Test hook: a sender with no UI and no database, so it can run next to
   // the normal app on the same PC. `SocialSave.exe --send-only <file>`
   // Nearby test hooks (no UI, no database):
@@ -195,6 +199,7 @@ Future<void> main(List<String> args) async {
   );
   installNearbyUi();
   unawaited(NearbyService.start());
+  listenForOpenedVideos();
 
   // Desktop test hook: `SocialSave.exe --download <url>` runs the normal
   // analyze + save flow and prints each step.
@@ -271,21 +276,11 @@ Future<void> main(List<String> args) async {
   // `--key-log`: print every key the player handles (keyboard tests).
   if (args.contains('--key-log')) InAppPlayerScreen.keyLog = true;
 
-  // Desktop test hook: `SocialSave.exe --play <file>` opens the in-app player.
-  final at = args.indexOf('--play');
-  if (at >= 0 && at + 1 < args.length && File(args[at + 1]).existsSync()) {
-    final path = args[at + 1];
+  // Open with, or `SocialSave.exe --play <file>`, opens that video.
+  final opened = openedVideoArgument(args);
+  if (opened != null && File(opened).existsSync()) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      // ignore: avoid_print
-      print('debug --play $path');
-      appRouter.push(
-        '/player',
-        extra: PlayerSession(
-          title: path.split(Platform.pathSeparator).last,
-          platform: SocialPlatform.direct,
-          filePath: path,
-        ),
-      );
+      unawaited(playOpenedVideo(opened));
     });
   }
 }

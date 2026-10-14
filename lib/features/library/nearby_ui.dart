@@ -30,17 +30,17 @@ void installNearbyUi() {
         builder: (context, setState) => AlertDialog(
           icon: const Icon(Icons.download_for_offline_rounded),
           title: Text(offer.isFolder
-              ? '${offer.fromName} wants to send you a folder'
+              ? '${offer.fromPlayer} wants to send you a folder'
               : offer.count > 1
-                  ? '${offer.fromName} wants to send you ${offer.count} files'
+                  ? '${offer.fromPlayer} wants to send you ${offer.count} files'
                   : isVideoName(offer.fileName)
-                      ? '${offer.fromName} wants to send you a video'
-                      : '${offer.fromName} wants to send you a file'),
+                      ? '${offer.fromPlayer} wants to send you a video'
+                      : '${offer.fromPlayer} wants to send you a file'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(offer.fileName, maxLines: 3, overflow: TextOverflow.ellipsis),
+              Text('${offer.fromName} · ${offer.fileName}', maxLines: 3, overflow: TextOverflow.ellipsis),
               if (offer.size > 0 || offer.count > 1)
                 Text(
                   [if (offer.count > 1) '${offer.count} files', if (offer.size > 0) _size(offer.size)].join(' · '),
@@ -222,8 +222,8 @@ class _NearbyDeviceChipsState extends State<NearbyDeviceChips> {
               ActionChip(
                 key: ValueKey('nearby-${d.id}'),
                 avatar: Icon(d.isCable ? Icons.cable_rounded : (d.isPc ? Icons.computer_rounded : Icons.smartphone_rounded), size: 18),
-                label: Text(d.name),
-                tooltip: 'Send a video to ${d.name}',
+                label: Text('${d.playerName} · ${d.name}'),
+                tooltip: 'Send a video to ${d.playerName} ${d.name}',
                 onPressed: () => _tap(d),
               ),
             if (!cable) const UsbHint(),

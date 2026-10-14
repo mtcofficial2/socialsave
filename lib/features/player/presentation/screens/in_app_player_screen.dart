@@ -11,6 +11,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:social_save/core/platform/desktop_support.dart';
+import 'package:social_save/core/platform/player_identity.dart';
 import 'package:social_save/core/platform/win_focus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -146,9 +147,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       _queueIndex = 0;
     }
     _player = Player(
-      configuration: const PlayerConfiguration(
+      configuration: PlayerConfiguration(
         bufferSize: 64 * 1024 * 1024,
-        title: 'SocialSave',
+        title: thisPlayerName,
       ),
     );
     _video = VideoController(
@@ -1795,8 +1796,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                               : _session.isVault
                                   ? 'Vault · PIN protected'
                                   : DesktopSupport.isWindows
-                                      ? 'Space play · ←/→ seek · ↑/↓ volume · F full screen · ? shortcuts'
-                                      : 'Double-tap sides to skip · pinch to fill',
+                                      ? '$thisPlayerName · Space play · ←/→ seek · ↑/↓ volume · F full screen'
+                                      : '$thisPlayerName · Double-tap sides to skip · pinch to fill',
                           style: const TextStyle(color: Colors.white70, fontSize: 12, height: 1.2),
                         ),
                       ],

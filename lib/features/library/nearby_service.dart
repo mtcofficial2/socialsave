@@ -10,6 +10,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:social_save/core/platform/player_identity.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:social_save/features/library/usb_link.dart';
 
@@ -36,6 +37,7 @@ class NearbyDevice {
   final String link;
 
   bool get isPc => kind == 'pc';
+  String get playerName => playerNameForKind(kind);
   bool get isCable => link != 'wifi';
   int get rank => link == 'usb' ? 2 : (link == 'cable' ? 1 : 0);
 }
@@ -45,6 +47,7 @@ class IncomingOffer {
   IncomingOffer({
     required this.fromId,
     required this.fromName,
+    this.fromKind = 'phone',
     required this.fileName,
     required this.size,
     this.count = 1,
@@ -68,6 +71,10 @@ class IncomingOffer {
 
   final String fromId;
   final String fromName;
+
+  /// `pc` or `phone`. Missing beacons from older apps count as a phone.
+  final String fromKind;
+  String get fromPlayer => playerNameForKind(fromKind);
   final String fileName;
   final int size;
   final Completer<bool> answer = Completer<bool>();
@@ -134,6 +141,19 @@ class NearbyService {
   static bool _busy = false;
 
   static String get kind => Platform.isWindows ? 'pc' : 'phone';
+
+  /// `pc` or `phone` from a transfer request. Older apps omit it, so fall
+  /// back to a device we have already seen.
+  static String _kindOf(Map body) {
+    final raw = '${body['kind'] ?? ''}';
+    if (raw == 'pc' || raw == 'phone') return raw;
+    final fromId = '${body['id'] ?? ''}';
+    for (final device in devices.value) {
+      if (device.id == fromId && device.id.isNotEmpty) return device.kind;
+    }
+    if ('${body['player'] ?? ''}' == 'PC player') return 'pc';
+    return 'phone';
+  }
 
   static Future<void> start({String? testId, String? testName}) async {
     if (_started || !(Platform.isWindows || Platform.isAndroid)) return;
@@ -278,6 +298,7 @@ class NearbyService {
       'id': id,
       'name': name,
       'kind': kind,
+      'player': thisPlayerName,
       'port': _inbox?.port ?? inboxPort,
       if (hello) 'hello': true,
     }));
@@ -329,6 +350,7 @@ class NearbyService {
         final offer = IncomingOffer(
           fromId: '${body['id'] ?? ''}',
           fromName: '${body['name'] ?? 'Another device'}',
+          fromKind: _kindOf(body),
           fileName: p.basename('${body['file'] ?? 'video.mp4'}'),
           size: (body['size'] as num?)?.toInt() ?? 0,
         );
@@ -381,6 +403,7 @@ class NearbyService {
         final offer = IncomingOffer(
           fromId: '${body['id'] ?? ''}',
           fromName: '${body['name'] ?? 'Another device'}',
+          fromKind: _kindOf(body),
           fileName: safeSegment('${body['label'] ?? 'Files'}'),
           size: files.fold(0, (a, b) => a + b.$2),
           count: files.length,
@@ -451,13 +474,13 @@ class NearbyService {
           );
         }
         res.headers.contentType = ContentType.json;
-        res.write(jsonEncode({'ok': true, 'id': id, 'name': name, 'kind': kind}));
+        res.write(jsonEncode({'ok': true, 'id': id, 'name': name, 'kind': kind, 'player': thisPlayerName}));
         await res.close();
         return;
       }
       if (req.method == 'GET' && parts.length == 1 && parts[0] == 'hello') {
         res.headers.contentType = ContentType.json;
-        res.write(jsonEncode({'ss': 1, 'id': id, 'name': name, 'kind': kind}));
+        res.write(jsonEncode({'ss': 1, 'id': id, 'name': name, 'kind': kind, 'player': thisPlayerName}));
         await res.close();
         return;
       }
@@ -635,7 +658,14 @@ class NearbyService {
       onStatus?.call('Waiting for ${device.name} to accept…');
       final ask = await client.postUrl(Uri.http('${device.host}:${device.port}', '/ask'));
       ask.headers.contentType = ContentType.json;
-      ask.write(jsonEncode({'id': id, 'name': name, 'file': p.basename(file.path), 'size': total}));
+      ask.write(jsonEncode({
+        'id': id,
+        'name': name,
+        'kind': kind,
+        'player': thisPlayerName,
+        'file': p.basename(file.path),
+        'size': total,
+      }));
       final askRes = await ask.close().timeout(const Duration(seconds: 100));
       final answer = jsonDecode(await utf8.decoder.bind(askRes).join()) as Map<String, dynamic>;
       if (answer['ok'] != true) {
@@ -697,6 +727,8 @@ class NearbyService {
       ask.write(jsonEncode({
         'id': id,
         'name': name,
+        'kind': kind,
+        'player': thisPlayerName,
         'label': bundle.label,
         'folder': bundle.isFolder,
         'files': [for (final it in bundle.items) {'path': it.rel, 'size': it.size}],

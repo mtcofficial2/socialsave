@@ -65,7 +65,7 @@ Future<void> chooseTargetAndSend(BuildContext context, SendBundle bundle) async 
                               d.isCable ? Icons.cable_rounded : (d.isPc ? Icons.computer_rounded : Icons.smartphone_rounded),
                               size: 18,
                             ),
-                            label: Text(d.name),
+                            label: Text('${d.playerName} · ${d.name}'),
                             onPressed: () => Navigator.pop(context, d),
                           ),
                       ],
