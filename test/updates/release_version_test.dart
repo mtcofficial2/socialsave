@@ -19,4 +19,28 @@ void main() {
     );
     expect(newerRelease(current: '1.1.0', tag: 'v1.0.9', apkUrl: 'https://example.com/a.apk'), isNull);
   });
+
+  test('the Android app is the apk asset, not the Windows zip', () {
+    final assets = [
+      {
+        'name': 'SocialSave-Windows-1.0.20.zip',
+        'browser_download_url': 'https://example.com/SocialSave-Windows-1.0.20.zip',
+      },
+      {
+        'name': 'SocialSave.apk',
+        'browser_download_url': 'https://example.com/SocialSave.apk',
+      },
+    ];
+    expect(androidReleaseApk(assets), 'https://example.com/SocialSave.apk');
+    expect(
+      androidReleaseApk([
+        {
+          'name': 'SocialSave-1.0.20.apk',
+          'browser_download_url': 'https://example.com/other.apk',
+        },
+      ]),
+      'https://example.com/other.apk',
+    );
+    expect(androidReleaseApk([{'name': 'notes.txt', 'browser_download_url': 'https://example.com/n.txt'}]), isNull);
+  });
 }

@@ -37,6 +37,23 @@ class AvailableUpdate {
   final Uri downloadUrl;
 }
 
+/// The Android application file on a GitHub release.
+/// Prefers the exact name SocialSave.apk, then any other .apk asset.
+String? androidReleaseApk(Object? assets) {
+  if (assets is! List) return null;
+  String? fallback;
+  for (final asset in assets) {
+    if (asset is! Map) continue;
+    final name = '${asset['name'] ?? ''}'.trim();
+    final url = asset['browser_download_url'];
+    if (url is! String || url.isEmpty) continue;
+    if (!name.toLowerCase().endsWith('.apk')) continue;
+    if (name == 'SocialSave.apk') return url;
+    fallback ??= url;
+  }
+  return fallback;
+}
+
 AvailableUpdate? newerRelease({
   required String current,
   required String tag,

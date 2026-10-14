@@ -1,9 +1,11 @@
 package com.socialsave.social_save
 
 import android.app.PictureInPictureParams
+import android.content.ClipData
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.media.MediaScannerConnection
@@ -1019,6 +1021,16 @@ class MainActivity : FlutterFragmentActivity() {
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "application/vnd.android.package-archive")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            clipData = ClipData.newRawUri("SocialSave", uri)
+        }
+        // Hand the installer permission to read the file so it can see this is SocialSave.
+        val targets = packageManager.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
+        for (target in targets) {
+            grantUriPermission(
+                target.activityInfo.packageName,
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
         }
         startActivity(intent)
         return true

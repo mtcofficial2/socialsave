@@ -60,20 +60,15 @@ class UpdateController extends Notifier<UpdateState> {
         BaseOptions(
           connectTimeout: const Duration(seconds: 8),
           receiveTimeout: const Duration(seconds: 8),
-          headers: const {'Accept': 'application/vnd.github+json'},
+          headers: const {
+            'Accept': 'application/vnd.github+json',
+            'User-Agent': 'SocialSave',
+          },
         ),
       ).get<Map<String, dynamic>>(_releasesUrl);
       final data = response.data;
       if (data == null) return;
-      final assets = data['assets'];
-      String? apk;
-      if (assets is List) {
-        for (final asset in assets) {
-          if (asset is Map && asset['name'] == 'SocialSave.apk') {
-            apk = asset['browser_download_url'] as String?;
-          }
-        }
-      }
+      final apk = androidReleaseApk(data['assets']);
       final update = newerRelease(
         current: current,
         tag: '${data['tag_name'] ?? ''}',
