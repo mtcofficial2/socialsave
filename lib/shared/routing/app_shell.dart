@@ -8,7 +8,9 @@ import 'package:social_save/features/player/phone_remote.dart';
 import 'package:social_save/shared/models/download_status.dart';
 import 'package:social_save/features/updates/update_checker.dart';
 import 'package:social_save/shared/widgets/brand_header.dart';
+import 'package:social_save/shared/widgets/desktop_sidebar.dart';
 import 'package:social_save/shared/widgets/glass.dart';
+import 'package:social_save/shared/widgets/page_layout.dart';
 
 class AppShell extends ConsumerWidget {
   const AppShell({super.key, required this.navigationShell});
@@ -27,7 +29,7 @@ class AppShell extends ConsumerWidget {
         current.status != DownloadStatus.completed &&
         current.status != DownloadStatus.cancelled;
 
-    final wide = MediaQuery.sizeOf(context).width >= 840;
+    final wide = isDesktopShell(context);
     void selectTab(int index) {
       if (index != 1) {
         ref.read(vaultUnlockedProvider.notifier).state = false;
@@ -43,17 +45,23 @@ class AppShell extends ConsumerWidget {
       children: [
         const PhoneRemote(),
         if (showMini)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: _MiniProgress(
-              title: current.title,
-              progress: current.progress,
-              speed: ref.watch(formattersProvider).speed(current.bytesPerSecond),
-              thumbnail: current.thumbnailUrl,
-              onOpen: () => context.push('/progress/${current.id}'),
-              onPause: current.status.canPause
-                  ? () => ref.read(downloadManagerProvider.notifier).pause(current.id)
-                  : null,
+          Align(
+            alignment: Alignment.centerRight,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 480),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: _MiniProgress(
+                  title: current.title,
+                  progress: current.progress,
+                  speed: ref.watch(formattersProvider).speed(current.bytesPerSecond),
+                  thumbnail: current.thumbnailUrl,
+                  onOpen: () => context.push('/progress/${current.id}'),
+                  onPause: current.status.canPause
+                      ? () => ref.read(downloadManagerProvider.notifier).pause(current.id)
+                      : null,
+                ),
+              ),
             ),
           ),
         if (!wide)
@@ -70,42 +78,20 @@ class AppShell extends ConsumerWidget {
         backgroundColor: Colors.transparent,
         body: Row(
           children: [
-            NavigationRail(
-              selectedIndex: navigationShell.currentIndex,
-              onDestinationSelected: selectTab,
-              labelType: NavigationRailLabelType.all,
-              minWidth: 84,
-              groupAlignment: -0.9,
-              destinations: const [
-                NavigationRailDestination(
-                  icon: Icon(Icons.home_outlined),
-                  selectedIcon: Icon(Icons.home_rounded),
-                  label: Text('Home'),
-                ),
-                NavigationRailDestination(
-                  icon: Icon(Icons.video_library_outlined),
-                  selectedIcon: Icon(Icons.video_library_rounded),
-                  label: Text('Library'),
-                ),
-                NavigationRailDestination(
-                  icon: Icon(Icons.download_outlined),
-                  selectedIcon: Icon(Icons.download_rounded),
-                  label: Text('Downloads'),
-                ),
-                NavigationRailDestination(
-                  icon: Icon(Icons.tune_outlined),
-                  selectedIcon: Icon(Icons.tune_rounded),
-                  label: Text('Settings'),
-                ),
-              ],
+            DesktopSidebar(
+              index: navigationShell.currentIndex,
+              downloadBadge: activeCount,
+              onSelect: selectTab,
             ),
-            VerticalDivider(width: 1, color: Theme.of(context).colorScheme.outline),
             Expanded(
-              child: Column(
-                children: [
-                  Expanded(child: UpdateChecker(child: navigationShell)),
-                  chrome,
-                ],
+              child: DesktopChrome(
+                active: true,
+                child: Column(
+                  children: [
+                    Expanded(child: UpdateChecker(child: navigationShell)),
+                    chrome,
+                  ],
+                ),
               ),
             ),
           ],
@@ -178,7 +164,7 @@ class _MiniProgress extends StatelessWidget {
                     Text(
                       '${(progress * 100).round()}%  •  $speed',
                       style: TextStyle(
-                        fontSize: 11,
+                        fontSize: 12,
                         fontWeight: FontWeight.w600,
                         color: scheme.primary,
                       ),

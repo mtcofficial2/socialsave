@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 import 'package:social_save/shared/widgets/app_logo.dart';
 import 'package:social_save/shared/widgets/glass.dart';
 
@@ -17,13 +16,13 @@ class BrandHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 12, 8),
+      padding: const EdgeInsets.fromLTRB(0, 4, 0, 8),
       child: Row(
         children: [
           if (showBack)
             IconButton(
+              tooltip: 'Back',
               onPressed: onBack ?? () => Navigator.maybePop(context),
               icon: const Icon(Icons.arrow_back_rounded),
             ),
@@ -31,39 +30,16 @@ class BrandHeader extends StatelessWidget {
             Expanded(
               child: Text(
                 title!,
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: -0.3,
-                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.3,
+                    ),
               ),
             )
-          else ...[
+          else
             const AppLogo(size: 32, showWordmark: true),
-            const Spacer(),
-          ],
-          IconButton(
-            tooltip: 'Settings',
-            onPressed: () => context.go('/settings'),
-            icon: Icon(Icons.tune_rounded, color: scheme.onSurfaceVariant),
-          ),
-          Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              color: scheme.primary,
-              shape: BoxShape.circle,
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x14000000),
-                  blurRadius: 4,
-                  offset: Offset(0, 1),
-                ),
-              ],
-            ),
-            child: const Icon(Icons.person_rounded, color: Colors.white, size: 18),
-          ),
-          const SizedBox(width: 4),
         ],
       ),
     );
@@ -85,9 +61,9 @@ class StitchNavBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
       child: Glass(
-        borderRadius: 32,
+        borderRadius: 28,
         blur: true,
         child: SafeArea(
           top: false,
@@ -132,62 +108,68 @@ class StitchNavBar extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final color = selected ? scheme.primary : scheme.onSurfaceVariant;
     return Expanded(
-      child: InkWell(
-        onTap: () => onSelect(i),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              decoration: BoxDecoration(
-                color: selected ? scheme.primary.withValues(alpha: 0.16) : Colors.transparent,
-                borderRadius: BorderRadius.circular(999),
-                border: selected
-                    ? Border.all(color: Colors.white.withValues(alpha: 0.45))
-                    : null,
-              ),
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Icon(selected ? selectedIcon : icon, color: color, size: 24),
-                  if (badge > 0)
-                    Positioned(
-                      top: -6,
-                      right: -8,
-                      child: Container(
-                        width: 16,
-                        height: 16,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: scheme.primary,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: scheme.surface, width: 2),
-                        ),
-                        child: Text(
-                          '$badge',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w800,
-                            height: 1,
+      child: Semantics(
+        button: true,
+        selected: selected,
+        label: label,
+        child: InkWell(
+          onTap: () => onSelect(i),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                decoration: BoxDecoration(
+                  color: selected ? scheme.primary.withValues(alpha: 0.16) : Colors.transparent,
+                  borderRadius: BorderRadius.circular(999),
+                  border: selected
+                      ? Border.all(color: scheme.primary.withValues(alpha: 0.28))
+                      : null,
+                ),
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Icon(selected ? selectedIcon : icon, color: color, size: 24),
+                    if (badge > 0)
+                      Positioned(
+                        top: -6,
+                        right: -10,
+                        child: Container(
+                          constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: scheme.primary,
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: scheme.surface, width: 2),
+                          ),
+                          child: Text(
+                            badge > 9 ? '9+' : '$badge',
+                            style: TextStyle(
+                              color: scheme.onPrimary,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              height: 1,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                color: color,
+              const SizedBox(height: 2),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  color: color,
+                  height: 1.1,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

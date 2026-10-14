@@ -36,15 +36,18 @@ class SaveQueueSection extends ConsumerWidget {
               SavePhase.done => 'Done',
               SavePhase.failed => 'Failed',
             };
-            return GlassCard(
-              child: ListTile(
-                title: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-                subtitle: Text(item.detail ?? item.url, maxLines: 2, overflow: TextOverflow.ellipsis),
-                trailing: Text(
-                  label,
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    color: item.phase == SavePhase.failed ? scheme.error : scheme.primary,
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: GlassCard(
+                child: ListTile(
+                  title: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  subtitle: Text(item.detail ?? item.url, maxLines: 2, overflow: TextOverflow.ellipsis),
+                  trailing: Text(
+                    label,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: item.phase == SavePhase.failed ? scheme.error : scheme.primary,
+                    ),
                   ),
                 ),
               ),

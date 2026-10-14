@@ -1797,7 +1797,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                                   : DesktopSupport.isWindows
                                       ? 'Space play · ←/→ seek · ↑/↓ volume · F full screen · ? shortcuts'
                                       : 'Double-tap sides to skip · pinch to fill',
-                          style: const TextStyle(color: Colors.white70, fontSize: 11),
+                          style: const TextStyle(color: Colors.white70, fontSize: 12, height: 1.2),
                         ),
                       ],
                     ),

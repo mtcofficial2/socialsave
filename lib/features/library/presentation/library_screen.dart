@@ -24,9 +24,16 @@ import 'package:social_save/shared/widgets/skeleton.dart';
 import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/features/player/player_session.dart';
 import 'package:social_save/shared/models/social_platform.dart';
-import 'package:social_save/shared/widgets/brand_header.dart';
 import 'package:social_save/shared/widgets/empty_state.dart';
+import 'package:social_save/shared/widgets/page_layout.dart';
 import 'package:social_save/shared/widgets/local_video_thumb.dart';
+
+double _libraryGutter(BuildContext context) {
+  final width = MediaQuery.sizeOf(context).width;
+  if (width >= 1100) return 32;
+  if (width >= 840) return 24;
+  return 16;
+}
 
 final vaultServiceProvider = Provider<VaultService>(
   (ref) => throw StateError('vaultServiceProvider must be overridden'),
@@ -120,7 +127,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        _error = 'Could not load videos on this phone.';
+        _error = DesktopSupport.isWindows
+            ? 'Could not load videos on this PC.'
+            : 'Could not load videos on this phone.';
         _loading = false;
       });
     }
@@ -379,70 +388,103 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   }
 
   Widget _body(BuildContext context) {
+    final gutter = _libraryGutter(context);
+    final title = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Library', style: pageTitleStyle(context)),
+        if (isDesktopShell(context))
+          Text(
+            DesktopSupport.isWindows ? 'Videos on this PC' : 'Videos on this device',
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.3,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+      ],
+    );
+    final actions = <Widget>[
+      if (_tab == 0)
+        TextButton.icon(
+          key: const ValueKey('library-select'),
+          onPressed: () => setState(() {
+            _selectMode = !_selectMode;
+            if (!_selectMode) _selected.clear();
+          }),
+          icon: Icon(_selectMode ? Icons.close_rounded : Icons.checklist_rounded, size: 20),
+          label: Text(_selectMode ? 'Done' : 'Select'),
+        ),
+      FilledButton.tonalIcon(
+        key: const ValueKey('library-share'),
+        style: FilledButton.styleFrom(
+          minimumSize: const Size(0, 44),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+        ),
+        onPressed: () => showNearbySheet(
+          context,
+          onSend: _pickLibraryVideoToSend,
+          pickFile: _chooseFileToSend,
+          onReceived: () => _reload(rescan: DesktopSupport.isWindows),
+        ),
+        icon: const Icon(Icons.wifi_tethering_rounded, size: 18),
+        label: const Text('Share'),
+      ),
+      if (DesktopSupport.isWindows)
+        IconButton(
+          tooltip: 'Video folders',
+          onPressed: _manageWindowsFolders,
+          icon: const Icon(Icons.create_new_folder_outlined),
+        ),
+      IconButton(
+        tooltip: 'Refresh',
+        onPressed: () => _reload(rescan: true),
+        icon: const Icon(Icons.refresh_rounded),
+      ),
+    ];
     return Scaffold(
       body: SafeArea(
         child: Column(
           children: [
-            const BrandHeader(),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Library',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 20,
-                          ),
-                    ),
-                  ),
-                  if (_tab == 0)
-                    TextButton.icon(
-                      key: const ValueKey('library-select'),
-                      onPressed: () => setState(() {
-                        _selectMode = !_selectMode;
-                        if (!_selectMode) _selected.clear();
-                      }),
-                      icon: Icon(_selectMode ? Icons.close_rounded : Icons.checklist_rounded, size: 20),
-                      label: Text(_selectMode ? 'Done' : 'Select'),
-                    ),
-                  FilledButton.tonalIcon(
-                    key: const ValueKey('library-share'),
-                    style: FilledButton.styleFrom(minimumSize: const Size(0, 40)),
-                    onPressed: () => showNearbySheet(
-                      context,
-                      onSend: _pickLibraryVideoToSend,
-                      pickFile: _chooseFileToSend,
-                      onReceived: () => _reload(rescan: DesktopSupport.isWindows),
-                    ),
-                    icon: const Icon(Icons.wifi_tethering_rounded, size: 18),
-                    label: const Text('Share'),
-                  ),
-                  const SizedBox(width: 4),
-                  if (DesktopSupport.isWindows)
-                    IconButton(
-                      tooltip: 'Video folders',
-                      onPressed: _manageWindowsFolders,
-                      icon: const Icon(Icons.create_new_folder_outlined),
-                    ),
-                  IconButton(
-                    tooltip: 'Refresh',
-                    onPressed: () => _reload(rescan: true),
-                    icon: const Icon(Icons.refresh_rounded),
-                  ),
-                ],
+              padding: EdgeInsets.fromLTRB(gutter, 8, gutter, 8),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  if (constraints.maxWidth < 520) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        title,
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(children: actions),
+                        ),
+                      ],
+                    );
+                  }
+                  return Row(
+                    children: [
+                      Expanded(child: title),
+                      ...actions,
+                    ],
+                  );
+                },
               ),
             ),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Wrap(
-                spacing: 12,
-                runSpacing: 8,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  SegmentedButton<int>(
+              padding: EdgeInsets.symmetric(horizontal: gutter),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final wide = constraints.maxWidth >= 640;
+                  final switcher = SegmentedButton<int>(
+                    // On a wide library row, the two tabs share a wider track
+                    // so they reach a little further into the middle.
+                    expandedInsets: wide ? EdgeInsets.zero : null,
                     showSelectedIcon: false,
+                    style: SegmentedButton.styleFrom(
+                      minimumSize: const Size(72, 42),
+                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                    ),
                     segments: [
                       ButtonSegment(
                         value: 0,
@@ -453,19 +495,39 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
                     ],
                     selected: {_tab},
                     onSelectionChanged: (value) => _selectTab(value.first),
-                  ),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 360),
-                    child: TextField(
-                      onChanged: (value) => setState(() => _query = value),
-                      decoration: const InputDecoration(
-                        hintText: 'Search by title',
-                        prefixIcon: Icon(Icons.search_rounded),
-                        isDense: true,
-                      ),
+                  );
+                  final search = TextField(
+                    onChanged: (value) => setState(() => _query = value),
+                    decoration: const InputDecoration(
+                      hintText: 'Search by title',
+                      prefixIcon: Icon(Icons.search_rounded),
+                      isDense: true,
                     ),
-                  ),
-                ],
+                  );
+                  if (!wide) {
+                    return Wrap(
+                      spacing: 12,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        switcher,
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 360),
+                          child: search,
+                        ),
+                      ],
+                    );
+                  }
+                  final switchWidth = (constraints.maxWidth * 0.42).clamp(300.0, 440.0);
+                  final searchWidth = math.min(360.0, constraints.maxWidth - switchWidth - 16);
+                  return Row(
+                    children: [
+                      SizedBox(width: switchWidth, child: switcher),
+                      const SizedBox(width: 16),
+                      SizedBox(width: searchWidth, child: search),
+                    ],
+                  );
+                },
               ),
             ),
             const SizedBox(height: 8),
@@ -473,7 +535,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
               height: 40,
               child: ListView(
                 scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
+                padding: EdgeInsets.symmetric(horizontal: gutter),
                 children: [
                   for (final name in const ['All', 'YouTube', 'TikTok', 'Instagram', 'Facebook', 'X'])
                     Padding(
@@ -514,10 +576,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
             const SizedBox(height: 8),
             if ((_selectMode || _selected.isNotEmpty) && _tab == 0)
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                padding: EdgeInsets.fromLTRB(gutter, 0, gutter, 8),
                 child: Material(
                   color: Theme.of(context).colorScheme.secondaryContainer,
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(16),
                   child: Row(
                     children: [
                       IconButton(
@@ -544,7 +606,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
               ),
             if (DesktopSupport.isWindows && _scanning && _tab == 0)
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                padding: EdgeInsets.fromLTRB(gutter, 0, gutter, 8),
                 child: Row(
                   children: [
                     const SizedBox(
@@ -603,10 +665,12 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
                       Expanded(child: list),
                       const VerticalDivider(width: 1),
                       SizedBox(
-                        width: (constraints.maxWidth * 0.56).clamp(360, 760),
+                        width: (constraints.maxWidth * 0.48).clamp(320.0, 640.0),
                         child: docked == null
-                            ? const Center(
-                                child: Text('Choose a video to play it beside the library.'),
+                            ? const EmptyState(
+                                icon: Icons.play_circle_outline_rounded,
+                                title: 'Nothing playing',
+                                message: 'Choose a video to play it beside the library.',
                               )
                             : InAppPlayerScreen(
                                 key: ValueKey(
@@ -671,13 +735,21 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
             ListTile(
               leading: const Icon(Icons.video_library_outlined),
               title: const Text('Move to Library'),
-              subtitle: const Text('Put it back in On this phone and remove it from the vault'),
+              subtitle: Text(
+                DesktopSupport.isWindows
+                    ? 'Put it back under This PC and remove it from the vault'
+                    : 'Put it back in On this phone and remove it from the vault',
+              ),
               onTap: () => Navigator.pop(context, 'move'),
             ),
             ListTile(
               leading: const Icon(Icons.copy_all_outlined),
               title: const Text('Keep a copy in Library'),
-              subtitle: const Text('Show it in On this phone and keep the vault copy locked'),
+              subtitle: Text(
+                DesktopSupport.isWindows
+                    ? 'Show it under This PC and keep the vault copy locked'
+                    : 'Show it in On this phone and keep the vault copy locked',
+              ),
               onTap: () => Navigator.pop(context, 'copy'),
             ),
             ListTile(
@@ -911,12 +983,13 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
                 subtitle: Text(video.path ?? ''),
                 onTap: () => Navigator.pop(context, 'reveal'),
               ),
-            ListTile(
-              leading: const Icon(Icons.tv_rounded),
-              title: const Text('Play on TV'),
-              subtitle: const Text('Opens the video already on this phone'),
-              onTap: () => Navigator.pop(context, 'tv'),
-            ),
+            if (!DesktopSupport.isWindows)
+              ListTile(
+                leading: const Icon(Icons.tv_rounded),
+                title: const Text('Play on TV'),
+                subtitle: const Text('Opens the video already on this phone'),
+                onTap: () => Navigator.pop(context, 'tv'),
+              ),
             ListTile(
               leading: const Icon(Icons.qr_code_rounded),
               title: const Text('Send to another device'),
@@ -1197,13 +1270,21 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
             ListTile(
               leading: const Icon(Icons.copy_all_outlined),
               title: const Text('Copy to vault'),
-              subtitle: const Text('Keep the original on this phone'),
+              subtitle: Text(
+                DesktopSupport.isWindows
+                    ? 'Keep the original on this PC'
+                    : 'Keep the original on this phone',
+              ),
               onTap: () => Navigator.pop(context, 'copy'),
             ),
             ListTile(
               leading: const Icon(Icons.lock_outline),
               title: const Text('Move to vault'),
-              subtitle: const Text('Remove it from Gallery and Files'),
+              subtitle: Text(
+                DesktopSupport.isWindows
+                    ? 'Remove the original file and keep only the vault copy'
+                    : 'Remove it from Gallery and Files',
+              ),
               onTap: () => Navigator.pop(context, 'move'),
             ),
           ],
@@ -1329,7 +1410,7 @@ class _DeviceList extends StatelessWidget {
       );
     }
     return GridView.builder(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      padding: EdgeInsets.fromLTRB(_libraryGutter(context), 8, _libraryGutter(context), 24),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 240,
         mainAxisSpacing: 12,
@@ -1510,7 +1591,7 @@ class _VideoCard extends StatelessWidget {
                             durationLabel!,
                             style: const TextStyle(
                               color: Colors.white,
-                              fontSize: 11,
+                              fontSize: 12,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
@@ -1541,14 +1622,14 @@ class _VideoCard extends StatelessWidget {
                     title,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                    style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, height: 1.25),
                   ),
                   if (caption != null)
                     Text(
                       caption!,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                      style: TextStyle(fontSize: 12, height: 1.3, color: scheme.onSurfaceVariant),
                     ),
                 ],
               ),
@@ -1596,7 +1677,7 @@ class _VaultGate extends ConsumerWidget {
             child: EmptyState(
               icon: Icons.lock_outline,
               title: 'Vault is empty',
-              message: 'Open On this phone, then tap the lock icon to hide a video behind your PIN.',
+              message: 'From the other tab, use the lock action on a video to hide it behind your PIN.',
             ),
           ),
         ],
@@ -1617,7 +1698,7 @@ class _VaultGate extends ConsumerWidget {
         ),
         Expanded(
           child: GridView.builder(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+            padding: EdgeInsets.fromLTRB(_libraryGutter(context), 8, _libraryGutter(context), 24),
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: MediaQuery.sizeOf(context).width >= 700 ? 3 : 2,
               mainAxisSpacing: 12,

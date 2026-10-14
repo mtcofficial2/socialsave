@@ -25,13 +25,14 @@ class ErrorBanner extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Icon(Icons.error_outline_rounded, color: scheme.error, size: 20),
+            const SizedBox(width: 10),
             Expanded(
               child: Text(
                 message,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: scheme.error,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: scheme.onErrorContainer,
                       height: 1.4,
-                      fontSize: 13,
                     ),
               ),
             ),

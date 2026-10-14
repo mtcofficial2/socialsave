@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:social_save/core/platform/phone_body.dart';
 import 'package:social_save/features/player/playback_bridge.dart';
+import 'package:social_save/shared/widgets/glass.dart';
 
 /// Shown on the phone while a video is also on a monitor or TV display.
 class PhoneRemote extends StatefulWidget {
@@ -40,13 +41,12 @@ class _PhoneRemoteState extends State<PhoneRemote> {
   @override
   Widget build(BuildContext context) {
     if (!_show) return const SizedBox.shrink();
-    final scheme = Theme.of(context).colorScheme;
     final title = PlaybackBridge.title?.call() ?? 'Video';
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      child: Material(
-        color: scheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(20),
+      child: Glass(
+        borderRadius: 22,
+        blur: true,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
           child: Row(

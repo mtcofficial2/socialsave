@@ -25,7 +25,7 @@ class ErrorMessages {
       'This platform is turned off in the current configuration.';
 
   static const String alreadySaved =
-      'Already saved on this phone. The existing file was kept.';
+      'Already saved on this device. The existing file was kept.';
 
   static const String downloadNotPermitted =
       'This platform does not allow third-party apps to download the file. SocialSave will not bypass that restriction.';

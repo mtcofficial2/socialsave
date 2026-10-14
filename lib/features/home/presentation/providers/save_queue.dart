@@ -96,7 +96,7 @@ class SaveQueueController extends Notifier<List<SaveQueueItem>> {
             _replace(current.copyWith(
               title: current.title,
               phase: SavePhase.done,
-              detail: 'Already on this phone',
+              detail: 'Already on this device',
             ));
             continue;
           }

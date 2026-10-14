@@ -140,7 +140,7 @@ class _UrlInputCardState extends ConsumerState<UrlInputCard> {
                           textInputAction: TextInputAction.done,
                           autocorrect: false,
                           enableSuggestions: false,
-                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
                           decoration: const InputDecoration(
                             hintText: 'https://...',
                             isDense: true,
@@ -172,7 +172,7 @@ class _UrlInputCardState extends ConsumerState<UrlInputCard> {
                               ? 'Extracting public metadata…'
                               : 'Public ${platform.displayName} detected',
                           style: TextStyle(
-                            fontSize: 11,
+                            fontSize: 12,
                             color: scheme.onSurfaceVariant,
                           ),
                         ),
@@ -180,8 +180,8 @@ class _UrlInputCardState extends ConsumerState<UrlInputCard> {
                         Text(
                           state.isAnalyzing ? 'Working' : 'Ready',
                           style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w500,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
                             color: scheme.onSurfaceVariant,
                           ),
                         ),

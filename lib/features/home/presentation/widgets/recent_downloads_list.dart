@@ -47,7 +47,7 @@ class RecentDownloadsSection extends ConsumerWidget {
                   child: Text(
                     '${recent.length}',
                     style: TextStyle(
-                      fontSize: 11,
+                      fontSize: 12,
                       fontWeight: FontWeight.w800,
                       color: scheme.primary,
                     ),
@@ -56,7 +56,13 @@ class RecentDownloadsSection extends ConsumerWidget {
                 const Spacer(),
                 TextButton(
                   onPressed: () => context.go('/downloads'),
-                  child: const Text('View All >'),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('View all'),
+                      Icon(Icons.chevron_right_rounded, size: 18),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -116,7 +122,7 @@ class _RecentRow extends ConsumerWidget {
                           Text(
                             record.platform.displayName,
                             style: TextStyle(
-                              fontSize: 11,
+                              fontSize: 12,
                               fontWeight: FontWeight.w600,
                               color: scheme.onSurfaceVariant,
                             ),
@@ -124,7 +130,7 @@ class _RecentRow extends ConsumerWidget {
                           Text('  •  ', style: TextStyle(color: scheme.onSurfaceVariant)),
                           Text(
                             record.quality ?? 'Video',
-                            style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                            style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                           ),
                         ],
                       ),
@@ -145,14 +151,14 @@ class _RecentRow extends ConsumerWidget {
                             style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                           ),
                           const SizedBox(width: 8),
-                          const Icon(Icons.check_circle, size: 14, color: AppColors.ok),
+                          Icon(Icons.check_circle, size: 14, color: AppColors.successFg(Theme.of(context).brightness)),
                           const SizedBox(width: 4),
-                          const Text(
+                          Text(
                             'Saved',
                             style: TextStyle(
-                              fontSize: 11,
+                              fontSize: 12,
                               fontWeight: FontWeight.w600,
-                              color: AppColors.ok,
+                              color: AppColors.successFg(Theme.of(context).brightness),
                             ),
                           ),
                         ],
@@ -167,8 +173,8 @@ class _RecentRow extends ConsumerWidget {
                     customBorder: const CircleBorder(),
                     onTap: () => openInAppPlayer(context, record),
                     child: SizedBox(
-                      width: 40,
-                      height: 40,
+                      width: 44,
+                      height: 44,
                       child: Icon(Icons.play_arrow_rounded, color: scheme.primary),
                     ),
                   ),

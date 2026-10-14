@@ -11,7 +11,6 @@ import 'package:social_save/features/home/presentation/providers/home_controller
 import 'package:social_save/features/library/vault_actions.dart';
 import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/shared/models/download_status.dart';
-import 'package:social_save/shared/widgets/brand_header.dart';
 import 'package:social_save/shared/widgets/glass.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
 import 'package:social_save/shared/widgets/skeleton.dart';
@@ -40,7 +39,15 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
     return Scaffold(
       body: SafeArea(
         child: history.when(
-          loading: () => const SkeletonList(),
+          loading: () => SafeArea(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const _DownloadsHeading(),
+                Expanded(child: SkeletonList(padding: pagePadding(context, top: 8))),
+              ],
+            ),
+          ),
           error: (error, _) => EmptyState(
             icon: Icons.error_outline_rounded,
             title: 'Could not load your downloads',
@@ -71,62 +78,68 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
 
             return Column(
               children: [
-                const BrandHeader(),
+                const _DownloadsHeading(),
                 Padding(
                   padding: pagePadding(context, bottom: 8),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Downloads',
-                          style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final search = TextField(
+                        onChanged: (value) => setState(() => _query = value),
+                        decoration: const InputDecoration(
+                          hintText: 'Search downloads',
+                          prefixIcon: Icon(Icons.search_rounded),
+                          isDense: true,
                         ),
-                      ),
-                    ],
-                  ),
-                ),
-                Padding(
-                  padding: pagePadding(context, bottom: 8),
-                  child: TextField(
-                    onChanged: (value) => setState(() => _query = value),
-                    decoration: const InputDecoration(
-                      hintText: 'Search downloads',
-                      prefixIcon: Icon(Icons.search_rounded),
-                      isDense: true,
-                    ),
-                  ),
-                ),
-                SizedBox(
-                  height: 44,
-                  child: ListView(
-                    scrollDirection: Axis.horizontal,
-                    padding: pagePadding(context, bottom: 0),
-                    children: [
-                      _FilterChip(
-                        label: 'All',
-                        count: '${records.length + active.length}',
-                        selected: _filter == 'All',
-                        onTap: () => setState(() => _filter = 'All'),
-                      ),
-                      _FilterChip(
-                        label: 'In Progress',
-                        count: '${active.length}',
-                        highlightCount: true,
-                        selected: _filter == 'In Progress',
-                        onTap: () => setState(() => _filter = 'In Progress'),
-                      ),
-                      _FilterChip(
-                        label: 'Completed',
-                        count: '${records.where((item) => item.status == DownloadStatus.completed).length}',
-                        selected: _filter == 'Completed',
-                        onTap: () => setState(() => _filter = 'Completed'),
-                      ),
-                      _FilterChip(
-                        label: 'Audio',
-                        selected: _filter == 'Audio',
-                        onTap: () => setState(() => _filter = 'Audio'),
-                      ),
-                    ],
+                      );
+                      final filters = SizedBox(
+                        height: 48,
+                        child: ListView(
+                          scrollDirection: Axis.horizontal,
+                          children: [
+                            _FilterChip(
+                              label: 'All',
+                              count: '${records.length + active.length}',
+                              selected: _filter == 'All',
+                              onTap: () => setState(() => _filter = 'All'),
+                            ),
+                            _FilterChip(
+                              label: 'In Progress',
+                              count: '${active.length}',
+                              highlightCount: true,
+                              selected: _filter == 'In Progress',
+                              onTap: () => setState(() => _filter = 'In Progress'),
+                            ),
+                            _FilterChip(
+                              label: 'Completed',
+                              count: '${records.where((item) => item.status == DownloadStatus.completed).length}',
+                              selected: _filter == 'Completed',
+                              onTap: () => setState(() => _filter = 'Completed'),
+                            ),
+                            _FilterChip(
+                              label: 'Audio',
+                              selected: _filter == 'Audio',
+                              onTap: () => setState(() => _filter = 'Audio'),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (constraints.maxWidth < 720) {
+                        return Column(
+                          children: [
+                            search,
+                            const SizedBox(height: 8),
+                            filters,
+                          ],
+                        );
+                      }
+                      return Row(
+                        children: [
+                          Expanded(child: filters),
+                          const SizedBox(width: 16),
+                          SizedBox(width: 320, child: search),
+                        ],
+                      );
+                    },
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -197,9 +210,13 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                                                       children: [
                                                         Text(
                                                           task.platform.displayName,
-                                                          style: const TextStyle(
+                                                          style: TextStyle(
                                                             fontWeight: FontWeight.w700,
-                                                            fontSize: 11,
+                                                            fontSize: 12,
+                                                            color: AppColors.readableBrand(
+                                                              AppColors.platformColor(task.platform),
+                                                              scheme,
+                                                            ),
                                                           ),
                                                         ),
                                                         const Spacer(),
@@ -282,6 +299,29 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
   }
 }
 
+class _DownloadsHeading extends StatelessWidget {
+  const _DownloadsHeading();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: pagePadding(context, top: 12, bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Downloads', style: pageTitleStyle(context)),
+          const SizedBox(height: 4),
+          Text(
+            'Saves in progress and videos already on this device.',
+            style: TextStyle(fontSize: 13, height: 1.35, color: scheme.onSurfaceVariant),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _FilterChip extends StatelessWidget {
   const _FilterChip({
     required this.label,
@@ -317,7 +357,7 @@ class _FilterChip extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
-                    color: selected ? Colors.white : scheme.onSurfaceVariant,
+                    color: selected ? scheme.onPrimaryContainer : scheme.onSurfaceVariant,
                   ),
                 ),
                 if (count != null) ...[
@@ -333,12 +373,12 @@ class _FilterChip extends StatelessWidget {
                     child: Text(
                       count!,
                       style: TextStyle(
-                        fontSize: 10,
+                        fontSize: 12,
                         fontWeight: FontWeight.w800,
                         color: highlightCount && !selected
                             ? scheme.onSecondaryContainer
                             : selected
-                                ? Colors.white
+                                ? scheme.onPrimaryContainer
                                 : scheme.onSurfaceVariant,
                       ),
                     ),
@@ -362,7 +402,8 @@ class _HistoryCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final formatters = ref.watch(formattersProvider);
     final scheme = Theme.of(context).colorScheme;
-    final color = AppColors.platformColor(record.platform);
+    final brand = AppColors.readableBrand(AppColors.platformColor(record.platform), scheme);
+    final saved = AppColors.successFg(Theme.of(context).brightness);
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: GlassCard(
@@ -407,7 +448,7 @@ class _HistoryCard extends ConsumerWidget {
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                               decoration: BoxDecoration(
-                                color: color.withValues(alpha: 0.12),
+                                color: brand.withValues(alpha: 0.12),
                                 borderRadius: BorderRadius.circular(999),
                               ),
                               child: Row(
@@ -418,8 +459,8 @@ class _HistoryCard extends ConsumerWidget {
                                   Text(
                                     record.platform.displayName,
                                     style: TextStyle(
-                                      color: color,
-                                      fontSize: 11,
+                                      color: brand,
+                                      fontSize: 12,
                                       fontWeight: FontWeight.w700,
                                     ),
                                   ),
@@ -427,13 +468,13 @@ class _HistoryCard extends ConsumerWidget {
                               ),
                             ),
                             const SizedBox(width: 6),
-                            const Icon(Icons.check_circle, size: 14, color: AppColors.ok),
+                            Icon(Icons.check_circle, size: 14, color: saved),
                             const SizedBox(width: 2),
                             Text(
                               record.status.label,
-                              style: const TextStyle(
-                                color: AppColors.ok,
-                                fontSize: 11,
+                              style: TextStyle(
+                                color: saved,
+                                fontSize: 12,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -473,15 +514,16 @@ class _HistoryCard extends ConsumerWidget {
               const SizedBox(height: 8),
               Row(
                 children: [
-                  Icon(Icons.verified, size: 16, color: scheme.primary),
-                  const SizedBox(width: 4),
-                  Text(
-                    'Verified Creative Commons',
-                    style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-                  ),
-                  const Spacer(),
-                  _roundIcon(context, Icons.share_outlined, () => _handle(context, ref, 'share')),
+                  Icon(Icons.folder_outlined, size: 16, color: scheme.onSurfaceVariant),
                   const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Saved on this device',
+                      style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                    ),
+                  ),
+                  _roundIcon(context, Icons.share_outlined, () => _handle(context, ref, 'share')),
+                  const SizedBox(width: 8),
                   _roundIcon(context, Icons.open_in_new, () => _handle(context, ref, 'open')),
                 ],
               ),
@@ -499,7 +541,7 @@ class _HistoryCard extends ConsumerWidget {
       child: InkWell(
         customBorder: const CircleBorder(),
         onTap: onTap,
-        child: SizedBox(width: 32, height: 32, child: Icon(icon, size: 16)),
+        child: SizedBox(width: 40, height: 40, child: Icon(icon, size: 18)),
       ),
     );
   }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:social_save/shared/widgets/page_layout.dart';
 
 class LegalScreen extends StatelessWidget {
   const LegalScreen({
@@ -24,7 +25,7 @@ class LegalScreen extends StatelessWidget {
           }
           final blocks = _parse(snapshot.data!);
           return ListView.builder(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
+            padding: pagePadding(context, top: 8, bottom: 40, maxWidth: 720),
             itemCount: blocks.length,
             itemBuilder: (context, index) {
               final block = blocks[index];
@@ -71,7 +72,7 @@ class LegalScreen extends StatelessWidget {
                     padding: const EdgeInsets.only(bottom: 12),
                     child: Text(
                       block.text,
-                      textAlign: TextAlign.justify,
+                      textAlign: TextAlign.start,
                       style: TextStyle(
                         fontSize: 15,
                         height: 1.55,

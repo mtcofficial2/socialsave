@@ -20,7 +20,7 @@ class PlatformBadge extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final color = AppColors.platformColor(platform);
     return Container(
-      height: compact ? 26 : 32,
+      height: compact ? 28 : 32,
       padding: EdgeInsets.fromLTRB(compact ? 8 : 8, 0, compact ? 10 : 12, 0),
       decoration: BoxDecoration(
         color: scheme.surfaceContainerHigh,
@@ -38,9 +38,9 @@ class PlatformBadge extends StatelessWidget {
           Text(
             platform.displayName,
             style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  fontSize: compact ? 11 : 12,
+                  fontSize: compact ? 12 : 13,
                   fontWeight: FontWeight.w600,
-                  color: enabled ? color : scheme.onSurfaceVariant,
+                  color: enabled ? AppColors.readableBrand(color, scheme) : scheme.onSurfaceVariant,
                 ),
           ),
         ],
@@ -87,7 +87,7 @@ class StatusBadge extends StatelessWidget {
         label,
         style: TextStyle(
           color: fg,
-          fontSize: 11,
+          fontSize: 12,
           fontWeight: FontWeight.w700,
           letterSpacing: 0.2,
         ),

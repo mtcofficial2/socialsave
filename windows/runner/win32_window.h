@@ -36,6 +36,14 @@ class Win32Window {
   // |Show| is called. Returns true if the window was created successfully.
   bool Create(const std::wstring& title, const Point& origin, const Size& size);
 
+  // Creates a window of |preferred| logical size, shrunk so it fits the
+  // primary monitor's work area, then centers it. The window stays invisible
+  // until |Show| is called.
+  bool CreateCentered(const std::wstring& title, const Size& preferred);
+
+  // Moves the window to the center of its monitor's work area.
+  void CenterOnWorkArea();
+
   // Show the current window. Returns true if the window was successfully shown.
   bool Show();
 

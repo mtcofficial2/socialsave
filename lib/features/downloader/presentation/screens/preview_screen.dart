@@ -17,6 +17,7 @@ import 'package:social_save/shared/models/media_info.dart';
 import 'package:social_save/shared/widgets/compliance_notice.dart';
 import 'package:social_save/shared/widgets/glass.dart';
 import 'package:social_save/shared/widgets/error_banner.dart';
+import 'package:social_save/shared/widgets/platform_badge.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
 import 'package:social_save/shared/widgets/video_thumbnail.dart';
 
@@ -132,59 +133,18 @@ class _PreviewBody extends ConsumerWidget {
                   onPressed: () => Navigator.maybePop(context),
                   icon: const Icon(Icons.arrow_back_rounded),
                 ),
-                const Expanded(
+                Expanded(
                   child: Text(
-                    'Media Inspection Details',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                    'Preview',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -0.3,
+                        ),
                   ),
                 ),
-                Container(
-                  width: 32,
-                  height: 32,
-                  decoration: BoxDecoration(
-                    color: scheme.primary,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.person, color: Colors.white, size: 18),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: scheme.primary,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'ANALYSIS COMPLETE',
-                  style: TextStyle(
-                    color: scheme.primary,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 11,
-                    letterSpacing: 0.6,
-                  ),
-                ),
-                const Spacer(),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: scheme.surfaceContainerHigh,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(
-                    'ID: ${media.platform.letter}-${media.sourceUrl.hashCode.abs().toRadixString(16).substring(0, 5).toUpperCase()}',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w500,
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
+                StatusBadge(
+                  label: media.canDownload ? 'Public' : 'Restricted',
+                  kind: media.canDownload ? StatusBadgeKind.public : StatusBadgeKind.restricted,
                 ),
               ],
             ),
@@ -199,7 +159,7 @@ class _PreviewBody extends ConsumerWidget {
                       VideoThumbnail(
                         url: media.thumbnailUrl,
                         durationSeconds: media.durationSeconds,
-                        height: 210,
+                        height: isDesktopShell(context) ? 380 : 210,
                         borderRadius: 0,
                       ),
                       Positioned(
@@ -220,7 +180,7 @@ class _PreviewBody extends ConsumerWidget {
                                 style: TextStyle(
                                   color: AppColors.platformColor(media.platform),
                                   fontWeight: FontWeight.w700,
-                                  fontSize: 11,
+                                  fontSize: 12,
                                 ),
                               ),
                             ],
@@ -239,7 +199,7 @@ class _PreviewBody extends ConsumerWidget {
                             ),
                             child: Text(
                               '${format!.width} × ${format.height}',
-                              style: const TextStyle(color: Colors.white, fontSize: 11),
+                              style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
                             ),
                           ),
                         ),
@@ -295,30 +255,34 @@ class _PreviewBody extends ConsumerWidget {
                         const SizedBox(height: 12),
                         if (media.canDownload)
                           Container(
-                            padding: const EdgeInsets.all(10),
+                            padding: const EdgeInsets.all(12),
                             decoration: BoxDecoration(
-                              color: AppColors.okSoft,
+                              color: AppColors.successBg(Theme.of(context).brightness),
                               borderRadius: BorderRadius.circular(12),
                             ),
-                            child: const Row(
+                            child: Row(
                               children: [
-                                Icon(Icons.verified, color: AppColors.ok, size: 20),
-                                SizedBox(width: 8),
+                                Icon(Icons.verified_outlined, color: AppColors.successFg(Theme.of(context).brightness), size: 20),
+                                const SizedBox(width: 8),
                                 Expanded(
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Text(
-                                        'Verified Public Post — Safe to Archive',
+                                        'Public link',
                                         style: TextStyle(
-                                          color: AppColors.ok,
+                                          color: AppColors.successFg(Theme.of(context).brightness),
                                           fontWeight: FontWeight.w700,
-                                          fontSize: 11,
+                                          fontSize: 13,
                                         ),
                                       ),
                                       Text(
-                                        'Metadata confirms creative attribution & open availability.',
-                                        style: TextStyle(color: AppColors.ok, fontSize: 11),
+                                        'You can save this. SocialSave does not bypass logins or DRM.',
+                                        style: TextStyle(
+                                          color: AppColors.successFg(Theme.of(context).brightness),
+                                          fontSize: 12,
+                                          height: 1.35,
+                                        ),
                                       ),
                                     ],
                                   ),
@@ -377,7 +341,7 @@ class _PreviewBody extends ConsumerWidget {
                               shape: BoxShape.circle,
                             ),
                             child: selected
-                                ? const Icon(Icons.check, size: 16, color: Colors.white)
+                                ? Icon(Icons.check, size: 16, color: scheme.onPrimary)
                                 : null,
                           ),
                           const SizedBox(width: 12),
@@ -406,9 +370,9 @@ class _PreviewBody extends ConsumerWidget {
                                           color: scheme.primary,
                                           borderRadius: BorderRadius.circular(999),
                                         ),
-                                        child: const Text(
-                                          'Recommended',
-                                          style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600),
+                                        child: Text(
+                                          'Selected',
+                                          style: TextStyle(color: scheme.onPrimary, fontSize: 12, fontWeight: FontWeight.w600),
                                         ),
                                       ),
                                     ],
@@ -416,7 +380,7 @@ class _PreviewBody extends ConsumerWidget {
                                 ),
                                 const SizedBox(height: 2),
                                 Text(
-                                  item.hasVideo ? 'H.264 • ${item.format.toUpperCase()}' : 'Audio extract',
+                                  item.hasVideo ? item.format.toUpperCase() : 'Audio',
                                   style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                                 ),
                               ],
@@ -433,8 +397,8 @@ class _PreviewBody extends ConsumerWidget {
                                 ),
                               ),
                               Text(
-                                selected ? 'Instant' : 'Fast',
-                                style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                                item.hasVideo ? 'Video' : 'Audio',
+                                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                               ),
                             ],
                           ),

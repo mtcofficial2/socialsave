@@ -93,7 +93,7 @@ class FontPickerSheet extends StatelessWidget {
                                   Text(
                                     font.mood,
                                     style: TextStyle(
-                                      fontSize: 11,
+                                      fontSize: 12,
                                       color: scheme.primary,
                                       fontWeight: FontWeight.w600,
                                     ),

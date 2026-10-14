@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:social_save/core/theme/app_colors.dart';
 import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/widgets/glass.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
@@ -36,8 +35,8 @@ class SupportedPlatformsSection extends StatelessWidget {
             ),
             const Spacer(),
             Text(
-              '9 Public Engines',
-              style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+              '9 sources',
+              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
             ),
           ],
         ),
@@ -46,10 +45,9 @@ class SupportedPlatformsSection extends StatelessWidget {
           spacing: 8,
           runSpacing: 8,
           children: _chips.map((item) {
-            final color = AppColors.platformColor(item.$1);
             return Glass(
               borderRadius: 999,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -58,8 +56,8 @@ class SupportedPlatformsSection extends StatelessWidget {
                   Text(
                     item.$2,
                     style: TextStyle(
-                      color: color,
-                      fontSize: 11,
+                      color: scheme.onSurface,
+                      fontSize: 13,
                       fontWeight: FontWeight.w600,
                     ),
                   ),

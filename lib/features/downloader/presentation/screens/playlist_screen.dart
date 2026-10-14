@@ -6,6 +6,8 @@ import 'package:social_save/features/downloader/presentation/providers/download_
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
 import 'package:social_save/shared/models/media_format.dart';
 import 'package:social_save/shared/models/playlist_entry.dart';
+import 'package:social_save/shared/widgets/empty_state.dart';
+import 'package:social_save/shared/widgets/page_layout.dart';
 
 class PlaylistScreen extends ConsumerStatefulWidget {
   const PlaylistScreen({super.key, required this.url});
@@ -105,18 +107,37 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(child: Padding(padding: const EdgeInsets.all(24), child: Text(_error!)))
+              ? EmptyState(
+                  icon: Icons.playlist_remove_rounded,
+                  title: 'Could not open this playlist',
+                  message: _error!,
+                  action: FilledButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        _loading = true;
+                        _error = null;
+                      });
+                      _load();
+                    },
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text('Try again'),
+                  ),
+                )
               : Column(
                   children: [
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                      padding: pagePadding(context, top: 8, bottom: 8),
                       child: Text(
                         'Choose public videos to save. Private and login-only items are skipped.',
-                        style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          height: 1.4,
+                        ),
                       ),
                     ),
                     Expanded(
                       child: ListView.builder(
+                        padding: pagePadding(context, top: 0, bottom: 8),
                         itemCount: _items.length,
                         itemBuilder: (context, index) {
                           final item = _items[index];
@@ -142,10 +163,13 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
                     ),
                     SafeArea(
                       child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: FilledButton(
-                          onPressed: _saving || _selected.isEmpty ? null : _saveSelected,
-                          child: Text(_saving ? 'Saving…' : 'Save selected'),
+                        padding: pagePadding(context, top: 8, bottom: 12),
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: FilledButton(
+                            onPressed: _saving || _selected.isEmpty ? null : _saveSelected,
+                            child: Text(_saving ? 'Saving…' : 'Save ${_selected.length}'),
+                          ),
                         ),
                       ),
                     ),

@@ -18,10 +18,25 @@ class AppTheme {
       brightness: scheme.brightness,
       scaffoldBackgroundColor: Colors.transparent,
     );
-    final text = _textTheme(base.textTheme, fontFamily).apply(
-      bodyColor: scheme.onSurface,
-      displayColor: scheme.onSurface,
-    );
+    final sourced = _textTheme(base.textTheme, fontFamily);
+    final text = sourced
+        .apply(
+          bodyColor: scheme.onSurface,
+          displayColor: scheme.onSurface,
+        )
+        .copyWith(
+          bodySmall: sourced.bodySmall?.copyWith(
+            fontSize: 13,
+            height: 1.4,
+            color: scheme.onSurfaceVariant,
+          ),
+          labelSmall: sourced.labelSmall?.copyWith(
+            fontSize: 12,
+            height: 1.3,
+            letterSpacing: 0.1,
+            color: scheme.onSurfaceVariant,
+          ),
+        );
 
     return base.copyWith(
       textTheme: text,
@@ -70,6 +85,7 @@ class AppTheme {
           borderSide: BorderSide(color: scheme.error),
         ),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        constraints: const BoxConstraints(minHeight: 48),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
@@ -157,13 +173,18 @@ class AppTheme {
       ),
       switchTheme: SwitchThemeData(
         thumbColor: WidgetStateProperty.resolveWith((states) {
-          return Colors.white;
+          if (states.contains(WidgetState.selected)) return scheme.onPrimary;
+          return scheme.brightness == Brightness.dark
+              ? scheme.outlineVariant
+              : Colors.white;
         }),
         trackColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) return scheme.primary;
-          return scheme.brightness == Brightness.dark
-              ? const Color(0xFF334155)
-              : const Color(0xFFCBD5E1);
+          return scheme.surfaceContainerHighest;
+        }),
+        trackOutlineColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) return Colors.transparent;
+          return scheme.outlineVariant;
         }),
       ),
     );

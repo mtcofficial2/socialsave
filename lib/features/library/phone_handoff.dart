@@ -1333,7 +1333,7 @@ class NearbyShareBar extends StatelessWidget {
                 ),
                 FilledButton.tonalIcon(
                   key: const ValueKey('nearby-send'),
-                  style: FilledButton.styleFrom(minimumSize: const Size(0, 40)),
+                  style: FilledButton.styleFrom(minimumSize: const Size(0, 44)),
                   onPressed: () => onSend != null ? onSend!() : pickAndSend(context),
                   icon: const Icon(Icons.send_rounded, size: 18),
                   label: const Text('Send'),
@@ -1341,7 +1341,7 @@ class NearbyShareBar extends StatelessWidget {
                 const SizedBox(width: 6),
                 OutlinedButton.icon(
                   key: const ValueKey('nearby-receive'),
-                  style: OutlinedButton.styleFrom(minimumSize: const Size(0, 40)),
+                  style: OutlinedButton.styleFrom(minimumSize: const Size(0, 44)),
                   onPressed: () => _receive(context),
                   icon: const Icon(Icons.download_rounded, size: 18),
                   label: const Text('Receive'),

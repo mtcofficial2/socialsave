@@ -149,6 +149,69 @@ bool Win32Window::Create(const std::wstring& title,
   return OnCreate();
 }
 
+bool Win32Window::CreateCentered(const std::wstring& title,
+                                 const Size& preferred) {
+  POINT origin{0, 0};
+  HMONITOR monitor = MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY);
+  MONITORINFO monitor_info{};
+  monitor_info.cbSize = sizeof(monitor_info);
+  unsigned int width = preferred.width;
+  unsigned int height = preferred.height;
+  if (GetMonitorInfo(monitor, &monitor_info)) {
+    UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
+    if (dpi == 0) {
+      dpi = 96;
+    }
+    const double scale = dpi / 96.0;
+    const int work_w = static_cast<int>(
+        (monitor_info.rcWork.right - monitor_info.rcWork.left) / scale);
+    const int work_h = static_cast<int>(
+        (monitor_info.rcWork.bottom - monitor_info.rcWork.top) / scale);
+    // Leave a margin so the title bar is not under the taskbar.
+    if (work_w > 80 && static_cast<int>(width) > work_w - 48) {
+      width = static_cast<unsigned int>(work_w - 48);
+    }
+    if (work_h > 80 && static_cast<int>(height) > work_h - 48) {
+      height = static_cast<unsigned int>(work_h - 48);
+    }
+  }
+  if (!Create(title, Point(0, 0), Size(width, height))) {
+    return false;
+  }
+  CenterOnWorkArea();
+  return true;
+}
+
+void Win32Window::CenterOnWorkArea() {
+  if (window_handle_ == nullptr) {
+    return;
+  }
+  RECT window_rect;
+  if (!GetWindowRect(window_handle_, &window_rect)) {
+    return;
+  }
+  HMONITOR monitor =
+      MonitorFromWindow(window_handle_, MONITOR_DEFAULTTONEAREST);
+  MONITORINFO monitor_info{};
+  monitor_info.cbSize = sizeof(monitor_info);
+  if (!GetMonitorInfo(monitor, &monitor_info)) {
+    return;
+  }
+  const RECT work = monitor_info.rcWork;
+  const int width = window_rect.right - window_rect.left;
+  const int height = window_rect.bottom - window_rect.top;
+  int x = work.left + ((work.right - work.left) - width) / 2;
+  int y = work.top + ((work.bottom - work.top) - height) / 2;
+  if (x < work.left) {
+    x = work.left;
+  }
+  if (y < work.top) {
+    y = work.top;
+  }
+  SetWindowPos(window_handle_, nullptr, x, y, 0, 0,
+               SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
 bool Win32Window::Show() {
   return ShowWindow(window_handle_, SW_SHOWNORMAL);
 }
@@ -180,11 +243,26 @@ Win32Window::MessageHandler(HWND hwnd,
                             LPARAM const lparam) noexcept {
   switch (message) {
     case WM_GETMINMAXINFO: {
-      // Keep the phone-style layout usable: at least 420 x 640 (scaled for DPI).
+      // Wide enough for the navigation rail (840) plus a content column.
       auto info = reinterpret_cast<MINMAXINFO*>(lparam);
-      double scale = FlutterDesktopGetDpiForHWND(hwnd) / 96.0;
-      info->ptMinTrackSize.x = static_cast<LONG>(420 * scale);
-      info->ptMinTrackSize.y = static_cast<LONG>(640 * scale);
+      const double scale = FlutterDesktopGetDpiForHWND(hwnd) / 96.0;
+      LONG min_w = static_cast<LONG>(960 * scale);
+      LONG min_h = static_cast<LONG>(640 * scale);
+      HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+      MONITORINFO monitor_info{};
+      monitor_info.cbSize = sizeof(monitor_info);
+      if (GetMonitorInfo(monitor, &monitor_info)) {
+        const LONG work_w = monitor_info.rcWork.right - monitor_info.rcWork.left;
+        const LONG work_h = monitor_info.rcWork.bottom - monitor_info.rcWork.top;
+        if (min_w > work_w) {
+          min_w = work_w;
+        }
+        if (min_h > work_h) {
+          min_h = work_h;
+        }
+      }
+      info->ptMinTrackSize.x = min_w;
+      info->ptMinTrackSize.y = min_h;
       return 0;
     }
     case WM_DESTROY:

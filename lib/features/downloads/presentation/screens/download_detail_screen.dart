@@ -13,6 +13,7 @@ import 'package:social_save/features/downloads/presentation/providers/downloads_
 import 'package:social_save/features/library/vault_actions.dart';
 import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/features/home/presentation/providers/home_controller.dart';
+import 'package:social_save/shared/widgets/empty_state.dart';
 import 'package:social_save/shared/widgets/platform_badge.dart';
 import 'package:social_save/shared/widgets/video_thumbnail.dart';
 
@@ -30,16 +31,38 @@ class DownloadDetailScreen extends ConsumerWidget {
       loading: () => const Scaffold(
         body: Center(child: CircularProgressIndicator()),
       ),
-      error: (error, _) => Scaffold(body: Center(child: Text('$error'))),
+      error: (error, _) => Scaffold(
+        appBar: AppBar(title: const Text('Saved video')),
+        body: EmptyState(
+          icon: Icons.error_outline_rounded,
+          title: 'Could not open this download',
+          message: '$error',
+        ),
+      ),
       data: (records) {
         final record = records.where((item) => item.id == id).firstOrNull;
         if (record == null) {
           return Scaffold(
-            appBar: AppBar(),
-            body: const Center(child: Text('This download was removed.')),
+            appBar: AppBar(title: const Text('Saved video')),
+            body: const EmptyState(
+              icon: Icons.video_library_outlined,
+              title: 'This download was removed',
+              message: 'It is no longer in your history.',
+            ),
           );
         }
         final controller = ref.read(downloadsControllerProvider.notifier);
+        final scheme = Theme.of(context).colorScheme;
+        Widget fact(IconData icon, String text) {
+          return Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 16, color: scheme.onSurfaceVariant),
+              const SizedBox(width: 6),
+              Text(text, style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13)),
+            ],
+          );
+        }
         return Scaffold(
           appBar: AppBar(title: const Text('Saved video')),
           body: ListView(
@@ -57,17 +80,35 @@ class DownloadDetailScreen extends ConsumerWidget {
                 record.title,
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                       fontWeight: FontWeight.w700,
+                      letterSpacing: -0.3,
+                      height: 1.25,
                     ),
               ),
-              if (record.author != null) Text(record.author!),
+              if (record.author != null && record.author!.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(record.author!, style: TextStyle(color: scheme.onSurfaceVariant)),
+              ],
               const SizedBox(height: 12),
-              Text(formatters.date(record.downloadedAt)),
-              Text(formatters.bytes(record.fileSize)),
-              if (record.localPath != null)
+              Wrap(
+                spacing: 16,
+                runSpacing: 8,
+                children: [
+                  fact(Icons.event_outlined, formatters.date(record.downloadedAt)),
+                  fact(Icons.sd_storage_outlined, formatters.bytes(record.fileSize)),
+                ],
+              ),
+              if (record.localPath != null) ...[
+                const SizedBox(height: 16),
                 Text(
+                  'Saved file',
+                  style: TextStyle(fontWeight: FontWeight.w700, color: scheme.onSurface),
+                ),
+                const SizedBox(height: 4),
+                SelectableText(
                   record.localPath!,
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
+              ],
               const SizedBox(height: 24),
               Row(
                 children: [

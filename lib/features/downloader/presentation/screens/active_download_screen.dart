@@ -31,7 +31,7 @@ class ActiveDownloadScreen extends ConsumerWidget {
         body: SafeArea(
           child: Column(
             children: [
-              const BrandHeader(showBack: true, title: 'Downloading Media'),
+              const BrandHeader(showBack: true, title: 'Downloading'),
               const Expanded(child: Center(child: Text('This download is no longer active.'))),
             ],
           ),
@@ -50,14 +50,22 @@ class ActiveDownloadScreen extends ConsumerWidget {
         child: ListView(
           padding: pagePadding(context),
           children: [
-            const BrandHeader(),
             Row(
               children: [
-                const Text(
-                  'Downloading Media',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                IconButton(
+                  tooltip: 'Close',
+                  onPressed: () => Navigator.maybePop(context),
+                  icon: const Icon(Icons.keyboard_arrow_down_rounded),
                 ),
-                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Downloading',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -0.3,
+                        ),
+                  ),
+                ),
                 Container(
                   width: 8,
                   height: 8,
@@ -66,14 +74,7 @@ class ActiveDownloadScreen extends ConsumerWidget {
                     shape: BoxShape.circle,
                   ),
                 ),
-                const Spacer(),
-                CircleAvatar(
-                  backgroundColor: scheme.surfaceContainer,
-                  child: IconButton(
-                    onPressed: () => Navigator.maybePop(context),
-                    icon: const Icon(Icons.keyboard_arrow_down_rounded),
-                  ),
-                ),
+                const SizedBox(width: 8),
               ],
             ),
             const SizedBox(height: 16),
@@ -276,7 +277,7 @@ class ActiveDownloadScreen extends ConsumerWidget {
                   CircleAvatar(
                     radius: 10,
                     backgroundColor: scheme.surfaceContainer,
-                    child: Text('${queued.length}', style: const TextStyle(fontSize: 11)),
+                    child: Text('${queued.length}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
                   ),
                 ],
               ),
@@ -320,7 +321,7 @@ class ActiveDownloadScreen extends ConsumerWidget {
       child: Text(
         label,
         style: TextStyle(
-          fontSize: 11,
+          fontSize: 12,
           fontWeight: FontWeight.w700,
           color: scheme.primary,
         ),

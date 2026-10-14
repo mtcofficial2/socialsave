@@ -9,22 +9,25 @@ class GlassBackground extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
+    final wide = MediaQuery.sizeOf(context).width >= 840;
     return DecoratedBox(
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: dark
-              ? const [Color(0xFF121A24), Color(0xFF0A1016), Color(0xFF102028)]
+              ? wide
+                  ? const [Color(0xFF161E2A), Color(0xFF0B1016), Color(0xFF0C1820)]
+                  : const [Color(0xFF121A24), Color(0xFF0A1016), Color(0xFF102028)]
               : const [Color(0xFFF5FAFF), Color(0xFFEEF3F7), Color(0xFFF7F4EF)],
         ),
       ),
-      child: const Stack(
+      child: Stack(
         children: [
-          _Glow(top: -90, left: -50, size: 280, color: Color(0x665EEAD4)),
-          _Glow(top: 180, right: -80, size: 320, color: Color(0x5593C5FD)),
-          _Glow(bottom: -40, left: -20, size: 300, color: Color(0x44A5F3FC)),
-          _Glow(bottom: 120, right: -30, size: 220, color: Color(0x33C4B5FD)),
+          _Glow(top: wide ? -160 : -90, left: wide ? 160 : -50, size: wide ? 520 : 280, color: const Color(0x665EEAD4)),
+          _Glow(top: wide ? -40 : 180, right: wide ? 40 : -80, size: wide ? 420 : 320, color: const Color(0x5593C5FD)),
+          _Glow(bottom: wide ? -80 : -40, left: wide ? 280 : -20, size: wide ? 380 : 300, color: const Color(0x44A5F3FC)),
+          _Glow(bottom: 80, right: -30, size: wide ? 280 : 220, color: const Color(0x33C4B5FD)),
         ],
       ),
     );

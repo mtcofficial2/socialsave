@@ -61,7 +61,7 @@ class ComplianceNotice extends StatelessWidget {
                     style: TextStyle(
                       color: scheme.primary,
                       fontWeight: FontWeight.w700,
-                      fontSize: 11,
+                      fontSize: 13,
                     ),
                   ),
                   const SizedBox(height: 2),

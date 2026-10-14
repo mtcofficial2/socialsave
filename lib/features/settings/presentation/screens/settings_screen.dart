@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:social_save/shared/widgets/desktop_columns.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/platform/desktop_support.dart';
@@ -18,12 +19,10 @@ import 'package:social_save/features/library/index_backup.dart';
 import 'package:social_save/features/library/library_catalog.dart';
 import 'package:social_save/core/constants/app_constants.dart';
 import 'package:social_save/core/storage/download_path_service.dart';
-import 'package:social_save/core/theme/app_colors.dart';
 import 'package:social_save/core/theme/app_fonts.dart';
 import 'package:social_save/features/settings/domain/entities/app_settings.dart';
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
 import 'package:social_save/features/settings/presentation/screens/font_picker_sheet.dart';
-import 'package:social_save/shared/widgets/brand_header.dart';
 import 'package:social_save/shared/widgets/glass.dart';
 
 class SettingsScreen extends ConsumerWidget {
@@ -38,56 +37,29 @@ class SettingsScreen extends ConsumerWidget {
     return Scaffold(
       body: SafeArea(
         child: ListView(
-          padding: pagePadding(context, bottom: 32),
+          padding: pagePadding(context, top: 12, bottom: 32),
           children: [
-            const BrandHeader(),
-            Row(
-              children: [
-                CircleAvatar(
-                  backgroundColor: scheme.surfaceContainerLow,
-                  child: IconButton(
-                    onPressed: () => context.go('/'),
-                    icon: const Icon(Icons.arrow_back_rounded),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Settings',
-                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
-                      ),
-                      Text(
-                        'Archival preferences & fair-use compliance',
-                        style: TextStyle(fontSize: 11, color: AppColors.muted),
-                      ),
-                    ],
-                  ),
-                ),
-                CircleAvatar(
-                  backgroundColor: scheme.primary.withValues(alpha: 0.08),
-                  child: Icon(Icons.verified_user, color: scheme.primary, size: 20),
-                ),
-              ],
+            Text('Settings', style: pageTitleStyle(context)),
+            const SizedBox(height: 4),
+            Text(
+              'Downloads, playback, and how this device behaves.',
+              style: TextStyle(fontSize: 13, height: 1.35, color: scheme.onSurfaceVariant),
             ),
             const SizedBox(height: 20),
+            DesktopColumns(
+              sections: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
             _groupTitle(context, Icons.palette_outlined, 'Appearance & Theme'),
             GlassCard(
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
-                    Row(
-                      children: [
-                        const Text('Interface Theme', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
-                        const Spacer(),
-                        Text(
-                          settings.themeMode.name[0].toUpperCase() + settings.themeMode.name.substring(1),
-                          style: TextStyle(color: scheme.primary, fontSize: 11, fontWeight: FontWeight.w600),
-                        ),
-                      ],
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Interface Theme', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
                     ),
                     const SizedBox(height: 8),
                     Container(
@@ -130,12 +102,17 @@ class SettingsScreen extends ConsumerWidget {
                           child: const Icon(Icons.check, color: Colors.white, size: 16),
                         ),
                         const SizedBox(width: 12),
-                        const Expanded(
+                        Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('Wallpaper colors', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                              Text('Material You when the phone provides a palette', style: TextStyle(fontSize: 12, color: AppColors.muted)),
+                              const Text('Wallpaper colors', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                              Text(
+                                DesktopSupport.isWindows
+                                    ? 'Uses the accent color from Windows'
+                                    : 'Material You when the phone provides a palette',
+                                style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant),
+                              ),
                             ],
                           ),
                         ),
@@ -149,7 +126,11 @@ class SettingsScreen extends ConsumerWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 20),
+                  ],
+                ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
             _groupTitle(context, Icons.download_for_offline_outlined, 'Download Preferences'),
             GlassCard(
               child: Padding(
@@ -160,7 +141,9 @@ class SettingsScreen extends ConsumerWidget {
                       context,
                       icon: Icons.wifi,
                       title: 'Download over Wi-Fi only',
-                      subtitle: 'Conserve mobile cellular bandwidth',
+                      subtitle: DesktopSupport.isWindows
+                          ? 'Skip saves while this computer is on a metered connection'
+                          : 'Conserve mobile cellular bandwidth',
                       value: settings.wifiOnly,
                       onChanged: controller.setWifiOnly,
                     ),
@@ -198,7 +181,11 @@ class SettingsScreen extends ConsumerWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 20),
+                  ],
+                ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
             _groupTitle(context, Icons.play_circle_outline, 'Player'),
             GlassCard(
               child: Padding(
@@ -208,13 +195,20 @@ class SettingsScreen extends ConsumerWidget {
                   icon: Icons.skip_next_rounded,
                   title: 'Play next in Library',
                   subtitle:
-                      'When a video ends, count down 5 seconds to the next one. Tap Rewatch to play it again.',
+                      DesktopSupport.isWindows
+                          ? 'When a video ends, count down 5 seconds to the next one. Click Rewatch to play it again.'
+                          : 'When a video ends, count down 5 seconds to the next one. Tap Rewatch to play it again.',
                   value: settings.autoPlayNextInGallery,
                   onChanged: controller.setAutoPlayNextInGallery,
                 ),
               ),
             ),
-            const SizedBox(height: 20),
+                  ],
+                ),
+                if (!DesktopSupport.isWindows)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
             _groupTitle(context, Icons.phone_android_rounded, 'Phone'),
             GlassCard(
               child: Padding(
@@ -300,8 +294,18 @@ class SettingsScreen extends ConsumerWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 20),
-            _groupTitle(context, Icons.devices_outlined, 'Library on this phone and a computer'),
+                    ],
+                  ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+            _groupTitle(
+              context,
+              Icons.devices_outlined,
+              DesktopSupport.isWindows
+                  ? 'Library on this computer'
+                  : 'Library on this phone and a computer',
+            ),
             GlassCard(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -310,8 +314,12 @@ class SettingsScreen extends ConsumerWidget {
                     _navRow(
                       context,
                       icon: Icons.qr_code_rounded,
-                      title: 'Show titles on a computer',
-                      subtitle: 'A short code lists saved titles. Videos stay on this phone.',
+                      title: DesktopSupport.isWindows
+                          ? 'Show titles on the website'
+                          : 'Show titles on a computer',
+                      subtitle: DesktopSupport.isWindows
+                          ? 'A short code lists saved titles. Videos stay on this computer.'
+                          : 'A short code lists saved titles. Videos stay on this phone.',
                       onTap: () => _pairLibrary(context, ref),
                     ),
                     const SizedBox(height: 8),
@@ -334,7 +342,11 @@ class SettingsScreen extends ConsumerWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 20),
+                  ],
+                ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
             _groupTitle(context, Icons.notifications_active_outlined, 'Notifications & System'),
             GlassCard(
               child: Padding(
@@ -345,7 +357,9 @@ class SettingsScreen extends ConsumerWidget {
                       context,
                       icon: Icons.done_all,
                       title: 'Download Complete Alerts',
-                      subtitle: 'Haptic chime when video parsing succeeds',
+                      subtitle: DesktopSupport.isWindows
+                          ? 'A notice when a save finishes'
+                          : 'Haptic chime when video parsing succeeds',
                       value: settings.notificationsEnabled,
                       onChanged: (value) async {
                         if (value) {
@@ -359,7 +373,9 @@ class SettingsScreen extends ConsumerWidget {
                       context,
                       icon: Icons.preview_outlined,
                       title: 'Thumbnail in Notification',
-                      subtitle: 'Display creator thumbnail on lockscreen preview',
+                      subtitle: DesktopSupport.isWindows
+                          ? 'Show the video picture on the notice'
+                          : 'Display creator thumbnail on lockscreen preview',
                       value: settings.notificationsEnabled,
                       onChanged: controller.setNotifications,
                     ),
@@ -367,7 +383,11 @@ class SettingsScreen extends ConsumerWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 20),
+                  ],
+                ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
             _groupTitle(context, Icons.gavel, 'Legal, Compliance & Privacy'),
             GlassCard(
               child: Padding(
@@ -437,18 +457,18 @@ class SettingsScreen extends ConsumerWidget {
                       children: [
                         Icon(Icons.cleaning_services_outlined, color: scheme.onSurfaceVariant),
                         const SizedBox(width: 16),
-                        const Expanded(
+                        Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
+                              const Text(
                                 'Temporary Video Cache',
                                 style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
                               ),
-                              SizedBox(height: 2),
+                              const SizedBox(height: 2),
                               Text(
                                 'Thumbnails and temporary files',
-                                style: TextStyle(fontSize: 13, color: AppColors.muted),
+                                style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
                               ),
                             ],
                           ),
@@ -478,6 +498,10 @@ class SettingsScreen extends ConsumerWidget {
                 ),
               ),
             ),
+                  ],
+                ),
+              ],
+            ),
             const SizedBox(height: 20),
             Column(
               children: [
@@ -495,11 +519,11 @@ class SettingsScreen extends ConsumerWidget {
                 const SizedBox(height: 4),
                 Text(
                   'SocialSave v${AppConstants.appVersion} • Compliant Video Archiver',
-                  style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                  style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                 ),
                 Text(
                   'Encrypted local sandboxing • Zero cloud logging',
-                  style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant.withValues(alpha: 0.7)),
+                  style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                 ),
               ],
             ),
@@ -510,18 +534,23 @@ class SettingsScreen extends ConsumerWidget {
   }
 
   Widget _groupTitle(BuildContext context, IconData icon, String title) {
+    final scheme = Theme.of(context).colorScheme;
+    final wide = isDesktopShell(context);
     return Padding(
       padding: const EdgeInsets.only(bottom: 8, left: 4),
       child: Row(
         children: [
-          Icon(icon, size: 18, color: Theme.of(context).colorScheme.primary),
-          const SizedBox(width: 6),
-          Text(
-            title.toUpperCase(),
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.6,
+          Icon(icon, size: 16, color: scheme.primary),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              wide ? title : title.toUpperCase(),
+              style: TextStyle(
+                fontSize: wide ? 13 : 12,
+                fontWeight: FontWeight.w700,
+                letterSpacing: wide ? -0.1 : 0.6,
+                color: scheme.primary,
+              ),
             ),
           ),
         ],
@@ -547,18 +576,18 @@ class SettingsScreen extends ConsumerWidget {
           onTap: () => onChanged(mode),
           borderRadius: BorderRadius.circular(8),
           child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
+            padding: const EdgeInsets.symmetric(vertical: 12),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(icon, size: 16, color: selected ? Colors.white : scheme.onSurfaceVariant),
+                Icon(icon, size: 16, color: selected ? scheme.onPrimary : scheme.onSurfaceVariant),
                 const SizedBox(width: 4),
                 Text(
                   label,
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: 13,
                     fontWeight: FontWeight.w600,
-                    color: selected ? Colors.white : scheme.onSurfaceVariant,
+                    color: selected ? scheme.onPrimary : scheme.onSurfaceVariant,
                   ),
                 ),
               ],

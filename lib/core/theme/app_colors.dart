@@ -43,6 +43,20 @@ class AppColors {
   static const Color inkDark = Color(0xFFE8EEF6);
   static const Color mutedDark = Color(0xFFAAB6C8);
 
+  /// Green that stays readable on the current canvas.
+  static Color successFg(Brightness brightness) =>
+      brightness == Brightness.dark ? const Color(0xFF4ADE80) : ok;
+
+  static Color successBg(Brightness brightness) =>
+      brightness == Brightness.dark ? okSoftDark : okSoft;
+
+  /// Platform colors such as black disappear on a dark surface.
+  static Color readableBrand(Color brand, ColorScheme scheme) {
+    final gap = (brand.computeLuminance() - scheme.surface.computeLuminance()).abs();
+    if (gap < 0.28) return scheme.onSurface;
+    return brand;
+  }
+
   static ColorScheme lightScheme() {
     return const ColorScheme(
       brightness: Brightness.light,

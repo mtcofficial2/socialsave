@@ -21,6 +21,7 @@ import 'package:social_save/features/home/presentation/widgets/url_input_card.da
 import 'package:social_save/features/updates/update_card.dart';
 import 'package:social_save/shared/widgets/brand_header.dart';
 import 'package:social_save/shared/widgets/compliance_notice.dart';
+import 'package:social_save/shared/widgets/page_layout.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -140,52 +141,35 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   }
 
   Widget _scaffold(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 860),
-          child: ListView(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            if (constraints.maxWidth >= kDesktopSplitWidth) {
+              return _desktopHome(context);
+            }
+            return _narrowHome(context);
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _narrowHome(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 860),
+        child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
           children: [
             const BrandHeader(),
-            Text(
-              AppConstants.appTagline.endsWith('.')
-                  ? AppConstants.appTagline
-                  : '${AppConstants.appTagline}.',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                    fontSize: 14,
-                    height: 1.4,
-                  ),
-            ),
+            _tagline(context),
             const SizedBox(height: 16),
             const UpdateCard(),
             UrlInputCard(onAnalyze: _analyze, onPaste: _paste),
-            ValueListenableBuilder<bool>(
-              valueListenable: DioClient.waking,
-              builder: (context, waking, _) => !waking
-                  ? const SizedBox.shrink()
-                  : const Padding(
-                      padding: EdgeInsets.only(top: 8),
-                      child: Row(
-                        children: [
-                          SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
-                          SizedBox(width: 10),
-                          Expanded(child: Text('Waking the SocialSave server… this can take up to a minute.')),
-                        ],
-                      ),
-                    ),
-            ),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: _playlist,
-                icon: const Icon(Icons.playlist_play_rounded),
-                label: const Text('Save a public playlist'),
-              ),
-            ),
+            _wakingRow(scheme),
+            _playlistButton(),
             const SizedBox(height: 8),
             const NearbyShareBar(compact: true),
             const SizedBox(height: 12),
@@ -198,8 +182,124 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             const RecentDownloadsSection(),
           ],
         ),
-        ),
-        ),
+      ),
+    );
+  }
+
+  Widget _desktopHome(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(28, 12, 28, 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Save a video',
+            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.6,
+                ),
+          ),
+          const SizedBox(height: 4),
+          _tagline(context),
+          if (DesktopSupport.isWindows) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Ctrl+V pastes a link. Esc goes back.',
+              style: TextStyle(fontSize: 12, height: 1.3, color: scheme.onSurfaceVariant),
+            ),
+          ],
+          const SizedBox(height: 18),
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  flex: 6,
+                  child: ListView(
+                    padding: const EdgeInsets.only(right: 8, bottom: 12),
+                    children: [
+                      const UpdateCard(),
+                      UrlInputCard(onAnalyze: _analyze, onPaste: _paste),
+                      _wakingRow(scheme),
+                      _playlistButton(),
+                      const SizedBox(height: 8),
+                      const SaveQueueSection(),
+                      const SizedBox(height: 16),
+                      const ComplianceNotice(compact: true),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 20),
+                Expanded(
+                  flex: 5,
+                  child: ListView(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    children: const [
+                      NearbyShareBar(compact: true),
+                      SizedBox(height: 16),
+                      SupportedPlatformsSection(),
+                      SizedBox(height: 20),
+                      RecentDownloadsSection(),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _tagline(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Text(
+      AppConstants.appTagline.endsWith('.')
+          ? AppConstants.appTagline
+          : '${AppConstants.appTagline}.',
+      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            color: scheme.onSurfaceVariant,
+            fontSize: 14,
+            height: 1.4,
+          ),
+    );
+  }
+
+  Widget _wakingRow(ColorScheme scheme) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: DioClient.waking,
+      builder: (context, waking, _) => !waking
+          ? const SizedBox.shrink()
+          : Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: scheme.primary),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Waking the SocialSave server… this can take up to a minute.',
+                      style: TextStyle(color: scheme.onSurfaceVariant, height: 1.35),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+    );
+  }
+
+  Widget _playlistButton() {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: TextButton.icon(
+        onPressed: _playlist,
+        icon: const Icon(Icons.playlist_play_rounded),
+        label: const Text('Save a public playlist'),
       ),
     );
   }

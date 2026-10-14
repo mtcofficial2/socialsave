@@ -49,9 +49,10 @@ class SkeletonGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final gutter = MediaQuery.sizeOf(context).width >= 840 ? 24.0 : 16.0;
     return GridView.builder(
       physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      padding: EdgeInsets.fromLTRB(gutter, 8, gutter, 24),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 240,
         mainAxisSpacing: 12,
