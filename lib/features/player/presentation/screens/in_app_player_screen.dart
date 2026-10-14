@@ -19,6 +19,7 @@ import 'package:social_save/core/platform/phone_body.dart';
 import 'package:social_save/core/theme/app_colors.dart';
 import 'package:social_save/features/library/device_media.dart';
 import 'package:social_save/features/player/pip.dart';
+import 'package:social_save/features/player/video_stage_layout.dart';
 import 'package:social_save/features/player/playback_bridge.dart';
 import 'package:social_save/features/player/player_session.dart';
 import 'package:social_save/features/player/resume_position.dart';
@@ -1691,6 +1692,139 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     return '${rate}x';
   }
 
+  Widget _dockIcon(IconData icon, VoidCallback onPressed, String tooltip) {
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: onPressed,
+      icon: Icon(icon),
+      style: IconButton.styleFrom(
+        foregroundColor: Colors.white,
+        padding: EdgeInsets.zero,
+        minimumSize: const Size(40, 40),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+    );
+  }
+
+  /// Progress bar and buttons in the black band under the picture.
+  Widget _controlDock() {
+    return ColoredBox(
+      color: Colors.black,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: _DockSeek(player: _player),
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _dockIcon(
+                Icons.replay_10_rounded,
+                () => unawaited(_skip(-10)),
+                'Back 10 seconds',
+              ),
+              _DockPlay(player: _player),
+              _dockIcon(
+                Icons.forward_10_rounded,
+                () => unawaited(_skip(10)),
+                'Forward 10 seconds',
+              ),
+            ],
+          ),
+          SizedBox(
+            height: 40,
+            child: Row(
+              children: [
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    reverse: true,
+                    child: Row(
+                      children: [
+                        if (_queueIndex > 0)
+                          _dockIcon(
+                            Icons.skip_previous_rounded,
+                            () => unawaited(_playPrevious()),
+                            'Previous',
+                          ),
+                        IconButton(
+                          tooltip: 'Speed ${_rateLabel(_rate)}',
+                          onPressed: () => DesktopSupport.isWindows
+                              ? unawaited(
+                                  _rateKey(_rate >= 2 ? -(_rate - 1) : 0.25),
+                                )
+                              : unawaited(_showTools()),
+                          style: IconButton.styleFrom(
+                            foregroundColor: Colors.white,
+                            padding: EdgeInsets.zero,
+                            minimumSize: const Size(40, 40),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          icon: Text(
+                            _rateLabel(_rate),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                        if (_hasNext)
+                          _dockIcon(
+                            Icons.skip_next_rounded,
+                            () => unawaited(_playNext()),
+                            'Next',
+                          ),
+                        _dockIcon(
+                          _loop
+                              ? Icons.repeat_one_rounded
+                              : Icons.repeat_rounded,
+                          () => unawaited(_toggleLoop()),
+                          _loop ? 'Loop on' : 'Loop',
+                        ),
+                        _dockIcon(
+                          _muted
+                              ? Icons.volume_off_rounded
+                              : Icons.volume_up_rounded,
+                          () => unawaited(_toggleMute()),
+                          _muted ? 'Unmute' : 'Mute',
+                        ),
+                        _dockIcon(
+                          _fit == BoxFit.cover
+                              ? Icons.fit_screen_rounded
+                              : Icons.aspect_ratio_rounded,
+                          _cycleFit,
+                          _fit == BoxFit.cover
+                              ? 'Fit to screen'
+                              : 'Fill screen',
+                        ),
+                        if (!DesktopSupport.isWindows)
+                          _dockIcon(
+                            Icons.screen_rotation_rounded,
+                            () => unawaited(_rotate()),
+                            'Rotate',
+                          ),
+                        _dockIcon(
+                          _fs
+                              ? Icons.fullscreen_exit_rounded
+                              : Icons.fullscreen_rounded,
+                          () => unawaited(_toggleFs()),
+                          _fs ? 'Exit full screen' : 'Full screen',
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Windows: desktop controls (click = play/pause, double-click = full
   /// screen, wheel = volume, cursor hides) plus our keyboard map.
   Widget _desktopVideo() {
@@ -1704,46 +1838,12 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       controlsHoverDuration: const Duration(seconds: 2),
       seekBarPositionColor: AppColors.secondaryContainer,
       seekBarThumbColor: AppColors.secondaryContainer,
+      // The progress bar and buttons sit in the black area under the picture.
+      displaySeekBar: false,
+      bottomButtonBar: const [],
       // Keys are handled once, by our CallbackShortcuts above, so they
       // work no matter which child has focus.
       keyboardShortcuts: const {},
-      bottomButtonBar: [
-        MaterialDesktopCustomButton(
-          icon: const Icon(Icons.skip_previous_rounded),
-          onPressed: () => unawaited(_playPrevious()),
-        ),
-        const MaterialDesktopPlayOrPauseButton(),
-        if (_hasNext)
-          MaterialDesktopCustomButton(
-            icon: const Icon(Icons.skip_next_rounded),
-            onPressed: () => unawaited(_playNext()),
-          ),
-        const MaterialDesktopVolumeButton(),
-        const MaterialDesktopPositionIndicator(),
-        const Spacer(),
-        MaterialDesktopCustomButton(
-          icon: Text(
-            _rateLabel(_rate),
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w800,
-              fontSize: 13,
-            ),
-          ),
-          onPressed: () =>
-              unawaited(_rateKey(_rate >= 2 ? -(_rate - 1) : 0.25)),
-        ),
-        widget.embedded
-            ? const MaterialDesktopFullscreenButton()
-            : MaterialDesktopCustomButton(
-                icon: Icon(
-                  _fs
-                      ? Icons.fullscreen_exit_rounded
-                      : Icons.fullscreen_rounded,
-                ),
-                onPressed: () => unawaited(_toggleFs()),
-              ),
-      ],
     );
     _keyMap = keys;
     return Builder(
@@ -1782,119 +1882,22 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     );
   }
 
+  /// Gestures stay on the picture. The buttons and progress bar do not.
   MaterialVideoControlsThemeData _theme() {
-    return MaterialVideoControlsThemeData(
-      displaySeekBar: true,
+    return const MaterialVideoControlsThemeData(
+      displaySeekBar: false,
       seekOnDoubleTap: true,
       seekGesture: true,
       volumeGesture: true,
       brightnessGesture: true,
       speedUpOnLongPress: true,
       speedUpFactor: 2,
-      visibleOnMount: true,
-      seekBarPositionColor: AppColors.secondaryContainer,
-      seekBarThumbColor: AppColors.secondaryContainer,
-      // Play, skip, and the other buttons sit with the progress bar.
-      // The same bar is used for portrait and landscape video.
-      primaryButtonBar: const [],
-      buttonBarHeight: 116,
-      bottomButtonBarMargin: const EdgeInsets.only(left: 4, right: 4),
-      seekBarMargin: const EdgeInsets.only(left: 12, right: 12, bottom: 8),
-      bottomButtonBar: [
-        Expanded(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  MaterialCustomButton(
-                    icon: const Icon(Icons.replay_10_rounded),
-                    onPressed: () => unawaited(_skip(-10)),
-                  ),
-                  const MaterialPlayOrPauseButton(iconSize: 36),
-                  MaterialCustomButton(
-                    icon: const Icon(Icons.forward_10_rounded),
-                    onPressed: () => unawaited(_skip(10)),
-                  ),
-                ],
-              ),
-              SizedBox(
-                height: 48,
-                child: Row(
-                  children: [
-                    const MaterialPositionIndicator(),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        reverse: true,
-                        child: Row(
-                          children: [
-                            MaterialCustomButton(
-                              icon: Text(
-                                _rateLabel(_rate),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 12,
-                                ),
-                              ),
-                              onPressed: () => unawaited(_showTools()),
-                            ),
-                            if (_hasNext)
-                              MaterialCustomButton(
-                                icon: const Icon(Icons.skip_next_rounded),
-                                onPressed: () => unawaited(_playNext()),
-                              ),
-                            MaterialCustomButton(
-                              icon: Icon(
-                                _loop
-                                    ? Icons.repeat_one_rounded
-                                    : Icons.repeat_rounded,
-                              ),
-                              onPressed: () => unawaited(_toggleLoop()),
-                            ),
-                            MaterialCustomButton(
-                              icon: Icon(
-                                _muted
-                                    ? Icons.volume_off_rounded
-                                    : Icons.volume_up_rounded,
-                              ),
-                              onPressed: () => unawaited(_toggleMute()),
-                            ),
-                            MaterialCustomButton(
-                              icon: Icon(
-                                _fit == BoxFit.cover
-                                    ? Icons.fit_screen_rounded
-                                    : Icons.aspect_ratio_rounded,
-                              ),
-                              onPressed: _cycleFit,
-                            ),
-                            MaterialCustomButton(
-                              icon: const Icon(Icons.screen_rotation_rounded),
-                              onPressed: () => unawaited(_rotate()),
-                            ),
-                            MaterialCustomButton(
-                              icon: Icon(
-                                _fs
-                                    ? Icons.fullscreen_exit_rounded
-                                    : Icons.fullscreen_rounded,
-                              ),
-                              onPressed: () => unawaited(_toggleFs()),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              // Leaves the progress line visible under the buttons.
-              const SizedBox(height: 18),
-            ],
-          ),
-        ),
-      ],
+      visibleOnMount: false,
+      backdropColor: Color(0x00000000),
+      primaryButtonBar: [],
+      topButtonBar: [],
+      bottomButtonBar: [],
+      buttonBarHeight: 0,
     );
   }
 
@@ -1952,13 +1955,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         ? _desktopVideo()
         : MaterialVideoControlsTheme(
             normal: theme,
-            fullscreen: theme.copyWith(
-              bottomButtonBarMargin: const EdgeInsets.only(
-                left: 8,
-                right: 8,
-                bottom: 24,
-              ),
-            ),
+            fullscreen: theme,
             child: Video(
               controller: _video,
               fill: Colors.black,
@@ -2220,13 +2217,23 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                           ),
                         )
                       else
-                        HeroMode(
-                          enabled: _heroTag != null,
-                          child: Hero(
-                            tag: _heroTag ?? 'player-idle',
-                            child: _FittedVideo(
-                              width: _frameWidth,
-                              height: _frameHeight,
+                        _VideoStage(
+                          width: _frameWidth,
+                          height: _frameHeight,
+                          dock: IgnorePointer(
+                            ignoring: _locked || (!_chrome && !_showEndCard),
+                            child: AnimatedOpacity(
+                              opacity: !_locked && (_chrome || _showEndCard)
+                                  ? 1
+                                  : 0,
+                              duration: const Duration(milliseconds: 180),
+                              child: _controlDock(),
+                            ),
+                          ),
+                          child: HeroMode(
+                            enabled: _heroTag != null,
+                            child: Hero(
+                              tag: _heroTag ?? 'player-idle',
                               child: _pinchZoom
                                   ? InteractiveViewer(
                                       minScale: 1,
@@ -2292,6 +2299,272 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         ),
       ),
     );
+  }
+}
+
+/// Picture on top, controls in the black band directly underneath.
+class _VideoStage extends StatelessWidget {
+  const _VideoStage({
+    required this.child,
+    required this.dock,
+    this.width,
+    this.height,
+  });
+
+  final Widget child;
+  final Widget dock;
+  final int? width;
+  final int? height;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final frameW = width ?? 0;
+        final frameH = height ?? 0;
+        final layout = VideoStageLayout.compute(
+          maxWidth: constraints.maxWidth,
+          maxHeight: constraints.maxHeight,
+          aspect: frameW > 0 && frameH > 0 ? frameW / frameH : 9 / 16,
+        );
+        return Stack(
+          children: [
+            Positioned(
+              left: layout.videoLeft,
+              top: layout.videoTop,
+              width: layout.videoWidth,
+              height: layout.videoHeight,
+              child: child,
+            ),
+            Positioned(
+              left: 0,
+              right: 0,
+              top: layout.dockTop,
+              height: layout.dockHeight,
+              child: dock,
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _DockPlay extends StatefulWidget {
+  const _DockPlay({required this.player});
+
+  final Player player;
+
+  @override
+  State<_DockPlay> createState() => _DockPlayState();
+}
+
+class _DockPlayState extends State<_DockPlay> {
+  StreamSubscription<bool>? _sub;
+  late bool _playing;
+
+  @override
+  void initState() {
+    super.initState();
+    _playing = widget.player.state.playing;
+    _sub = widget.player.stream.playing.listen((value) {
+      if (mounted) setState(() => _playing = value);
+    });
+  }
+
+  @override
+  void dispose() {
+    unawaited(_sub?.cancel());
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: _playing ? 'Pause' : 'Play',
+      onPressed: () => unawaited(widget.player.playOrPause()),
+      iconSize: 36,
+      color: Colors.white,
+      icon: Icon(_playing ? Icons.pause_rounded : Icons.play_arrow_rounded),
+    );
+  }
+}
+
+class _DockSeek extends StatefulWidget {
+  const _DockSeek({required this.player});
+
+  final Player player;
+
+  @override
+  State<_DockSeek> createState() => _DockSeekState();
+}
+
+class _DockSeekState extends State<_DockSeek> {
+  final _subs = <StreamSubscription<dynamic>>[];
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
+  Duration _buffer = Duration.zero;
+  bool _dragging = false;
+  double _drag = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    final player = widget.player;
+    _position = player.state.position;
+    _duration = player.state.duration;
+    _buffer = player.state.buffer;
+    _subs.add(
+      player.stream.position.listen((value) {
+        if (!mounted || _dragging) return;
+        setState(() => _position = value);
+      }),
+    );
+    _subs.add(
+      player.stream.duration.listen((value) {
+        if (!mounted) return;
+        setState(() => _duration = value);
+      }),
+    );
+    _subs.add(
+      player.stream.buffer.listen((value) {
+        if (!mounted) return;
+        setState(() => _buffer = value);
+      }),
+    );
+  }
+
+  @override
+  void dispose() {
+    for (final sub in _subs) {
+      unawaited(sub.cancel());
+    }
+    super.dispose();
+  }
+
+  void _apply(double dx, double width) {
+    if (width <= 0 || _duration <= Duration.zero) return;
+    final fraction = (dx / width).clamp(0.0, 1.0);
+    final target = _duration * fraction;
+    setState(() {
+      _dragging = true;
+      _drag = fraction;
+      _position = target;
+    });
+    unawaited(widget.player.seek(target));
+  }
+
+  String _clock(Duration value) {
+    final hours = value.inHours;
+    final minutes = value.inMinutes.remainder(60);
+    final seconds = value.inSeconds.remainder(60).toString().padLeft(2, '0');
+    if (hours > 0) {
+      return '$hours:${minutes.toString().padLeft(2, '0')}:$seconds';
+    }
+    return '$minutes:$seconds';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final total = _duration.inMilliseconds;
+    final fraction = total <= 0
+        ? 0.0
+        : (_position.inMilliseconds / total).clamp(0.0, 1.0);
+    final buffered = total <= 0
+        ? 0.0
+        : (_buffer.inMilliseconds / total).clamp(0.0, 1.0);
+    return Row(
+      children: [
+        SizedBox(
+          width: 56,
+          child: Text(
+            _clock(_position),
+            textAlign: TextAlign.right,
+            style: const TextStyle(color: Colors.white, fontSize: 12),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapDown: (details) =>
+                    _apply(details.localPosition.dx, constraints.maxWidth),
+                onHorizontalDragStart: (details) =>
+                    _apply(details.localPosition.dx, constraints.maxWidth),
+                onHorizontalDragUpdate: (details) =>
+                    _apply(details.localPosition.dx, constraints.maxWidth),
+                onHorizontalDragEnd: (_) => setState(() => _dragging = false),
+                onTapUp: (_) => setState(() => _dragging = false),
+                child: SizedBox(
+                  height: 28,
+                  child: CustomPaint(
+                    painter: _SeekPainter(
+                      fraction: _dragging ? _drag : fraction,
+                      buffer: buffered,
+                      color: AppColors.secondaryContainer,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 56,
+          child: Text(
+            _clock(_duration),
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SeekPainter extends CustomPainter {
+  const _SeekPainter({
+    required this.fraction,
+    required this.buffer,
+    required this.color,
+  });
+
+  final double fraction;
+  final double buffer;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final y = size.height / 2;
+    final track = Paint()
+      ..color = const Color(0x3DFFFFFF)
+      ..strokeWidth = 3
+      ..strokeCap = StrokeCap.round;
+    final buffered = Paint()
+      ..color = const Color(0x66FFFFFF)
+      ..strokeWidth = 3
+      ..strokeCap = StrokeCap.round;
+    final played = Paint()
+      ..color = color
+      ..strokeWidth = 3
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(Offset(0, y), Offset(size.width, y), track);
+    canvas.drawLine(Offset(0, y), Offset(size.width * buffer, y), buffered);
+    canvas.drawLine(Offset(0, y), Offset(size.width * fraction, y), played);
+    canvas.drawCircle(
+      Offset(size.width * fraction, y),
+      6,
+      Paint()..color = color,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _SeekPainter oldDelegate) {
+    return oldDelegate.fraction != fraction ||
+        oldDelegate.buffer != buffer ||
+        oldDelegate.color != color;
   }
 }
 
