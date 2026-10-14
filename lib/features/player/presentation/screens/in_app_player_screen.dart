@@ -541,7 +541,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('Resumed at $label'),
-        duration: const Duration(seconds: 4),
+        duration: const Duration(seconds: 5),
+        persist: false,
         action: SnackBarAction(
           label: 'Start over',
           onPressed: () {
