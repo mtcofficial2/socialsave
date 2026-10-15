@@ -5,6 +5,7 @@ import 'package:social_save/features/library/bundle_transfer.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
 import 'package:flutter/material.dart';
 import 'package:social_save/features/library/nearby_service.dart';
+import 'package:social_save/features/library/presentation/library_look.dart';
 import 'package:social_save/features/library/usb_link.dart';
 import 'package:social_save/features/player/player_session.dart';
 import 'package:social_save/shared/models/social_platform.dart';
@@ -288,67 +289,59 @@ class _NearbyDeviceChipsState extends State<NearbyDeviceChips> {
   }
 
   Widget _pills(BuildContext context, List<NearbyDevice> list) {
-    if (list.isEmpty) {
-      return const Text(
-        'Looking for SocialSave on this Wi-Fi…',
-        style: TextStyle(color: Color(0x80FFFFFF), fontSize: 11),
-      );
-    }
-    return SizedBox(
-      height: 34,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        children: [
-          for (final d in list)
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: Tooltip(
-                message: 'Send a video to ${d.playerName} ${d.name}',
-                child: Material(
-                  key: ValueKey('nearby-${d.id}'),
-                  color: const Color(0x0DFFFFFF),
-                  shape: StadiumBorder(
-                    side: BorderSide(
-                      color: Colors.white.withValues(alpha: 0.1),
-                    ),
-                  ),
-                  child: InkWell(
-                    customBorder: const StadiumBorder(),
-                    onTap: () => _tap(d),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            d.isCable
-                                ? Icons.cable_rounded
-                                : (d.isPc
-                                      ? Icons.laptop_rounded
-                                      : Icons.smartphone_rounded),
-                            size: 14,
-                            color: const Color(0xFF7C5CFF),
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            d.name.isEmpty ? d.playerName : d.name,
-                            style: const TextStyle(
-                              color: Color(0xE6FFFFFF),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
+    if (list.isEmpty) return const SizedBox.shrink();
+    final look = LibraryPalette.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: SizedBox(
+        height: 32,
+        child: ListView(
+          scrollDirection: Axis.horizontal,
+          children: [
+            for (final d in list)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Tooltip(
+                  message: 'Send a video to ${d.playerName} ${d.name}',
+                  child: Material(
+                    key: ValueKey('nearby-${d.id}'),
+                    color: look.accentDim,
+                    shape: StadiumBorder(side: BorderSide(color: look.border)),
+                    child: InkWell(
+                      customBorder: const StadiumBorder(),
+                      onTap: () => _tap(d),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              d.isCable
+                                  ? Icons.cable_rounded
+                                  : (d.isPc
+                                        ? Icons.laptop_rounded
+                                        : Icons.smartphone_rounded),
+                              size: 14,
+                              color: look.accent,
                             ),
-                          ),
-                        ],
+                            const SizedBox(width: 6),
+                            Text(
+                              d.name.isEmpty ? d.playerName : d.name,
+                              style: TextStyle(
+                                color: look.ink,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }

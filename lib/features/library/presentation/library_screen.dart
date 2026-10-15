@@ -412,195 +412,193 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
         ? _device.where(_matchesVideo).length
         : _vault.where(_matchesVault).length;
     final selecting = _tab == 0 && (_selectMode || _selected.isNotEmpty);
-    return Theme(
-      data: libraryLookTheme(context),
-      child: Scaffold(
-        backgroundColor: LibraryLook.bg,
-        body: SafeArea(
-          child: Column(
-            children: [
-              Padding(
-                padding: EdgeInsets.fromLTRB(
-                  gutter,
-                  4,
-                  math.max(4, gutter - 8),
-                  4,
-                ),
-                child: selecting ? _selectHeader() : _titleHeader(visibleCount),
+    final vaultLocked = _tab == 1 && !unlocked;
+    final look = LibraryPalette.of(context);
+    return Scaffold(
+      backgroundColor: look.bg,
+      body: SafeArea(
+        child: Column(
+          children: [
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                gutter,
+                2,
+                math.max(4, gutter - 8),
+                0,
               ),
-              Padding(
-                padding: EdgeInsets.fromLTRB(gutter, 4, gutter, 0),
-                child: _shareCard(),
-              ),
-              Padding(
-                padding: EdgeInsets.fromLTRB(gutter, 12, gutter, 0),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final wide = constraints.maxWidth >= 640;
-                    final sourceLabel = DesktopSupport.isWindows
-                        ? 'This PC'
-                        : 'This phone';
-                    final sourceIcon = DesktopSupport.isWindows
-                        ? Icons.computer_rounded
-                        : Icons.smartphone_rounded;
-                    final switcher = _sourceSwitch(sourceIcon, sourceLabel);
-                    if (!wide || _tab != 0) return switcher;
-                    final switchWidth = (constraints.maxWidth * 0.42).clamp(
-                      300.0,
-                      440.0,
-                    );
-                    return Row(
-                      children: [
-                        SizedBox(width: switchWidth, child: switcher),
-                        const SizedBox(width: 16),
-                        Expanded(child: _searchField()),
-                      ],
-                    );
-                  },
-                ),
-              ),
-              if (_tab == 0) ...[
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    if (constraints.maxWidth >= 640) {
-                      return const SizedBox(height: 8);
-                    }
-                    return Padding(
-                      padding: EdgeInsets.fromLTRB(gutter, 10, gutter, 0),
-                      child: _searchField(),
-                    );
-                  },
-                ),
-                const SizedBox(height: 10),
-                SizedBox(
-                  height: 40,
-                  child: ListView(
-                    scrollDirection: Axis.horizontal,
-                    padding: EdgeInsets.symmetric(horizontal: gutter),
+              child: selecting ? _selectHeader() : _titleHeader(visibleCount),
+            ),
+            Padding(
+              padding: EdgeInsets.fromLTRB(gutter, 8, gutter, 0),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final wide = constraints.maxWidth >= 640;
+                  final sourceLabel = DesktopSupport.isWindows
+                      ? 'This PC'
+                      : 'This phone';
+                  final sourceIcon = DesktopSupport.isWindows
+                      ? Icons.computer_rounded
+                      : Icons.smartphone_rounded;
+                  final switcher = _sourceSwitch(sourceIcon, sourceLabel);
+                  if (!wide || _tab != 0) return switcher;
+                  final switchWidth = (constraints.maxWidth * 0.42).clamp(
+                    300.0,
+                    440.0,
+                  );
+                  return Row(
                     children: [
-                      for (final name in const [
-                        'All',
-                        'YouTube',
-                        'TikTok',
-                        'Instagram',
-                        'Facebook',
-                        'X',
-                      ])
-                        _filterPill(
-                          label: name,
-                          selected: _platform == name,
-                          onTap: () => setState(() => _platform = name),
-                        ),
-                      _filterPill(
-                        label: 'Favorites',
-                        selected: _favoritesOnly,
-                        icon: Icons.favorite_rounded,
-                        iconColor: LibraryLook.danger,
-                        onTap: () =>
-                            setState(() => _favoritesOnly = !_favoritesOnly),
-                      ),
-                      for (final name in catalog.collectionNames)
-                        _filterPill(
-                          label: '#$name',
-                          selected: _collection == name,
-                          onTap: () => setState(() {
-                            _collection = _collection == name ? null : name;
-                          }),
-                        ),
-                      _filterPill(
-                        label: 'New collection',
-                        icon: Icons.add_rounded,
-                        dashed: true,
-                        onTap: _createCollection,
-                      ),
+                      SizedBox(width: switchWidth, child: switcher),
+                      const SizedBox(width: 16),
+                      Expanded(child: _searchField()),
                     ],
-                  ),
-                ),
-              ],
-              if (_tab == 1 && unlocked)
-                Padding(
-                  padding: EdgeInsets.fromLTRB(gutter, 12, gutter, 0),
-                  child: _vaultBanner(),
-                ),
-              if (DesktopSupport.isWindows && _scanning && _tab == 0)
-                Padding(
-                  padding: EdgeInsets.fromLTRB(gutter, 8, gutter, 0),
-                  child: Row(
-                    children: [
-                      const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: LibraryLook.violet,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Looking for videos on this PC… ${_device.length} found',
-                        style: const TextStyle(
-                          color: Color(0x99FFFFFF),
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+                  );
+                },
+              ),
+            ),
+            if (_tab == 0) ...[
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  if (constraints.maxWidth >= 640) {
+                    return const SizedBox(height: 4);
+                  }
+                  return Padding(
+                    padding: EdgeInsets.fromLTRB(gutter, 8, gutter, 0),
+                    child: _searchField(),
+                  );
+                },
+              ),
               const SizedBox(height: 8),
-              Expanded(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final twoPane = MediaQuery.sizeOf(context).width >= 900;
-                    final list = _libraryList(catalog);
-                    if (!twoPane) return list;
-                    final docked = _docked;
-                    return Row(
-                      children: [
-                        Expanded(child: list),
-                        const VerticalDivider(width: 1),
-                        SizedBox(
-                          width: (constraints.maxWidth * 0.48).clamp(
-                            320.0,
-                            640.0,
-                          ),
-                          child: docked == null
-                              ? const LibraryEmpty(
-                                  icon: Icons.play_circle_outline_rounded,
-                                  title: 'Nothing playing',
-                                  message:
-                                      'Choose a video to play it beside the library.',
-                                )
-                              : InAppPlayerScreen(
-                                  key: ValueKey(
-                                    '${docked.filePath ?? docked.title}-${docked.queueIndex}',
-                                  ),
-                                  session: docked,
-                                  embedded: true,
-                                  onClose: () => setState(() => _docked = null),
-                                ),
-                        ),
-                      ],
-                    );
-                  },
+              SizedBox(
+                height: 34,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  padding: EdgeInsets.symmetric(horizontal: gutter),
+                  children: [
+                    for (final name in const [
+                      'All',
+                      'YouTube',
+                      'TikTok',
+                      'Instagram',
+                      'Facebook',
+                      'X',
+                    ])
+                      _filterPill(
+                        label: name,
+                        selected: _platform == name,
+                        onTap: () => setState(() => _platform = name),
+                      ),
+                    _filterPill(
+                      label: 'Favorites',
+                      selected: _favoritesOnly,
+                      icon: Icons.favorite_rounded,
+                      iconColor: look.danger,
+                      onTap: () =>
+                          setState(() => _favoritesOnly = !_favoritesOnly),
+                    ),
+                    for (final name in catalog.collectionNames)
+                      _filterPill(
+                        label: '#$name',
+                        selected: _collection == name,
+                        onTap: () => setState(() {
+                          _collection = _collection == name ? null : name;
+                        }),
+                      ),
+                    _filterPill(
+                      label: 'New collection',
+                      icon: Icons.add_rounded,
+                      dashed: true,
+                      onTap: _createCollection,
+                    ),
+                  ],
                 ),
               ),
             ],
-          ),
+            if (_tab == 1 && unlocked)
+              Padding(
+                padding: EdgeInsets.fromLTRB(gutter, 8, gutter, 0),
+                child: _vaultBanner(),
+              ),
+            if (!vaultLocked)
+              Padding(
+                padding: EdgeInsets.fromLTRB(gutter, 8, gutter, 0),
+                child: _shareCard(),
+              ),
+            if (DesktopSupport.isWindows && _scanning && _tab == 0)
+              Padding(
+                padding: EdgeInsets.fromLTRB(gutter, 8, gutter, 0),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: look.accent,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Looking for videos on this PC… ${_device.length} found',
+                      style: TextStyle(color: look.muted, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 4),
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final twoPane = MediaQuery.sizeOf(context).width >= 900;
+                  final list = _libraryList(catalog);
+                  if (!twoPane) return list;
+                  final docked = _docked;
+                  return Row(
+                    children: [
+                      Expanded(child: list),
+                      const VerticalDivider(width: 1),
+                      SizedBox(
+                        width: (constraints.maxWidth * 0.48).clamp(
+                          320.0,
+                          640.0,
+                        ),
+                        child: docked == null
+                            ? const LibraryEmpty(
+                                icon: Icons.play_circle_outline_rounded,
+                                title: 'Nothing playing',
+                                message:
+                                    'Choose a video to play it beside the library.',
+                              )
+                            : InAppPlayerScreen(
+                                key: ValueKey(
+                                  '${docked.filePath ?? docked.title}-${docked.queueIndex}',
+                                ),
+                                session: docked,
+                                embedded: true,
+                                onClose: () => setState(() => _docked = null),
+                              ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
   Widget _titleHeader(int count) {
+    final look = LibraryPalette.of(context);
     return SizedBox(
-      height: 56,
+      height: 48,
       child: Row(
         children: [
-          const Text(
+          Text(
             'Library',
             style: TextStyle(
-              color: Colors.white,
-              fontSize: 24,
+              color: look.ink,
+              fontSize: 22,
               fontWeight: FontWeight.w700,
               letterSpacing: -0.4,
             ),
@@ -609,15 +607,15 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.1),
+              color: look.accentDim,
               borderRadius: BorderRadius.circular(99),
             ),
             child: Text(
               '$count',
-              style: const TextStyle(
-                color: Color(0x99FFFFFF),
+              style: TextStyle(
+                color: look.muted,
                 fontSize: 12,
-                fontWeight: FontWeight.w500,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),
@@ -625,23 +623,26 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
           if (DesktopSupport.isWindows)
             IconButton(
               tooltip: 'Video folders',
+              visualDensity: VisualDensity.compact,
               onPressed: _manageWindowsFolders,
-              icon: const Icon(
-                Icons.create_new_folder_outlined,
-                color: Color(0xCCFFFFFF),
-              ),
+              icon: Icon(Icons.create_new_folder_outlined, color: look.muted),
             ),
           IconButton(
             tooltip: 'Refresh',
+            visualDensity: VisualDensity.compact,
             onPressed: () => _reload(rescan: true),
-            icon: const Icon(Icons.refresh_rounded, color: Color(0xCCFFFFFF)),
+            icon: Icon(Icons.refresh_rounded, color: look.muted),
           ),
           if (_tab == 0)
             TextButton.icon(
               key: const ValueKey('library-select'),
               onPressed: () => setState(() => _selectMode = true),
-              style: TextButton.styleFrom(foregroundColor: LibraryLook.violet),
-              icon: const Icon(Icons.checklist_rounded, size: 20),
+              style: TextButton.styleFrom(
+                foregroundColor: look.accent,
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+              ),
+              icon: const Icon(Icons.checklist_rounded, size: 18),
               label: const Text(
                 'Select',
                 style: TextStyle(fontWeight: FontWeight.w600),
@@ -653,28 +654,34 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   }
 
   Widget _selectHeader() {
+    final look = LibraryPalette.of(context);
     return Container(
-      height: 56,
+      height: 48,
       padding: const EdgeInsets.symmetric(horizontal: 4),
       decoration: BoxDecoration(
-        color: LibraryLook.surface,
-        borderRadius: BorderRadius.circular(LibraryLook.radius),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+        color: look.card,
+        borderRadius: BorderRadius.circular(LibraryPalette.radius),
+        border: Border.all(color: look.border),
       ),
       child: Row(
         children: [
           IconButton(
             key: const ValueKey('library-select'),
             tooltip: 'Cancel',
+            visualDensity: VisualDensity.compact,
             onPressed: () => setState(() {
               _selected.clear();
               _selectMode = false;
             }),
-            icon: const Icon(Icons.close_rounded, color: Color(0xCCFFFFFF)),
+            icon: Icon(Icons.close_rounded, color: look.ink),
           ),
           Text(
             '${_selected.length} selected',
-            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+            style: TextStyle(
+              color: look.ink,
+              fontWeight: FontWeight.w600,
+              fontSize: 14,
+            ),
           ),
           const Spacer(),
           TextButton(
@@ -683,13 +690,13 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
                 _device.where(_matchesVideo).map((v) => v.id),
               ),
             ),
+            style: TextButton.styleFrom(
+              foregroundColor: look.accent,
+              visualDensity: VisualDensity.compact,
+            ),
             child: const Text(
               'Select all',
-              style: TextStyle(
-                color: LibraryLook.violet,
-                fontWeight: FontWeight.w600,
-                fontSize: 12,
-              ),
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
             ),
           ),
           TextButton.icon(
@@ -697,8 +704,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
               _device.where((v) => _selected.contains(v.id)).toList(),
             ),
             style: TextButton.styleFrom(
-              foregroundColor: LibraryLook.danger,
-              backgroundColor: LibraryLook.dangerDim,
+              foregroundColor: look.danger,
+              backgroundColor: look.dangerDim,
+              visualDensity: VisualDensity.compact,
             ),
             icon: const Icon(Icons.delete_outline, size: 18),
             label: const Text(
@@ -713,65 +721,88 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   }
 
   Widget _shareCard() {
+    final look = LibraryPalette.of(context);
     return Container(
       key: const ValueKey('library-share'),
-      padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+      padding: const EdgeInsets.fromLTRB(10, 4, 2, 4),
       decoration: BoxDecoration(
-        color: LibraryLook.card,
-        borderRadius: BorderRadius.circular(LibraryLook.radius),
-        border: Border.all(color: LibraryLook.border),
+        color: look.card,
+        borderRadius: BorderRadius.circular(LibraryPalette.radius),
+        border: Border.all(color: look.border),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Row(
             children: [
-              Container(
-                width: 32,
-                height: 32,
-                decoration: const BoxDecoration(
-                  color: LibraryLook.violetDim,
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.wifi_rounded,
-                  color: LibraryLook.violet,
-                  size: 18,
+              Icon(Icons.wifi_rounded, color: look.accent, size: 18),
+              const SizedBox(width: 6),
+              const _LiveDot(),
+              const SizedBox(width: 6),
+              Text(
+                'Share',
+                style: TextStyle(
+                  color: look.ink,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
               const SizedBox(width: 8),
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text(
-                          'Local Wi-Fi Sharing',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        SizedBox(width: 6),
-                        _LiveDot(),
-                      ],
+              Expanded(
+                child: FilledButton.icon(
+                  key: const ValueKey('nearby-send'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: look.accent,
+                    foregroundColor: look.onAccent,
+                    minimumSize: const Size(0, 34),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                    SizedBox(height: 2),
-                    Text(
-                      'High-speed direct wireless transfer',
-                      style: TextStyle(color: Color(0x80FFFFFF), fontSize: 11),
+                  ),
+                  onPressed: _pickLibraryVideoToSend,
+                  icon: const Icon(Icons.send_rounded, size: 15),
+                  label: const Text(
+                    'Send',
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: OutlinedButton.icon(
+                  key: const ValueKey('nearby-receive'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: look.ink,
+                    backgroundColor: look.raised,
+                    minimumSize: const Size(0, 34),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    side: BorderSide(color: look.border),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                  ],
+                  ),
+                  onPressed: () async {
+                    final saved = await showReceiveFromPhone(context);
+                    if (!saved || !mounted) return;
+                    await _reload(rescan: DesktopSupport.isWindows);
+                  },
+                  icon: const Icon(Icons.download_rounded, size: 15),
+                  label: const Text(
+                    'Receive',
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                  ),
                 ),
               ),
               PopupMenuButton<String>(
                 tooltip: 'More sharing options',
-                icon: const Icon(
-                  Icons.more_horiz_rounded,
-                  color: Color(0xB3FFFFFF),
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                iconSize: 22,
+                icon: Icon(Icons.more_horiz_rounded, color: look.muted),
                 onSelected: (value) {
                   switch (value) {
                     case 'files':
@@ -784,6 +815,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
                           builder: (_) => const ReceivedScreen(),
                         ),
                       );
+                    case 'scan':
+                      _pickLibraryVideoToSend();
                     case 'share':
                       showNearbySheet(
                         context,
@@ -801,93 +834,12 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
                     value: 'received',
                     child: Text('Received files'),
                   ),
+                  PopupMenuItem(value: 'scan', child: Text('Scan code')),
                   PopupMenuItem(
                     value: 'share',
                     child: Text('All share options'),
                   ),
                 ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: FilledButton.icon(
-                  key: const ValueKey('nearby-send'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: LibraryLook.violet,
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size(0, 44),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(LibraryLook.radius),
-                    ),
-                  ),
-                  onPressed: _pickLibraryVideoToSend,
-                  icon: const Icon(Icons.send_rounded, size: 16),
-                  label: const Text(
-                    'Send',
-                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton.icon(
-                  key: const ValueKey('nearby-receive'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    backgroundColor: Colors.white.withValues(alpha: 0.1),
-                    minimumSize: const Size(0, 44),
-                    side: BorderSide(
-                      color: Colors.white.withValues(alpha: 0.06),
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(LibraryLook.radius),
-                    ),
-                  ),
-                  onPressed: () async {
-                    final saved = await showReceiveFromPhone(context);
-                    if (!saved || !mounted) return;
-                    await _reload(rescan: DesktopSupport.isWindows);
-                  },
-                  icon: const Icon(Icons.download_rounded, size: 16),
-                  label: const Text(
-                    'Receive',
-                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              const Text(
-                'NEARBY DEVICES',
-                style: TextStyle(
-                  color: Color(0x80FFFFFF),
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.6,
-                ),
-              ),
-              const Spacer(),
-              TextButton(
-                onPressed: _pickLibraryVideoToSend,
-                style: TextButton.styleFrom(
-                  foregroundColor: LibraryLook.violet,
-                  visualDensity: VisualDensity.compact,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                ),
-                child: const Text(
-                  'SCAN CODE',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.4,
-                  ),
-                ),
               ),
             ],
           ),
@@ -899,12 +851,13 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   }
 
   Widget _sourceSwitch(IconData sourceIcon, String sourceLabel) {
+    final look = LibraryPalette.of(context);
     return Container(
-      padding: const EdgeInsets.all(4),
+      padding: const EdgeInsets.all(3),
       decoration: BoxDecoration(
-        color: LibraryLook.card,
-        borderRadius: BorderRadius.circular(LibraryLook.radius),
-        border: Border.all(color: LibraryLook.border),
+        color: look.card,
+        borderRadius: BorderRadius.circular(LibraryPalette.radius),
+        border: Border.all(color: look.border),
       ),
       child: Row(
         children: [
@@ -916,28 +869,25 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   }
 
   Widget _sourceTab(int value, IconData icon, String label) {
+    final look = LibraryPalette.of(context);
     final on = _tab == value;
     return Material(
-      color: on ? LibraryLook.violet : Colors.transparent,
+      color: on ? look.accent : Colors.transparent,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () => _selectTab(value),
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 10),
+          padding: const EdgeInsets.symmetric(vertical: 7),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                icon,
-                size: 16,
-                color: on ? Colors.white : const Color(0x99FFFFFF),
-              ),
+              Icon(icon, size: 16, color: on ? look.onAccent : look.muted),
               const SizedBox(width: 6),
               Text(
                 label,
                 style: TextStyle(
-                  color: on ? Colors.white : const Color(0x99FFFFFF),
+                  color: on ? look.onAccent : look.muted,
                   fontWeight: on ? FontWeight.w700 : FontWeight.w500,
                   fontSize: 13,
                 ),
@@ -950,43 +900,36 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   }
 
   Widget _searchField() {
+    final look = LibraryPalette.of(context);
     return TextField(
       controller: _search,
-      style: const TextStyle(color: Colors.white, fontSize: 13),
-      cursorColor: LibraryLook.violet,
+      style: TextStyle(color: look.ink, fontSize: 13),
+      cursorColor: look.accent,
       decoration: InputDecoration(
         hintText: 'Search by title',
-        hintStyle: const TextStyle(color: Color(0x66FFFFFF), fontSize: 13),
-        prefixIcon: const Icon(
-          Icons.search_rounded,
-          color: Color(0x66FFFFFF),
-          size: 20,
-        ),
+        hintStyle: TextStyle(color: look.muted, fontSize: 13),
+        prefixIcon: Icon(Icons.search_rounded, color: look.muted, size: 20),
         suffixIcon: _query.isEmpty
             ? null
             : IconButton(
                 tooltip: 'Clear',
                 onPressed: _search.clear,
-                icon: const Icon(
-                  Icons.cancel_rounded,
-                  color: Color(0x66FFFFFF),
-                  size: 18,
-                ),
+                icon: Icon(Icons.cancel_rounded, color: look.muted, size: 18),
               ),
         filled: true,
-        fillColor: LibraryLook.card,
+        fillColor: look.card,
         isDense: true,
-        contentPadding: const EdgeInsets.symmetric(vertical: 12),
-        border: _searchBorder(LibraryLook.border),
-        enabledBorder: _searchBorder(LibraryLook.border),
-        focusedBorder: _searchBorder(LibraryLook.violet),
+        contentPadding: const EdgeInsets.symmetric(vertical: 8),
+        border: _searchBorder(look.border),
+        enabledBorder: _searchBorder(look.border),
+        focusedBorder: _searchBorder(look.accent),
       ),
     );
   }
 
   OutlineInputBorder _searchBorder(Color color) {
     return OutlineInputBorder(
-      borderRadius: BorderRadius.circular(LibraryLook.radius),
+      borderRadius: BorderRadius.circular(LibraryPalette.radius),
       borderSide: BorderSide(color: color),
     );
   }
@@ -999,29 +942,24 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     IconData? icon,
     Color? iconColor,
   }) {
-    final fg = selected
-        ? Colors.white
-        : (dashed ? LibraryLook.violet : const Color(0xB3FFFFFF));
+    final look = LibraryPalette.of(context);
+    final fg = selected ? look.onAccent : (dashed ? look.accent : look.ink);
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: Material(
-        color: selected
-            ? LibraryLook.violet
-            : (dashed
-                  ? Colors.white.withValues(alpha: 0.05)
-                  : LibraryLook.card),
+        color: selected ? look.accent : (dashed ? look.accentDim : look.card),
         shape: StadiumBorder(
           side: BorderSide(
             color: dashed
-                ? LibraryLook.violet.withValues(alpha: 0.5)
-                : (selected ? LibraryLook.violet : LibraryLook.border),
+                ? look.accent.withValues(alpha: 0.5)
+                : (selected ? look.accent : look.border),
           ),
         ),
         child: InkWell(
           customBorder: const StadiumBorder(),
           onTap: onTap,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -1046,57 +984,41 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   }
 
   Widget _vaultBanner() {
+    final look = LibraryPalette.of(context);
     return Container(
-      padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+      padding: const EdgeInsets.fromLTRB(10, 4, 4, 4),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0x663B0764), LibraryLook.card],
-        ),
-        borderRadius: BorderRadius.circular(LibraryLook.radius),
-        border: Border.all(color: LibraryLook.violet.withValues(alpha: 0.35)),
+        color: look.card,
+        borderRadius: BorderRadius.circular(LibraryPalette.radius),
+        border: Border.all(color: look.border),
       ),
       child: Row(
         children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: LibraryLook.violetDim,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: LibraryLook.violet.withValues(alpha: 0.4),
+          Icon(Icons.lock_rounded, color: look.accent, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Private PIN Vault · AES-256',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: look.ink,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
               ),
-            ),
-            child: const Icon(Icons.lock_rounded, color: LibraryLook.violet),
-          ),
-          const SizedBox(width: 12),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Private PIN Vault',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                SizedBox(height: 2),
-                Text(
-                  'Protected with AES-256 local encryption',
-                  style: TextStyle(color: Color(0x99FFFFFF), fontSize: 11),
-                ),
-              ],
             ),
           ),
           TextButton.icon(
             style: TextButton.styleFrom(
-              foregroundColor: Colors.white,
-              backgroundColor: Colors.white.withValues(alpha: 0.1),
+              foregroundColor: look.ink,
+              backgroundColor: look.raised,
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              minimumSize: const Size(0, 32),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
-                side: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
+                side: BorderSide(color: look.border),
               ),
             ),
             onPressed: () =>
@@ -1113,6 +1035,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   }
 
   Widget _libraryList(LibraryCatalog catalog) {
+    // The PIN pad does not need the video scan, so it can fill the page at once.
+    if (_tab == 1 && !ref.watch(vaultUnlockedProvider)) {
+      return VaultLockPane(onUnlocked: () => _reload());
+    }
     if (_loading) return const SkeletonGrid();
     if (_error != null) {
       return LibraryEmpty(
@@ -1122,8 +1048,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
         danger: true,
         action: FilledButton.icon(
           style: FilledButton.styleFrom(
-            backgroundColor: Colors.white.withValues(alpha: 0.1),
-            foregroundColor: Colors.white,
+            backgroundColor: LibraryPalette.of(context).accent,
+            foregroundColor: LibraryPalette.of(context).onAccent,
           ),
           onPressed: () => _reload(rescan: true),
           icon: const Icon(Icons.refresh_rounded),
@@ -2138,16 +2064,17 @@ class _VideoCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final look = LibraryPalette.of(context);
     final card = Material(
-      color: LibraryLook.card,
+      color: look.card,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(LibraryLook.radius),
+        borderRadius: BorderRadius.circular(LibraryPalette.radius),
         side: BorderSide(
           color: missing
               ? Colors.transparent
               : selected
-              ? LibraryLook.violet
-              : LibraryLook.border,
+              ? look.accent
+              : look.border,
         ),
       ),
       clipBehavior: Clip.antiAlias,
@@ -2157,7 +2084,7 @@ class _VideoCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Expanded(child: missing ? _missingThumb() : _thumb(context)),
+            Expanded(child: missing ? _missingThumb(look) : _thumb(context)),
             Padding(
               padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
               child: Column(
@@ -2168,12 +2095,12 @@ class _VideoCard extends StatelessWidget {
                     maxLines: vault ? 1 : 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: missing ? const Color(0xCCFFFFFF) : Colors.white,
+                      color: missing ? look.muted : look.ink,
                       fontWeight: FontWeight.w600,
                       fontSize: 12,
                       height: 1.25,
                       decoration: missing ? TextDecoration.lineThrough : null,
-                      decorationColor: const Color(0xCCFFFFFF),
+                      decorationColor: look.muted,
                     ),
                   ),
                   if (caption != null && caption!.isNotEmpty)
@@ -2186,9 +2113,7 @@ class _VideoCard extends StatelessWidget {
                         style: TextStyle(
                           fontSize: 10,
                           height: 1.3,
-                          color: missing
-                              ? const Color(0x66FFFFFF)
-                              : const Color(0x80FFFFFF),
+                          color: look.muted,
                         ),
                       ),
                     ),
@@ -2201,8 +2126,8 @@ class _VideoCard extends StatelessWidget {
                 child: TextButton.icon(
                   key: deleteKey,
                   style: TextButton.styleFrom(
-                    foregroundColor: LibraryLook.danger,
-                    backgroundColor: LibraryLook.dangerDim,
+                    foregroundColor: look.danger,
+                    backgroundColor: look.dangerDim,
                     minimumSize: const Size.fromHeight(32),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8),
@@ -2220,10 +2145,10 @@ class _VideoCard extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
                 child: DecoratedBox(
-                  decoration: const BoxDecoration(
-                    border: Border(top: BorderSide(color: Color(0x0DFFFFFF))),
+                  decoration: BoxDecoration(
+                    border: Border(top: BorderSide(color: look.border)),
                   ),
-                  child: vault ? _vaultActions() : _phoneActions(),
+                  child: vault ? _vaultActions(look) : _phoneActions(look),
                 ),
               ),
           ],
@@ -2232,30 +2157,26 @@ class _VideoCard extends StatelessWidget {
     );
     if (!missing) return card;
     return DashedRoundedBorder(
-      color: LibraryLook.danger.withValues(alpha: 0.7),
+      color: look.danger.withValues(alpha: 0.7),
       child: card,
     );
   }
 
-  Widget _missingThumb() {
-    return const ColoredBox(
-      color: Color(0xFF09090B),
+  Widget _missingThumb(LibraryPalette look) {
+    return ColoredBox(
+      color: look.raised,
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            Icons.broken_image_outlined,
-            color: LibraryLook.danger,
-            size: 28,
-          ),
-          SizedBox(height: 6),
+          Icon(Icons.broken_image_outlined, color: look.danger, size: 28),
+          const SizedBox(height: 6),
           Padding(
-            padding: EdgeInsets.symmetric(horizontal: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
             child: Text(
               'This vault file is missing.',
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: LibraryLook.danger,
+                color: look.danger,
                 fontSize: 10,
                 fontWeight: FontWeight.w600,
               ),
@@ -2267,6 +2188,7 @@ class _VideoCard extends StatelessWidget {
   }
 
   Widget _thumb(BuildContext context) {
+    final look = LibraryPalette.of(context);
     final platformName = platform;
     return Stack(
       fit: StackFit.expand,
@@ -2292,38 +2214,38 @@ class _VideoCard extends StatelessWidget {
             height: vault ? 36 : 40,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: vault ? LibraryLook.violet : const Color(0x99000000),
+              color: vault ? look.accent : const Color(0x99000000),
               border: vault
                   ? null
                   : Border.all(color: Colors.white.withValues(alpha: 0.2)),
             ),
-            child: const Icon(
+            child: Icon(
               Icons.play_arrow_rounded,
-              color: Colors.white,
+              color: vault ? look.onAccent : Colors.white,
               size: 22,
             ),
           ),
         ),
         if (vault)
-          const Positioned(
+          Positioned(
             left: 8,
             top: 8,
             child: DecoratedBox(
               decoration: BoxDecoration(
-                color: LibraryLook.violet,
-                borderRadius: BorderRadius.all(Radius.circular(6)),
+                color: look.accent,
+                borderRadius: const BorderRadius.all(Radius.circular(6)),
               ),
               child: Padding(
-                padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.lock_rounded, color: Colors.white, size: 10),
-                    SizedBox(width: 2),
+                    Icon(Icons.lock_rounded, color: look.onAccent, size: 10),
+                    const SizedBox(width: 2),
                     Text(
                       'VAULT',
                       style: TextStyle(
-                        color: Colors.white,
+                        color: look.onAccent,
                         fontSize: 9,
                         fontWeight: FontWeight.w800,
                       ),
@@ -2386,7 +2308,7 @@ class _VideoCard extends StatelessWidget {
                     favorite
                         ? Icons.favorite_rounded
                         : Icons.favorite_border_rounded,
-                    color: favorite ? LibraryLook.danger : Colors.white,
+                    color: favorite ? look.danger : Colors.white,
                     size: 14,
                   ),
                 ),
@@ -2419,7 +2341,7 @@ class _VideoCard extends StatelessWidget {
           Positioned.fill(
             child: ColoredBox(
               color: selected
-                  ? LibraryLook.violet.withValues(alpha: 0.28)
+                  ? look.accent.withValues(alpha: 0.28)
                   : Colors.transparent,
               child: Align(
                 alignment: Alignment.topRight,
@@ -2429,16 +2351,16 @@ class _VideoCard extends StatelessWidget {
                     width: 22,
                     height: 22,
                     decoration: BoxDecoration(
-                      color: selected ? LibraryLook.violet : LibraryLook.card,
+                      color: selected ? look.accent : const Color(0xCC000000),
                       borderRadius: BorderRadius.circular(6),
                       border: Border.all(
                         color: Colors.white.withValues(alpha: 0.35),
                       ),
                     ),
                     child: selected
-                        ? const Icon(
+                        ? Icon(
                             Icons.check_rounded,
-                            color: Colors.white,
+                            color: look.onAccent,
                             size: 16,
                           )
                         : null,
@@ -2451,7 +2373,7 @@ class _VideoCard extends StatelessWidget {
     );
   }
 
-  Widget _phoneActions() {
+  Widget _phoneActions(LibraryPalette look) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -2459,28 +2381,30 @@ class _VideoCard extends StatelessWidget {
           Icons.phonelink_ring_rounded,
           'Send to another device',
           onSend,
+          look,
         ),
-        _actionIcon(Icons.lock_outline_rounded, 'Add to vault', onVault),
+        _actionIcon(Icons.lock_outline_rounded, 'Add to vault', onVault, look),
         _actionIcon(
           Icons.delete_outline_rounded,
           'Delete',
           onDelete,
-          color: LibraryLook.danger,
+          look,
+          color: look.danger,
           buttonKey: deleteKey,
         ),
-        _actionIcon(Icons.more_vert_rounded, 'More', onMore),
+        _actionIcon(Icons.more_vert_rounded, 'More', onMore, look),
       ],
     );
   }
 
-  Widget _vaultActions() {
+  Widget _vaultActions(LibraryPalette look) {
     return Row(
       children: [
         Expanded(
           child: TextButton.icon(
             style: TextButton.styleFrom(
-              foregroundColor: const Color(0xCCFFFFFF),
-              backgroundColor: Colors.white.withValues(alpha: 0.05),
+              foregroundColor: look.ink,
+              backgroundColor: look.raised,
               minimumSize: const Size(0, 32),
               padding: const EdgeInsets.symmetric(horizontal: 8),
               shape: RoundedRectangleBorder(
@@ -2495,7 +2419,7 @@ class _VideoCard extends StatelessWidget {
             ),
           ),
         ),
-        _actionIcon(Icons.more_vert_rounded, 'Vault options', onMore),
+        _actionIcon(Icons.more_vert_rounded, 'Vault options', onMore, look),
       ],
     );
   }
@@ -2503,8 +2427,9 @@ class _VideoCard extends StatelessWidget {
   Widget _actionIcon(
     IconData icon,
     String tooltip,
-    VoidCallback? onPressed, {
-    Color color = const Color(0xB3FFFFFF),
+    VoidCallback? onPressed,
+    LibraryPalette look, {
+    Color? color,
     Key? buttonKey,
   }) {
     return IconButton(
@@ -2514,7 +2439,7 @@ class _VideoCard extends StatelessWidget {
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
       onPressed: onPressed,
-      icon: Icon(icon, size: 18, color: color),
+      icon: Icon(icon, size: 18, color: color ?? look.muted),
     );
   }
 }
@@ -2601,8 +2526,8 @@ class _LiveDot extends StatelessWidget {
     return Container(
       width: 6,
       height: 6,
-      decoration: const BoxDecoration(
-        color: LibraryLook.success,
+      decoration: BoxDecoration(
+        color: LibraryPalette.of(context).success,
         shape: BoxShape.circle,
       ),
     );
@@ -2743,6 +2668,7 @@ class _VaultLockPaneState extends ConsumerState<VaultLockPane>
 
   @override
   Widget build(BuildContext context) {
+    final look = LibraryPalette.of(context);
     final vault = ref.watch(vaultServiceProvider);
     final creating = !vault.hasPin;
     final title = creating
@@ -2759,231 +2685,208 @@ class _VaultLockPaneState extends ConsumerState<VaultLockPane>
       focusNode: _focus,
       autofocus: true,
       onKeyEvent: _onKey,
-      child: ColoredBox(
-        color: LibraryLook.bg,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
         child: LayoutBuilder(
           builder: (context, box) {
-            // 3 keys of 78 + 2 gaps of 26 = 286 wide; ~600 tall in total.
-            return Center(
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                child: SizedBox(
-                  width: 320,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: LibraryLook.violetDim,
-                            borderRadius: BorderRadius.circular(99),
-                            border: Border.all(
-                              color: LibraryLook.violet.withValues(alpha: 0.35),
-                            ),
-                          ),
-                          child: const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.lock_rounded,
-                                color: LibraryLook.violet,
-                                size: 14,
-                              ),
-                              SizedBox(width: 4),
-                              Text(
-                                'AES-256',
-                                style: TextStyle(
-                                  color: LibraryLook.violet,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
+            final keypad = _keypadSize(box.biggest);
+            return Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.lock_rounded, color: look.accent, size: 18),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: look.ink,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -0.2,
                         ),
-                        const SizedBox(height: 18),
-                        Container(
-                          width: 64,
-                          height: 64,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: LibraryLook.violetDim,
-                            border: Border.all(
-                              color: LibraryLook.violet.withValues(alpha: 0.4),
-                            ),
-                          ),
-                          child: const Icon(
-                            Icons.lock_rounded,
-                            color: LibraryLook.violet,
-                            size: 30,
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-                        Text(
-                          title,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 20,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: -0.2,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        SizedBox(
-                          height: 20,
-                          child: Text(
-                            subtitle,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: _error != null
-                                  ? const Color(0xFFFF8A80)
-                                  : Colors.white70,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 18),
-                        AnimatedBuilder(
-                          animation: _shake,
-                          builder: (context, child) {
-                            final t = _shake.value;
-                            final dx = t == 0
-                                ? 0.0
-                                : 14 * (1 - t) * math.sin(t * math.pi * 6);
-                            return Transform.translate(
-                              offset: Offset(dx, 0),
-                              child: child,
-                            );
-                          },
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              for (var i = 0; i < _length; i++)
-                                AnimatedContainer(
-                                  duration: const Duration(milliseconds: 120),
-                                  width: 13,
-                                  height: 13,
-                                  margin: const EdgeInsets.symmetric(
-                                    horizontal: 11,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: i < _pin.length
-                                        ? LibraryLook.violet
-                                        : const Color(0x0DFFFFFF),
-                                    border: Border.all(
-                                      color: i < _pin.length
-                                          ? LibraryLook.violet
-                                          : const Color(0x66FFFFFF),
-                                      width: 1.2,
-                                    ),
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 40),
-                        for (final row in const [
-                          [
-                            ['1', ''],
-                            ['2', 'ABC'],
-                            ['3', 'DEF'],
-                          ],
-                          [
-                            ['4', 'GHI'],
-                            ['5', 'JKL'],
-                            ['6', 'MNO'],
-                          ],
-                          [
-                            ['7', 'PQRS'],
-                            ['8', 'TUV'],
-                            ['9', 'WXYZ'],
-                          ],
-                        ]) ...[
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              for (var c = 0; c < 3; c++) ...[
-                                if (c > 0) const SizedBox(width: _PinKey.gap),
-                                _PinKey(
-                                  digit: row[c][0],
-                                  letters: row[c][1],
-                                  onTap: () => _press(row[c][0]),
-                                ),
-                              ],
-                            ],
-                          ),
-                          const SizedBox(height: 18),
-                        ],
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            // Left slot: no biometric support in this app, so empty.
-                            const SizedBox(
-                              width: _PinKey.size,
-                              height: _PinKey.size,
-                            ),
-                            const SizedBox(width: _PinKey.gap),
-                            _PinKey(
-                              digit: '0',
-                              letters: '',
-                              onTap: () => _press('0'),
-                            ),
-                            const SizedBox(width: _PinKey.gap),
-                            SizedBox(
-                              width: _PinKey.size,
-                              height: _PinKey.size,
-                              child: TextButton(
-                                style: TextButton.styleFrom(
-                                  foregroundColor: Colors.white,
-                                  shape: const CircleBorder(),
-                                  padding: EdgeInsets.zero,
-                                ),
-                                onPressed: _pin.isEmpty ? _cancel : _backspace,
-                                child: Text(
-                                  _pin.isEmpty ? 'Cancel' : 'Delete',
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w400,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
+                      ),
                     ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: look.accentDim,
+                        borderRadius: BorderRadius.circular(99),
+                        border: Border.all(
+                          color: look.accent.withValues(alpha: 0.35),
+                        ),
+                      ),
+                      child: Text(
+                        'AES-256',
+                        style: TextStyle(
+                          color: look.accent,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: _error != null ? look.danger : look.muted,
+                    fontSize: 13,
                   ),
                 ),
-              ),
+                const SizedBox(height: 8),
+                AnimatedBuilder(
+                  animation: _shake,
+                  builder: (context, child) {
+                    final t = _shake.value;
+                    final dx = t == 0
+                        ? 0.0
+                        : 14 * (1 - t) * math.sin(t * math.pi * 6);
+                    return Transform.translate(
+                      offset: Offset(dx, 0),
+                      child: child,
+                    );
+                  },
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      for (var i = 0; i < _length; i++)
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 120),
+                          width: 12,
+                          height: 12,
+                          margin: const EdgeInsets.symmetric(horizontal: 8),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: i < _pin.length
+                                ? look.accent
+                                : Colors.transparent,
+                            border: Border.all(
+                              color: i < _pin.length ? look.accent : look.muted,
+                              width: 1.4,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const Spacer(),
+                for (final row in const [
+                  [
+                    ['1', ''],
+                    ['2', 'ABC'],
+                    ['3', 'DEF'],
+                  ],
+                  [
+                    ['4', 'GHI'],
+                    ['5', 'JKL'],
+                    ['6', 'MNO'],
+                  ],
+                  [
+                    ['7', 'PQRS'],
+                    ['8', 'TUV'],
+                    ['9', 'WXYZ'],
+                  ],
+                ]) ...[
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      for (var c = 0; c < 3; c++) ...[
+                        if (c > 0) SizedBox(width: keypad.gap),
+                        _PinKey(
+                          digit: row[c][0],
+                          letters: row[c][1],
+                          size: keypad.size,
+                          onTap: () => _press(row[c][0]),
+                        ),
+                      ],
+                    ],
+                  ),
+                  SizedBox(height: keypad.gap),
+                ],
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    SizedBox(width: keypad.size, height: keypad.size),
+                    SizedBox(width: keypad.gap),
+                    _PinKey(
+                      digit: '0',
+                      letters: '',
+                      size: keypad.size,
+                      onTap: () => _press('0'),
+                    ),
+                    SizedBox(width: keypad.gap),
+                    SizedBox(
+                      width: keypad.size,
+                      height: keypad.size,
+                      child: TextButton(
+                        style: TextButton.styleFrom(
+                          foregroundColor: look.ink,
+                          shape: const CircleBorder(),
+                          padding: EdgeInsets.zero,
+                        ),
+                        onPressed: _pin.isEmpty ? _cancel : _backspace,
+                        child: Text(
+                          _pin.isEmpty ? 'Cancel' : 'Delete',
+                          style: TextStyle(
+                            fontSize: (keypad.size * 0.2).clamp(12.0, 16.0),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             );
           },
         ),
       ),
     );
   }
+
+  /// Keys grow with the space under the short header, and stop at a phone-sized cap.
+  ({double size, double gap}) _keypadSize(Size box) {
+    const header = 96.0;
+    const minGap = 8.0;
+    final freeH = math.max(1.0, box.height - header);
+    final freeW = math.max(1.0, box.width);
+    var size = math.min((freeH - minGap * 3) / 4, (freeW - minGap * 2) / 3);
+    if (!size.isFinite || size <= 0) size = 48;
+    if (size > 84) size = 84;
+    var gap = math.min(
+      20.0,
+      math.min((freeH - size * 4) / 3, (freeW - size * 3) / 2),
+    );
+    if (!gap.isFinite || gap < 2) gap = 2;
+    return (size: size, gap: gap);
+  }
 }
 
-/// iPhone-style passcode key: translucent circle, big light digit, letters.
+/// Round passcode key. Digit size follows the circle.
 class _PinKey extends StatefulWidget {
   const _PinKey({
     required this.digit,
     required this.letters,
     required this.onTap,
+    required this.size,
   });
-
-  static const size = 78.0;
-  static const gap = 26.0;
 
   final String digit;
   final String letters;
   final VoidCallback onTap;
+  final double size;
 
   @override
   State<_PinKey> createState() => _PinKeyState();
@@ -2994,6 +2897,8 @@ class _PinKeyState extends State<_PinKey> {
 
   @override
   Widget build(BuildContext context) {
+    final look = LibraryPalette.of(context);
+    final size = widget.size;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTapDown: (_) => setState(() => _down = true),
@@ -3005,34 +2910,34 @@ class _PinKeyState extends State<_PinKey> {
       child: AnimatedContainer(
         duration: Duration(milliseconds: _down ? 40 : 260),
         curve: Curves.easeOut,
-        width: _PinKey.size,
-        height: _PinKey.size,
+        width: size,
+        height: size,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: _down ? const Color(0xFF2A2A36) : LibraryLook.card,
-          border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+          color: _down ? look.accentDim : look.raised,
+          border: Border.all(color: look.border),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text(
               widget.digit,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 34,
-                fontWeight: FontWeight.w300,
-                height: 1.05,
+              style: TextStyle(
+                color: look.ink,
+                fontSize: size * 0.42,
+                fontWeight: FontWeight.w400,
+                height: 1,
               ),
             ),
             if (widget.letters.isNotEmpty)
               Text(
                 widget.letters,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 10,
+                style: TextStyle(
+                  color: look.muted,
+                  fontSize: (size * 0.11).clamp(7.0, 11.0),
                   fontWeight: FontWeight.w600,
-                  letterSpacing: 2,
-                  height: 1.2,
+                  letterSpacing: 1.2,
+                  height: 1.1,
                 ),
               ),
           ],
@@ -3047,14 +2952,14 @@ Future<bool> ensureVaultUnlocked(BuildContext context, WidgetRef ref) async {
   final ok = await showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,
-    backgroundColor: const Color(0xFF0A1118),
+    backgroundColor: Theme.of(context).colorScheme.surface,
     showDragHandle: false,
     builder: (context) => Padding(
       padding: EdgeInsets.only(
         bottom: MediaQuery.of(context).viewInsets.bottom,
       ),
       child: SizedBox(
-        height: math.min(MediaQuery.sizeOf(context).height * 0.9, 720),
+        height: math.min(MediaQuery.sizeOf(context).height * 0.92, 760),
         child: VaultLockPane(onUnlocked: () => Navigator.pop(context, true)),
       ),
     ),

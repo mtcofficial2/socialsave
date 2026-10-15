@@ -1,50 +1,32 @@
 import 'package:flutter/material.dart';
 
-/// Colors from the cinematic library mock (appDark, appCard, accent violet).
-class LibraryLook {
-  const LibraryLook._();
+/// Library surfaces taken from the app theme, so Light and Dark both apply.
+class LibraryPalette {
+  const LibraryPalette(this.scheme);
 
-  static const bg = Color(0xFF0B0B0F);
-  static const card = Color(0xFF16161D);
-  static const surface = Color(0xFF1F1F28);
-  static const violet = Color(0xFF7C5CFF);
-  static const violetHover = Color(0xFF6947F5);
-  static const danger = Color(0xFFFF453A);
-  static const success = Color(0xFF30D158);
-  static const border = Color(0x14FFFFFF);
-  static const violetDim = Color(0x267C5CFF);
-  static const dangerDim = Color(0x26FF453A);
+  final ColorScheme scheme;
+
+  static LibraryPalette of(BuildContext context) =>
+      LibraryPalette(Theme.of(context).colorScheme);
+
+  bool get dark => scheme.brightness == Brightness.dark;
+
+  Color get bg => scheme.surface;
+  Color get card =>
+      dark ? scheme.surfaceContainerLow : scheme.surfaceContainerLowest;
+  Color get raised =>
+      dark ? scheme.surfaceContainerHigh : scheme.surfaceContainerLow;
+  Color get accent => scheme.primary;
+  Color get onAccent => scheme.onPrimary;
+  Color get ink => scheme.onSurface;
+  Color get muted => scheme.onSurfaceVariant;
+  Color get border => scheme.outlineVariant;
+  Color get danger => scheme.error;
+  Color get dangerDim => scheme.errorContainer;
+  Color get accentDim => scheme.primary.withValues(alpha: dark ? 0.22 : 0.12);
+  Color get success => dark ? const Color(0xFF4ADE80) : const Color(0xFF15803D);
 
   static const radius = 16.0;
-}
-
-ThemeData libraryLookTheme(BuildContext context) {
-  final base = Theme.of(context);
-  const scheme = ColorScheme.dark(
-    primary: LibraryLook.violet,
-    onPrimary: Colors.white,
-    secondary: LibraryLook.violet,
-    onSecondary: Colors.white,
-    surface: LibraryLook.bg,
-    onSurface: Colors.white,
-    error: LibraryLook.danger,
-    onError: Colors.white,
-    surfaceContainerHighest: LibraryLook.card,
-    surfaceContainerHigh: LibraryLook.surface,
-    surfaceContainer: Color(0xFF12121A),
-    onSurfaceVariant: Color(0x99FFFFFF),
-  );
-  return base.copyWith(
-    brightness: Brightness.dark,
-    scaffoldBackgroundColor: LibraryLook.bg,
-    colorScheme: scheme,
-    iconTheme: const IconThemeData(color: Colors.white),
-    dividerColor: LibraryLook.border,
-    textTheme: base.textTheme.apply(
-      bodyColor: Colors.white,
-      displayColor: Colors.white,
-    ),
-  );
 }
 
 /// `mm:ss`, or `h:mm:ss` once an hour is reached.
@@ -142,7 +124,7 @@ Color libraryPlatformColor(String name) {
   }
 }
 
-/// Centered empty or error block used on the dark library page.
+/// Centered empty or error block on the library page.
 class LibraryEmpty extends StatelessWidget {
   const LibraryEmpty({
     super.key,
@@ -161,8 +143,9 @@ class LibraryEmpty extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = danger ? LibraryLook.danger : LibraryLook.violet;
-    final wash = danger ? LibraryLook.dangerDim : LibraryLook.violetDim;
+    final look = LibraryPalette.of(context);
+    final color = danger ? look.danger : look.accent;
+    final wash = danger ? look.dangerDim : look.accentDim;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -185,21 +168,17 @@ class LibraryEmpty extends StatelessWidget {
               Text(
                 title,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w700,
-                  color: Colors.white,
+                  color: look.ink,
                 ),
               ),
               const SizedBox(height: 6),
               Text(
                 message,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 12,
-                  height: 1.45,
-                  color: Color(0x99FFFFFF),
-                ),
+                style: TextStyle(fontSize: 12, height: 1.45, color: look.muted),
               ),
               if (action != null) ...[const SizedBox(height: 16), action!],
             ],
@@ -215,8 +194,8 @@ class DashedRoundedBorder extends StatelessWidget {
   const DashedRoundedBorder({
     super.key,
     required this.child,
-    this.color = LibraryLook.danger,
-    this.radius = LibraryLook.radius,
+    this.color = const Color(0xFFBA1A1A),
+    this.radius = LibraryPalette.radius,
   });
 
   final Widget child;
