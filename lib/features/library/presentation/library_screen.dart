@@ -13,19 +13,21 @@ import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/platform/desktop_support.dart';
 import 'package:social_save/core/platform/phone_body.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
+import 'package:social_save/features/library/bundle_ui.dart';
 import 'package:social_save/features/library/device_media.dart';
 import 'package:social_save/features/library/library_catalog.dart';
+import 'package:social_save/features/library/nearby_ui.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
+import 'package:social_save/features/library/presentation/library_look.dart';
 import 'package:social_save/features/library/summarize_sheet.dart';
 import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
 import 'package:social_save/features/library/vault_service.dart';
-import 'package:social_save/shared/routing/app_router.dart' show debugOpenVault, debugOpenMenu;
+import 'package:social_save/shared/routing/app_router.dart'
+    show debugOpenVault, debugOpenMenu;
 import 'package:social_save/shared/widgets/skeleton.dart';
 import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/features/player/player_session.dart';
 import 'package:social_save/shared/models/social_platform.dart';
-import 'package:social_save/shared/widgets/empty_state.dart';
-import 'package:social_save/shared/widgets/page_layout.dart';
 import 'package:social_save/shared/widgets/local_video_thumb.dart';
 
 double _libraryGutter(BuildContext context) {
@@ -65,18 +67,27 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   PlayerSession? _docked;
   bool _scanning = false;
   StreamSubscription<List<DeviceVideo>>? _scanSub;
+  final TextEditingController _search = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _search.addListener(_onSearch);
     _reload();
+  }
+
+  void _onSearch() {
+    if (!mounted || _search.text == _query) return;
+    setState(() => _query = _search.text);
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _scanSub?.cancel();
+    _search.removeListener(_onSearch);
+    _search.dispose();
     super.dispose();
   }
 
@@ -102,7 +113,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
       final videos = await Permission.videos.request();
       final storage = await Permission.storage.request();
       allowed =
-          videos.isGranted || videos.isLimited || storage.isGranted || storage.isLimited;
+          videos.isGranted ||
+          videos.isLimited ||
+          storage.isGranted ||
+          storage.isLimited;
     }
     try {
       final device = await DeviceMediaService().listVideos();
@@ -219,7 +233,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
               children: [
                 const ListTile(
                   title: Text('Video folders on this PC'),
-                  subtitle: Text('SocialSave looks for videos in these folders and the folders inside them.'),
+                  subtitle: Text(
+                    'SocialSave looks for videos in these folders and the folders inside them.',
+                  ),
                 ),
                 for (final folder in defaults)
                   ListTile(
@@ -251,7 +267,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
                     icon: const Icon(Icons.create_new_folder_outlined),
                     label: const Text('Add folder'),
                     onPressed: () async {
-                      final picked = await getDirectoryPath(confirmButtonText: 'Add folder');
+                      final picked = await getDirectoryPath(
+                        confirmButtonText: 'Add folder',
+                      );
                       if (picked == null || picked.isEmpty) return;
                       final lower = picked.toLowerCase();
                       if (extra.any((item) => item.toLowerCase() == lower) ||
@@ -350,18 +368,15 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   Future<void> _addToVault(DeviceVideo video, {required bool move}) async {
     final path = await DeviceMediaService().resolvePlayablePath(video);
     if (path == null) return;
-    await ref.read(vaultServiceProvider).importFile(
-          sourcePath: path,
-          title: video.title,
-        );
+    await ref
+        .read(vaultServiceProvider)
+        .importFile(sourcePath: path, title: video.title);
     if (move) {
       await DeviceMediaService().deletePublic(video);
     }
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(move ? 'Moved to vault' : 'Copied to vault'),
-      ),
+      SnackBar(content: Text(move ? 'Moved to vault' : 'Copied to vault')),
     );
     await _reload();
   }
@@ -372,7 +387,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
       bindings: {
         const SingleActivator(LogicalKeyboardKey.delete): () {
           if (_tab != 0 || _selected.isEmpty) return;
-          _deleteVideos(_device.where((v) => _selected.contains(v.id)).toList());
+          _deleteVideos(
+            _device.where((v) => _selected.contains(v.id)).toList(),
+          );
         },
         const SingleActivator(LogicalKeyboardKey.escape): () {
           if (_selectMode || _selected.isNotEmpty) {
@@ -389,306 +406,761 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
 
   Widget _body(BuildContext context) {
     final gutter = _libraryGutter(context);
-    final title = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Library', style: pageTitleStyle(context)),
-        if (isDesktopShell(context))
-          Text(
-            DesktopSupport.isWindows ? 'Videos on this PC' : 'Videos on this device',
-            style: TextStyle(
-              fontSize: 13,
-              height: 1.3,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ),
-      ],
-    );
-    final actions = <Widget>[
-      if (_tab == 0)
-        TextButton.icon(
-          key: const ValueKey('library-select'),
-          onPressed: () => setState(() {
-            _selectMode = !_selectMode;
-            if (!_selectMode) _selected.clear();
-          }),
-          icon: Icon(_selectMode ? Icons.close_rounded : Icons.checklist_rounded, size: 20),
-          label: Text(_selectMode ? 'Done' : 'Select'),
-        ),
-      FilledButton.tonalIcon(
-        key: const ValueKey('library-share'),
-        style: FilledButton.styleFrom(
-          minimumSize: const Size(0, 44),
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-        ),
-        onPressed: () => showNearbySheet(
-          context,
-          onSend: _pickLibraryVideoToSend,
-          pickFile: _chooseFileToSend,
-          onReceived: () => _reload(rescan: DesktopSupport.isWindows),
-        ),
-        icon: const Icon(Icons.wifi_tethering_rounded, size: 18),
-        label: const Text('Share'),
-      ),
-      if (DesktopSupport.isWindows)
-        IconButton(
-          tooltip: 'Video folders',
-          onPressed: _manageWindowsFolders,
-          icon: const Icon(Icons.create_new_folder_outlined),
-        ),
-      IconButton(
-        tooltip: 'Refresh',
-        onPressed: () => _reload(rescan: true),
-        icon: const Icon(Icons.refresh_rounded),
-      ),
-    ];
-    return Scaffold(
-      body: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: EdgeInsets.fromLTRB(gutter, 8, gutter, 8),
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  if (constraints.maxWidth < 520) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        title,
-                        SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Row(children: actions),
-                        ),
-                      ],
-                    );
-                  }
-                  return Row(
-                    children: [
-                      Expanded(child: title),
-                      ...actions,
-                    ],
-                  );
-                },
-              ),
-            ),
-            Padding(
-              padding: EdgeInsets.symmetric(horizontal: gutter),
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final wide = constraints.maxWidth >= 640;
-                  final switcher = SegmentedButton<int>(
-                    // On a wide library row, the two tabs share a wider track
-                    // so they reach a little further into the middle.
-                    expandedInsets: wide ? EdgeInsets.zero : null,
-                    showSelectedIcon: false,
-                    style: SegmentedButton.styleFrom(
-                      minimumSize: const Size(72, 42),
-                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-                    ),
-                    segments: [
-                      ButtonSegment(
-                        value: 0,
-                        icon: Icon(DesktopSupport.isWindows ? Icons.computer_rounded : Icons.smartphone_rounded, size: 18),
-                        label: Text(DesktopSupport.isWindows ? 'This PC' : 'This phone'),
-                      ),
-                      const ButtonSegment(value: 1, icon: Icon(Icons.lock_rounded, size: 18), label: Text('Vault')),
-                    ],
-                    selected: {_tab},
-                    onSelectionChanged: (value) => _selectTab(value.first),
-                  );
-                  final search = TextField(
-                    onChanged: (value) => setState(() => _query = value),
-                    decoration: const InputDecoration(
-                      hintText: 'Search by title',
-                      prefixIcon: Icon(Icons.search_rounded),
-                      isDense: true,
-                    ),
-                  );
-                  if (!wide) {
-                    return Wrap(
-                      spacing: 12,
-                      runSpacing: 8,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        switcher,
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 360),
-                          child: search,
-                        ),
-                      ],
-                    );
-                  }
-                  final switchWidth = (constraints.maxWidth * 0.42).clamp(300.0, 440.0);
-                  final searchWidth = math.min(360.0, constraints.maxWidth - switchWidth - 16);
-                  return Row(
-                    children: [
-                      SizedBox(width: switchWidth, child: switcher),
-                      const SizedBox(width: 16),
-                      SizedBox(width: searchWidth, child: search),
-                    ],
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 40,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: EdgeInsets.symmetric(horizontal: gutter),
-                children: [
-                  for (final name in const ['All', 'YouTube', 'TikTok', 'Instagram', 'Facebook', 'X'])
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: ChoiceChip(
-                        label: Text(name),
-                        selected: _platform == name,
-                        onSelected: (_) => setState(() => _platform = name),
-                      ),
-                    ),
-                  const SizedBox(height: 24, child: VerticalDivider(width: 16)),
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: FilterChip(
-                      label: const Text('Favorites'),
-                      selected: _favoritesOnly,
-                      onSelected: (value) => setState(() => _favoritesOnly = value),
-                    ),
-                  ),
-                  for (final name in ref.watch(libraryCatalogProvider).collectionNames)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: ChoiceChip(
-                        label: Text(name),
-                        selected: _collection == name,
-                        onSelected: (_) => setState(() {
-                          _collection = _collection == name ? null : name;
-                        }),
-                      ),
-                    ),
-                  ActionChip(
-                    label: const Text('New collection'),
-                    onPressed: _createCollection,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
-            if ((_selectMode || _selected.isNotEmpty) && _tab == 0)
+    final catalog = ref.watch(libraryCatalogProvider);
+    final unlocked = ref.watch(vaultUnlockedProvider);
+    final visibleCount = _tab == 0
+        ? _device.where(_matchesVideo).length
+        : _vault.where(_matchesVault).length;
+    final selecting = _tab == 0 && (_selectMode || _selected.isNotEmpty);
+    return Theme(
+      data: libraryLookTheme(context),
+      child: Scaffold(
+        backgroundColor: LibraryLook.bg,
+        body: SafeArea(
+          child: Column(
+            children: [
               Padding(
-                padding: EdgeInsets.fromLTRB(gutter, 0, gutter, 8),
-                child: Material(
-                  color: Theme.of(context).colorScheme.secondaryContainer,
-                  borderRadius: BorderRadius.circular(16),
-                  child: Row(
+                padding: EdgeInsets.fromLTRB(
+                  gutter,
+                  4,
+                  math.max(4, gutter - 8),
+                  4,
+                ),
+                child: selecting ? _selectHeader() : _titleHeader(visibleCount),
+              ),
+              Padding(
+                padding: EdgeInsets.fromLTRB(gutter, 4, gutter, 0),
+                child: _shareCard(),
+              ),
+              Padding(
+                padding: EdgeInsets.fromLTRB(gutter, 12, gutter, 0),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final wide = constraints.maxWidth >= 640;
+                    final sourceLabel = DesktopSupport.isWindows
+                        ? 'This PC'
+                        : 'This phone';
+                    final sourceIcon = DesktopSupport.isWindows
+                        ? Icons.computer_rounded
+                        : Icons.smartphone_rounded;
+                    final switcher = _sourceSwitch(sourceIcon, sourceLabel);
+                    if (!wide || _tab != 0) return switcher;
+                    final switchWidth = (constraints.maxWidth * 0.42).clamp(
+                      300.0,
+                      440.0,
+                    );
+                    return Row(
+                      children: [
+                        SizedBox(width: switchWidth, child: switcher),
+                        const SizedBox(width: 16),
+                        Expanded(child: _searchField()),
+                      ],
+                    );
+                  },
+                ),
+              ),
+              if (_tab == 0) ...[
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    if (constraints.maxWidth >= 640) {
+                      return const SizedBox(height: 8);
+                    }
+                    return Padding(
+                      padding: EdgeInsets.fromLTRB(gutter, 10, gutter, 0),
+                      child: _searchField(),
+                    );
+                  },
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  height: 40,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    padding: EdgeInsets.symmetric(horizontal: gutter),
                     children: [
-                      IconButton(
-                        tooltip: 'Cancel',
-                        onPressed: () => setState(() {
-                          _selected.clear();
-                          _selectMode = false;
-                        }),
-                        icon: const Icon(Icons.close_rounded),
+                      for (final name in const [
+                        'All',
+                        'YouTube',
+                        'TikTok',
+                        'Instagram',
+                        'Facebook',
+                        'X',
+                      ])
+                        _filterPill(
+                          label: name,
+                          selected: _platform == name,
+                          onTap: () => setState(() => _platform = name),
+                        ),
+                      _filterPill(
+                        label: 'Favorites',
+                        selected: _favoritesOnly,
+                        icon: Icons.favorite_rounded,
+                        iconColor: LibraryLook.danger,
+                        onTap: () =>
+                            setState(() => _favoritesOnly = !_favoritesOnly),
                       ),
-                      Expanded(child: Text('${_selected.length} selected', style: const TextStyle(fontWeight: FontWeight.w700))),
-                      TextButton(
-                        onPressed: () => setState(() => _selected.addAll(_device.where(_matchesVideo).map((v) => v.id))),
-                        child: const Text('Select all'),
-                      ),
-                      IconButton(
-                        tooltip: 'Delete',
-                        onPressed: () => _deleteVideos(_device.where((v) => _selected.contains(v.id)).toList()),
-                        icon: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
+                      for (final name in catalog.collectionNames)
+                        _filterPill(
+                          label: '#$name',
+                          selected: _collection == name,
+                          onTap: () => setState(() {
+                            _collection = _collection == name ? null : name;
+                          }),
+                        ),
+                      _filterPill(
+                        label: 'New collection',
+                        icon: Icons.add_rounded,
+                        dashed: true,
+                        onTap: _createCollection,
                       ),
                     ],
                   ),
                 ),
+              ],
+              if (_tab == 1 && unlocked)
+                Padding(
+                  padding: EdgeInsets.fromLTRB(gutter, 12, gutter, 0),
+                  child: _vaultBanner(),
+                ),
+              if (DesktopSupport.isWindows && _scanning && _tab == 0)
+                Padding(
+                  padding: EdgeInsets.fromLTRB(gutter, 8, gutter, 0),
+                  child: Row(
+                    children: [
+                      const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: LibraryLook.violet,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Looking for videos on this PC… ${_device.length} found',
+                        style: const TextStyle(
+                          color: Color(0x99FFFFFF),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final twoPane = MediaQuery.sizeOf(context).width >= 900;
+                    final list = _libraryList(catalog);
+                    if (!twoPane) return list;
+                    final docked = _docked;
+                    return Row(
+                      children: [
+                        Expanded(child: list),
+                        const VerticalDivider(width: 1),
+                        SizedBox(
+                          width: (constraints.maxWidth * 0.48).clamp(
+                            320.0,
+                            640.0,
+                          ),
+                          child: docked == null
+                              ? const LibraryEmpty(
+                                  icon: Icons.play_circle_outline_rounded,
+                                  title: 'Nothing playing',
+                                  message:
+                                      'Choose a video to play it beside the library.',
+                                )
+                              : InAppPlayerScreen(
+                                  key: ValueKey(
+                                    '${docked.filePath ?? docked.title}-${docked.queueIndex}',
+                                  ),
+                                  session: docked,
+                                  embedded: true,
+                                  onClose: () => setState(() => _docked = null),
+                                ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
               ),
-            if (DesktopSupport.isWindows && _scanning && _tab == 0)
-              Padding(
-                padding: EdgeInsets.fromLTRB(gutter, 0, gutter, 8),
-                child: Row(
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _titleHeader(int count) {
+    return SizedBox(
+      height: 56,
+      child: Row(
+        children: [
+          const Text(
+            'Library',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 24,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.4,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(99),
+            ),
+            child: Text(
+              '$count',
+              style: const TextStyle(
+                color: Color(0x99FFFFFF),
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          const Spacer(),
+          if (DesktopSupport.isWindows)
+            IconButton(
+              tooltip: 'Video folders',
+              onPressed: _manageWindowsFolders,
+              icon: const Icon(
+                Icons.create_new_folder_outlined,
+                color: Color(0xCCFFFFFF),
+              ),
+            ),
+          IconButton(
+            tooltip: 'Refresh',
+            onPressed: () => _reload(rescan: true),
+            icon: const Icon(Icons.refresh_rounded, color: Color(0xCCFFFFFF)),
+          ),
+          if (_tab == 0)
+            TextButton.icon(
+              key: const ValueKey('library-select'),
+              onPressed: () => setState(() => _selectMode = true),
+              style: TextButton.styleFrom(foregroundColor: LibraryLook.violet),
+              icon: const Icon(Icons.checklist_rounded, size: 20),
+              label: const Text(
+                'Select',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _selectHeader() {
+    return Container(
+      height: 56,
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      decoration: BoxDecoration(
+        color: LibraryLook.surface,
+        borderRadius: BorderRadius.circular(LibraryLook.radius),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            key: const ValueKey('library-select'),
+            tooltip: 'Cancel',
+            onPressed: () => setState(() {
+              _selected.clear();
+              _selectMode = false;
+            }),
+            icon: const Icon(Icons.close_rounded, color: Color(0xCCFFFFFF)),
+          ),
+          Text(
+            '${_selected.length} selected',
+            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+          ),
+          const Spacer(),
+          TextButton(
+            onPressed: () => setState(
+              () => _selected.addAll(
+                _device.where(_matchesVideo).map((v) => v.id),
+              ),
+            ),
+            child: const Text(
+              'Select all',
+              style: TextStyle(
+                color: LibraryLook.violet,
+                fontWeight: FontWeight.w600,
+                fontSize: 12,
+              ),
+            ),
+          ),
+          TextButton.icon(
+            onPressed: () => _deleteVideos(
+              _device.where((v) => _selected.contains(v.id)).toList(),
+            ),
+            style: TextButton.styleFrom(
+              foregroundColor: LibraryLook.danger,
+              backgroundColor: LibraryLook.dangerDim,
+            ),
+            icon: const Icon(Icons.delete_outline, size: 18),
+            label: const Text(
+              'Delete',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
+            ),
+          ),
+          const SizedBox(width: 4),
+        ],
+      ),
+    );
+  }
+
+  Widget _shareCard() {
+    return Container(
+      key: const ValueKey('library-share'),
+      padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+      decoration: BoxDecoration(
+        color: LibraryLook.card,
+        borderRadius: BorderRadius.circular(LibraryLook.radius),
+        border: Border.all(color: LibraryLook.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: const BoxDecoration(
+                  color: LibraryLook.violetDim,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.wifi_rounded,
+                  color: LibraryLook.violet,
+                  size: 18,
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                    Row(
+                      children: [
+                        Text(
+                          'Local Wi-Fi Sharing',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        SizedBox(width: 6),
+                        _LiveDot(),
+                      ],
                     ),
-                    const SizedBox(width: 8),
+                    SizedBox(height: 2),
                     Text(
-                      'Looking for videos on this PC… ${_device.length} found',
-                      style: Theme.of(context).textTheme.bodySmall,
+                      'High-speed direct wireless transfer',
+                      style: TextStyle(color: Color(0x80FFFFFF), fontSize: 11),
                     ),
                   ],
                 ),
               ),
-            Expanded(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final twoPane = MediaQuery.sizeOf(context).width >= 900;
-                  final list = _loading
-                      ? const SkeletonGrid()
-                      : _error != null
-                          ? EmptyState(
-                              icon: Icons.videocam_off_outlined,
-                              title: 'Cannot open library',
-                              message: _error!,
-                              action: FilledButton.icon(
-                                onPressed: () => _reload(rescan: true),
-                                icon: const Icon(Icons.refresh_rounded),
-                                label: const Text('Try again'),
-                              ),
-                            )
-                          : _tab == 0
-                              ? _DeviceList(
-                                  selected: _selected,
-                                  selecting: _selectMode || _selected.isNotEmpty,
-                                  onDelete: (video) => _deleteVideos([video]),
-                                  onToggle: _toggleSelect,
-                                  videos: _device.where(_matchesVideo).toList(),
-                                  onPlay: _playDevice,
-                                  onVault: (video) => _confirmVault(video),
-                                  onActions: _deviceActions,
-                                  onSend: _sendDevice,
-                                )
-                              : _VaultGate(
-                                  items: _vault.where(_matchesVault).toList(),
-                                  paths: _vaultPaths,
-                                  onPlay: _playVault,
-                                  onActions: _vaultItemActions,
-                                  onReload: _reload,
-                                );
-                  if (!twoPane) return list;
-                  final docked = _docked;
-                  return Row(
-                    children: [
-                      Expanded(child: list),
-                      const VerticalDivider(width: 1),
-                      SizedBox(
-                        width: (constraints.maxWidth * 0.48).clamp(320.0, 640.0),
-                        child: docked == null
-                            ? const EmptyState(
-                                icon: Icons.play_circle_outline_rounded,
-                                title: 'Nothing playing',
-                                message: 'Choose a video to play it beside the library.',
-                              )
-                            : InAppPlayerScreen(
-                                key: ValueKey(
-                                  '${docked.filePath ?? docked.title}-${docked.queueIndex}',
-                                ),
-                                session: docked,
-                                embedded: true,
-                                onClose: () => setState(() => _docked = null),
-                              ),
-                      ),
-                    ],
-                  );
+              PopupMenuButton<String>(
+                tooltip: 'More sharing options',
+                icon: const Icon(
+                  Icons.more_horiz_rounded,
+                  color: Color(0xB3FFFFFF),
+                ),
+                onSelected: (value) {
+                  switch (value) {
+                    case 'files':
+                      pickAndSendBundle(context, folder: false);
+                    case 'folder':
+                      pickAndSendBundle(context, folder: true);
+                    case 'received':
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const ReceivedScreen(),
+                        ),
+                      );
+                    case 'share':
+                      showNearbySheet(
+                        context,
+                        onSend: _pickLibraryVideoToSend,
+                        pickFile: _chooseFileToSend,
+                        onReceived: () =>
+                            _reload(rescan: DesktopSupport.isWindows),
+                      );
+                  }
                 },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'files', child: Text('Send files')),
+                  PopupMenuItem(value: 'folder', child: Text('Send a folder')),
+                  PopupMenuItem(
+                    value: 'received',
+                    child: Text('Received files'),
+                  ),
+                  PopupMenuItem(
+                    value: 'share',
+                    child: Text('All share options'),
+                  ),
+                ],
               ),
-            ),
-          ],
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  key: const ValueKey('nearby-send'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: LibraryLook.violet,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size(0, 44),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(LibraryLook.radius),
+                    ),
+                  ),
+                  onPressed: _pickLibraryVideoToSend,
+                  icon: const Icon(Icons.send_rounded, size: 16),
+                  label: const Text(
+                    'Send',
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  key: const ValueKey('nearby-receive'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    backgroundColor: Colors.white.withValues(alpha: 0.1),
+                    minimumSize: const Size(0, 44),
+                    side: BorderSide(
+                      color: Colors.white.withValues(alpha: 0.06),
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(LibraryLook.radius),
+                    ),
+                  ),
+                  onPressed: () async {
+                    final saved = await showReceiveFromPhone(context);
+                    if (!saved || !mounted) return;
+                    await _reload(rescan: DesktopSupport.isWindows);
+                  },
+                  icon: const Icon(Icons.download_rounded, size: 16),
+                  label: const Text(
+                    'Receive',
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              const Text(
+                'NEARBY DEVICES',
+                style: TextStyle(
+                  color: Color(0x80FFFFFF),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.6,
+                ),
+              ),
+              const Spacer(),
+              TextButton(
+                onPressed: _pickLibraryVideoToSend,
+                style: TextButton.styleFrom(
+                  foregroundColor: LibraryLook.violet,
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                ),
+                child: const Text(
+                  'SCAN CODE',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.4,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          NearbyDeviceChips(pills: true, pickFile: _chooseFileToSend),
+          const UsbHint(),
+        ],
+      ),
+    );
+  }
+
+  Widget _sourceSwitch(IconData sourceIcon, String sourceLabel) {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: LibraryLook.card,
+        borderRadius: BorderRadius.circular(LibraryLook.radius),
+        border: Border.all(color: LibraryLook.border),
+      ),
+      child: Row(
+        children: [
+          Expanded(child: _sourceTab(0, sourceIcon, sourceLabel)),
+          Expanded(child: _sourceTab(1, Icons.lock_rounded, 'Vault')),
+        ],
+      ),
+    );
+  }
+
+  Widget _sourceTab(int value, IconData icon, String label) {
+    final on = _tab == value;
+    return Material(
+      color: on ? LibraryLook.violet : Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => _selectTab(value),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 16,
+                color: on ? Colors.white : const Color(0x99FFFFFF),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  color: on ? Colors.white : const Color(0x99FFFFFF),
+                  fontWeight: on ? FontWeight.w700 : FontWeight.w500,
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
+    );
+  }
+
+  Widget _searchField() {
+    return TextField(
+      controller: _search,
+      style: const TextStyle(color: Colors.white, fontSize: 13),
+      cursorColor: LibraryLook.violet,
+      decoration: InputDecoration(
+        hintText: 'Search by title',
+        hintStyle: const TextStyle(color: Color(0x66FFFFFF), fontSize: 13),
+        prefixIcon: const Icon(
+          Icons.search_rounded,
+          color: Color(0x66FFFFFF),
+          size: 20,
+        ),
+        suffixIcon: _query.isEmpty
+            ? null
+            : IconButton(
+                tooltip: 'Clear',
+                onPressed: _search.clear,
+                icon: const Icon(
+                  Icons.cancel_rounded,
+                  color: Color(0x66FFFFFF),
+                  size: 18,
+                ),
+              ),
+        filled: true,
+        fillColor: LibraryLook.card,
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(vertical: 12),
+        border: _searchBorder(LibraryLook.border),
+        enabledBorder: _searchBorder(LibraryLook.border),
+        focusedBorder: _searchBorder(LibraryLook.violet),
+      ),
+    );
+  }
+
+  OutlineInputBorder _searchBorder(Color color) {
+    return OutlineInputBorder(
+      borderRadius: BorderRadius.circular(LibraryLook.radius),
+      borderSide: BorderSide(color: color),
+    );
+  }
+
+  Widget _filterPill({
+    required String label,
+    required VoidCallback onTap,
+    bool selected = false,
+    bool dashed = false,
+    IconData? icon,
+    Color? iconColor,
+  }) {
+    final fg = selected
+        ? Colors.white
+        : (dashed ? LibraryLook.violet : const Color(0xB3FFFFFF));
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: Material(
+        color: selected
+            ? LibraryLook.violet
+            : (dashed
+                  ? Colors.white.withValues(alpha: 0.05)
+                  : LibraryLook.card),
+        shape: StadiumBorder(
+          side: BorderSide(
+            color: dashed
+                ? LibraryLook.violet.withValues(alpha: 0.5)
+                : (selected ? LibraryLook.violet : LibraryLook.border),
+          ),
+        ),
+        child: InkWell(
+          customBorder: const StadiumBorder(),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (icon != null) ...[
+                  Icon(icon, size: 14, color: iconColor ?? fg),
+                  const SizedBox(width: 4),
+                ],
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: fg,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _vaultBanner() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0x663B0764), LibraryLook.card],
+        ),
+        borderRadius: BorderRadius.circular(LibraryLook.radius),
+        border: Border.all(color: LibraryLook.violet.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: LibraryLook.violetDim,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: LibraryLook.violet.withValues(alpha: 0.4),
+              ),
+            ),
+            child: const Icon(Icons.lock_rounded, color: LibraryLook.violet),
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Private PIN Vault',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                SizedBox(height: 2),
+                Text(
+                  'Protected with AES-256 local encryption',
+                  style: TextStyle(color: Color(0x99FFFFFF), fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+          TextButton.icon(
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white,
+              backgroundColor: Colors.white.withValues(alpha: 0.1),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
+              ),
+            ),
+            onPressed: () =>
+                ref.read(vaultUnlockedProvider.notifier).state = false,
+            icon: const Icon(Icons.lock_clock_rounded, size: 16),
+            label: const Text(
+              'Lock',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _libraryList(LibraryCatalog catalog) {
+    if (_loading) return const SkeletonGrid();
+    if (_error != null) {
+      return LibraryEmpty(
+        icon: Icons.no_photography_outlined,
+        title: 'Unable to read media files',
+        message: _error!,
+        danger: true,
+        action: FilledButton.icon(
+          style: FilledButton.styleFrom(
+            backgroundColor: Colors.white.withValues(alpha: 0.1),
+            foregroundColor: Colors.white,
+          ),
+          onPressed: () => _reload(rescan: true),
+          icon: const Icon(Icons.refresh_rounded),
+          label: const Text('Try again'),
+        ),
+      );
+    }
+    if (_tab == 0) {
+      return _DeviceList(
+        selected: _selected,
+        selecting: _selectMode || _selected.isNotEmpty,
+        favorites: catalog.favorites,
+        onDelete: (video) => _deleteVideos([video]),
+        onToggle: _toggleSelect,
+        onFavorite: (video) => ref
+            .read(libraryCatalogProvider.notifier)
+            .toggleFavorite('device:${video.id}'),
+        videos: _device.where(_matchesVideo).toList(),
+        filtered:
+            _query.trim().isNotEmpty ||
+            _favoritesOnly ||
+            _collection != null ||
+            _platform != 'All',
+        onPlay: _playDevice,
+        onVault: (video) => _confirmVault(video),
+        onActions: _deviceActions,
+        onSend: _sendDevice,
+      );
+    }
+    return _VaultGate(
+      items: _vault.where(_matchesVault).toList(),
+      paths: _vaultPaths,
+      onPlay: _playVault,
+      onActions: _vaultItemActions,
+      onToLibrary: (item) => _restoreVault(item, copy: false),
+      onDelete: _deleteVaultItem,
+      onReload: _reload,
     );
   }
 
@@ -698,7 +1170,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     final key = 'device:${video.id}';
     if (_favoritesOnly && !catalog.isFavorite(key)) return false;
     final collection = _collection;
-    if (collection != null && !catalog.inCollection(collection, key)) return false;
+    if (collection != null && !catalog.inCollection(collection, key))
+      return false;
     return true;
   }
 
@@ -716,6 +1189,39 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
 
   void _selectTab(int value) => setState(() => _tab = value);
 
+  Future<void> _restoreVault(VaultItem item, {required bool copy}) async {
+    try {
+      await ref.read(vaultServiceProvider).restoreToGallery(item);
+      if (!copy) {
+        await ref.read(vaultServiceProvider).delete(item);
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            copy
+                ? 'Copied to Library. The vault copy is still locked.'
+                : 'Moved to Library. It is no longer in the vault.',
+          ),
+        ),
+      );
+      setState(() => _tab = 0);
+      await _reload();
+    } on StateError catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not move this video back to Library.'),
+        ),
+      );
+    }
+  }
+
   Future<void> _vaultItemActions(VaultItem item) async {
     final action = await showModalBottomSheet<String>(
       context: context,
@@ -725,7 +1231,11 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
           children: [
             ListTile(
               title: const Text('Take out of vault'),
-              subtitle: Text(item.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+              subtitle: Text(
+                item.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
             ListTile(
               leading: const Icon(Icons.drive_file_rename_outline),
@@ -753,9 +1263,14 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
               onTap: () => Navigator.pop(context, 'copy'),
             ),
             ListTile(
-              leading: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
+              leading: Icon(
+                Icons.delete_outline,
+                color: Theme.of(context).colorScheme.error,
+              ),
               title: const Text('Delete forever'),
-              subtitle: const Text('Remove it from the vault without putting it back in Gallery'),
+              subtitle: const Text(
+                'Remove it from the vault without putting it back in Gallery',
+              ),
               onTap: () => Navigator.pop(context, 'delete'),
             ),
           ],
@@ -774,7 +1289,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
           title: const Text('Rename'),
           content: TextField(controller: controller, autofocus: true),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
             FilledButton(
               onPressed: () => Navigator.pop(context, controller.text.trim()),
               child: const Text('Save'),
@@ -789,34 +1307,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
       return;
     }
     if (action != 'move' && action != 'copy') return;
-    try {
-      await ref.read(vaultServiceProvider).restoreToGallery(item);
-      if (action == 'move') {
-        await ref.read(vaultServiceProvider).delete(item);
-      }
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            action == 'copy'
-                ? 'Copied to Library. The vault copy is still locked.'
-                : 'Moved to Library. It is no longer in the vault.',
-          ),
-        ),
-      );
-      setState(() => _tab = 0);
-      await _reload();
-    } on StateError catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.message)),
-      );
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not move this video back to Library.')),
-      );
-    }
+    await _restoreVault(item, copy: action == 'copy');
   }
 
   Future<void> _deleteVaultItem(VaultItem item) async {
@@ -842,9 +1333,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     if (ok != true) return;
     await ref.read(vaultServiceProvider).delete(item);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Removed from vault.')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Removed from vault.')));
     await _reload();
   }
 
@@ -877,7 +1368,11 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
                   itemCount: videos.length,
                   itemBuilder: (context, i) => ListTile(
                     leading: const Icon(Icons.movie_outlined),
-                    title: Text(videos[i].title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    title: Text(
+                      videos[i].title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                     onTap: () => Navigator.pop(context, videos[i]),
                   ),
                 ),
@@ -909,7 +1404,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
             children: [
               const ListTile(
                 title: Text('Send which video?'),
-                subtitle: Text('The other phone or PC can watch it or save a copy.'),
+                subtitle: Text(
+                  'The other phone or PC can watch it or save a copy.',
+                ),
               ),
               ListTile(
                 leading: const Icon(Icons.folder_open_rounded),
@@ -922,7 +1419,11 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
                   itemCount: videos.length,
                   itemBuilder: (context, i) => ListTile(
                     leading: const Icon(Icons.movie_outlined),
-                    title: Text(videos[i].title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    title: Text(
+                      videos[i].title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                     onTap: () => Navigator.pop(context, videos[i]),
                   ),
                 ),
@@ -943,106 +1444,125 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   Future<void> _deviceActions(DeviceVideo video) async {
     final action = await _showItemMenu(
       builder: (context) => [
-            ListTile(
-              title: Text(video.title, maxLines: 2, overflow: TextOverflow.ellipsis),
-              subtitle: Text(_durationLabel((video.durationMs / 1000).round(), video.size)),
-              trailing: IconButton(
-                tooltip: 'Delete',
-                icon: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
-                onPressed: () => Navigator.pop(context, 'delete'),
-              ),
+        ListTile(
+          title: Text(
+            video.title,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Text(
+            _durationLabel((video.durationMs / 1000).round(), video.size),
+          ),
+          trailing: IconButton(
+            tooltip: 'Delete',
+            icon: Icon(
+              Icons.delete_outline,
+              color: Theme.of(context).colorScheme.error,
             ),
-            ListTile(
-              leading: const Icon(Icons.play_arrow_rounded),
-              title: const Text('Play'),
-              onTap: () => Navigator.pop(context, 'play'),
+            onPressed: () => Navigator.pop(context, 'delete'),
+          ),
+        ),
+        ListTile(
+          leading: const Icon(Icons.play_arrow_rounded),
+          title: const Text('Play'),
+          onTap: () => Navigator.pop(context, 'play'),
+        ),
+        ListTile(
+          key: const ValueKey('menu-delete'),
+          leading: Icon(
+            Icons.delete_outline,
+            color: Theme.of(context).colorScheme.error,
+          ),
+          title: Text(
+            DesktopSupport.isWindows
+                ? 'Delete (Recycle Bin)'
+                : 'Delete from phone',
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.error,
+              fontWeight: FontWeight.w600,
             ),
-            ListTile(
-              key: const ValueKey('menu-delete'),
-              leading: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
-              title: Text(
-                DesktopSupport.isWindows ? 'Delete (Recycle Bin)' : 'Delete from phone',
-                style: TextStyle(color: Theme.of(context).colorScheme.error, fontWeight: FontWeight.w600),
-              ),
-              onTap: () => Navigator.pop(context, 'delete'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.drive_file_rename_outline),
-              title: const Text('Rename'),
-              onTap: () => Navigator.pop(context, 'rename'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.share_outlined),
-              title: const Text('Share file'),
-              onTap: () => Navigator.pop(context, 'share'),
-            ),
-            if (DesktopSupport.isWindows)
-              ListTile(
-                leading: const Icon(Icons.folder_open_outlined),
-                title: const Text('Show in folder'),
-                subtitle: Text(video.path ?? ''),
-                onTap: () => Navigator.pop(context, 'reveal'),
-              ),
-            if (!DesktopSupport.isWindows)
-              ListTile(
-                leading: const Icon(Icons.tv_rounded),
-                title: const Text('Play on TV'),
-                subtitle: const Text('Opens the video already on this phone'),
-                onTap: () => Navigator.pop(context, 'tv'),
-              ),
-            ListTile(
-              leading: const Icon(Icons.qr_code_rounded),
-              title: const Text('Send to another device'),
-              subtitle: const Text('Phone or PC on this Wi-Fi: QR or 6-letter code. Watch or save.'),
-              onTap: () => Navigator.pop(context, 'handoff'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.phonelink_rounded),
-              title: const Text('Hold phones together'),
-              subtitle: const Text('Quick Share between the two phones'),
-              onTap: () => Navigator.pop(context, 'near'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.ring_volume_outlined),
-              title: const Text('Use 30 seconds as a sound'),
-              subtitle: const Text('Ringtone, notification, or alarm'),
-              onTap: () => Navigator.pop(context, 'sound'),
-            ),
-            ListTile(
-              leading: Icon(
-                ref.read(libraryCatalogProvider).isFavorite('device:${video.id}')
-                    ? Icons.favorite_rounded
-                    : Icons.favorite_border_rounded,
-              ),
-              title: const Text('Favorite'),
-              onTap: () => Navigator.pop(context, 'favorite'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.folder_outlined),
-              title: const Text('Add to collection'),
-              onTap: () => Navigator.pop(context, 'collection'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.notes_outlined),
-              title: const Text('Note'),
-              onTap: () => Navigator.pop(context, 'note'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.auto_awesome_outlined),
-              title: const Text('Summarize'),
-              onTap: () => Navigator.pop(context, 'summary'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.info_outline),
-              title: const Text('Details'),
-              onTap: () => Navigator.pop(context, 'details'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.check_box_outlined),
-              title: const Text('Select (for deleting several)'),
-              onTap: () => Navigator.pop(context, 'select'),
-            ),
-          ],
+          ),
+          onTap: () => Navigator.pop(context, 'delete'),
+        ),
+        ListTile(
+          leading: const Icon(Icons.drive_file_rename_outline),
+          title: const Text('Rename'),
+          onTap: () => Navigator.pop(context, 'rename'),
+        ),
+        ListTile(
+          leading: const Icon(Icons.share_outlined),
+          title: const Text('Share file'),
+          onTap: () => Navigator.pop(context, 'share'),
+        ),
+        if (DesktopSupport.isWindows)
+          ListTile(
+            leading: const Icon(Icons.folder_open_outlined),
+            title: const Text('Show in folder'),
+            subtitle: Text(video.path ?? ''),
+            onTap: () => Navigator.pop(context, 'reveal'),
+          ),
+        if (!DesktopSupport.isWindows)
+          ListTile(
+            leading: const Icon(Icons.tv_rounded),
+            title: const Text('Play on TV'),
+            subtitle: const Text('Opens the video already on this phone'),
+            onTap: () => Navigator.pop(context, 'tv'),
+          ),
+        ListTile(
+          leading: const Icon(Icons.qr_code_rounded),
+          title: const Text('Send to another device'),
+          subtitle: const Text(
+            'Phone or PC on this Wi-Fi: QR or 6-letter code. Watch or save.',
+          ),
+          onTap: () => Navigator.pop(context, 'handoff'),
+        ),
+        ListTile(
+          leading: const Icon(Icons.phonelink_rounded),
+          title: const Text('Hold phones together'),
+          subtitle: const Text('Quick Share between the two phones'),
+          onTap: () => Navigator.pop(context, 'near'),
+        ),
+        ListTile(
+          leading: const Icon(Icons.ring_volume_outlined),
+          title: const Text('Use 30 seconds as a sound'),
+          subtitle: const Text('Ringtone, notification, or alarm'),
+          onTap: () => Navigator.pop(context, 'sound'),
+        ),
+        ListTile(
+          leading: Icon(
+            ref.read(libraryCatalogProvider).isFavorite('device:${video.id}')
+                ? Icons.favorite_rounded
+                : Icons.favorite_border_rounded,
+          ),
+          title: const Text('Favorite'),
+          onTap: () => Navigator.pop(context, 'favorite'),
+        ),
+        ListTile(
+          leading: const Icon(Icons.folder_outlined),
+          title: const Text('Add to collection'),
+          onTap: () => Navigator.pop(context, 'collection'),
+        ),
+        ListTile(
+          leading: const Icon(Icons.notes_outlined),
+          title: const Text('Note'),
+          onTap: () => Navigator.pop(context, 'note'),
+        ),
+        ListTile(
+          leading: const Icon(Icons.auto_awesome_outlined),
+          title: const Text('Summarize'),
+          onTap: () => Navigator.pop(context, 'summary'),
+        ),
+        ListTile(
+          leading: const Icon(Icons.info_outline),
+          title: const Text('Details'),
+          onTap: () => Navigator.pop(context, 'details'),
+        ),
+        ListTile(
+          leading: const Icon(Icons.check_box_outlined),
+          title: const Text('Select (for deleting several)'),
+          onTap: () => Navigator.pop(context, 'select'),
+        ),
+      ],
     );
     if (!mounted || action == null) return;
     if (action == 'play') {
@@ -1058,7 +1578,11 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
       if (path != null) await DesktopSupport.revealInFolder(path);
       return;
     }
-    if (action == 'share' || action == 'near' || action == 'tv' || action == 'handoff' || action == 'sound') {
+    if (action == 'share' ||
+        action == 'near' ||
+        action == 'tv' ||
+        action == 'handoff' ||
+        action == 'sound') {
       final path = await DeviceMediaService().resolvePlayablePath(video);
       if (path == null || !mounted) return;
       if (action == 'share' || action == 'near') {
@@ -1070,7 +1594,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
         if (!mounted) return;
         if (!ok) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('No TV app on this phone could open the video.')),
+            const SnackBar(
+              content: Text('No TV app on this phone could open the video.'),
+            ),
           );
         }
         return;
@@ -1083,7 +1609,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
       return;
     }
     if (action == 'favorite') {
-      await ref.read(libraryCatalogProvider.notifier).toggleFavorite('device:${video.id}');
+      await ref
+          .read(libraryCatalogProvider.notifier)
+          .toggleFavorite('device:${video.id}');
       return;
     }
     if (action == 'collection') {
@@ -1116,7 +1644,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
             '${_durationLabel((video.durationMs / 1000).round(), video.size)}\n${video.path ?? video.uri ?? ''}\n${ref.read(libraryCatalogProvider).notes['device:${video.id}'] ?? ''}',
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'),
+            ),
           ],
         ),
       );
@@ -1136,7 +1667,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
 
   /// Item menu that always fits: a centred scrollable dialog on PC, a
   /// scrollable sheet (max 85% of the screen) on phones.
-  Future<String?> _showItemMenu({required List<Widget> Function(BuildContext) builder}) {
+  Future<String?> _showItemMenu({
+    required List<Widget> Function(BuildContext) builder,
+  }) {
     final size = MediaQuery.sizeOf(context);
     if (DesktopSupport.isWindows || size.width >= 700) {
       return showDialog<String>(
@@ -1144,10 +1677,16 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
         builder: (context) => Dialog(
           clipBehavior: Clip.antiAlias,
           child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: 440, maxHeight: size.height * 0.85),
+            constraints: BoxConstraints(
+              maxWidth: 440,
+              maxHeight: size.height * 0.85,
+            ),
             child: SingleChildScrollView(
               padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Column(mainAxisSize: MainAxisSize.min, children: builder(context)),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: builder(context),
+              ),
             ),
           ),
         ),
@@ -1159,7 +1698,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
       constraints: BoxConstraints(maxHeight: size.height * 0.85),
       builder: (context) => SafeArea(
         child: SingleChildScrollView(
-          child: Column(mainAxisSize: MainAxisSize.min, children: builder(context)),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: builder(context),
+          ),
         ),
       ),
     );
@@ -1175,19 +1717,31 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   /// and refreshes the list.
   Future<void> _deleteVideos(List<DeviceVideo> videos) async {
     if (videos.isEmpty) return;
-    final what = videos.length == 1 ? '“${videos.first.title}”' : '${videos.length} videos';
+    final what = videos.length == 1
+        ? '“${videos.first.title}”'
+        : '${videos.length} videos';
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        icon: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
+        icon: Icon(
+          Icons.delete_outline,
+          color: Theme.of(context).colorScheme.error,
+        ),
         title: Text('Delete $what?'),
-        content: Text(DesktopSupport.isWindows
-            ? 'This removes the file${videos.length == 1 ? '' : 's'} from your device (moved to the Recycle Bin).'
-            : 'This removes the file${videos.length == 1 ? '' : 's'} from your device.'),
+        content: Text(
+          DesktopSupport.isWindows
+              ? 'This removes the file${videos.length == 1 ? '' : 's'} from your device (moved to the Recycle Bin).'
+              : 'This removes the file${videos.length == 1 ? '' : 's'} from your device.',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Delete'),
           ),
@@ -1200,14 +1754,21 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     try {
       final repo = ref.read(downloadsRepositoryProvider);
       // Only files that are really gone (the user may decline the system prompt).
-      final gonePaths = [for (final v in videos) if (v.path != null && !File(v.path!).existsSync()) v.path!];
-      final names = {for (final p in gonePaths) p.split(Platform.pathSeparator).last.split('/').last};
+      final gonePaths = [
+        for (final v in videos)
+          if (v.path != null && !File(v.path!).existsSync()) v.path!,
+      ];
+      final names = {
+        for (final p in gonePaths)
+          p.split(Platform.pathSeparator).last.split('/').last,
+      };
       final paths = gonePaths.toSet();
       for (final record in await repo.getAll()) {
         final local = record.localPath;
         if (local == null || local.isEmpty) continue;
         final name = local.split(Platform.pathSeparator).last.split('/').last;
-        final ownCopy = local.contains('/Android/data/') && names.contains(name);
+        final ownCopy =
+            local.contains('/Android/data/') && names.contains(name);
         if (paths.contains(local) || ownCopy) {
           await repo.delete(record.id, deleteFile: ownCopy);
         }
@@ -1218,13 +1779,17 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
       _selected.clear();
       _selectMode = false;
     });
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(deleted >= videos.length
-          ? 'Deleted ${videos.length == 1 ? '1 video' : '${videos.length} videos'}${DesktopSupport.isWindows ? ' (moved to the Recycle Bin)' : ''}.'
-          : deleted == 0
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          deleted >= videos.length
+              ? 'Deleted ${videos.length == 1 ? '1 video' : '${videos.length} videos'}${DesktopSupport.isWindows ? ' (moved to the Recycle Bin)' : ''}.'
+              : deleted == 0
               ? 'Nothing was deleted.'
-              : 'Deleted $deleted of ${videos.length}. The rest were kept.'),
-    ));
+              : 'Deleted $deleted of ${videos.length}. The rest were kept.',
+        ),
+      ),
+    );
     await _reload(rescan: DesktopSupport.isWindows);
   }
 
@@ -1236,7 +1801,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
         title: const Text('Rename'),
         content: TextField(controller: controller, autofocus: true),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
             onPressed: () => Navigator.pop(context, controller.text.trim()),
             child: const Text('Save'),
@@ -1265,7 +1833,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
           children: [
             const ListTile(
               title: Text('Add to vault'),
-              subtitle: Text('Vault files stay inside SocialSave and need your PIN.'),
+              subtitle: Text(
+                'Vault files stay inside SocialSave and need your PIN.',
+              ),
             ),
             ListTile(
               leading: const Icon(Icons.copy_all_outlined),
@@ -1333,26 +1903,46 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
       if (created == null || created.isEmpty) return;
       name = created;
     }
-    await ref.read(libraryCatalogProvider.notifier).addToCollection(name, 'device:${video.id}');
+    await ref
+        .read(libraryCatalogProvider.notifier)
+        .addToCollection(name, 'device:${video.id}');
   }
 
   Future<void> _editNote(String key) async {
     final current = ref.read(libraryCatalogProvider).notes[key] ?? '';
-    final note = await _askText('Note', 'A note for this video', initial: current);
+    final note = await _askText(
+      'Note',
+      'A note for this video',
+      initial: current,
+    );
     if (note == null) return;
     await ref.read(libraryCatalogProvider.notifier).setNote(key, note);
   }
 
-  Future<String?> _askText(String title, String label, {String initial = ''}) async {
+  Future<String?> _askText(
+    String title,
+    String label, {
+    String initial = '',
+  }) async {
     final controller = TextEditingController(text: initial);
     final value = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(title),
-        content: TextField(controller: controller, autofocus: true, decoration: InputDecoration(labelText: label)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: InputDecoration(labelText: label),
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('Save')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Save'),
+          ),
         ],
       ),
     );
@@ -1374,9 +1964,12 @@ class _DeviceList extends StatelessWidget {
   const _DeviceList({
     required this.selected,
     required this.selecting,
+    required this.favorites,
     required this.onDelete,
     required this.onToggle,
+    required this.onFavorite,
     required this.videos,
+    required this.filtered,
     required this.onPlay,
     required this.onVault,
     required this.onActions,
@@ -1386,9 +1979,12 @@ class _DeviceList extends StatelessWidget {
   final ValueChanged<DeviceVideo> onSend;
   final Set<String> selected;
   final bool selecting;
+  final Set<String> favorites;
   final ValueChanged<DeviceVideo> onDelete;
   final ValueChanged<DeviceVideo> onToggle;
+  final ValueChanged<DeviceVideo> onFavorite;
   final List<DeviceVideo> videos;
+  final bool filtered;
   final ValueChanged<DeviceVideo> onPlay;
   final ValueChanged<DeviceVideo> onVault;
   final ValueChanged<DeviceVideo> onActions;
@@ -1396,92 +1992,85 @@ class _DeviceList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (videos.isEmpty) {
-      if (DesktopSupport.isWindows) {
-        return const EmptyState(
-          icon: Icons.video_library_outlined,
-          title: 'No videos found on this PC',
-          message: 'Add a folder with the folder button above, or download a video, then refresh.',
+      if (filtered) {
+        return const LibraryEmpty(
+          icon: Icons.search_off_rounded,
+          title: 'No videos match',
+          message: 'Try another title, platform, or collection.',
         );
       }
-      return const EmptyState(
-        icon: Icons.video_library_outlined,
-        title: 'No videos on this phone',
-        message: 'Download a video or copy one onto the device, then refresh.',
+      if (DesktopSupport.isWindows) {
+        return const LibraryEmpty(
+          icon: Icons.video_library_outlined,
+          title: 'No videos found on this PC',
+          message:
+              'Add a folder with the folder button above, or download a video, then refresh.',
+        );
+      }
+      return const LibraryEmpty(
+        icon: Icons.play_circle_rounded,
+        title: 'Your library is empty',
+        message:
+            'Download your favorite reels, shorts, and TikTok videos to watch offline anytime.',
       );
     }
     return GridView.builder(
-      padding: EdgeInsets.fromLTRB(_libraryGutter(context), 8, _libraryGutter(context), 24),
+      padding: EdgeInsets.fromLTRB(
+        _libraryGutter(context),
+        4,
+        _libraryGutter(context),
+        24,
+      ),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 240,
+        maxCrossAxisExtent: 220,
         mainAxisSpacing: 12,
         crossAxisSpacing: 12,
-        childAspectRatio: 0.78,
+        childAspectRatio: 0.58,
       ),
       itemCount: videos.length,
       itemBuilder: (context, index) {
         final video = videos[index];
         final seconds = (video.durationMs / 1000).round();
+        final when = libraryWhen(libraryAdded(video.addedAt));
+        final folder = DesktopSupport.isWindows ? _folderName(video) : '';
         return _VideoCard(
           cacheKey: 'device-${video.id}',
           id: video.id,
           path: video.path,
           uri: video.uri,
           title: video.title,
-          caption: DesktopSupport.isWindows
-              ? _pcCaption(video)
-              : _durationLabel(seconds, video.size),
-          durationLabel: DesktopSupport.isWindows && seconds == 0 ? null : _clock(seconds),
+          caption: [
+            librarySize(video.size),
+            if (when.isNotEmpty) when,
+            if (folder.isNotEmpty) folder,
+          ].join(' • '),
+          durationLabel: seconds == 0 ? null : libraryClock(seconds),
+          platform: libraryPlatformBadge(
+            '${video.title} ${video.path ?? ''} ${video.folder ?? ''}',
+          ),
+          favorite: favorites.contains('device:${video.id}'),
+          onFavorite: () => onFavorite(video),
+          selected: selected.contains(video.id),
+          selecting: selecting,
           onTap: () => selecting ? onToggle(video) : onPlay(video),
           onLongPress: () => onToggle(video),
           heroTag: 'library-${video.id}',
-          action: selecting
-              ? Checkbox(
-                  value: selected.contains(video.id),
-                  onChanged: (_) => onToggle(video),
-                  side: const BorderSide(color: Colors.white, width: 2),
-                )
-              : Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                tooltip: 'Send to another device',
-                visualDensity: VisualDensity.compact,
-                onPressed: () => onSend(video),
-                icon: const Icon(Icons.send_to_mobile_rounded, color: Colors.white),
-              ),
-              IconButton(
-                tooltip: 'Add to vault',
-                visualDensity: VisualDensity.compact,
-                onPressed: () => onVault(video),
-                icon: const Icon(Icons.lock_outline, color: Colors.white),
-              ),
-              IconButton(
-                key: ValueKey('card-delete-${video.id}'),
-                tooltip: 'Delete',
-                visualDensity: VisualDensity.compact,
-                onPressed: () => onDelete(video),
-                icon: const Icon(Icons.delete_outline, color: Colors.white),
-              ),
-              IconButton(
-                tooltip: 'More',
-                visualDensity: VisualDensity.compact,
-                onPressed: () => onActions(video),
-                icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
-              ),
-            ],
-          ),
+          onSend: () => onSend(video),
+          onVault: () => onVault(video),
+          onDelete: () => onDelete(video),
+          onMore: () => onActions(video),
+          deleteKey: ValueKey('card-delete-${video.id}'),
         );
       },
     );
   }
 }
 
-/// Windows: size and the folder the video is in.
-String _pcCaption(DeviceVideo video) {
-  final folder = video.folder ?? (video.path == null ? '' : File(video.path!).parent.path);
-  final name = folder.isEmpty ? '' : folder.split(Platform.pathSeparator).last;
-  final size = video.size <= 0 ? '' : '${(video.size / (1024 * 1024)).toStringAsFixed(1)} MB';
-  return [size, if (name.isNotEmpty) name].where((part) => part.isNotEmpty).join('  •  ');
+String _folderName(DeviceVideo video) {
+  final folder =
+      video.folder ?? (video.path == null ? '' : File(video.path!).parent.path);
+  if (folder.isEmpty) return '';
+  return folder.split(Platform.pathSeparator).last;
 }
 
 String _clock(int seconds) {
@@ -1507,9 +2096,20 @@ class _VideoCard extends StatelessWidget {
     this.uri,
     this.caption,
     this.durationLabel,
-    this.locked = false,
-    this.action,
     this.heroTag,
+    this.platform,
+    this.favorite = false,
+    this.onFavorite,
+    this.vault = false,
+    this.missing = false,
+    this.selected = false,
+    this.selecting = false,
+    this.onSend,
+    this.onVault,
+    this.onDelete,
+    this.onMore,
+    this.onToLibrary,
+    this.deleteKey,
   });
 
   final String cacheKey;
@@ -1521,20 +2121,34 @@ class _VideoCard extends StatelessWidget {
   final String? uri;
   final String? caption;
   final String? durationLabel;
-  final bool locked;
-  final Widget? action;
   final String? heroTag;
+  final String? platform;
+  final bool favorite;
+  final VoidCallback? onFavorite;
+  final bool vault;
+  final bool missing;
+  final bool selected;
+  final bool selecting;
+  final VoidCallback? onSend;
+  final VoidCallback? onVault;
+  final VoidCallback? onDelete;
+  final VoidCallback? onMore;
+  final VoidCallback? onToLibrary;
+  final Key? deleteKey;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Material(
-      color: scheme.brightness == Brightness.dark
-          ? const Color(0xCC1C2633)
-          : const Color(0xCCFFFFFF),
+    final card = Material(
+      color: LibraryLook.card,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(22),
-        side: BorderSide(color: Colors.white.withValues(alpha: 0.55)),
+        borderRadius: BorderRadius.circular(LibraryLook.radius),
+        side: BorderSide(
+          color: missing
+              ? Colors.transparent
+              : selected
+              ? LibraryLook.violet
+              : LibraryLook.border,
+        ),
       ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -1543,100 +2157,364 @@ class _VideoCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Expanded(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  HeroMode(
-                    enabled: (ModalRoute.of(context)?.isCurrent ?? true) && heroTag != null,
-                    child: Hero(
-                      tag: heroTag ?? cacheKey,
-                      child: LocalVideoThumb(
-                        cacheKey: cacheKey,
-                        id: id,
-                        path: path,
-                        uri: uri,
-                        borderRadius: 0,
-                      ),
-                    ),
-                  ),
-                  const DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [Color(0x33000000), Color(0x00000000), Color(0x66000000)],
-                      ),
-                    ),
-                  ),
-                  const Center(
-                    child: CircleAvatar(
-                      radius: 18,
-                      backgroundColor: Color(0xCC000000),
-                      child: Icon(Icons.play_arrow_rounded, color: Colors.white),
-                    ),
-                  ),
-                  if (durationLabel != null)
-                    Positioned(
-                      left: 8,
-                      bottom: 8,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: const Color(0xCC000000),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          child: Text(
-                            durationLabel!,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  if (locked)
-                    const Positioned(
-                      left: 8,
-                      top: 8,
-                      child: Icon(Icons.lock_rounded, color: Colors.white, size: 18),
-                    ),
-                  if (action != null)
-                    Positioned(
-                      top: 0,
-                      right: 0,
-                      child: action!,
-                    ),
-                ],
-              ),
-            ),
+            Expanded(child: missing ? _missingThumb() : _thumb(context)),
             Padding(
-              padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+              padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     title,
-                    maxLines: 2,
+                    maxLines: vault ? 1 : 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, height: 1.25),
+                    style: TextStyle(
+                      color: missing ? const Color(0xCCFFFFFF) : Colors.white,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 12,
+                      height: 1.25,
+                      decoration: missing ? TextDecoration.lineThrough : null,
+                      decorationColor: const Color(0xCCFFFFFF),
+                    ),
                   ),
-                  if (caption != null)
-                    Text(
-                      caption!,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 12, height: 1.3, color: scheme.onSurfaceVariant),
+                  if (caption != null && caption!.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 3),
+                      child: Text(
+                        caption!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10,
+                          height: 1.3,
+                          color: missing
+                              ? const Color(0x66FFFFFF)
+                              : const Color(0x80FFFFFF),
+                        ),
+                      ),
                     ),
                 ],
               ),
             ),
+            if (missing && onDelete != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+                child: TextButton.icon(
+                  key: deleteKey,
+                  style: TextButton.styleFrom(
+                    foregroundColor: LibraryLook.danger,
+                    backgroundColor: LibraryLook.dangerDim,
+                    minimumSize: const Size.fromHeight(32),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  onPressed: onDelete,
+                  icon: const Icon(Icons.delete_forever_rounded, size: 14),
+                  label: const Text(
+                    'Delete record',
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
+                child: DecoratedBox(
+                  decoration: const BoxDecoration(
+                    border: Border(top: BorderSide(color: Color(0x0DFFFFFF))),
+                  ),
+                  child: vault ? _vaultActions() : _phoneActions(),
+                ),
+              ),
           ],
         ),
       ),
+    );
+    if (!missing) return card;
+    return DashedRoundedBorder(
+      color: LibraryLook.danger.withValues(alpha: 0.7),
+      child: card,
+    );
+  }
+
+  Widget _missingThumb() {
+    return const ColoredBox(
+      color: Color(0xFF09090B),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.broken_image_outlined,
+            color: LibraryLook.danger,
+            size: 28,
+          ),
+          SizedBox(height: 6),
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: 8),
+            child: Text(
+              'This vault file is missing.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: LibraryLook.danger,
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _thumb(BuildContext context) {
+    final platformName = platform;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        HeroMode(
+          enabled:
+              (ModalRoute.of(context)?.isCurrent ?? true) && heroTag != null,
+          child: Hero(
+            tag: heroTag ?? cacheKey,
+            child: LocalVideoThumb(
+              cacheKey: cacheKey,
+              id: id,
+              path: path,
+              uri: uri,
+              borderRadius: 0,
+            ),
+          ),
+        ),
+        const DecoratedBox(decoration: BoxDecoration(color: Color(0x4D000000))),
+        Center(
+          child: Container(
+            width: vault ? 36 : 40,
+            height: vault ? 36 : 40,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: vault ? LibraryLook.violet : const Color(0x99000000),
+              border: vault
+                  ? null
+                  : Border.all(color: Colors.white.withValues(alpha: 0.2)),
+            ),
+            child: const Icon(
+              Icons.play_arrow_rounded,
+              color: Colors.white,
+              size: 22,
+            ),
+          ),
+        ),
+        if (vault)
+          const Positioned(
+            left: 8,
+            top: 8,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: LibraryLook.violet,
+                borderRadius: BorderRadius.all(Radius.circular(6)),
+              ),
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.lock_rounded, color: Colors.white, size: 10),
+                    SizedBox(width: 2),
+                    Text(
+                      'VAULT',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          )
+        else if (platformName != null)
+          Positioned(
+            left: 8,
+            top: 8,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: const Color(0xB3000000),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: libraryPlatformColor(platformName),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      platformName,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        if (!vault && !selecting && onFavorite != null)
+          Positioned(
+            right: 6,
+            top: 6,
+            child: Material(
+              color: const Color(0x99000000),
+              shape: const CircleBorder(),
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: onFavorite,
+                child: Padding(
+                  padding: const EdgeInsets.all(4),
+                  child: Icon(
+                    favorite
+                        ? Icons.favorite_rounded
+                        : Icons.favorite_border_rounded,
+                    color: favorite ? LibraryLook.danger : Colors.white,
+                    size: 14,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        if (durationLabel != null)
+          Positioned(
+            right: 8,
+            bottom: 8,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: const Color(0xCC000000),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                child: Text(
+                  durationLabel!,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        if (selecting)
+          Positioned.fill(
+            child: ColoredBox(
+              color: selected
+                  ? LibraryLook.violet.withValues(alpha: 0.28)
+                  : Colors.transparent,
+              child: Align(
+                alignment: Alignment.topRight,
+                child: Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Container(
+                    width: 22,
+                    height: 22,
+                    decoration: BoxDecoration(
+                      color: selected ? LibraryLook.violet : LibraryLook.card,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.35),
+                      ),
+                    ),
+                    child: selected
+                        ? const Icon(
+                            Icons.check_rounded,
+                            color: Colors.white,
+                            size: 16,
+                          )
+                        : null,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _phoneActions() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        _actionIcon(
+          Icons.phonelink_ring_rounded,
+          'Send to another device',
+          onSend,
+        ),
+        _actionIcon(Icons.lock_outline_rounded, 'Add to vault', onVault),
+        _actionIcon(
+          Icons.delete_outline_rounded,
+          'Delete',
+          onDelete,
+          color: LibraryLook.danger,
+          buttonKey: deleteKey,
+        ),
+        _actionIcon(Icons.more_vert_rounded, 'More', onMore),
+      ],
+    );
+  }
+
+  Widget _vaultActions() {
+    return Row(
+      children: [
+        Expanded(
+          child: TextButton.icon(
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xCCFFFFFF),
+              backgroundColor: Colors.white.withValues(alpha: 0.05),
+              minimumSize: const Size(0, 32),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            onPressed: onToLibrary,
+            icon: const Icon(Icons.lock_open_rounded, size: 14),
+            label: const Text(
+              'To Library',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ),
+        _actionIcon(Icons.more_vert_rounded, 'Vault options', onMore),
+      ],
+    );
+  }
+
+  Widget _actionIcon(
+    IconData icon,
+    String tooltip,
+    VoidCallback? onPressed, {
+    Color color = const Color(0xB3FFFFFF),
+    Key? buttonKey,
+  }) {
+    return IconButton(
+      key: buttonKey,
+      tooltip: tooltip,
+      visualDensity: VisualDensity.compact,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+      onPressed: onPressed,
+      icon: Icon(icon, size: 18, color: color),
     );
   }
 }
@@ -1647,6 +2525,8 @@ class _VaultGate extends ConsumerWidget {
     required this.paths,
     required this.onPlay,
     required this.onActions,
+    required this.onToLibrary,
+    required this.onDelete,
     required this.onReload,
   });
 
@@ -1654,6 +2534,8 @@ class _VaultGate extends ConsumerWidget {
   final Map<String, String> paths;
   final ValueChanged<VaultItem> onPlay;
   final ValueChanged<VaultItem> onActions;
+  final ValueChanged<VaultItem> onToLibrary;
+  final ValueChanged<VaultItem> onDelete;
   final VoidCallback onReload;
 
   @override
@@ -1663,69 +2545,66 @@ class _VaultGate extends ConsumerWidget {
       return VaultLockPane(onUnlocked: onReload);
     }
     if (items.isEmpty) {
-      return Column(
-        children: [
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              onPressed: () => ref.read(vaultUnlockedProvider.notifier).state = false,
-              icon: const Icon(Icons.lock_rounded, size: 18),
-              label: const Text('Lock'),
-            ),
-          ),
-          const Expanded(
-            child: EmptyState(
-              icon: Icons.lock_outline,
-              title: 'Vault is empty',
-              message: 'From the other tab, use the lock action on a video to hide it behind your PIN.',
-            ),
-          ),
-        ],
+      return const LibraryEmpty(
+        icon: Icons.lock_outline_rounded,
+        title: 'Vault is empty',
+        message:
+            'From the other tab, use the lock action on a video to hide it behind your PIN.',
       );
     }
-    return Column(
-      children: [
-        Align(
-          alignment: Alignment.centerRight,
-          child: Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: TextButton.icon(
-              onPressed: () => ref.read(vaultUnlockedProvider.notifier).state = false,
-              icon: const Icon(Icons.lock_rounded, size: 18),
-              label: const Text('Lock'),
-            ),
-          ),
-        ),
-        Expanded(
-          child: GridView.builder(
-            padding: EdgeInsets.fromLTRB(_libraryGutter(context), 8, _libraryGutter(context), 24),
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: MediaQuery.sizeOf(context).width >= 700 ? 3 : 2,
-              mainAxisSpacing: 12,
-              crossAxisSpacing: 12,
-              childAspectRatio: 0.78,
-            ),
-            itemCount: items.length,
-            itemBuilder: (context, index) {
-              final item = items[index];
-              return _VideoCard(
-                cacheKey: 'vault-${item.id}',
-                path: paths[item.id],
-                title: item.title,
-                caption: '${(item.bytes / (1024 * 1024)).toStringAsFixed(1)} MB',
-                locked: true,
-                onTap: () => onPlay(item),
-                onLongPress: () => onActions(item),
-                action: IconButton(
-                  tooltip: 'Move to Library',
-                  onPressed: () => onActions(item),
-                  icon: const Icon(Icons.lock_open_rounded, color: Colors.white),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
+    return GridView.builder(
+      padding: EdgeInsets.fromLTRB(
+        _libraryGutter(context),
+        4,
+        _libraryGutter(context),
+        24,
+      ),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 260,
+        mainAxisSpacing: 12,
+        crossAxisSpacing: 12,
+        childAspectRatio: 0.92,
+      ),
+      itemCount: items.length,
+      itemBuilder: (context, index) {
+        final item = items[index];
+        final path = paths[item.id];
+        final missing =
+            path == null || path.isEmpty || !File(path).existsSync();
+        final when = libraryWhen(item.addedAt);
+        final size = librarySize(item.bytes);
+        return _VideoCard(
+          cacheKey: 'vault-${item.id}',
+          path: missing ? null : path,
+          title: item.title,
+          caption: missing
+              ? 'Missing from disk'
+              : [size, if (when.isNotEmpty) when].join(' • '),
+          vault: true,
+          missing: missing,
+          onTap: () => onPlay(item),
+          onLongPress: () => onActions(item),
+          onToLibrary: () => onToLibrary(item),
+          onMore: () => onActions(item),
+          onDelete: () => onDelete(item),
+        );
+      },
+    );
+  }
+}
+
+class _LiveDot extends StatelessWidget {
+  const _LiveDot();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 6,
+      height: 6,
+      decoration: const BoxDecoration(
+        color: LibraryLook.success,
+        shape: BoxShape.circle,
+      ),
     );
   }
 }
@@ -1739,7 +2618,8 @@ class VaultLockPane extends ConsumerStatefulWidget {
   ConsumerState<VaultLockPane> createState() => _VaultLockPaneState();
 }
 
-class _VaultLockPaneState extends ConsumerState<VaultLockPane> with SingleTickerProviderStateMixin {
+class _VaultLockPaneState extends ConsumerState<VaultLockPane>
+    with SingleTickerProviderStateMixin {
   static const _length = 4;
   String _pin = '';
   String _first = '';
@@ -1836,18 +2716,21 @@ class _VaultLockPaneState extends ConsumerState<VaultLockPane> with SingleTicker
   }
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent)
+      return KeyEventResult.ignored;
     final key = event.logicalKey;
     final ch = event.character;
     if (ch != null && ch.length == 1 && '0123456789'.contains(ch)) {
       _press(ch);
       return KeyEventResult.handled;
     }
-    if (key == LogicalKeyboardKey.backspace || key == LogicalKeyboardKey.delete) {
+    if (key == LogicalKeyboardKey.backspace ||
+        key == LogicalKeyboardKey.delete) {
       _backspace();
       return KeyEventResult.handled;
     }
-    if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
+    if (key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter) {
       if (_pin.length == _length) _submit(_pin);
       return KeyEventResult.handled;
     }
@@ -1864,23 +2747,20 @@ class _VaultLockPaneState extends ConsumerState<VaultLockPane> with SingleTicker
     final creating = !vault.hasPin;
     final title = creating
         ? (_confirming ? 'Confirm Passcode' : 'Create Passcode')
-        : 'Enter Passcode';
-    final subtitle = _error ??
+        : 'Enter Vault PIN';
+    final subtitle =
+        _error ??
         (creating
-            ? (_confirming ? 'Enter the same 4 digits again' : 'Choose 4 digits to lock your vault')
-            : 'Unlock your SocialSave vault');
+            ? (_confirming
+                  ? 'Enter the same 4 digits again'
+                  : 'Choose 4 digits to lock your vault')
+            : 'Enter your 4-digit security PIN to unlock');
     return Focus(
       focusNode: _focus,
       autofocus: true,
       onKeyEvent: _onKey,
-      child: DecoratedBox(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xFF14202E), Color(0xFF0A1118)],
-          ),
-        ),
+      child: ColoredBox(
+        color: LibraryLook.bg,
         child: LayoutBuilder(
           builder: (context, box) {
             // 3 keys of 78 + 2 gaps of 26 = 286 wide; ~600 tall in total.
@@ -1894,16 +2774,64 @@ class _VaultLockPaneState extends ConsumerState<VaultLockPane> with SingleTicker
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.lock_rounded, color: Colors.white, size: 26),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: LibraryLook.violetDim,
+                            borderRadius: BorderRadius.circular(99),
+                            border: Border.all(
+                              color: LibraryLook.violet.withValues(alpha: 0.35),
+                            ),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.lock_rounded,
+                                color: LibraryLook.violet,
+                                size: 14,
+                              ),
+                              SizedBox(width: 4),
+                              Text(
+                                'AES-256',
+                                style: TextStyle(
+                                  color: LibraryLook.violet,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+                        Container(
+                          width: 64,
+                          height: 64,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: LibraryLook.violetDim,
+                            border: Border.all(
+                              color: LibraryLook.violet.withValues(alpha: 0.4),
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.lock_rounded,
+                            color: LibraryLook.violet,
+                            size: 30,
+                          ),
+                        ),
                         const SizedBox(height: 14),
                         Text(
                           title,
                           textAlign: TextAlign.center,
                           style: const TextStyle(
                             color: Colors.white,
-                            fontSize: 22,
-                            fontWeight: FontWeight.w400,
-                            letterSpacing: 0.2,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.2,
                           ),
                         ),
                         const SizedBox(height: 6),
@@ -1913,7 +2841,9 @@ class _VaultLockPaneState extends ConsumerState<VaultLockPane> with SingleTicker
                             subtitle,
                             textAlign: TextAlign.center,
                             style: TextStyle(
-                              color: _error != null ? const Color(0xFFFF8A80) : Colors.white70,
+                              color: _error != null
+                                  ? const Color(0xFFFF8A80)
+                                  : Colors.white70,
                               fontSize: 13,
                             ),
                           ),
@@ -1923,8 +2853,13 @@ class _VaultLockPaneState extends ConsumerState<VaultLockPane> with SingleTicker
                           animation: _shake,
                           builder: (context, child) {
                             final t = _shake.value;
-                            final dx = t == 0 ? 0.0 : 14 * (1 - t) * math.sin(t * math.pi * 6);
-                            return Transform.translate(offset: Offset(dx, 0), child: child);
+                            final dx = t == 0
+                                ? 0.0
+                                : 14 * (1 - t) * math.sin(t * math.pi * 6);
+                            return Transform.translate(
+                              offset: Offset(dx, 0),
+                              child: child,
+                            );
                           },
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.center,
@@ -1934,11 +2869,20 @@ class _VaultLockPaneState extends ConsumerState<VaultLockPane> with SingleTicker
                                   duration: const Duration(milliseconds: 120),
                                   width: 13,
                                   height: 13,
-                                  margin: const EdgeInsets.symmetric(horizontal: 11),
+                                  margin: const EdgeInsets.symmetric(
+                                    horizontal: 11,
+                                  ),
                                   decoration: BoxDecoration(
                                     shape: BoxShape.circle,
-                                    color: i < _pin.length ? Colors.white : Colors.transparent,
-                                    border: Border.all(color: Colors.white, width: 1.3),
+                                    color: i < _pin.length
+                                        ? LibraryLook.violet
+                                        : const Color(0x0DFFFFFF),
+                                    border: Border.all(
+                                      color: i < _pin.length
+                                          ? LibraryLook.violet
+                                          : const Color(0x66FFFFFF),
+                                      width: 1.2,
+                                    ),
                                   ),
                                 ),
                             ],
@@ -1946,9 +2890,21 @@ class _VaultLockPaneState extends ConsumerState<VaultLockPane> with SingleTicker
                         ),
                         const SizedBox(height: 40),
                         for (final row in const [
-                          [['1', ''], ['2', 'ABC'], ['3', 'DEF']],
-                          [['4', 'GHI'], ['5', 'JKL'], ['6', 'MNO']],
-                          [['7', 'PQRS'], ['8', 'TUV'], ['9', 'WXYZ']],
+                          [
+                            ['1', ''],
+                            ['2', 'ABC'],
+                            ['3', 'DEF'],
+                          ],
+                          [
+                            ['4', 'GHI'],
+                            ['5', 'JKL'],
+                            ['6', 'MNO'],
+                          ],
+                          [
+                            ['7', 'PQRS'],
+                            ['8', 'TUV'],
+                            ['9', 'WXYZ'],
+                          ],
                         ]) ...[
                           Row(
                             mainAxisAlignment: MainAxisAlignment.center,
@@ -1969,9 +2925,16 @@ class _VaultLockPaneState extends ConsumerState<VaultLockPane> with SingleTicker
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             // Left slot: no biometric support in this app, so empty.
-                            const SizedBox(width: _PinKey.size, height: _PinKey.size),
+                            const SizedBox(
+                              width: _PinKey.size,
+                              height: _PinKey.size,
+                            ),
                             const SizedBox(width: _PinKey.gap),
-                            _PinKey(digit: '0', letters: '', onTap: () => _press('0')),
+                            _PinKey(
+                              digit: '0',
+                              letters: '',
+                              onTap: () => _press('0'),
+                            ),
                             const SizedBox(width: _PinKey.gap),
                             SizedBox(
                               width: _PinKey.size,
@@ -1985,7 +2948,10 @@ class _VaultLockPaneState extends ConsumerState<VaultLockPane> with SingleTicker
                                 onPressed: _pin.isEmpty ? _cancel : _backspace,
                                 child: Text(
                                   _pin.isEmpty ? 'Cancel' : 'Delete',
-                                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w400),
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w400,
+                                  ),
                                 ),
                               ),
                             ),
@@ -2006,7 +2972,11 @@ class _VaultLockPaneState extends ConsumerState<VaultLockPane> with SingleTicker
 
 /// iPhone-style passcode key: translucent circle, big light digit, letters.
 class _PinKey extends StatefulWidget {
-  const _PinKey({required this.digit, required this.letters, required this.onTap});
+  const _PinKey({
+    required this.digit,
+    required this.letters,
+    required this.onTap,
+  });
 
   static const size = 78.0;
   static const gap = 26.0;
@@ -2039,7 +3009,8 @@ class _PinKeyState extends State<_PinKey> {
         height: _PinKey.size,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: Colors.white.withValues(alpha: _down ? 0.45 : 0.17),
+          color: _down ? const Color(0xFF2A2A36) : LibraryLook.card,
+          border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -2084,9 +3055,7 @@ Future<bool> ensureVaultUnlocked(BuildContext context, WidgetRef ref) async {
       ),
       child: SizedBox(
         height: math.min(MediaQuery.sizeOf(context).height * 0.9, 720),
-        child: VaultLockPane(
-          onUnlocked: () => Navigator.pop(context, true),
-        ),
+        child: VaultLockPane(onUnlocked: () => Navigator.pop(context, true)),
       ),
     ),
   );
