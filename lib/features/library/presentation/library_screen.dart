@@ -1037,7 +1037,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   Widget _libraryList(LibraryCatalog catalog) {
     // The PIN pad does not need the video scan, so it can fill the page at once.
     if (_tab == 1 && !ref.watch(vaultUnlockedProvider)) {
-      return VaultLockPane(onUnlocked: () => _reload());
+      return VaultLockPane(
+        onUnlocked: () => _reload(),
+        onCancel: () => setState(() => _tab = 0),
+      );
     }
     if (_loading) return const SkeletonGrid();
     if (_error != null) {
@@ -2535,9 +2538,10 @@ class _LiveDot extends StatelessWidget {
 }
 
 class VaultLockPane extends ConsumerStatefulWidget {
-  const VaultLockPane({super.key, this.onUnlocked});
+  const VaultLockPane({super.key, this.onUnlocked, this.onCancel});
 
   final VoidCallback? onUnlocked;
+  final VoidCallback? onCancel;
 
   @override
   ConsumerState<VaultLockPane> createState() => _VaultLockPaneState();
@@ -2594,7 +2598,11 @@ class _VaultLockPaneState extends ConsumerState<VaultLockPane>
 
   void _cancel() {
     final nav = Navigator.of(context);
-    if (nav.canPop()) nav.pop(false);
+    if (nav.canPop()) {
+      nav.pop(false);
+      return;
+    }
+    widget.onCancel?.call();
   }
 
   Future<void> _submit(String pin) async {
@@ -2685,192 +2693,236 @@ class _VaultLockPaneState extends ConsumerState<VaultLockPane>
       focusNode: _focus,
       autofocus: true,
       onKeyEvent: _onKey,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
-        child: LayoutBuilder(
-          builder: (context, box) {
-            final keypad = _keypadSize(box.biggest);
-            return Column(
+      child: LayoutBuilder(
+        builder: (context, box) {
+          final dial = _dialMetrics(box.biggest);
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.lock_rounded, color: look.accent, size: 18),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: look.ink,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.2,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: look.accentDim,
-                        borderRadius: BorderRadius.circular(99),
-                        border: Border.all(
-                          color: look.accent.withValues(alpha: 0.35),
-                        ),
-                      ),
-                      child: Text(
-                        'AES-256',
-                        style: TextStyle(
-                          color: look.accent,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: _error != null ? look.danger : look.muted,
-                    fontSize: 13,
+                _pinTopBar(look),
+                _pinIdentity(look, title, subtitle),
+                _pinDial(look, dial),
+                TextButton(
+                  onPressed: _cancel,
+                  style: TextButton.styleFrom(
+                    foregroundColor: look.muted,
+                    minimumSize: const Size(0, 36),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
-                ),
-                const SizedBox(height: 8),
-                AnimatedBuilder(
-                  animation: _shake,
-                  builder: (context, child) {
-                    final t = _shake.value;
-                    final dx = t == 0
-                        ? 0.0
-                        : 14 * (1 - t) * math.sin(t * math.pi * 6);
-                    return Transform.translate(
-                      offset: Offset(dx, 0),
-                      child: child,
-                    );
-                  },
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      for (var i = 0; i < _length; i++)
-                        AnimatedContainer(
-                          duration: const Duration(milliseconds: 120),
-                          width: 12,
-                          height: 12,
-                          margin: const EdgeInsets.symmetric(horizontal: 8),
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: i < _pin.length
-                                ? look.accent
-                                : Colors.transparent,
-                            border: Border.all(
-                              color: i < _pin.length ? look.accent : look.muted,
-                              width: 1.4,
-                            ),
-                          ),
-                        ),
-                    ],
+                  child: const Text(
+                    'Cancel',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                   ),
-                ),
-                const Spacer(),
-                for (final row in const [
-                  [
-                    ['1', ''],
-                    ['2', 'ABC'],
-                    ['3', 'DEF'],
-                  ],
-                  [
-                    ['4', 'GHI'],
-                    ['5', 'JKL'],
-                    ['6', 'MNO'],
-                  ],
-                  [
-                    ['7', 'PQRS'],
-                    ['8', 'TUV'],
-                    ['9', 'WXYZ'],
-                  ],
-                ]) ...[
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      for (var c = 0; c < 3; c++) ...[
-                        if (c > 0) SizedBox(width: keypad.gap),
-                        _PinKey(
-                          digit: row[c][0],
-                          letters: row[c][1],
-                          size: keypad.size,
-                          onTap: () => _press(row[c][0]),
-                        ),
-                      ],
-                    ],
-                  ),
-                  SizedBox(height: keypad.gap),
-                ],
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    SizedBox(width: keypad.size, height: keypad.size),
-                    SizedBox(width: keypad.gap),
-                    _PinKey(
-                      digit: '0',
-                      letters: '',
-                      size: keypad.size,
-                      onTap: () => _press('0'),
-                    ),
-                    SizedBox(width: keypad.gap),
-                    SizedBox(
-                      width: keypad.size,
-                      height: keypad.size,
-                      child: TextButton(
-                        style: TextButton.styleFrom(
-                          foregroundColor: look.ink,
-                          shape: const CircleBorder(),
-                          padding: EdgeInsets.zero,
-                        ),
-                        onPressed: _pin.isEmpty ? _cancel : _backspace,
-                        child: Text(
-                          _pin.isEmpty ? 'Cancel' : 'Delete',
-                          style: TextStyle(
-                            fontSize: (keypad.size * 0.2).clamp(12.0, 16.0),
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
                 ),
               ],
-            );
-          },
-        ),
+            ),
+          );
+        },
       ),
     );
   }
 
-  /// Keys grow with the space under the short header, and stop at a phone-sized cap.
-  ({double size, double gap}) _keypadSize(Size box) {
-    const header = 96.0;
-    const minGap = 8.0;
-    final freeH = math.max(1.0, box.height - header);
-    final freeW = math.max(1.0, box.width);
-    var size = math.min((freeH - minGap * 3) / 4, (freeW - minGap * 2) / 3);
-    if (!size.isFinite || size <= 0) size = 48;
-    if (size > 84) size = 84;
-    var gap = math.min(
-      20.0,
-      math.min((freeH - size * 4) / 3, (freeW - size * 3) / 2),
-    );
-    if (!gap.isFinite || gap < 2) gap = 2;
+  /// Even key size and the same gap across and down, held near a phone dial.
+  ({double size, double gap}) _dialMetrics(Size box) {
+    const chrome = 284.0;
+    final dialH = math.max(1.0, box.height - chrome);
+    final dialW = math.max(1.0, box.width * 0.86);
+    var size = math.min(dialH / 4.84, dialW / 3.56);
+    if (!size.isFinite || size <= 0) size = 56;
+    if (size > 66) size = 66;
+    var gap = size * 0.28;
+    final fitH = (dialH - gap * 3) / 4;
+    final fitW = (dialW - gap * 2) / 3;
+    if (size > fitH) size = fitH;
+    if (size > fitW) size = fitW;
+    if (!size.isFinite || size < 36) size = 36;
+    gap = size * 0.28;
     return (size: size, gap: gap);
+  }
+
+  Widget _pinTopBar(LibraryPalette look) {
+    final pill = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: look.accentDim,
+        borderRadius: BorderRadius.circular(99),
+        border: Border.all(color: look.accent.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.lock_rounded, color: look.accent, size: 14),
+          const SizedBox(width: 4),
+          Text(
+            'AES-256',
+            style: TextStyle(
+              color: look.accent,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+    return SizedBox(
+      height: 40,
+      child: Row(
+        children: [
+          const SizedBox(width: 40),
+          Expanded(child: Center(child: pill)),
+          const SizedBox(width: 40),
+        ],
+      ),
+    );
+  }
+
+  Widget _pinIdentity(LibraryPalette look, String title, String subtitle) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 56,
+          height: 56,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: look.accentDim,
+            border: Border.all(color: look.accent.withValues(alpha: 0.4)),
+          ),
+          child: Icon(Icons.lock_rounded, color: look.accent, size: 28),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          title,
+          textAlign: TextAlign.center,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: look.ink,
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.2,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          subtitle,
+          textAlign: TextAlign.center,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: _error != null ? look.danger : look.muted,
+            fontSize: 13,
+            height: 1.3,
+          ),
+        ),
+        const SizedBox(height: 16),
+        AnimatedBuilder(
+          animation: _shake,
+          builder: (context, child) {
+            final t = _shake.value;
+            final dx = t == 0 ? 0.0 : 14 * (1 - t) * math.sin(t * math.pi * 6);
+            return Transform.translate(offset: Offset(dx, 0), child: child);
+          },
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (var i = 0; i < _length; i++)
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 120),
+                  width: 12,
+                  height: 12,
+                  margin: const EdgeInsets.symmetric(horizontal: 8),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: i < _pin.length ? look.accent : Colors.transparent,
+                    border: Border.all(
+                      color: i < _pin.length ? look.accent : look.muted,
+                      width: 1.4,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _pinDial(LibraryPalette look, ({double size, double gap}) dial) {
+    const rows = [
+      [
+        ['1', ''],
+        ['2', 'ABC'],
+        ['3', 'DEF'],
+      ],
+      [
+        ['4', 'GHI'],
+        ['5', 'JKL'],
+        ['6', 'MNO'],
+      ],
+      [
+        ['7', 'PQRS'],
+        ['8', 'TUV'],
+        ['9', 'WXYZ'],
+      ],
+    ];
+    Widget gap() => SizedBox(width: dial.gap);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var r = 0; r < rows.length; r++) ...[
+          if (r > 0) SizedBox(height: dial.gap),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (var c = 0; c < 3; c++) ...[
+                if (c > 0) gap(),
+                _PinKey(
+                  digit: rows[r][c][0],
+                  letters: rows[r][c][1],
+                  size: dial.size,
+                  onTap: () => _press(rows[r][c][0]),
+                ),
+              ],
+            ],
+          ),
+        ],
+        SizedBox(height: dial.gap),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SizedBox(width: dial.size, height: dial.size),
+            gap(),
+            _PinKey(
+              digit: '0',
+              letters: '',
+              size: dial.size,
+              onTap: () => _press('0'),
+            ),
+            gap(),
+            SizedBox(
+              width: dial.size,
+              height: dial.size,
+              child: IconButton(
+                tooltip: 'Delete',
+                padding: EdgeInsets.zero,
+                constraints: BoxConstraints.tight(Size(dial.size, dial.size)),
+                onPressed: _pin.isEmpty ? null : _backspace,
+                icon: Icon(
+                  Icons.backspace_outlined,
+                  size: dial.size * 0.36,
+                  color: _pin.isEmpty
+                      ? look.muted.withValues(alpha: 0.35)
+                      : look.ink,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
   }
 }
 
@@ -2924,22 +2976,27 @@ class _PinKeyState extends State<_PinKey> {
               widget.digit,
               style: TextStyle(
                 color: look.ink,
-                fontSize: size * 0.42,
-                fontWeight: FontWeight.w400,
+                fontSize: size * 0.38,
+                fontWeight: FontWeight.w600,
                 height: 1,
               ),
             ),
-            if (widget.letters.isNotEmpty)
-              Text(
-                widget.letters,
-                style: TextStyle(
-                  color: look.muted,
-                  fontSize: (size * 0.11).clamp(7.0, 11.0),
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 1.2,
-                  height: 1.1,
-                ),
-              ),
+            const SizedBox(height: 2),
+            SizedBox(
+              height: (size * 0.14).clamp(8.0, 12.0).toDouble(),
+              child: widget.letters.isEmpty
+                  ? null
+                  : Text(
+                      widget.letters,
+                      style: TextStyle(
+                        color: look.muted,
+                        fontSize: (size * 0.12).clamp(7.0, 10.0).toDouble(),
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1.2,
+                        height: 1,
+                      ),
+                    ),
+            ),
           ],
         ),
       ),

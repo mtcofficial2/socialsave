@@ -55,7 +55,7 @@ void main() {
       of: find.text('5'),
       matching: find.byType(AnimatedContainer),
     );
-    expect(tester.getSize(key).width, greaterThanOrEqualTo(72));
+    expect(tester.getSize(key).width, inInclusiveRange(56, 70));
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 20));
@@ -109,7 +109,8 @@ void main() {
       of: find.text('5'),
       matching: find.byType(AnimatedContainer),
     );
-    expect(tester.getSize(lightKey).width, greaterThanOrEqualTo(72));
+    expect(tester.getSize(lightKey).width, inInclusiveRange(56, 70));
+    _expectEvenDial(tester);
 
     await pumpPane(AppColors.darkScheme());
     expect(find.text('Enter Vault PIN'), findsOneWidget);
@@ -121,7 +122,33 @@ void main() {
       of: find.text('5'),
       matching: find.byType(AnimatedContainer),
     );
-    expect(tester.getSize(darkKey).width, greaterThanOrEqualTo(72));
+    expect(tester.getSize(darkKey).width, inInclusiveRange(56, 70));
+    _expectEvenDial(tester);
     expect(tester.takeException(), isNull);
   });
+}
+
+void _expectEvenDial(WidgetTester tester) {
+  Rect circle(String digit) {
+    return tester.getRect(
+      find.ancestor(
+        of: find.text(digit),
+        matching: find.byType(AnimatedContainer),
+      ),
+    );
+  }
+
+  final five = circle('5');
+  final six = circle('6');
+  final eight = circle('8');
+  final across = six.left - five.right;
+  final down = eight.top - five.bottom;
+  expect((across - down).abs(), lessThan(3));
+  expect(across, inInclusiveRange(12, 22));
+
+  final paneTop = tester.getTopLeft(find.byType(VaultLockPane)).dy;
+  final paneHeight = tester.getSize(find.byType(VaultLockPane)).height;
+  final mid = paneTop + paneHeight / 2;
+  expect(five.center.dy, greaterThan(mid - paneHeight * 0.08));
+  expect(five.center.dy, lessThan(paneTop + paneHeight * 0.72));
 }
