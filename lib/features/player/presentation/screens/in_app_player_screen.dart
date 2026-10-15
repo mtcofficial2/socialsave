@@ -19,6 +19,7 @@ import 'package:social_save/core/platform/phone_body.dart';
 import 'package:social_save/core/theme/app_colors.dart';
 import 'package:social_save/features/library/device_media.dart';
 import 'package:social_save/features/player/pip.dart';
+import 'package:social_save/features/player/presentation/widgets/phone_player_chrome.dart';
 import 'package:social_save/features/player/video_stage_layout.dart';
 import 'package:social_save/features/player/playback_bridge.dart';
 import 'package:social_save/features/player/player_session.dart';
@@ -1408,7 +1409,14 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   Future<void> _showTools() async {
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xFF111827),
+      backgroundColor: DesktopSupport.isWindows
+          ? const Color(0xFF111827)
+          : const Color(0xFF16161D),
+      shape: DesktopSupport.isWindows
+          ? null
+          : const RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
       showDragHandle: true,
       builder: (context) {
         return SafeArea(
@@ -1690,6 +1698,224 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   String _rateLabel(double rate) {
     if (rate == rate.roundToDouble()) return '${rate.toStringAsFixed(0)}x';
     return '${rate}x';
+  }
+
+  void _cyclePhoneRate() {
+    var index = 0;
+    for (var i = 0; i < _rates.length; i++) {
+      if ((_rates[i] - _rate).abs() < 0.01) {
+        index = i;
+        break;
+      }
+    }
+    unawaited(_setRate(_rates[(index + 1) % _rates.length]));
+  }
+
+  String _phoneSubtitle() {
+    if (_session.isPreview) return 'Preview · not saved yet';
+    if (_session.isVault) return 'Vault · PIN protected';
+    return 'SocialSave player · Double-tap sides to skip';
+  }
+
+  Widget _phoneMoreButton() {
+    return PopupMenuButton<String>(
+      tooltip: 'More',
+      padding: EdgeInsets.zero,
+      icon: const Icon(Icons.more_vert_rounded, color: Colors.white, size: 22),
+      onSelected: (value) {
+        if (value == 'pip') unawaited(_playOverApps());
+        if (value == 'send') {
+          unawaited(
+            showSendToPhone(context, File(_session.filePath!), _session.title),
+          );
+        }
+        if (value == 'tv') unawaited(_playOnTv());
+        if (value == 'open') unawaited(_openExternal());
+        if (value == 'rotate') unawaited(_rotate());
+      },
+      itemBuilder: (_) => [
+        if (_session.filePath != null && !_session.isVault) ...const [
+          PopupMenuItem(value: 'send', child: Text('Send to another device')),
+          PopupMenuItem(value: 'open', child: Text('Open in another app')),
+        ],
+        const PopupMenuItem(value: 'rotate', child: Text('Rotate')),
+      ],
+    );
+  }
+
+  Widget _phoneChrome() {
+    final canShare = _session.filePath != null && !_session.isVault;
+    return PhonePlayerChrome(
+      player: _player,
+      title: _session.title,
+      subtitle: _phoneSubtitle(),
+      platform: _session.platform,
+      frameWidth: _frameWidth,
+      frameHeight: _frameHeight,
+      rate: _rate,
+      loop: _loop,
+      muted: _muted,
+      filling: _fit == BoxFit.cover,
+      fullscreen: _fs,
+      hasNext: _hasNext,
+      vault: _session.isVault,
+      landscape: MediaQuery.orientationOf(context) == Orientation.landscape,
+      showPip: !_session.isVault,
+      showCast: canShare,
+      onBack: () {
+        if (widget.embedded) {
+          widget.onClose?.call();
+        } else if (_fs) {
+          unawaited(_setFs(false));
+        } else {
+          Navigator.maybePop(context);
+        }
+      },
+      onLock: () => setState(() {
+        _locked = true;
+        _chrome = false;
+        _lockHint = true;
+      }),
+      onTools: () => unawaited(_showTools()),
+      onPip: () => unawaited(_playOverApps()),
+      onCast: () => unawaited(_playOnTv()),
+      onSkip: (seconds) => unawaited(_skip(seconds)),
+      onPrevious: () => unawaited(_playPrevious()),
+      onNext: () => unawaited(_playNext()),
+      onRate: _cyclePhoneRate,
+      onLoop: () => unawaited(_toggleLoop()),
+      onMute: () => unawaited(_toggleMute()),
+      onFit: _cycleFit,
+      onFullscreen: () => unawaited(_toggleFs()),
+      moreMenu: _phoneMoreButton(),
+    );
+  }
+
+  Widget _videoHero(Widget video) {
+    return HeroMode(
+      enabled: _heroTag != null,
+      child: Hero(
+        tag: _heroTag ?? 'player-idle',
+        child: _pinchZoom
+            ? InteractiveViewer(
+                minScale: 1,
+                maxScale: 3,
+                panEnabled: false,
+                child: video,
+              )
+            : video,
+      ),
+    );
+  }
+
+  /// Phone: the picture fills the screen and the mock chrome sits on it.
+  Widget _phoneStage(Widget video) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        const ColoredBox(color: Colors.black),
+        _videoHero(video),
+        IgnorePointer(
+          ignoring: _locked || (!_chrome && !_showEndCard),
+          child: AnimatedOpacity(
+            opacity: !_locked && (_chrome || _showEndCard) ? 1 : 0,
+            duration: const Duration(milliseconds: 180),
+            child: _phoneChrome(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _lockLayer(bool phone) {
+    return Positioned.fill(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() => _lockHint = !_lockHint),
+        child: _lockHint
+            ? Center(child: phone ? _phoneUnlock() : _desktopUnlock())
+            : const SizedBox.expand(),
+      ),
+    );
+  }
+
+  Widget _desktopUnlock() {
+    return IconButton(
+      tooltip: 'Unlock',
+      iconSize: 42,
+      onPressed: () => setState(() {
+        _locked = false;
+        _lockHint = false;
+        _chrome = true;
+      }),
+      icon: const Icon(Icons.lock_open_rounded, color: Colors.white),
+    );
+  }
+
+  Widget _phoneUnlock() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Material(
+          color: const Color(0xE62A2A2A),
+          borderRadius: BorderRadius.circular(999),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(999),
+            onTap: () => setState(() {
+              _locked = false;
+              _lockHint = false;
+              _chrome = true;
+            }),
+            child: const Padding(
+              padding: EdgeInsets.fromLTRB(16, 10, 22, 10),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: PhonePlayerChrome.violet,
+                      shape: BoxShape.circle,
+                    ),
+                    child: SizedBox(
+                      width: 32,
+                      height: 32,
+                      child: Icon(
+                        Icons.lock_open_rounded,
+                        color: PhonePlayerChrome.onViolet,
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                  SizedBox(width: 12),
+                  Text(
+                    'Tap to Unlock',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Container(
+          margin: const EdgeInsets.symmetric(horizontal: 32),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0x99000000),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: const Text(
+            'Controls are locked so a tap does not change playback.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Color(0xFFC7C5D4), fontSize: 12),
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _dockIcon(IconData icon, VoidCallback onPressed, String tooltip) {
@@ -1982,6 +2208,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       );
     }
 
+    final phone = !DesktopSupport.isWindows;
     final narrow = MediaQuery.sizeOf(context).width < 560;
     return PopScope(
       // Back leaves full screen first.
@@ -2007,7 +2234,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                 // Always laid out (only faded) so showing it never shifts the video:
                 // the shift moved the seek bar under the mouse mid-click and the
                 // click then seeked to 0:00.
-                if (!_fs)
+                if (!phone && !_fs)
                   Visibility(
                     visible: _chrome || _showEndCard,
                     maintainSize: true,
@@ -2216,6 +2443,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                             ),
                           ),
                         )
+                      else if (phone)
+                        _phoneStage(video)
                       else
                         _VideoStage(
                           width: _frameWidth,
@@ -2230,45 +2459,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                               child: _controlDock(),
                             ),
                           ),
-                          child: HeroMode(
-                            enabled: _heroTag != null,
-                            child: Hero(
-                              tag: _heroTag ?? 'player-idle',
-                              child: _pinchZoom
-                                  ? InteractiveViewer(
-                                      minScale: 1,
-                                      maxScale: 3,
-                                      panEnabled: false,
-                                      child: video,
-                                    )
-                                  : video,
-                            ),
-                          ),
+                          child: _videoHero(video),
                         ),
-                      if (_locked)
-                        Positioned.fill(
-                          child: GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTap: () => setState(() => _lockHint = !_lockHint),
-                            child: _lockHint
-                                ? Center(
-                                    child: IconButton(
-                                      tooltip: 'Unlock',
-                                      iconSize: 42,
-                                      onPressed: () => setState(() {
-                                        _locked = false;
-                                        _lockHint = false;
-                                        _chrome = true;
-                                      }),
-                                      icon: const Icon(
-                                        Icons.lock_open_rounded,
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                                  )
-                                : const SizedBox.expand(),
-                          ),
-                        ),
+                      if (_locked) _lockLayer(phone),
                       _osdLayer(),
                       if (_showEndCard)
                         _EndCard(
@@ -2289,8 +2482,10 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                   ),
                 ),
                 if (!_ready && _error == null)
-                  const LinearProgressIndicator(
-                    color: AppColors.secondaryContainer,
+                  LinearProgressIndicator(
+                    color: phone
+                        ? PhonePlayerChrome.violet
+                        : AppColors.secondaryContainer,
                     backgroundColor: Colors.white10,
                   ),
               ],
