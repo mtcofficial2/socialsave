@@ -7,7 +7,6 @@ import 'package:social_save/core/theme/app_colors.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
 import 'package:social_save/features/downloads/presentation/providers/downloads_controller.dart';
 import 'package:social_save/features/player/open_player.dart';
-import 'package:social_save/shared/widgets/glass.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
 import 'package:social_save/shared/widgets/video_thumbnail.dart';
 
@@ -30,10 +29,10 @@ class RecentDownloadsSection extends ConsumerWidget {
               children: [
                 Text(
                   'Recent Downloads',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 18,
-                      ),
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
                 ),
                 const SizedBox(width: 6),
                 Container(
@@ -90,24 +89,28 @@ class _RecentRow extends ConsumerWidget {
     final formatters = ref.watch(formattersProvider);
     final scheme = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Glass(
-        borderRadius: 22,
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: scheme.surfaceContainerLow,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: scheme.outlineVariant),
+        ),
+        clipBehavior: Clip.antiAlias,
         child: InkWell(
-          borderRadius: BorderRadius.circular(22),
           onTap: () => context.push('/downloads/${record.id}'),
           child: Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.fromLTRB(8, 8, 4, 8),
             child: Row(
               children: [
                 SizedBox(
-                  width: 72,
-                  height: 72,
+                  width: 64,
+                  height: 64,
                   child: VideoThumbnail(
                     url: record.thumbnailUrl,
                     durationSeconds: record.durationSeconds,
-                    height: 72,
-                    borderRadius: 12,
+                    height: 64,
+                    borderRadius: 10,
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -127,10 +130,16 @@ class _RecentRow extends ConsumerWidget {
                               color: scheme.onSurfaceVariant,
                             ),
                           ),
-                          Text('  •  ', style: TextStyle(color: scheme.onSurfaceVariant)),
+                          Text(
+                            '  •  ',
+                            style: TextStyle(color: scheme.onSurfaceVariant),
+                          ),
                           Text(
                             record.quality ?? 'Video',
-                            style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: scheme.onSurfaceVariant,
+                            ),
                           ),
                         ],
                       ),
@@ -139,7 +148,10 @@ class _RecentRow extends ConsumerWidget {
                         record.title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                       const SizedBox(height: 4),
                       Row(
@@ -148,17 +160,28 @@ class _RecentRow extends ConsumerWidget {
                             record.fileSize != null
                                 ? formatters.bytes(record.fileSize)
                                 : '',
-                            style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: scheme.onSurfaceVariant,
+                            ),
                           ),
                           const SizedBox(width: 8),
-                          Icon(Icons.check_circle, size: 14, color: AppColors.successFg(Theme.of(context).brightness)),
+                          Icon(
+                            Icons.check_circle,
+                            size: 14,
+                            color: AppColors.successFg(
+                              Theme.of(context).brightness,
+                            ),
+                          ),
                           const SizedBox(width: 4),
                           Text(
                             'Saved',
                             style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
-                              color: AppColors.successFg(Theme.of(context).brightness),
+                              color: AppColors.successFg(
+                                Theme.of(context).brightness,
+                              ),
                             ),
                           ),
                         ],
@@ -167,15 +190,18 @@ class _RecentRow extends ConsumerWidget {
                   ),
                 ),
                 Material(
-                  color: scheme.surfaceContainerLow,
+                  color: scheme.surface,
                   shape: const CircleBorder(),
                   child: InkWell(
                     customBorder: const CircleBorder(),
                     onTap: () => openInAppPlayer(context, record),
                     child: SizedBox(
-                      width: 44,
-                      height: 44,
-                      child: Icon(Icons.play_arrow_rounded, color: scheme.primary),
+                      width: 40,
+                      height: 40,
+                      child: Icon(
+                        Icons.play_arrow_rounded,
+                        color: scheme.primary,
+                      ),
                     ),
                   ),
                 ),

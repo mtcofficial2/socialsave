@@ -57,225 +57,217 @@ class _UrlInputCardState extends ConsumerState<UrlInputCard> {
       }
     });
 
+    final ready = platform != SocialPlatform.unknown;
+    final emphasizePaste = state.canPasteLink && state.url.trim().isEmpty;
     return GlassCard(
       blur: true,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Text(
-                    'Paste a public video URL',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 18,
-                          height: 1.25,
-                        ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                if (platform != SocialPlatform.unknown)
-                  PlatformLogo(platform: platform, size: 28)
-                else
-                  Container(
-                    width: 24,
-                    height: 24,
-                    decoration: BoxDecoration(
-                      color: scheme.secondaryContainer,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(Icons.link, size: 14, color: scheme.onSecondaryContainer),
-                  ),
-                if (platform != SocialPlatform.unknown) ...[
-                  const SizedBox(width: 8),
-                  PlatformBadge(platform: platform, compact: true),
-                ],
-              ],
-            ),
-            const SizedBox(height: 8),
             Text(
-              'Works with public videos from TikTok, Instagram, YouTube, X, Reddit, Facebook, Pinterest, a direct file, or another website.',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                    fontSize: 12,
-                    height: 1.35,
-                  ),
+              'Paste a link',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                fontSize: 18,
+                letterSpacing: -0.3,
+              ),
             ),
+            const SizedBox(height: 10),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerLow,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: ready
+                      ? scheme.primary.withValues(alpha: 0.45)
+                      : scheme.outlineVariant,
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 2, 4, 2),
+                child: Row(
+                  children: [
+                    ready
+                        ? PlatformLogo(platform: platform, size: 20)
+                        : Icon(
+                            Icons.link_rounded,
+                            size: 20,
+                            color: scheme.primary,
+                          ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        key: const Key('url-input'),
+                        controller: _controller,
+                        onChanged: controller.setUrl,
+                        keyboardType: TextInputType.url,
+                        textInputAction: TextInputAction.done,
+                        autocorrect: false,
+                        enableSuggestions: false,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        decoration: const InputDecoration(
+                          hintText: 'https://...',
+                          isDense: true,
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          filled: false,
+                          contentPadding: EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        onSubmitted: (_) => widget.onAnalyze(),
+                      ),
+                    ),
+                    if (state.url.isNotEmpty)
+                      IconButton(
+                        tooltip: 'Clear',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () => controller.setUrl(''),
+                        icon: const Icon(Icons.close_rounded, size: 18),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            if (ready) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  PlatformBadge(platform: platform, compact: true),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      state.isAnalyzing ? 'Opening this link…' : 'Public video',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
             if (state.canPasteLink) ...[
-              const SizedBox(height: 10),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: ActionChip(
-                  avatar: const Icon(Icons.content_paste_rounded, size: 18),
-                  label: const Text('Link on clipboard'),
-                  onPressed: () => widget.onPaste(),
+              const SizedBox(height: 8),
+              Text(
+                'A link is ready to paste.',
+                style: TextStyle(
+                  color: scheme.primary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ],
-            const SizedBox(height: 14),
-            Container(
-              padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
-              decoration: BoxDecoration(
-                color: scheme.surfaceContainerLow,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      platform == SocialPlatform.unknown
-                          ? Icon(Icons.link, size: 20, color: scheme.primary)
-                          : PlatformLogo(platform: platform, size: 20),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextField(
-                          key: const Key('url-input'),
-                          controller: _controller,
-                          onChanged: controller.setUrl,
-                          keyboardType: TextInputType.url,
-                          textInputAction: TextInputAction.done,
-                          autocorrect: false,
-                          enableSuggestions: false,
-                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
-                          decoration: const InputDecoration(
-                            hintText: 'https://...',
-                            isDense: true,
-                            border: InputBorder.none,
-                            enabledBorder: InputBorder.none,
-                            focusedBorder: InputBorder.none,
-                            filled: false,
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                          onSubmitted: (_) => widget.onAnalyze(),
-                        ),
-                      ),
-                      if (state.url.isNotEmpty)
-                        IconButton(
-                          visualDensity: VisualDensity.compact,
-                          onPressed: () => controller.setUrl(''),
-                          icon: const Icon(Icons.close, size: 18),
-                        ),
-                    ],
-                  ),
-                  if (platform != SocialPlatform.unknown) ...[
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        Icon(Icons.check_circle, size: 14, color: scheme.primary),
-                        const SizedBox(width: 4),
-                        Text(
-                          state.isAnalyzing
-                              ? 'Extracting public metadata…'
-                              : 'Public ${platform.displayName} detected',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: scheme.onSurfaceVariant,
-                          ),
-                        ),
-                        const Spacer(),
-                        Text(
-                          state.isAnalyzing ? 'Working' : 'Ready',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: scheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ],
-              ),
-            ),
             if (state.error != null) ...[
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
               ErrorBanner(
                 message: state.error!,
                 onRetry: state.url.isEmpty ? null : widget.onAnalyze,
               ),
             ],
             const SizedBox(height: 12),
-            if (state.canPasteLink) ...[
-              SizedBox(
-                height: 52,
-                child: FilledButton.icon(
-                  key: const Key('paste-button'),
-                  onPressed: state.isAnalyzing ? null : widget.onPaste,
-                  icon: const Icon(Icons.content_paste_rounded),
-                  label: Text(state.isAnalyzing ? 'Opening link…' : 'Paste link'),
-                ),
-              ),
-              const SizedBox(height: 8),
-            ],
-            SizedBox(
-              height: 52,
-              child: state.canPasteLink
-                  ? FilledButton.tonalIcon(
-                      key: const Key('analyze-button'),
-                      onPressed: state.isAnalyzing ? null : widget.onAnalyze,
-                      icon: const Icon(Icons.manage_search_rounded, size: 20),
-                      label: Text(state.isAnalyzing ? 'Analyzing…' : 'Analyze Link'),
-                    )
-                  : FilledButton(
-                      key: const Key('analyze-button'),
-                      onPressed: state.isAnalyzing ? null : widget.onAnalyze,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          if (state.isAnalyzing)
-                            SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: scheme.onPrimary,
-                              ),
-                            )
-                          else
-                            const Icon(Icons.manage_search_rounded, size: 20),
-                          const SizedBox(width: 8),
-                          Text(state.isAnalyzing ? 'Analyzing…' : 'Analyze Link'),
-                          if (!state.isAnalyzing) ...[
-                            const SizedBox(width: 6),
-                            const Icon(Icons.arrow_forward_rounded, size: 18),
-                          ],
-                        ],
-                      ),
-                    ),
+            Row(
+              children: [
+                Expanded(child: _pasteButton(state, emphasizePaste)),
+                const SizedBox(width: 8),
+                Expanded(child: _analyzeButton(state, scheme, emphasizePaste)),
+              ],
             ),
-            if (!state.canPasteLink) ...[
-              const SizedBox(height: 8),
-              SizedBox(
-                height: 52,
-                child: FilledButton.tonalIcon(
-                  key: const Key('paste-button'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: scheme.surfaceContainerLow,
-                    foregroundColor: scheme.primary,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                  ),
-                  onPressed: state.isAnalyzing ? null : widget.onPaste,
-                  icon: const Icon(Icons.content_paste_rounded),
-                  label: const Text('Paste link'),
-                ),
-              ),
-            ],
-            const SizedBox(height: 8),
-            Center(
+            Align(
+              alignment: Alignment.centerLeft,
               child: TextButton(
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                ),
                 onPressed: state.isAnalyzing ? null : controller.useSampleUrl,
-                child: const Text('⚡  Try a sample public video'),
+                child: const Text('Try a sample public video'),
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _pasteButton(HomeState state, bool emphasizePaste) {
+    final style = FilledButton.styleFrom(
+      minimumSize: const Size(0, 44),
+      visualDensity: VisualDensity.compact,
+    );
+    final onPressed = state.isAnalyzing ? null : widget.onPaste;
+    const icon = Icon(Icons.content_paste_rounded, size: 18);
+    final label = Text(
+      state.isAnalyzing && state.canPasteLink ? 'Opening…' : 'Paste link',
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
+    if (emphasizePaste) {
+      return FilledButton.icon(
+        key: const Key('paste-button'),
+        style: style,
+        onPressed: onPressed,
+        icon: icon,
+        label: label,
+      );
+    }
+    return FilledButton.tonalIcon(
+      key: const Key('paste-button'),
+      style: style,
+      onPressed: onPressed,
+      icon: icon,
+      label: label,
+    );
+  }
+
+  Widget _analyzeButton(
+    HomeState state,
+    ColorScheme scheme,
+    bool emphasizePaste,
+  ) {
+    final style = FilledButton.styleFrom(
+      minimumSize: const Size(0, 44),
+      visualDensity: VisualDensity.compact,
+    );
+    final onPressed = state.isAnalyzing ? null : widget.onAnalyze;
+    final icon = state.isAnalyzing
+        ? SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: emphasizePaste
+                  ? scheme.onSecondaryContainer
+                  : scheme.onPrimary,
+            ),
+          )
+        : const Icon(Icons.arrow_forward_rounded, size: 18);
+    final label = Text(
+      state.isAnalyzing ? 'Analyzing…' : 'Analyze Link',
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
+    if (emphasizePaste) {
+      return FilledButton.tonalIcon(
+        key: const Key('analyze-button'),
+        style: style,
+        onPressed: onPressed,
+        icon: icon,
+        label: label,
+      );
+    }
+    return FilledButton.icon(
+      key: const Key('analyze-button'),
+      style: style,
+      onPressed: onPressed,
+      icon: icon,
+      label: label,
     );
   }
 }

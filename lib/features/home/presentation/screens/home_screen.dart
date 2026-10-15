@@ -10,11 +10,15 @@ import 'package:go_router/go_router.dart';
 import 'package:social_save/core/platform/desktop_support.dart';
 import 'package:social_save/core/storage/storage_migration.dart';
 import 'package:social_save/core/storage/vault_recovery.dart';
-import 'package:social_save/features/library/presentation/library_screen.dart' show vaultServiceProvider;
+import 'package:social_save/features/library/presentation/library_screen.dart'
+    show vaultServiceProvider;
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/constants/app_constants.dart';
 import 'package:social_save/features/home/presentation/providers/home_controller.dart';
+import 'package:social_save/features/downloads/domain/entities/download_record.dart';
+import 'package:social_save/features/downloads/presentation/providers/downloads_controller.dart';
 import 'package:social_save/features/home/presentation/widgets/recent_downloads_list.dart';
+import 'package:social_save/shared/widgets/platform_logo.dart';
 import 'package:social_save/features/home/presentation/widgets/supported_platforms.dart';
 import 'package:social_save/features/home/presentation/widgets/save_queue_section.dart';
 import 'package:social_save/features/home/presentation/widgets/url_input_card.dart';
@@ -132,7 +136,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     if (Platform.isWindows) {
       return CallbackShortcuts(
         bindings: {
-          const SingleActivator(LogicalKeyboardKey.keyV, control: true): () => unawaited(_paste()),
+          const SingleActivator(LogicalKeyboardKey.keyV, control: true): () =>
+              unawaited(_paste()),
         },
         child: Focus(autofocus: true, child: _scaffold(context)),
       );
@@ -165,21 +170,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           children: [
             const BrandHeader(),
             _tagline(context),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
             const UpdateCard(),
             UrlInputCard(onAnalyze: _analyze, onPaste: _paste),
             _wakingRow(scheme),
+            const _RecentLinks(),
             _playlistButton(),
-            const SizedBox(height: 8),
-            const NearbyShareBar(compact: true),
-            const SizedBox(height: 12),
             const SaveQueueSection(),
+            const SizedBox(height: 8),
+            const RecentDownloadsSection(),
+            const SizedBox(height: 12),
+            const NearbyShareBar(compact: true),
+            const SizedBox(height: 16),
+            const SupportedPlatformsSection(),
             const SizedBox(height: 16),
             const ComplianceNotice(compact: true),
-            const SizedBox(height: 20),
-            const SupportedPlatformsSection(),
-            const SizedBox(height: 20),
-            const RecentDownloadsSection(),
           ],
         ),
       ),
@@ -196,9 +201,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           Text(
             'Save a video',
             style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.6,
-                ),
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.6,
+            ),
           ),
           const SizedBox(height: 4),
           _tagline(context),
@@ -206,7 +211,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             const SizedBox(height: 6),
             Text(
               'Ctrl+V pastes a link. Esc goes back.',
-              style: TextStyle(fontSize: 12, height: 1.3, color: scheme.onSurfaceVariant),
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.3,
+                color: scheme.onSurfaceVariant,
+              ),
             ),
           ],
           const SizedBox(height: 18),
@@ -222,8 +231,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                       const UpdateCard(),
                       UrlInputCard(onAnalyze: _analyze, onPaste: _paste),
                       _wakingRow(scheme),
+                      const _RecentLinks(),
                       _playlistButton(),
-                      const SizedBox(height: 8),
                       const SaveQueueSection(),
                       const SizedBox(height: 16),
                       const ComplianceNotice(compact: true),
@@ -236,11 +245,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                   child: ListView(
                     padding: const EdgeInsets.only(bottom: 12),
                     children: const [
+                      RecentDownloadsSection(),
+                      SizedBox(height: 16),
                       NearbyShareBar(compact: true),
                       SizedBox(height: 16),
                       SupportedPlatformsSection(),
-                      SizedBox(height: 20),
-                      RecentDownloadsSection(),
                     ],
                   ),
                 ),
@@ -259,10 +268,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           ? AppConstants.appTagline
           : '${AppConstants.appTagline}.',
       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            color: scheme.onSurfaceVariant,
-            fontSize: 14,
-            height: 1.4,
-          ),
+        color: scheme.onSurfaceVariant,
+        fontSize: 14,
+        height: 1.4,
+      ),
     );
   }
 
@@ -278,13 +287,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                   SizedBox(
                     width: 16,
                     height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: scheme.primary),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: scheme.primary,
+                    ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       'Waking the SocialSave server… this can take up to a minute.',
-                      style: TextStyle(color: scheme.onSurfaceVariant, height: 1.35),
+                      style: TextStyle(
+                        color: scheme.onSurfaceVariant,
+                        height: 1.35,
+                      ),
                     ),
                   ),
                 ],
@@ -303,4 +318,113 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       ),
     );
   }
+}
+
+/// Up to four links the user already saved. A tap fills the field and stays
+/// on Home, so the link can be edited before Analyze.
+class _RecentLinks extends ConsumerWidget {
+  const _RecentLinks();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final records = ref
+        .watch(downloadsControllerProvider)
+        .maybeWhen(
+          data: (rows) => rows,
+          orElse: () => const <DownloadRecord>[],
+        );
+    final links = _uniqueRecentLinks(records);
+    if (links.isEmpty) return const SizedBox.shrink();
+
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Recent links',
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              color: scheme.onSurfaceVariant,
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 36,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: links.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (context, index) {
+                final row = links[index];
+                final url = row.sourceUrl.trim();
+                return Tooltip(
+                  message: url,
+                  child: Material(
+                    color: scheme.surfaceContainerLow,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(99),
+                      side: BorderSide(color: scheme.outlineVariant),
+                    ),
+                    child: InkWell(
+                      key: ValueKey('recent-link-$url'),
+                      customBorder: const StadiumBorder(),
+                      onTap: () {
+                        HapticFeedback.selectionClick();
+                        ref.read(homeControllerProvider.notifier).setUrl(url);
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            PlatformLogo(platform: row.platform, size: 14),
+                            const SizedBox(width: 6),
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 168),
+                              child: Text(
+                                _recentLinkLabel(row),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: scheme.onSurface,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+List<DownloadRecord> _uniqueRecentLinks(List<DownloadRecord> rows) {
+  final seen = <String>{};
+  final links = <DownloadRecord>[];
+  for (final row in rows) {
+    final url = row.sourceUrl.trim();
+    if (url.isEmpty || !seen.add(url)) continue;
+    links.add(row);
+    if (links.length == 4) break;
+  }
+  return links;
+}
+
+String _recentLinkLabel(DownloadRecord row) {
+  final title = row.title.trim();
+  if (title.isNotEmpty && title.toLowerCase() != 'untitled video') return title;
+  final host = Uri.tryParse(row.sourceUrl)?.host ?? row.sourceUrl;
+  return host.startsWith('www.') ? host.substring(4) : host;
 }

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:social_save/shared/models/social_platform.dart';
-import 'package:social_save/shared/widgets/glass.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
 
 class SupportedPlatformsSection extends StatelessWidget {
@@ -24,47 +23,49 @@ class SupportedPlatformsSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Text(
-              'Supported Platforms',
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
-                  ),
-            ),
-            const Spacer(),
-            Text(
-              '9 sources',
-              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-            ),
-          ],
+        Text(
+          'Supported Platforms',
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w700,
+            fontSize: 14,
+          ),
         ),
-        const SizedBox(height: 10),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: _chips.map((item) {
-            return Glass(
-              borderRadius: 999,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  PlatformLogo(platform: item.$1, size: 16),
-                  const SizedBox(width: 6),
-                  Text(
-                    item.$2,
-                    style: TextStyle(
-                      color: scheme.onSurface,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 34,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: _chips.length,
+            separatorBuilder: (_, _) => const SizedBox(width: 8),
+            itemBuilder: (context, index) {
+              final item = _chips[index];
+              return DecoratedBox(
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerLow,
+                  borderRadius: BorderRadius.circular(99),
+                  border: Border.all(color: scheme.outlineVariant),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      PlatformLogo(platform: item.$1, size: 14),
+                      const SizedBox(width: 6),
+                      Text(
+                        item.$2,
+                        style: TextStyle(
+                          color: scheme.onSurface,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            );
-          }).toList(),
+                ),
+              );
+            },
+          ),
         ),
       ],
     );

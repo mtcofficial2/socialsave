@@ -13,9 +13,9 @@ class SaveQueueSection extends ConsumerWidget {
     final url = ref.watch(homeControllerProvider.select((state) => state.url));
     final scheme = Theme.of(context).colorScheme;
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        OutlinedButton.icon(
+        TextButton.icon(
           onPressed: url.trim().isEmpty
               ? null
               : () => ref.read(saveQueueProvider.notifier).add(url),
@@ -26,7 +26,9 @@ class SaveQueueSection extends ConsumerWidget {
           const SizedBox(height: 12),
           Text(
             'Queue',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 8),
           ...items.map((item) {
@@ -40,13 +42,23 @@ class SaveQueueSection extends ConsumerWidget {
               padding: const EdgeInsets.only(bottom: 8),
               child: GlassCard(
                 child: ListTile(
-                  title: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  subtitle: Text(item.detail ?? item.url, maxLines: 2, overflow: TextOverflow.ellipsis),
+                  title: Text(
+                    item.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: Text(
+                    item.detail ?? item.url,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                   trailing: Text(
                     label,
                     style: TextStyle(
                       fontWeight: FontWeight.w700,
-                      color: item.phase == SavePhase.failed ? scheme.error : scheme.primary,
+                      color: item.phase == SavePhase.failed
+                          ? scheme.error
+                          : scheme.primary,
                     ),
                   ),
                 ),
