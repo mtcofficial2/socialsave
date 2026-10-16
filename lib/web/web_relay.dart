@@ -52,32 +52,49 @@ class WebRelayCard extends StatelessWidget {
       margin: EdgeInsets.zero,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Icon(Icons.wifi_tethering_rounded, color: scheme.primary),
-            const SizedBox(width: 12),
-            const Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Nearby share', style: TextStyle(fontWeight: FontWeight.w700)),
-                  SizedBox(height: 2),
-                  Text('Send with a code', style: TextStyle(fontSize: 12)),
-                ],
-              ),
+            Row(
+              children: [
+                Icon(Icons.wifi_tethering_rounded, color: scheme.primary),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Nearby share', style: TextStyle(fontWeight: FontWeight.w700)),
+                      SizedBox(height: 2),
+                      Text(
+                        'Send a video or file to another phone or PC with a code.',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-            FilledButton.tonalIcon(
-              key: const ValueKey('relay-send'),
-              onPressed: () => showRelaySend(context),
-              icon: const Icon(Icons.north_east_rounded, size: 18),
-              label: const Text('Send'),
-            ),
-            const SizedBox(width: 8),
-            OutlinedButton.icon(
-              key: const ValueKey('relay-receive'),
-              onPressed: () => showRelayReceive(context),
-              icon: const Icon(Icons.south_west_rounded, size: 18),
-              label: const Text('Receive'),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton.tonalIcon(
+                    key: const ValueKey('relay-send'),
+                    onPressed: () => showRelaySend(context),
+                    icon: const Icon(Icons.north_east_rounded, size: 18),
+                    label: const Text('Send'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    key: const ValueKey('relay-receive'),
+                    onPressed: () => showRelayReceive(context),
+                    icon: const Icon(Icons.south_west_rounded, size: 18),
+                    label: const Text('Receive'),
+                  ),
+                ),
+              ],
             ),
           ],
         ),

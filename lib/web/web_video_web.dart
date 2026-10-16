@@ -31,11 +31,12 @@ class _Handle implements WebVideoHandle {
 /// The browser's own video element with its controls: real frames, full
 /// screen, picture-in-picture and keyboard support come from the browser.
 class WebVideoView extends StatefulWidget {
-  const WebVideoView({super.key, required this.url, this.onEnded, this.onReady});
+  const WebVideoView({super.key, required this.url, this.onEnded, this.onReady, this.onNoPicture});
 
   final String url;
   final VoidCallback? onEnded;
   final void Function(WebVideoHandle handle)? onReady;
+  final VoidCallback? onNoPicture;
 
   @override
   State<WebVideoView> createState() => _WebVideoViewState();
@@ -63,6 +64,10 @@ class _WebVideoViewState extends State<WebVideoView> {
         ..backgroundColor = 'black'
         ..objectFit = 'contain';
       video.onended = ((web.Event _) => widget.onEnded?.call()).toJS;
+      video.onloadeddata = ((web.Event _) {
+        // Plays but no frames: a codec this browser can't decode (H.265).
+        if (video.videoWidth == 0) widget.onNoPicture?.call();
+      }).toJS;
       _video = video;
       widget.onReady?.call(_Handle(video));
       return video;

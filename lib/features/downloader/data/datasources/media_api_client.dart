@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:social_save/core/constants/api_endpoints.dart';
 import 'package:social_save/core/errors/error_messages.dart';
 import 'package:social_save/core/errors/exceptions.dart';
@@ -30,7 +31,10 @@ class MediaApiClient {
       ApiEndpoints.download,
       data: {
         'url': url,
-        'format_id': formatId,
+        // Web: ask for an H.264 file; browsers can't all decode H.265.
+        'format_id': kIsWeb && formatId != 'audio' && formatId != 'preview'
+            ? '$formatId+web'
+            : formatId,
       },
     );
     final data = _requireMap(response.data);

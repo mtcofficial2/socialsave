@@ -18,7 +18,7 @@ const bestFormat = "bv*+ba/b"
 // RequestedMaxHeight maps a Flutter format id onto a height cap.
 // auto, original, and best are uncapped so they keep the tallest source video.
 func RequestedMaxHeight(formatID string, defaultMax int) *int {
-	quality := strings.ToLower(strings.TrimSpace(formatID))
+	quality, _ := SplitWebFormat(formatID)
 	if quality == "" {
 		quality = "auto"
 	}
@@ -39,7 +39,47 @@ func RequestedMaxHeight(formatID string, defaultMax int) *int {
 
 // FormatSelector is the yt-dlp -f expression for a prepare-local job.
 func FormatSelector(formatID string, hasFFmpeg bool, maxHeight int) string {
+	quality, web := SplitWebFormat(formatID)
+	if web && quality != "audio" {
+		return browserSafe(quality, hasFFmpeg) + "/" + formatSelector(quality, hasFFmpeg, maxHeight)
+	}
+	return formatSelector(quality, hasFFmpeg, maxHeight)
+}
+
+// webFormatSuffix marks a request from the web build. Browsers only decode
+// H.264 everywhere (H.265 needs hardware support), so those requests prefer
+// an H.264 file at the same height cap.
+const webFormatSuffix = "+web"
+
+// SplitWebFormat returns the plain format id and whether it asked for a
+// browser-safe codec.
+func SplitWebFormat(formatID string) (string, bool) {
 	quality := strings.ToLower(strings.TrimSpace(formatID))
+	if strings.HasSuffix(quality, webFormatSuffix) {
+		return strings.TrimSuffix(quality, webFormatSuffix), true
+	}
+	return quality, false
+}
+
+func browserSafe(quality string, hasFFmpeg bool) string {
+	limit := ""
+	if height := RequestedMaxHeight(quality, 0); height != nil && *height > 0 {
+		limit = "[height<=" + strconv.Itoa(*height) + "]"
+	}
+	parts := []string{
+		"b" + limit + "[vcodec^=avc1][acodec!=none]",
+		"b" + limit + "[vcodec^=h264][acodec!=none]",
+	}
+	if hasFFmpeg {
+		parts = append(parts,
+			"bv*"+limit+"[vcodec^=avc1]+ba[acodec^=mp4a]",
+			"bv*"+limit+"[vcodec^=avc1]+ba",
+		)
+	}
+	return strings.Join(parts, "/")
+}
+
+func formatSelector(quality string, hasFFmpeg bool, maxHeight int) string {
 	if quality == "audio" {
 		if hasFFmpeg {
 			return "ba/b"
@@ -386,6 +426,10 @@ func bestVideoHeight(info mediaInfo, maxHeight *int) int {
 // available video. A shorter file is not used in place of a taller one.
 func directFromInfo(info mediaInfo, rawURL, formatID, title string, cfg config.Config) (Handle, bool, error) {
 	if strings.EqualFold(strings.TrimSpace(formatID), "audio") {
+		return Handle{}, false, nil
+	}
+	if _, web := SplitWebFormat(formatID); web {
+		// Let yt-dlp pick the H.264 file (FormatSelector) instead.
 		return Handle{}, false, nil
 	}
 	maxHeight := RequestedMaxHeight(formatID, cfg.DefaultMaxHeight)

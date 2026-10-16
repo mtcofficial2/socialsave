@@ -196,6 +196,7 @@ class _WebPlayerScreenState extends ConsumerState<WebPlayerScreen> {
   WebVideoHandle? _handle;
   Timer? _countdown;
   int _left = 0;
+  bool _noPicture = false;
 
   WebPlayItem get _item => widget.args.items[_index];
   bool get _hasNext => _index < widget.args.items.length - 1;
@@ -219,6 +220,7 @@ class _WebPlayerScreenState extends ConsumerState<WebPlayerScreen> {
       _url = null;
       _error = null;
       _left = 0;
+      _noPicture = false;
     });
     final item = _item;
     String? url;
@@ -317,6 +319,9 @@ class _WebPlayerScreenState extends ConsumerState<WebPlayerScreen> {
                       url: url,
                       onEnded: _ended,
                       onReady: (h) => _handle = h,
+                      onNoPicture: () {
+                        if (mounted) setState(() => _noPicture = true);
+                      },
                     )
                   else if (_error != null)
                     Center(
@@ -331,6 +336,20 @@ class _WebPlayerScreenState extends ConsumerState<WebPlayerScreen> {
                     )
                   else
                     const Center(child: CircularProgressIndicator()),
+                  if (_noPicture)
+                    const Positioned(
+                      left: 16,
+                      right: 16,
+                      top: 16,
+                      child: Card(
+                        child: Padding(
+                          padding: EdgeInsets.all(12),
+                          child: Text(
+                            'This browser can\'t show this video\'s picture (H.265). The sound plays, and the saved file plays in your video app.',
+                          ),
+                        ),
+                      ),
+                    ),
                   if (_left > 0)
                     Positioned(
                       left: 16,
