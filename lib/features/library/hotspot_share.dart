@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -201,14 +202,30 @@ class HotspotShare {
     final block = PcHotspot.blockMessage(r);
     if (block != null) throw HotspotError(block);
     final ip = await PcHotspot.address();
-    final band = switch ('${r['band']}') {
+    var band = switch ('${r['band']}') {
       'FiveGigahertz' => 2,
       'TwoPointFourGigahertz' => 1,
       'SixGigahertz' => 4,
       'Auto' => 3,
       _ => null,
     };
+    // One Wi-Fi radio: while the PC itself is on Wi-Fi, Windows runs the
+    // hotspot on that same channel, whatever band was asked for.
+    final sta = await _pcStationBand();
+    String? staNote;
+    if (sta != null) {
+      debugPrint('[hotspot] PC Wi-Fi "${sta.ssid}" on ${sta.band} GHz ch ${sta.channel}; hotspot follows it');
+      if (sta.band.startsWith('2.4')) {
+        band = 1;
+        staNote = 'This PC is on 2.4 GHz Wi-Fi ("${sta.ssid}", channel ${sta.channel}), so Windows keeps the hotspot '
+            'on that channel too (about 1–3 MB/s). For 5 GHz speed: disconnect the PC from Wi-Fi '
+            '(or use a cable for internet), then start Hotspot share again.';
+      } else if (sta.band.startsWith('5')) {
+        band = 2;
+      }
+    }
     final notes = <String>[
+      ?staNote,
       if ('${r['note'] ?? ''}'.isNotEmpty) '${r['note']}',
       if (r['reused'] == true) 'Using your Mobile hotspot that was already on (it stays on afterwards).',
       if (want == '5' && band != 2 && '${r['note'] ?? ''}'.isEmpty && r['has5'] != true) 'This PC\'s Wi-Fi can\'t host on 5 GHz.',
@@ -225,6 +242,27 @@ class HotspotShare {
     lastInfo = info;
     hostRunning.value = true;
     return info;
+  }
+
+  /// The band/channel this PC's own Wi-Fi is connected on (null when the PC
+  /// isn't on Wi-Fi as a client).
+  static Future<({String ssid, String band, String channel})?> _pcStationBand() async {
+    try {
+      final r = await Process.run('netsh', ['wlan', 'show', 'interfaces']);
+      final text = '${r.stdout}';
+      String? field(String block, String name) =>
+          RegExp('^\\s*$name\\s*:\\s*(.+)\$', multiLine: true).firstMatch(block)?.group(1)?.trim();
+      for (final block in text.split(RegExp(r'\r?\n\s*\r?\n'))) {
+        if (field(block, 'State') != 'connected') continue;
+        final desc = field(block, 'Description') ?? '';
+        if (desc.contains('Virtual') || desc.contains('Direct')) continue;
+        final band = field(block, 'Band');
+        final ssid = field(block, 'SSID');
+        if (band == null || ssid == null) continue;
+        return (ssid: ssid, band: band.replaceAll(' GHz', ''), channel: field(block, 'Channel') ?? '?');
+      }
+    } catch (_) {}
+    return null;
   }
 
   static Future<void> stop() async {

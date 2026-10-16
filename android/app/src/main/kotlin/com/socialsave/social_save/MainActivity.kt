@@ -40,6 +40,7 @@ class MainActivity : FlutterFragmentActivity() {
     private var multicastLock: android.net.wifi.WifiManager.MulticastLock? = null
     private var pendingShare: String? = null
     private var openedVideo: Map<String, String>? = null
+    private var pendingQuickAction: String? = null
     private var pipAllowed = false
     private var pipWidth = 16
     private var pipHeight = 9
@@ -271,6 +272,7 @@ class MainActivity : FlutterFragmentActivity() {
     private var hotspotShare: HotspotShare? = null
 
     companion object {
+        const val EXTRA_QUICK_ACTION = "socialsave_quick_action"
         private const val ENGINE_ID = "socialsave_main"
 
         /** Ends the engine that outlived its activity (session over, app closed). */
@@ -500,6 +502,11 @@ class MainActivity : FlutterFragmentActivity() {
                     pendingShare = null
                     result.success(text)
                 }
+                "consumeQuickAction" -> {
+                    val action = pendingQuickAction
+                    pendingQuickAction = null
+                    result.success(action)
+                }
                 "consumeOpenedVideo" -> {
                     val video = openedVideo
                     openedVideo = null
@@ -519,6 +526,7 @@ class MainActivity : FlutterFragmentActivity() {
                     }
                     result.success(secure)
                 }
+                "apkPath" -> result.success(applicationInfo.sourceDir)
                 "installApk" -> {
                     val path = call.argument<String>("path")
                     if (path.isNullOrBlank()) {
@@ -685,6 +693,15 @@ class MainActivity : FlutterFragmentActivity() {
         captureShare(intent)
         captureOpenedVideo(intent)
         captureOpenSession(intent)
+        captureQuickAction(intent)
+    }
+
+    /** The Quick Settings tile: open Hotspot share. */
+    private fun captureQuickAction(intent: Intent?) {
+        val action = intent?.getStringExtra(EXTRA_QUICK_ACTION) ?: return
+        intent.removeExtra(EXTRA_QUICK_ACTION)
+        pendingQuickAction = action
+        channel?.invokeMethod("quickAction", action)
     }
 
     override fun onDestroy() {
@@ -714,6 +731,7 @@ class MainActivity : FlutterFragmentActivity() {
         captureShare(intent)
         channel?.invokeMethod("sharedText", pendingShare)
         captureOpenedVideo(intent)
+        captureQuickAction(intent)
     }
 
     private fun captureShare(intent: Intent?) {

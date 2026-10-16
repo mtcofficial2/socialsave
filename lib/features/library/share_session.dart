@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart' show WidgetsBinding, AppLifecycleState;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:social_save/core/constants/app_constants.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/features/library/session_keepalive.dart';
 import 'package:path/path.dart' as p;
@@ -16,8 +17,27 @@ import 'package:social_save/features/library/transfer_meter.dart';
 
 /// The other device in a [ShareSession].
 class SessionPeer {
-  SessionPeer({required this.id, required this.name, required this.kind, required this.host, required this.port, required this.link});
+  SessionPeer({
+    required this.id,
+    required this.name,
+    required this.kind,
+    required this.host,
+    required this.port,
+    required this.link,
+    this.legacy = false,
+    this.version,
+  });
   final String id;
+
+  /// An older SocialSave (1.0.30 or earlier) that can't open a session: it
+  /// only downloads what this device serves under the pairing code.
+  final bool legacy;
+
+  /// The other app's version (1.0.35+ report it; null = 1.0.34 or older).
+  final String? version;
+
+  /// True when the other app is older than this one (or doesn't say).
+  bool get older => legacy || version == null || ShareSession.compareVersions(version!, AppConstants.appVersion) < 0;
   final String name;
   final String kind; // 'pc' or 'phone'
   String host;
@@ -194,12 +214,98 @@ class ShareSession {
 
   static bool get active => peer.value != null;
 
+  /// The Connected screen should open on Transfers (a file is on its way).
+  static bool landOnTransfers = false;
+
+  /// The QR link of the open pairing (hotspot / code), for "Show code".
+  static String? pairLink;
+
+  static int compareVersions(String a, String b) {
+    List<int> parts(String v) => v.split('+').first.split('.').map((x) => int.tryParse(x) ?? 0).toList();
+    final x = parts(a);
+    final y = parts(b);
+    for (var i = 0; i < max(x.length, y.length); i++) {
+      final d = (i < x.length ? x[i] : 0) - (i < y.length ? y[i] : 0);
+      if (d != 0) return d;
+    }
+    return 0;
+  }
+
+  // ------------------------------------------------ older SocialSave peers
+
+  static bool _legacyCheck = false;
+  static DateTime _lastServedAt = DateTime.now();
+
+  /// Someone fetched the pairing offer (/info or /v). If no session follows
+  /// within a few seconds it's an older SocialSave: open a "legacy" session
+  /// anyway, so this side still lands on the Connected screen.
+  static void _onContact(String host, bool download) {
+    _lastTouch = DateTime.now();
+    final cur = peer.value;
+    if (cur != null) {
+      if (cur.legacy && cur.host != host) cur.host = host;
+      return;
+    }
+    if (_legacyCheck) return;
+    _legacyCheck = true;
+    Future<void>.delayed(const Duration(seconds: 3), () {
+      _legacyCheck = false;
+      if (peer.value == null && PhoneHandoff.current != null) startLegacy(host);
+    });
+  }
+
+  static void startLegacy(String host) {
+    if (peer.value != null) return;
+    final viaHotspot = hostsHotspotPending || hostsHotspot;
+    if (viaHotspot) hostsHotspot = true;
+    final peerInfo = SessionPeer(
+      id: 'legacy:$host',
+      name: viaHotspot ? 'Other phone' : 'Other device',
+      kind: 'phone',
+      host: host,
+      port: 0,
+      link: viaHotspot ? 'hotspot' : 'wifi',
+      legacy: true,
+    );
+    _token = null;
+    _pairToken = null;
+    _beat?.cancel();
+    _beat = null;
+    items.clear();
+    peer.value = peerInfo;
+    lastPeer = peerInfo;
+    _lastWasHotspotHost = viaHotspot;
+    state.value = 'connected';
+    endReason = '';
+    pendingFirst = null;
+    final f = PhoneHandoff.currentFile;
+    if (f != null && f.existsSync()) {
+      landOnTransfers = true;
+      trackServed(f, p.basenameWithoutExtension(f.path));
+    }
+    _changed();
+    debugPrint('[session] older SocialSave at $host: legacy session (served file: ${f?.path})');
+    unawaited(SessionKeepAlive.start(_title(), _text()));
+    _updateNotification();
+    onOpened?.call();
+  }
+
+  static String legacyCode() {
+    final c = PhoneHandoff.current?.code ?? '';
+    return c.length == 6 ? '${c.substring(0, 3)} ${c.substring(3)}' : c;
+  }
+
+  static String _legacyWaiting(SessionPeer to) =>
+      'Ready · on ${to.name}: SocialSave › Receive › scan the code again (Show code) or type ${legacyCode()}';
+
   static void install() {
     if (_installed) return;
     _installed = true;
     NearbyService.autoAccept = (fromId) => peer.value != null && peer.value!.id == fromId;
     NearbyService.extraRoute = _route;
     NearbyService.incoming.addListener(_onIncoming);
+    PhoneHandoff.onContact = _onContact;
+    PhoneHandoff.keepAlive = () => active;
     SessionKeepAlive.onDisconnect = disconnect;
     SessionKeepAlive.wire();
     HotspotShare.event.addListener(_onHotspotEvent);
@@ -303,7 +409,14 @@ class ShareSession {
       res.write(jsonEncode({'ok': false}));
       return;
     }
-    final current = peer.value;
+    var current = peer.value;
+    if (current != null && current.legacy) {
+      // We guessed "older app" but it does open sessions after all.
+      debugPrint('[session] ${current.host} opened a real session; leaving legacy mode');
+      peer.value = null;
+      state.value = 'closed';
+      current = null;
+    }
     if (current != null && current.id != id) {
       res.write(jsonEncode({'ok': false, 'busy': true, 'with': current.name}));
       return;
@@ -363,13 +476,14 @@ class ShareSession {
     _pairToken = null;
     _closedIds.remove(id);
     final token = current != null ? _token! : _newToken();
-    _start(SessionPeer(id: id, name: name, kind: kind, host: host, port: toPort, link: link), token);
+    _start(SessionPeer(id: id, name: name, kind: kind, host: host, port: toPort, link: link, version: body['v'] as String?), token);
     res.write(jsonEncode({
       'ok': true,
       'token': token,
       'id': NearbyService.id,
       'name': NearbyService.name,
       'kind': NearbyService.kind,
+      'v': AppConstants.appVersion,
     }));
   }
 
@@ -398,6 +512,7 @@ class ShareSession {
         'name': NearbyService.name,
         'kind': NearbyService.kind,
         'port': NearbyService.inboxBoundPort,
+        'v': AppConstants.appVersion,
         if (pair != null) 'pair': pair,
         if (resume) 'resume': true,
       }));
@@ -420,6 +535,7 @@ class ShareSession {
           host: host,
           port: port,
           link: link,
+          version: j['v'] as String?,
         ),
         '${j['token']}',
       );
@@ -492,10 +608,47 @@ class ShareSession {
       final first = pendingFirst;
       pendingFirst = null;
       if (first != null && first.existsSync()) {
-        // Give the other side a moment to finish opening its end, so the
-        // file isn't offered before it knows this session (no accept prompt).
-        _holdUntil = DateTime.now().add(const Duration(milliseconds: 1500));
-        enqueue([first]);
+        landOnTransfers = true;
+        if (PhoneHandoff.current != null) {
+          // 1.0.33 and older fetch the picked file from the pairing server
+          // after connecting; 1.0.34+ wait for it in the session. Watch which
+          // one this is for a moment so it never arrives twice.
+          final seen = PhoneHandoff.contacts;
+          final item = SessionItem(outgoing: true, name: first.path.split(RegExp(r'[\\/]')).last, size: first.lengthSync(), file: first);
+          item.detail = 'Starting…';
+          item.state = SessionItemState.sending; // placeholder; the pump skips it
+          items.add(item);
+          _changed();
+          Future<void>.delayed(const Duration(seconds: 3), () {
+            if (peer.value != p) {
+              items.remove(item);
+              return;
+            }
+            if (PhoneHandoff.contacts > seen || PhoneHandoff.served.value > 0) {
+              debugPrint('[session] ${p.name} fetches the first file from the pairing server');
+              items.remove(item);
+              trackServed(first, p.name);
+              _changed();
+            } else {
+              // Same row, now really queued: it stays the first transfer.
+              final idle = !items.any((i) => i.outgoing && (i.state == SessionItemState.queued || i.state == SessionItemState.sending) && i != item);
+              if (idle) {
+                _batchTotal = 0;
+                _batchDone = 0;
+              }
+              _batchTotal++;
+              item.state = SessionItemState.queued;
+              item.detail = '';
+              _changed();
+              unawaited(_pump());
+            }
+          });
+        } else {
+          // Give the other side a moment to finish opening its end, so the
+          // file isn't offered before it knows this session (no prompt).
+          _holdUntil = DateTime.now().add(const Duration(milliseconds: 1500));
+          enqueue([first]);
+        }
       }
       // 1.0.34: always land on the Connected screen (closes pairing UI).
       onOpened?.call();
@@ -653,7 +806,12 @@ class ShareSession {
       hostsHotspot = false;
       await PhoneHandoff.stop();
       await HotspotShare.stop();
+    } else if (PhoneHandoff.current != null) {
+      // The pairing server stayed up for the session (older apps fetch
+      // from it): it goes with the session.
+      await PhoneHandoff.stop();
     }
+    pairLink = null;
     if (joinedHotspot) {
       joinedHotspot = false;
       await HotspotShare.leave();
@@ -860,6 +1018,10 @@ class ShareSession {
         if (p == null) return;
         final next = items.where((i) => i.outgoing && i.state == SessionItemState.queued).firstOrNull;
         if (next == null) return;
+        if (p.legacy) {
+          await _sendLegacy(p, next);
+          continue;
+        }
         next.state = SessionItemState.sending;
         next.detail = 'Starting…';
         _changed();
@@ -917,6 +1079,45 @@ class ShareSession {
     }
   }
 
+  /// Older SocialSave: serve [next] under the pairing code and wait until
+  /// the other device has downloaded it (it receives again for each file).
+  static Future<void> _sendLegacy(SessionPeer to, SessionItem next) async {
+    // Let the file it is fetching right now finish first.
+    while (peer.value == to && _servedItem != null && _servedItem!.state == SessionItemState.sending) {
+      if (PhoneHandoff.served.value > 0 && DateTime.now().difference(_lastServedAt) > const Duration(seconds: 40)) {
+        final stalled = _servedItem!;
+        stalled.state = SessionItemState.failed;
+        stalled.detail = 'Stopped before the end';
+        _servedItem = null;
+        PhoneHandoff.served.removeListener(_onServed);
+        _changed();
+        break;
+      }
+      if (PhoneHandoff.served.value == 0) break; // never started: replace it
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+    if (peer.value != to || PhoneHandoff.current == null) return;
+    final old = _servedItem;
+    if (old != null && old.state == SessionItemState.sending) {
+      old.state = SessionItemState.queued; // not fetched yet: after this one
+      old.detail = '';
+    }
+    PhoneHandoff.served.removeListener(_onServed);
+    PhoneHandoff.swap(next.file!);
+    next.state = SessionItemState.sending;
+    next.done = 0;
+    _servedItem = next;
+    _servedMeter = TransferMeter();
+    _lastServedAt = DateTime.now();
+    PhoneHandoff.served.addListener(_onServed);
+    next.detail = _legacyWaiting(to);
+    _changed();
+    while (peer.value == to && next.state == SessionItemState.sending) {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+    if (next.state == SessionItemState.done) _batchDone++;
+  }
+
   static SessionItem? _incomingItem;
   static TransferMeter _incomingMeter = TransferMeter();
 
@@ -966,13 +1167,15 @@ class ShareSession {
   // The first file of a hotspot pairing goes over the handoff server; show it
   // in the list too.
   static SessionItem? _servedItem;
-  static final TransferMeter _servedMeter = TransferMeter();
+  static TransferMeter _servedMeter = TransferMeter();
 
   static void trackServed(File file, String title) {
     final it = SessionItem(outgoing: true, name: p.basename(file.path), size: file.lengthSync(), file: file, state: SessionItemState.sending);
     it.done = min(PhoneHandoff.served.value, it.size);
     items.add(it);
     _servedItem = it;
+    _servedMeter = TransferMeter();
+    _lastServedAt = DateTime.now();
     PhoneHandoff.served.addListener(_onServed);
     _onServed();
   }
@@ -981,6 +1184,7 @@ class ShareSession {
     final it = _servedItem;
     if (it == null) return;
     _lastTouch = DateTime.now();
+    _lastServedAt = DateTime.now();
     it.done = min(PhoneHandoff.served.value, it.size);
     if (it.done >= it.size && it.size > 0) {
       it.state = SessionItemState.done;
@@ -989,7 +1193,10 @@ class ShareSession {
       PhoneHandoff.served.removeListener(_onServed);
     } else if (_servedMeter.update(it.done, it.size)) {
       it.speed = _servedMeter.speed;
-      it.detail = it.done == 0 ? 'Waiting for ${peer.value?.name ?? 'the other device'}…' : _servedMeter.label;
+      final to = peer.value;
+      it.detail = it.done == 0
+          ? (to != null && to.legacy ? _legacyWaiting(to) : 'Waiting for ${to?.name ?? 'the other device'}…')
+          : _servedMeter.label;
     } else {
       return;
     }

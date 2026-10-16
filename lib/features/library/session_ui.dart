@@ -7,7 +7,10 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:social_save/features/library/hotspot_share.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:social_save/core/constants/app_constants.dart';
+import 'package:social_save/core/platform/media_events.dart';
 import 'package:social_save/core/platform/plat.dart';
+import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:social_save/features/library/session_keepalive.dart';
 import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
 import 'package:social_save/features/library/bundle_transfer.dart';
@@ -253,10 +256,24 @@ Future<void> landOnSession() async {
   final watching = InAppPlayerScreen.openCount > 0;
   if (!watching && !ShareSession.screenOpen) unawaited(openSessionScreen());
   await Future<void>.delayed(const Duration(milliseconds: 300));
+  ShareSession.landOnTransfers = false;
+  final offerUpdate = p.older && p.kind == 'phone' && !watching;
   messenger?.showSnackBar(SnackBar(
-    duration: const Duration(seconds: 2),
-    content: Text('Connected to ${p.name}'),
-    action: watching ? SnackBarAction(label: 'Open', onPressed: () => unawaited(openSessionScreen())) : null,
+    duration: Duration(seconds: offerUpdate ? 6 : 2),
+    content: Text(p.legacy
+        ? 'Connected to ${p.name} · it has an older SocialSave'
+        : 'Connected to ${p.name}${offerUpdate ? ' · it has an older SocialSave' : ''}'),
+    action: watching
+        ? SnackBarAction(label: 'Open', onPressed: () => unawaited(openSessionScreen()))
+        : offerUpdate
+            ? SnackBarAction(
+                label: 'Send update',
+                onPressed: () {
+                  final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
+                  if (ctx != null) unawaited(sendAppToPeer(ctx));
+                },
+              )
+            : null,
   ));
 }
 
@@ -370,16 +387,27 @@ Future<void> showConnectPicker(BuildContext context) async {
 
 String _wifiEsc(String v) => v.replaceAllMapped(RegExp(r'([\\;,:"])'), (m) => '\\${m[1]}');
 
+bool get sessionHasCode => sessionHotspotDetails() != null || PhoneHandoff.current != null;
+
+Widget _qr(String data, String key, {double size = 180}) => Container(
+      color: Colors.white,
+      padding: const EdgeInsets.all(8),
+      child: QrImageView(key: ValueKey(key), data: data, size: size),
+    );
+
 Future<void> showSessionHotspotCode(BuildContext context) async {
   final d = sessionHotspotDetails();
-  if (d == null) return;
+  final offer = PhoneHandoff.current;
+  if (d == null && offer == null) return;
+  final link = ShareSession.pairLink ?? offer?.url;
   await showDialog<void>(
     context: context,
     builder: (context) {
       final theme = Theme.of(context);
+      final small = theme.textTheme.bodySmall;
       Widget row(String label, String value, String key) => ListTile(
             contentPadding: EdgeInsets.zero,
-            title: Text(label, style: theme.textTheme.bodySmall),
+            title: Text(label, style: small),
             subtitle: SelectableText(value, key: ValueKey(key), style: theme.textTheme.titleMedium),
             trailing: IconButton(
               tooltip: 'Copy',
@@ -389,33 +417,147 @@ Future<void> showSessionHotspotCode(BuildContext context) async {
           );
       return AlertDialog(
         key: const ValueKey('session-code-dialog'),
-        icon: const Icon(Icons.wifi_tethering_rounded),
-        title: const Text('Hotspot details'),
+        icon: const Icon(Icons.qr_code_2_rounded),
+        title: const Text('Show code'),
         content: SizedBox(
-          width: 360,
+          width: 380,
           child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Container(
-                  color: Colors.white,
-                  padding: const EdgeInsets.all(8),
-                  child: QrImageView(
-                    key: const ValueKey('session-code-qr'),
-                    data: 'WIFI:T:WPA;S:${_wifiEsc(d.ssid)};P:${_wifiEsc(d.password)};;',
-                    size: 180,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text('Another device can scan this with its camera, or join by hand:',
-                    style: theme.textTheme.bodySmall, textAlign: TextAlign.center),
-                row('Wi-Fi name', d.ssid, 'session-code-ssid'),
-                row('Password', d.password, 'session-code-pass'),
+                if (link != null && offer != null) ...[
+                  _qr(link, 'session-code-link'),
+                  const SizedBox(height: 6),
+                  Text('On the other device: SocialSave › Receive › scan this. '
+                      'An older SocialSave gets the next file this way.',
+                      style: small, textAlign: TextAlign.center),
+                  row('Code', ShareSession.legacyCode(), 'session-code-code'),
+                ],
+                if (d != null) ...[
+                  if (link != null && offer != null) const Divider(),
+                  _qr('WIFI:T:WPA;S:${_wifiEsc(d.ssid)};P:${_wifiEsc(d.password)};;', 'session-code-qr', size: 150),
+                  const SizedBox(height: 6),
+                  Text('Join this Wi-Fi with the camera, or by hand:', style: small, textAlign: TextAlign.center),
+                  row('Wi-Fi name', d.ssid, 'session-code-ssid'),
+                  row('Password', d.password, 'session-code-pass'),
+                ],
               ],
             ),
           ),
         ),
         actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))],
+      );
+    },
+  );
+}
+
+/// This app's installer, to update the other phone: Android sends its own
+/// APK; Windows uses SocialSave.apk next to SocialSave.exe (the portable zip
+/// ships one) or the newest SocialSave*.apk on the Desktop / in Downloads.
+Future<File?> findShareableApk() async {
+  final name = 'SocialSave-${AppConstants.appVersion}.apk';
+  try {
+    if (Plat.isAndroid) {
+      final src = await MediaEvents.channel.invokeMethod<String>('apkPath');
+      if (src == null || !File(src).existsSync()) return null;
+      final out = File('${Directory.systemTemp.path}/$name');
+      if (!out.existsSync() || out.lengthSync() != File(src).lengthSync()) await File(src).copy(out.path);
+      return out;
+    }
+    final exeDir = File(Platform.resolvedExecutable).parent.path;
+    final bundled = File('$exeDir${Platform.pathSeparator}SocialSave.apk');
+    if (bundled.existsSync()) return bundled;
+    final home = Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '';
+    final found = <File>[];
+    for (final dir in ['$home${Platform.pathSeparator}Desktop', '$home${Platform.pathSeparator}Downloads']) {
+      final d = Directory(dir);
+      if (!d.existsSync()) continue;
+      for (final e in d.listSync()) {
+        final n = e.path.split(RegExp(r'[\\/]')).last.toLowerCase();
+        if (e is File && n.startsWith('socialsave') && n.endsWith('.apk')) found.add(e);
+      }
+    }
+    if (found.isEmpty) return null;
+    found.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+    return found.first;
+  } catch (e) {
+    debugPrint('[session] no apk: $e');
+    return null;
+  }
+}
+
+/// "Send SocialSave to the other phone": over the session when it can take
+/// files; for an older app, through the phone's browser (same hotspot/Wi-Fi).
+Future<void> sendAppToPeer(BuildContext context) async {
+  final peer = ShareSession.peer.value;
+  if (peer == null) return;
+  final messenger = ScaffoldMessenger.of(context);
+  final apk = await findShareableApk();
+  if (apk == null) {
+    messenger.showSnackBar(SnackBar(
+      content: Text(Plat.isWindows
+          ? 'No SocialSave APK found. Put SocialSave.apk next to SocialSave.exe (or on the Desktop) and try again.'
+          : 'Could not find this app\'s installer.'),
+    ));
+    return;
+  }
+  if (!peer.legacy) {
+    ShareSession.enqueue([apk]);
+    messenger.showSnackBar(SnackBar(
+      content: Text('Sending SocialSave ${AppConstants.appVersion} to ${peer.name}. '
+          'On ${peer.name}: tap it in Transfers to install.'),
+    ));
+    return;
+  }
+  PhoneHandoff.apkFile = apk;
+  final url = PhoneHandoff.apkUrl();
+  if (url == null || !context.mounted) return;
+  final d = sessionHotspotDetails();
+  await showDialog<void>(
+    context: context,
+    builder: (context) {
+      final theme = Theme.of(context);
+      final small = theme.textTheme.bodySmall;
+      return AlertDialog(
+        key: const ValueKey('send-app-dialog'),
+        icon: const Icon(Icons.system_update_rounded),
+        title: Text('Send SocialSave ${AppConstants.appVersion}'),
+        content: SizedBox(
+          width: 380,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (d != null) ...[
+                  Text('1. On ${peer.name}, join the Wi-Fi "${d.ssid}" (scan with the camera):', style: small),
+                  const SizedBox(height: 6),
+                  Center(child: _qr('WIFI:T:WPA;S:${_wifiEsc(d.ssid)};P:${_wifiEsc(d.password)};;', 'send-app-wifi', size: 140)),
+                  const SizedBox(height: 10),
+                ],
+                Text('${d != null ? '2. ' : ''}Scan this with the phone\'s camera (or open the link in its browser) '
+                    'to download SocialSave, then tap it to install:', style: small),
+                const SizedBox(height: 6),
+                Center(child: _qr(url, 'send-app-url', size: 170)),
+                const SizedBox(height: 4),
+                SelectableText(url, key: const ValueKey('send-app-link'), textAlign: TextAlign.center, style: small),
+                const SizedBox(height: 8),
+                Text('After updating, scan the code again: both phones then stay connected and send both ways.',
+                    style: small),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              ShareSession.enqueue([apk]);
+              Navigator.pop(context);
+            },
+            child: const Text('Queue it for Receive instead'),
+          ),
+          FilledButton(onPressed: () => Navigator.pop(context), child: const Text('Done')),
+        ],
       );
     },
   );
@@ -571,7 +713,7 @@ class _SessionScreenState extends State<SessionScreen> with SingleTickerProvider
   bool? _exempt;
   // A file picked before connecting is already the first transfer: show it.
   late final TabController _tabs =
-      TabController(length: 2, vsync: this, initialIndex: ShareSession.items.isNotEmpty ? 1 : 0);
+      TabController(length: 2, vsync: this, initialIndex: ShareSession.items.isNotEmpty || ShareSession.landOnTransfers ? 1 : 0);
 
   @override
   void initState() {
@@ -640,6 +782,10 @@ class _SessionScreenState extends State<SessionScreen> with SingleTickerProvider
   }
 
   void _openPath(String path, String name) {
+    if (Plat.isAndroid && path.toLowerCase().endsWith('.apk')) {
+      unawaited(MediaEvents.channel.invokeMethod<bool>('installApk', {'path': path}));
+      return;
+    }
     if (FileSystemEntity.isDirectorySync(path)) {
       unawaited(openWithSystem(path));
     } else if (isVideoName(path)) {
@@ -656,6 +802,30 @@ class _SessionScreenState extends State<SessionScreen> with SingleTickerProvider
     final f = it.file;
     if (f == null) return;
     _openPath(f.path, it.name);
+  }
+
+  Widget _updateBanner(BuildContext context, SessionPeer peer) {
+    final scheme = Theme.of(context).colorScheme;
+    final phone = peer.kind == 'phone';
+    final text = peer.legacy
+        ? '${peer.name} is on an older SocialSave. Update it to send both ways. '
+            'Until then it gets each file by receiving again (Show code).'
+        : '${peer.name} has an older SocialSave${peer.version == null ? '' : ' (${peer.version})'}. '
+            '${phone ? 'Send the update' : 'Update it'} so both have the newest sharing.';
+    return _Banner(
+      color: scheme.tertiaryContainer,
+      onColor: scheme.onTertiaryContainer,
+      icon: Icons.system_update_rounded,
+      text: text,
+      action: phone
+          ? FilledButton.tonalIcon(
+              key: const ValueKey('session-send-app'),
+              onPressed: () => sendAppToPeer(context),
+              icon: const Icon(Icons.install_mobile_rounded),
+              label: const Text('Send SocialSave'),
+            )
+          : null,
+    );
   }
 
   Widget _stateBanner(BuildContext context, SessionPeer? peer, String state) {
@@ -756,7 +926,7 @@ class _SessionScreenState extends State<SessionScreen> with SingleTickerProvider
                 ],
               ),
               actions: [
-                if (sessionHotspotDetails() != null)
+                if (sessionHasCode)
                   IconButton(
                     key: const ValueKey('session-show-code'),
                     tooltip: 'Show code (hotspot name, password, QR)',
@@ -781,6 +951,7 @@ class _SessionScreenState extends State<SessionScreen> with SingleTickerProvider
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _stateBanner(context, peer, state),
+                  if (peer != null && peer.older) _updateBanner(context, peer),
                   if (peer != null && _exempt == false && SessionKeepAlive.supported)
                     Material(
                       color: scheme.surfaceContainerHigh,

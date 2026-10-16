@@ -26,6 +26,7 @@ import 'package:social_save/core/platform/desktop_support.dart';
 import 'package:social_save/core/platform/open_with.dart';
 import 'package:social_save/features/library/nearby_ui.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
+import 'package:social_save/features/library/hotspot_share.dart';
 import 'package:social_save/features/library/share_session.dart';
 import 'package:social_save/features/library/session_media_picker.dart';
 import 'package:social_save/features/library/session_ui.dart';
@@ -336,9 +337,12 @@ Future<void> main(List<String> args) async {
   final su = args.indexOf('--session-ui-test');
   if (su >= 0 && su + 2 < args.length) unawaited(_sessionUiTest(args[su + 1], args[su + 2]));
   final pt = args.indexOf('--pair-test');
-  if (pt >= 0 && pt + 2 < args.length) unawaited(_pairTest(args[pt + 1], args[pt + 2]));
+  if (pt >= 0 && pt + 2 < args.length) {
+    unawaited(_pairTest(args[pt + 1], args[pt + 2], pt + 3 < args.length ? args[pt + 3] : null));
+  }
   unawaited(NearbyService.start());
   listenForOpenedVideos();
+  listenForQuickActions();
 
   // Desktop test hook: `SocialSave.exe --download <url>` runs the normal
   // analyze + save flow and prints each step.
@@ -586,7 +590,7 @@ String _pairState() => 'popupOnTop=${_popupOnTop()} pairingUi=${ShareSession.pai
 /// ways. The host opens the Send code dialog with <file>; the joiner opens
 /// the Connect picker and connects to the host's inbox port. Prints
 /// `debug pair-test <role> result=ok`.
-Future<void> _pairTest(String role, String file) async {
+Future<void> _pairTest(String role, String file, [String? file2]) async {
   ShareSession.persist = false;
   // The two copies run with their own TEMP (separate test data), so the
   // port file can be put in a shared place.
@@ -637,6 +641,96 @@ Future<void> _pairTest(String role, String file) async {
     await Future<void>.delayed(const Duration(seconds: 1));
     exit(0);
   }
+  if (role == 'quick-host') {
+    // One-tap Hotspot share (no file), a joiner scans the QR (pair token).
+    ShareSession.onRequest = (n, k) async => true;
+    unawaited(showHotspotQuickShare(nav.context));
+    if (!await _waitFor(() => ShareSession.pairLink != null || !_popupOnTop(), const Duration(seconds: 90))) {
+      fail('hotspot did not start');
+    }
+    await Future<void>.delayed(const Duration(seconds: 2));
+    final link = ShareSession.pairLink;
+    print('debug pair-test quick-host link=$link band=${HotspotShare.lastInfo?.bandLabel} note=${HotspotShare.lastInfo?.bandNote}');
+    await _shot('ss_quick_host_qr');
+    if (link == null) fail('no QR (hotspot failed to start?)');
+    final q = Uri.parse(link);
+    await portFile.writeAsString('${q.queryParameters['sp']}|${q.queryParameters['sid']}');
+    if (!await _waitFor(() => ShareSession.active, const Duration(minutes: 2))) fail('no session');
+    final at = DateTime.now();
+    final closed = await _waitFor(() => !_popupOnTop() && ShareSession.pairingUi.isEmpty && ShareSession.screenOpen,
+        const Duration(seconds: 5));
+    print('debug pair-test quick-host connected via ${ShareSession.peer.value?.link}; dialog closed=$closed after '
+        '${DateTime.now().difference(at).inMilliseconds} ms; ${_pairState()}');
+    await Future<void>.delayed(const Duration(milliseconds: 700));
+    await _shot('ss_quick_host_after');
+    if (!closed) fail('hotspot dialog still open after connecting');
+    if (!await _waitFor(() => ShareSession.items.any((i) => !i.outgoing && i.state == SessionItemState.done),
+        const Duration(minutes: 3))) {
+      fail('nothing received');
+    }
+    ShareSession.enqueue([File(file)]);
+    if (!await _waitFor(() => ShareSession.items.any((i) => i.outgoing && i.state == SessionItemState.done),
+        const Duration(minutes: 3))) {
+      fail('send failed');
+    }
+    print('debug pair-test quick-host sent and received; hotspot running=${await HotspotShare.isRunning()}');
+    await Future<void>.delayed(const Duration(seconds: 1));
+    await _shot('ss_quick_host_transfers');
+    await _waitFor(() => !ShareSession.active, const Duration(seconds: 60));
+    await Future<void>.delayed(const Duration(seconds: 4));
+    print('debug pair-test quick-host session ended (${ShareSession.endReason}); hotspot running after Disconnect=${await HotspotShare.isRunning()}');
+    print('debug pair-test quick-host result=ok');
+    exit(0);
+  }
+  if (role == 'legacy-host') {
+    // An older SocialSave (simulated by the test script) only downloads by
+    // code: the code dialog must still close into a (legacy) session.
+    ShareSession.onRequest = (n, k) async => true;
+    unawaited(showSendToPhone(nav.context, File(file), name));
+    await Future<void>.delayed(const Duration(seconds: 3));
+    await _shot('ss_legacy_host_before');
+    final offer = PhoneHandoff.current;
+    if (offer == null) fail('no offer');
+    await portFile.writeAsString('${offer.port}|${offer.code}');
+    if (!await _waitFor(() => ShareSession.active, const Duration(minutes: 2))) fail('no session');
+    final at = DateTime.now();
+    final closed = await _waitFor(() => !_popupOnTop() && ShareSession.pairingUi.isEmpty && ShareSession.screenOpen,
+        const Duration(seconds: 5));
+    final peer = ShareSession.peer.value!;
+    print('debug pair-test legacy-host session legacy=${peer.legacy} name=${peer.name} host=${peer.host}; dialog closed=$closed after '
+        '${DateTime.now().difference(at).inMilliseconds} ms; ${_pairState()}');
+    if (!closed || !peer.legacy) fail('did not land in a legacy session');
+    if (!await _waitFor(() => ShareSession.items.any((i) => i.outgoing && i.state == SessionItemState.done),
+        const Duration(minutes: 3))) {
+      fail('first file not fetched');
+    }
+    await Future<void>.delayed(const Duration(seconds: 1));
+    await _shot('ss_legacy_host_after');
+    print('debug pair-test legacy-host first file fetched; queueing ${file2 ?? '-'}');
+    if (file2 != null) {
+      ShareSession.enqueue([File(file2)]);
+      await Future<void>.delayed(const Duration(seconds: 2));
+      final it = ShareSession.items.last;
+      print('debug pair-test legacy-host queued: ${it.name} ${it.state.name} "${it.detail}"');
+      await _shot('ss_legacy_host_queued');
+      if (!await _waitFor(() => it.state == SessionItemState.done, const Duration(minutes: 3))) fail('second file not fetched');
+      print('debug pair-test legacy-host second file fetched by receiving again');
+    }
+    unawaited(sendAppToPeer(nav.context));
+    if (!await _waitFor(() => PhoneHandoff.apkUrl() != null, const Duration(seconds: 20))) fail('no apk to send');
+    await Future<void>.delayed(const Duration(seconds: 2));
+    print('debug pair-test legacy-host apk url ${PhoneHandoff.apkUrl()} (${PhoneHandoff.apkFile?.path})');
+    await File('${portFile.path}.apk').writeAsString(PhoneHandoff.apkUrl()!);
+    await _shot('ss_legacy_send_app');
+    await Future<void>.delayed(const Duration(seconds: 15));
+    nav.pop();
+    await Future<void>.delayed(const Duration(seconds: 1));
+    await _shot('ss_legacy_host_end');
+    await ShareSession.disconnect();
+    print('debug pair-test legacy-host result=ok');
+    await Future<void>.delayed(const Duration(seconds: 1));
+    exit(0);
+  }
   // Joiner.
   unawaited(showConnectPicker(nav.context));
   await Future<void>.delayed(const Duration(seconds: 2));
@@ -646,10 +740,13 @@ Future<void> _pairTest(String role, String file) async {
   if (!await _waitFor(() => portFile.existsSync() && portFile.readAsStringSync().trim().isNotEmpty, const Duration(minutes: 2))) {
     fail('no host port');
   }
-  final port = int.parse(portFile.readAsStringSync().trim());
+  final spec = portFile.readAsStringSync().trim().split('|');
+  final port = int.parse(spec[0]);
+  final pair = spec.length > 1 ? spec[1] : null;
   final ip = Platform.environment['SS_PAIR_IP'] ?? '127.0.0.1';
-  // Same as tapping the device in the picker (picker stays open meanwhile).
-  final err = await ShareSession.connect(host: ip, port: port);
+  // Same as tapping the device in the picker / scanning the hotspot QR
+  // (the picker stays open meanwhile).
+  final err = await ShareSession.connect(host: ip, port: port, pair: pair, link: pair != null ? 'hotspot' : 'wifi');
   print('debug pair-test join connect ${err ?? 'ok'} to $ip:$port');
   if (err != null) fail('connect: $err');
   final at = DateTime.now();
@@ -659,15 +756,19 @@ Future<void> _pairTest(String role, String file) async {
   await Future<void>.delayed(const Duration(milliseconds: 700));
   await _shot('ss_pair_join_after');
   if (!closed) fail('picker still open after connecting');
+  if (pair != null) {
+    // Quick share: nothing was picked on the host; this side sends first.
+    ShareSession.enqueue([File(file)]);
+  }
   if (!await _waitFor(() => ShareSession.items.any((i) => !i.outgoing && i.state == SessionItemState.done),
       const Duration(minutes: 3))) {
-    fail("host's picked file never arrived");
+    fail("host's file never arrived");
   }
   final first = ShareSession.items.reduce((a, b) => a.key < b.key ? a : b);
   print('debug pair-test join first item=${first.name} outgoing=${first.outgoing} ${first.size} bytes -> ${first.file?.path}');
   print('debug pair-test join popupOnTop after receiving=${_popupOnTop()} (no Watch/Save dialog expected)');
   if (_popupOnTop()) fail('a receive dialog popped up in session mode');
-  ShareSession.enqueue([File(file)]);
+  if (pair == null) ShareSession.enqueue([File(file)]);
   if (!await _waitFor(() => ShareSession.items.any((i) => i.outgoing && i.state == SessionItemState.done),
       const Duration(minutes: 3))) {
     fail('send back failed');

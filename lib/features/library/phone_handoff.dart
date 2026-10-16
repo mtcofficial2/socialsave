@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'package:social_save/core/platform/plat.dart';
+import 'package:social_save/core/platform/media_events.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -53,10 +55,60 @@ class PhoneHandoff {
   /// Bytes the sender has served for the current offer (all requests).
   static final ValueNotifier<int> served = ValueNotifier<int>(0);
 
+  /// The file behind the current offer (null: "lobby", nothing picked yet).
+  static File? _file;
+
+  /// A SocialSave APK served at /app/<code>/<name> (to update older phones
+  /// through their browser).
+  static File? apkFile;
+
+  /// Number of download requests (GET /v) seen for the current offer.
+  static int downloads = 0;
+
+  /// /info or /v requests from other devices for the current offer.
+  static int contacts = 0;
+
+  static File? get currentFile => _file;
+
+  /// Someone fetched /info or /v from [host] (download: true for /v). The
+  /// session uses this to spot older SocialSave versions that never open a
+  /// session, and still move on to the Connected screen.
+  static void Function(String host, bool download)? onContact;
+
+  /// While true the offer outlives [lifetime] (a session is using it).
+  static bool Function()? keepAlive;
+
+  /// Serves [file] next under the same code and address, so a device that
+  /// can't open a session (older SocialSave) gets it by receiving again.
+  static void swap(File file, {String? title}) {
+    final o = current;
+    if (o == null) return;
+    _file = file;
+    final name = p.basename(file.path);
+    current = HandoffOffer(
+      code: o.code,
+      ips: o.ips,
+      port: o.port,
+      fileName: name,
+      title: title ?? p.basenameWithoutExtension(name),
+      size: file.lengthSync(),
+    );
+    served.value = 0;
+  }
+
+  static String? apkUrl() {
+    final o = current;
+    final f = apkFile;
+    if (o == null || f == null) return null;
+    return 'http://${o.ips.first}:${o.port}/app/${o.code}/${Uri.encodeComponent(p.basename(f.path))}';
+  }
+
   /// [preferIp] goes first in the offer (the hotspot address for Fast share).
-  static Future<HandoffOffer?> offer(File file, {String? title, String? preferIp}) async {
+  /// A null [file] opens the offer with nothing in it yet (hotspot quick
+  /// share): files are picked after connecting.
+  static Future<HandoffOffer?> offer(File? file, {String? title, String? preferIp}) async {
     await stop();
-    if (!file.existsSync()) return null;
+    if (file != null && !file.existsSync()) return null;
     final ips = await lanIps();
     if (preferIp != null) {
       ips.remove(preferIp);
@@ -64,6 +116,8 @@ class PhoneHandoff {
     }
     if (ips.isEmpty) return null;
     served.value = 0;
+    downloads = 0;
+    contacts = 0;
     final code = newCode();
     HttpServer server;
     try {
@@ -72,18 +126,19 @@ class PhoneHandoff {
       server = await HttpServer.bind(InternetAddress.anyIPv4, 0);
     }
     _server = server;
-    final name = p.basename(file.path);
+    final name = file == null ? '' : p.basename(file.path);
     final offer = HandoffOffer(
       code: code,
       ips: ips,
       port: server.port,
       fileName: name,
-      title: title ?? p.basenameWithoutExtension(name),
-      size: await file.length(),
+      title: title ?? (file == null ? '' : p.basenameWithoutExtension(name)),
+      size: file == null ? 0 : await file.length(),
     );
     current = offer;
-    _timer = Timer(lifetime, () => unawaited(stop()));
-    unawaited(_serve(server, file, offer));
+    _file = file;
+    _armTimer();
+    unawaited(_serve(server));
     try {
       final udp = await RawDatagramSocket.bind(InternetAddress.anyIPv4, discoveryPort, reuseAddress: true);
       udp.broadcastEnabled = true;
@@ -102,15 +157,53 @@ class PhoneHandoff {
     return offer;
   }
 
-  static Future<void> _serve(HttpServer server, File file, HandoffOffer offer) async {
+  static void _armTimer() {
+    _timer?.cancel();
+    _timer = Timer(lifetime, () {
+      if (keepAlive?.call() == true) {
+        _armTimer();
+      } else {
+        unawaited(stop());
+      }
+    });
+  }
+
+  static Future<void> _serve(HttpServer server) async {
     try {
       await for (final request in server) {
-        unawaited(_handle(request, file, offer));
+        final offer = current;
+        if (offer == null) {
+          try {
+            request.response.statusCode = HttpStatus.notFound;
+            await request.response.close();
+          } catch (_) {}
+          continue;
+        }
+        unawaited(_handle(request, _file, offer));
       }
     } catch (_) {}
   }
 
-  static Future<void> _handle(HttpRequest request, File file, HandoffOffer offer) async {
+  static Future<void> _serveApk(HttpRequest request, File apk) async {
+    final res = request.response;
+    final length = await apk.length();
+    res.headers.contentType = ContentType('application', 'vnd.android.package-archive');
+    res.headers.set('Content-Disposition', 'attachment; filename="${p.basename(apk.path)}"');
+    res.headers.contentLength = length;
+    if (request.method == 'HEAD') {
+      await res.close();
+      return;
+    }
+    await TransferBoost.begin();
+    try {
+      await res.addStream(TransferBoost.read(apk, 0, length));
+    } finally {
+      await TransferBoost.end();
+    }
+    await res.close();
+  }
+
+  static Future<void> _handle(HttpRequest request, File? file, HandoffOffer offer) async {
     final res = request.response;
     try {
       res.headers.set('Access-Control-Allow-Origin', '*');
@@ -120,6 +213,22 @@ class PhoneHandoff {
         res.statusCode = HttpStatus.notFound;
         await res.close();
         return;
+      }
+      final from = request.connectionInfo?.remoteAddress;
+      if (parts[0] == 'app') {
+        final apk = apkFile;
+        if (apk == null || !apk.existsSync()) {
+          res.statusCode = HttpStatus.notFound;
+          await res.close();
+          return;
+        }
+        await _serveApk(request, apk);
+        return;
+      }
+      if (from != null && !from.isLoopback && (parts[0] == 'info' || parts[0] == 'v')) {
+        if (parts[0] == 'v' && request.method == 'GET') downloads++;
+        contacts++;
+        onContact?.call(from.address, parts[0] == 'v');
       }
       if (parts[0] == 'info') {
         res.headers.contentType = ContentType.json;
@@ -134,7 +243,7 @@ class PhoneHandoff {
         await res.close();
         return;
       }
-      if (parts[0] != 'v' || (request.method != 'GET' && request.method != 'HEAD')) {
+      if (parts[0] != 'v' || (request.method != 'GET' && request.method != 'HEAD') || file == null) {
         res.statusCode = HttpStatus.notFound;
         await res.close();
         return;
@@ -207,6 +316,7 @@ class PhoneHandoff {
     _timer?.cancel();
     _timer = null;
     current = null;
+    _file = null;
     _udp?.close();
     _udp = null;
     final server = _server;
@@ -787,6 +897,7 @@ Future<void> showSendToPhone(BuildContext context, File file, String title) asyn
   // If the other device connects (Connect / session) while this is open, the
   // picked file goes first in the session and this dialog closes by itself.
   ShareSession.pendingFirst = file;
+  ShareSession.pairLink = offer?.url;
   final next = await showDialog<String>(
     context: context,
     barrierDismissible: false,
@@ -936,7 +1047,12 @@ Future<void> showSendToPhone(BuildContext context, File file, String title) asyn
     )),
   );
   if (identical(ShareSession.pendingFirst, file)) ShareSession.pendingFirst = null;
-  await PhoneHandoff.stop();
+  // Connected (also an older app fetching by code): the server stays for
+  // the session; Disconnect stops it.
+  if (!ShareSession.active) {
+    ShareSession.pairLink = null;
+    await PhoneHandoff.stop();
+  }
   if (next == 'hotspot' && context.mounted && !ShareSession.active) {
     await showHotspotSend(context, file, title);
   }
@@ -944,7 +1060,18 @@ Future<void> showSendToPhone(BuildContext context, File file, String title) asyn
 
 /// Sender side of Fast share: opens a local-only hotspot, serves the file on
 /// it and shows a QR that carries the hotspot name and password.
-Future<void> showHotspotSend(BuildContext context, File file, String title) async {
+/// One-tap "Hotspot share": opens the hotspot and its QR with nothing picked
+/// yet. When the other device connects, both land on the Connected screen
+/// and pick files there.
+Future<void> showHotspotQuickShare(BuildContext context) async {
+  if (ShareSession.active) {
+    await openSessionScreen(context);
+    return;
+  }
+  await showHotspotSend(context, null, 'Hotspot share');
+}
+
+Future<void> showHotspotSend(BuildContext context, File? file, String title) async {
   final result = await showDialog<String>(
     context: context,
     barrierDismissible: false,
@@ -960,6 +1087,7 @@ Future<void> showHotspotSend(BuildContext context, File file, String title) asyn
     if (context.mounted && !ShareSession.screenOpen && result == 'session') await openSessionScreen(context);
     return;
   }
+  ShareSession.pairLink = null;
   await PhoneHandoff.stop();
   await HotspotShare.stop();
 }
@@ -1044,7 +1172,7 @@ class _JoinByHand extends StatelessWidget {
 
 class _HotspotSendDialog extends StatefulWidget {
   const _HotspotSendDialog({required this.file, required this.title});
-  final File file;
+  final File? file;
   final String title;
 
   @override
@@ -1140,7 +1268,7 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
         await HotspotShare.stop();
         return;
       }
-      _size = await widget.file.length();
+      _size = widget.file == null ? 0 : await widget.file!.length();
       final offer = await PhoneHandoff.offer(widget.file, title: widget.title, preferIp: info.ip);
       if (offer == null) throw const HotspotError('Could not start sharing on the hotspot.');
       debugPrint('[hotspot] ready ssid=${info.ssid} ip=${info.ip} port=${offer.port} code=${offer.code}');
@@ -1154,6 +1282,7 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
         // sf=1: this sender sends the file inside the session (1.0.34+).
         _link = '${HotspotShare.link(offer.url, info)}&sid=$pair&sp=${NearbyService.inboxBoundPort}&sf=1';
       });
+      ShareSession.pairLink = _link;
     } catch (e) {
       debugPrint('[hotspot] start failed: $e');
       if (mounted) setState(() => _error = e is HotspotError ? e.message : 'Fast share could not start: $e');
@@ -1170,11 +1299,11 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
     final started = sent > 0;
     final done = _size > 0 && sent >= _size;
     return AlertDialog(
-      title: const Row(
+      title: Row(
         children: [
-          Icon(Icons.wifi_tethering_rounded),
-          SizedBox(width: 8),
-          Expanded(child: Text('Fast share (hotspot)')),
+          const Icon(Icons.wifi_tethering_rounded),
+          const SizedBox(width: 8),
+          Expanded(child: Text(widget.file == null ? 'Hotspot share' : 'Fast share (hotspot)')),
         ],
       ),
       content: SizedBox(
@@ -1184,7 +1313,13 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(widget.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+              Text(
+                widget.file == null
+                    ? 'Connect first, then send any videos or files both ways.'
+                    : widget.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
               const SizedBox(height: 10),
               Center(
                 child: HotspotBandPicker(
@@ -1834,6 +1969,7 @@ class NearbyShareBar extends StatelessWidget {
                 ),
               ],
             ),
+            HotspotQuickButtons(onReceived: onReceived),
             NearbyDeviceChips(pickFile: pickFile ?? () => pickVideoFile()),
             const SessionBanner(),
           ],
@@ -1864,6 +2000,7 @@ class NearbyShareBar extends StatelessWidget {
                 ),
               ],
             ),
+            HotspotQuickButtons(onReceived: onReceived),
             const SizedBox(height: 6),
             NearbyDeviceChips(pickFile: pickFile ?? () => pickVideoFile()),
             const SessionBanner(),
@@ -1942,4 +2079,94 @@ class NearbyShareBar extends StatelessWidget {
       );
     return flat ? body : Card(margin: EdgeInsets.zero, child: body);
   }
+}
+
+
+/// One-tap pair of quick buttons: "Hotspot share" (opens the hotspot and its
+/// QR right away, no file needed) and "Scan to join" / "Receive" for the
+/// other side. After connecting, both land on the Connected screen.
+class HotspotQuickButtons extends StatelessWidget {
+  const HotspotQuickButtons({super.key, this.dense = false, this.onReceived});
+  final bool dense;
+  final VoidCallback? onReceived;
+
+  @override
+  Widget build(BuildContext context) {
+    final height = dense ? 36.0 : 44.0;
+    final canHost = HotspotShare.hostSupported;
+    final joinLabel = HotspotShare.supported ? 'Scan to join' : 'Receive';
+    return ValueListenableBuilder<SessionPeer?>(
+      valueListenable: ShareSession.peer,
+      builder: (context, peer, _) {
+        if (peer != null) return const SizedBox.shrink();
+        return Padding(
+          padding: EdgeInsets.only(top: dense ? 6 : 8),
+          child: Row(
+            children: [
+              if (canHost) ...[
+                Expanded(
+                  child: FilledButton.icon(
+                    key: const ValueKey('quick-hotspot-share'),
+                    style: FilledButton.styleFrom(
+                      minimumSize: Size(0, height),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      visualDensity: dense ? VisualDensity.compact : null,
+                    ),
+                    onPressed: () => showHotspotQuickShare(context),
+                    icon: Icon(Icons.wifi_tethering_rounded, size: dense ? 16 : 20),
+                    label: const Text('Hotspot share', maxLines: 1, overflow: TextOverflow.ellipsis),
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+              Expanded(
+                child: OutlinedButton.icon(
+                  key: const ValueKey('quick-scan-join'),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: Size(0, height),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    visualDensity: dense ? VisualDensity.compact : null,
+                  ),
+                  onPressed: () async {
+                    final saved = await showReceiveFromPhone(context);
+                    if (saved) onReceived?.call();
+                  },
+                  icon: Icon(Icons.qr_code_scanner_rounded, size: dense ? 16 : 20),
+                  label: Text(joinLabel, maxLines: 1, overflow: TextOverflow.ellipsis),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Android Quick Settings tile "SocialSave hotspot share" → Hotspot share.
+void listenForQuickActions() {
+  if (!Plat.isAndroid) return;
+  var busy = false;
+  Future<void> run(Object? action) async {
+    if (action != 'hotspot_share' || busy) return;
+    busy = true;
+    try {
+      try {
+        await MediaEvents.channel.invokeMethod<void>('consumeQuickAction');
+      } catch (_) {}
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
+      if (ctx != null && ctx.mounted) await showHotspotQuickShare(ctx);
+    } finally {
+      busy = false;
+    }
+  }
+
+  MediaEvents.on('quickAction', run);
+  WidgetsBinding.instance.addPostFrameCallback((_) async {
+    try {
+      final a = await MediaEvents.channel.invokeMethod<dynamic>('consumeQuickAction');
+      if (a != null) await run(a);
+    } catch (_) {}
+  });
 }

@@ -852,6 +852,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
               ),
             ],
           ),
+          HotspotQuickButtons(
+            dense: true,
+            onReceived: () => _reload(rescan: DesktopSupport.isWindows),
+          ),
           NearbyDeviceChips(pills: true, pickFile: _chooseFileToSend),
           const UsbHint(),
         ],
