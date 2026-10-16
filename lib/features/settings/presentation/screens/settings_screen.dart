@@ -17,6 +17,7 @@ import 'package:social_save/core/platform/desktop_support.dart';
 import 'package:social_save/core/platform/media_events.dart';
 import 'package:social_save/core/platform/phone_body.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
+import 'package:social_save/features/library/hotspot_share.dart';
 import 'package:social_save/features/library/index_backup.dart';
 import 'package:social_save/features/library/library_catalog.dart';
 import 'package:social_save/core/constants/app_constants.dart';
@@ -454,6 +455,7 @@ class SettingsScreen extends ConsumerWidget {
                         ],
                       ),
                     ),
+                    if (!kIsWeb && Plat.isAndroid) const HotspotBandTile(),
                     ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: const Icon(Icons.description_outlined),

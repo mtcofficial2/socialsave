@@ -49,7 +49,7 @@ class HotspotShare(private val context: Context, messenger: BinaryMessenger) :
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "status" -> result.success(status())
-            "start" -> start(result)
+            "start" -> start(result, call.argument<String>("band") ?: "auto")
             "stop" -> {
                 stop()
                 result.success(true)
@@ -87,7 +87,10 @@ class HotspotShare(private val context: Context, messenger: BinaryMessenger) :
     private var wantedPassword: String? = null
 
     @SuppressLint("MissingPermission")
-    private fun start(result: MethodChannel.Result) {
+    /** What the user asked for and what we could do, shown in the dialog. */
+    private var bandNote: String = ""
+
+    private fun start(result: MethodChannel.Result, band: String) {
         if (Build.VERSION.SDK_INT < 26) {
             result.error("too_old", "Fast share needs Android 8 or newer on the sending phone.", null)
             return
@@ -105,7 +108,7 @@ class HotspotShare(private val context: Context, messenger: BinaryMessenger) :
         // Some phones never call back when the maker blocks it.
         main.postDelayed({
             answer { result.error("timeout", "The hotspot did not start. Turn off the phone's own hotspot and try again.", null) }
-        }, 20000)
+        }, 30000)
 
         fun callback(onFail: (Int) -> Unit) = object : WifiManager.LocalOnlyHotspotCallback() {
             override fun onStarted(res: WifiManager.LocalOnlyHotspotReservation) {
@@ -158,32 +161,67 @@ class HotspotShare(private val context: Context, messenger: BinaryMessenger) :
             }
         }
 
-        // Android 13+: ask for a short, easy password (hidden but app-callable
-        // overload that only needs NEARBY_WIFI_DEVICES). If the phone refuses,
-        // fall back to the normal random one.
-        val config = if (Build.VERSION.SDK_INT >= 33) customConfig() else null
-        if (config == null) {
+        // Android 13+: ask for a short, easy password and the chosen band
+        // (hidden but app-callable overload that only needs
+        // NEARBY_WIFI_DEVICES). Each refusal falls back one step; the last
+        // step is the normal random hotspot.
+        if (Build.VERSION.SDK_INT < 33) {
+            bandNote = "Android ${Build.VERSION.RELEASE} picks the hotspot band itself (choosing needs Android 13+)."
             standard()
             return
         }
-        try {
+        @Suppress("DEPRECATION")
+        val has5 = try { wifi.is5GHzBandSupported } catch (_: Throwable) { false }
+        // SoftApConfiguration bands: 1 = 2.4 GHz, 2 = 5 GHz, 3 = either.
+        val attempts: List<Int?> = when {
+            band == "2.4" -> listOf(1, null)
+            !has5 -> listOf(1, null)
+            band == "5" -> listOf(2, 1, null)
+            else -> listOf(2, 3, null)
+        }
+        bandNote = if (!has5 && band != "2.4") "Using 2.4 GHz (this phone doesn't support 5 GHz)." else ""
+        val method = try {
             WifiManager::class.java.getMethod(
                 "startLocalOnlyHotspot",
                 Class.forName("android.net.wifi.SoftApConfiguration"),
                 java.util.concurrent.Executor::class.java,
                 WifiManager.LocalOnlyHotspotCallback::class.java,
-            ).invoke(wifi, config, java.util.concurrent.Executor { main.post(it) }, callback { reason ->
-                Log.w(TAG, "short-password hotspot refused ($reason), using the normal one")
-                main.post { if (!answered) standard() }
-            })
+            )
         } catch (e: Throwable) {
-            Log.w(TAG, "short-password hotspot not available: ${e.cause ?: e}")
+            Log.w(TAG, "custom hotspot not available: ${e.cause ?: e}")
+            bandNote = "This phone doesn't let apps choose the hotspot band; using its default."
             standard()
+            return
         }
+        fun attempt(i: Int) {
+            if (answered) return
+            if (i >= attempts.size) {
+                bandNote = "This phone refused SocialSave's hotspot settings; using its default band and password."
+                standard()
+                return
+            }
+            val mask = attempts[i]
+            val config = customConfig(mask)
+            if (config == null) {
+                attempt(i + 1)
+                return
+            }
+            try {
+                Log.i(TAG, "starting hotspot band=${mask ?: "default"}")
+                method.invoke(wifi, config, java.util.concurrent.Executor { main.post(it) }, callback { reason ->
+                    Log.w(TAG, "hotspot with band=${mask ?: "default"} refused ($reason)")
+                    main.post { attempt(i + 1) }
+                })
+            } catch (e: Throwable) {
+                Log.w(TAG, "hotspot with band=${mask ?: "default"} failed: ${e.cause ?: e}")
+                attempt(i + 1)
+            }
+        }
+        attempt(0)
     }
 
     /** SoftApConfiguration with name "SocialSave-1234" and an 8-digit password, or null. */
-    private fun customConfig(): Any? {
+    private fun customConfig(bandMask: Int?): Any? {
         return try {
             val rnd = java.security.SecureRandom()
             val password = (1..8).map { rnd.nextInt(10) }.joinToString("")
@@ -207,6 +245,9 @@ class HotspotShare(private val context: Context, messenger: BinaryMessenger) :
             }
             // 1 = SECURITY_TYPE_WPA2_PSK (easiest for any phone or PC to join).
             builderClass.getMethod("setPassphrase", String::class.java, Int::class.javaPrimitiveType).invoke(builder, password, 1)
+            if (bandMask != null) {
+                builderClass.getMethod("setBand", Int::class.javaPrimitiveType).invoke(builder, bandMask)
+            }
             val config = builderClass.getMethod("build").invoke(builder)
             wantedPassword = password
             config
@@ -234,7 +275,20 @@ class HotspotShare(private val context: Context, messenger: BinaryMessenger) :
             "password" to password?.trim('"'),
             "ip" to apAddress(),
             "custom" to (wantedPassword != null && password?.trim('"') == wantedPassword),
+            "band" to bandOf(res),
+            "bandNote" to bandNote,
         )
+    }
+
+    /** Band mask of the running hotspot (1 = 2.4, 2 = 5, 3 = either, 4 = 6 GHz), or null. */
+    private fun bandOf(res: WifiManager.LocalOnlyHotspotReservation): Int? {
+        if (Build.VERSION.SDK_INT < 30) return null
+        return try {
+            val conf = res.softApConfiguration
+            conf.javaClass.getMethod("getBand").invoke(conf) as? Int
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     /** IPv4 address of the hotspot interface (usually 192.168.x.1). */

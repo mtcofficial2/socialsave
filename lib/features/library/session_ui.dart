@@ -1,9 +1,11 @@
+import 'dart:io';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/features/library/bundle_transfer.dart';
 import 'package:social_save/features/library/nearby_service.dart';
+import 'package:social_save/features/library/session_media_picker.dart';
 import 'package:social_save/features/library/share_session.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
 import 'package:social_save/features/player/player_session.dart';
@@ -185,9 +187,39 @@ class SessionScreen extends StatefulWidget {
   State<SessionScreen> createState() => _SessionScreenState();
 }
 
-class _SessionScreenState extends State<SessionScreen> {
+class _SessionScreenState extends State<SessionScreen> with SingleTickerProviderStateMixin {
   SessionPeer? _last;
   bool _picking = false;
+  late final TabController _tabs = TabController(length: 2, vsync: this);
+
+  @override
+  void dispose() {
+    _tabs.dispose();
+    super.dispose();
+  }
+
+  /// Media picked in the grid: queue them and show the transfer list.
+  Future<void> _sendPicked(List<MediaEntry> picked) async {
+    final files = <File>[];
+    var missing = 0;
+    for (final e in picked) {
+      final f = await MediaCatalog.fileFor(e);
+      if (f == null) {
+        missing++;
+      } else {
+        files.add(f);
+      }
+    }
+    if (!mounted) return;
+    if (files.isNotEmpty) ShareSession.enqueue(files);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text([
+        if (files.isNotEmpty) 'Sending ${files.length} item${files.length == 1 ? '' : 's'}',
+        if (missing > 0) '$missing could not be opened',
+      ].join(' · ')),
+    ));
+    if (files.isNotEmpty) _tabs.animateTo(1);
+  }
 
   Future<void> _send({required bool folder}) async {
     if (_picking) return;
@@ -249,6 +281,23 @@ class _SessionScreenState extends State<SessionScreen> {
                     ),
                 ],
               ),
+              bottom: TabBar(
+                controller: _tabs,
+                tabs: [
+                  const Tab(key: ValueKey('session-tab-media'), icon: Icon(Icons.video_library_rounded), text: 'Pick media'),
+                  Tab(
+                    key: const ValueKey('session-tab-transfers'),
+                    icon: const Icon(Icons.swap_vert_rounded),
+                    child: ValueListenableBuilder<int>(
+                      valueListenable: ShareSession.revision,
+                      builder: (context, _, __) {
+                        final active = ShareSession.items.where((i) => i.active || i.state == SessionItemState.queued).length;
+                        return Text(active > 0 ? 'Transfers ($active)' : 'Transfers');
+                      },
+                    ),
+                  ),
+                ],
+              ),
               actions: [
                 if (peer != null)
                   Padding(
@@ -281,72 +330,89 @@ class _SessionScreenState extends State<SessionScreen> {
                       icon: Icons.sync_problem_rounded,
                       text: 'Can\'t reach ${peer.name} right now… keep SocialSave open on both devices.',
                     ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                    child: Row(
+                  Expanded(
+                    child: TabBarView(
+                      controller: _tabs,
                       children: [
-                        Expanded(
-                          child: FilledButton.icon(
-                            key: const ValueKey('session-send'),
-                            style: FilledButton.styleFrom(minimumSize: const Size(0, 52)),
-                            onPressed: peer == null || _picking ? null : () => _send(folder: false),
-                            icon: const Icon(Icons.send_rounded),
-                            label: const Text('Send'),
-                          ),
+                        SessionMediaPicker(
+                          enabled: peer != null,
+                          onBrowseFiles: () => _send(folder: false),
+                          onSend: _sendPicked,
                         ),
-                        const SizedBox(width: 10),
-                        OutlinedButton.icon(
-                          key: const ValueKey('session-send-folder'),
-                          style: OutlinedButton.styleFrom(minimumSize: const Size(0, 52)),
-                          onPressed: peer == null || _picking ? null : () => _send(folder: true),
-                          icon: const Icon(Icons.drive_folder_upload_rounded),
-                          label: const Text('Folder'),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: FilledButton.icon(
+                                    key: const ValueKey('session-send'),
+                                    style: FilledButton.styleFrom(minimumSize: const Size(0, 52)),
+                                    onPressed: peer == null || _picking ? null : () => _send(folder: false),
+                                    icon: const Icon(Icons.send_rounded),
+                                    label: const Text('Browse files'),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                OutlinedButton.icon(
+                                  key: const ValueKey('session-send-folder'),
+                                  style: OutlinedButton.styleFrom(minimumSize: const Size(0, 52)),
+                                  onPressed: peer == null || _picking ? null : () => _send(folder: true),
+                                  icon: const Icon(Icons.drive_folder_upload_rounded),
+                                  label: const Text('Folder'),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: Text(
+                              peer == null
+                                  ? 'Connect again from Nearby share › Connect, or scan a new hotspot QR.'
+                                  : 'Pick media for videos, photos and music, or Browse files for anything else — they queue and go one after another. '
+                                      'Anything ${peer.name} sends appears here and is saved automatically.',
+                              style: theme.textTheme.bodySmall,
+                            ),
+                          ),
+                          const Divider(height: 24),
+                          Expanded(
+                            child: ValueListenableBuilder<int>(
+                              valueListenable: ShareSession.revision,
+                              builder: (context, _, __) {
+                                final list = ShareSession.items.reversed.toList();
+                                if (list.isEmpty) {
+                                  return Center(
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(24),
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(Icons.swap_vert_rounded, size: 48, color: scheme.outline),
+                                          const SizedBox(height: 8),
+                                          Text('Nothing sent yet', style: theme.textTheme.titleMedium),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                }
+                                return ListView.separated(
+                                  padding: const EdgeInsets.fromLTRB(8, 0, 8, 24),
+                                  itemCount: list.length,
+                                  separatorBuilder: (_, __) => const SizedBox(height: 2),
+                                  itemBuilder: (context, i) => _ItemTile(
+                                    item: list[i],
+                                    peerName: shown?.name ?? '',
+                                    onOpen: _open,
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                          ],
                         ),
                       ],
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Text(
-                      peer == null
-                          ? 'Connect again from Nearby share › Connect, or scan a new hotspot QR.'
-                          : 'Pick videos or any files — they queue and go one after another. '
-                              'Anything ${peer.name} sends appears here and is saved automatically.',
-                      style: theme.textTheme.bodySmall,
-                    ),
-                  ),
-                  const Divider(height: 24),
-                  Expanded(
-                    child: ValueListenableBuilder<int>(
-                      valueListenable: ShareSession.revision,
-                      builder: (context, _, __) {
-                        final list = ShareSession.items.reversed.toList();
-                        if (list.isEmpty) {
-                          return Center(
-                            child: Padding(
-                              padding: const EdgeInsets.all(24),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(Icons.swap_vert_rounded, size: 48, color: scheme.outline),
-                                  const SizedBox(height: 8),
-                                  Text('Nothing sent yet', style: theme.textTheme.titleMedium),
-                                ],
-                              ),
-                            ),
-                          );
-                        }
-                        return ListView.separated(
-                          padding: const EdgeInsets.fromLTRB(8, 0, 8, 24),
-                          itemCount: list.length,
-                          separatorBuilder: (_, __) => const SizedBox(height: 2),
-                          itemBuilder: (context, i) => _ItemTile(
-                            item: list[i],
-                            peerName: shown?.name ?? '',
-                            onOpen: _open,
-                          ),
-                        );
-                      },
                     ),
                   ),
                 ],
@@ -451,6 +517,15 @@ class _ItemTile extends StatelessWidget {
                 ],
               ),
             ),
+            if (it.active && it.speed > 0)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Text(
+                  '${(it.speed / (1024 * 1024)).toStringAsFixed(1)}\nMB/s',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800, height: 1.1),
+                ),
+              ),
             if (done && !it.outgoing && it.file != null)
               TextButton(
                 onPressed: () => onOpen(it),

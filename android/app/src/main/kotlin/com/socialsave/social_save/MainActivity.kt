@@ -404,6 +404,20 @@ class MainActivity : FlutterFragmentActivity() {
                         ),
                     )
                 }
+                "queryMedia" -> {
+                    // Paged MediaStore listing for the session media picker.
+                    val kind = call.argument<String>("kind") ?: "video"
+                    val offset = call.argument<Int>("offset") ?: 0
+                    val limit = call.argument<Int>("limit") ?: 300
+                    io.execute {
+                        val out = try {
+                            queryMedia(kind, offset, limit)
+                        } catch (e: Exception) {
+                            mapOf("total" to 0, "items" to emptyList<Any>(), "error" to (e.message ?: "query failed"))
+                        }
+                        runOnUiThread { result.success(out) }
+                    }
+                }
                 "listVideos" -> {
                     try {
                         result.success(listVideos())
@@ -775,6 +789,81 @@ class MainActivity : FlutterFragmentActivity() {
         source.copyTo(target, overwrite = true)
         MediaScannerConnection.scanFile(this, arrayOf(target.absolutePath), arrayOf(mime), null)
         return target.absolutePath
+    }
+
+    private fun queryMedia(kind: String, offset: Int, limit: Int): Map<String, Any?> {
+        val collection: Uri
+        val durationCol: String?
+        when (kind) {
+            "image" -> {
+                collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                durationCol = null
+            }
+            "audio" -> {
+                collection = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+                durationCol = MediaStore.Audio.Media.DURATION
+            }
+            else -> {
+                collection = MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                durationCol = MediaStore.Video.Media.DURATION
+            }
+        }
+        val cols = mutableListOf(
+            MediaStore.MediaColumns._ID,
+            MediaStore.MediaColumns.DISPLAY_NAME,
+            MediaStore.MediaColumns.SIZE,
+            MediaStore.MediaColumns.DATE_ADDED,
+            MediaStore.MediaColumns.DATA,
+            MediaStore.MediaColumns.MIME_TYPE,
+        )
+        if (durationCol != null) cols.add(durationCol)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            cols.add(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
+            cols.add(MediaStore.MediaColumns.RELATIVE_PATH)
+        } else if (kind != "audio") {
+            cols.add("bucket_display_name")
+        }
+        val items = mutableListOf<Map<String, Any?>>()
+        var total = 0
+        contentResolver.query(
+            collection,
+            cols.toTypedArray(),
+            null,
+            null,
+            "${MediaStore.MediaColumns.DATE_ADDED} DESC",
+        )?.use { c ->
+            total = c.count
+            val idCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+            val nameCol = c.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
+            val sizeCol = c.getColumnIndex(MediaStore.MediaColumns.SIZE)
+            val dateCol = c.getColumnIndex(MediaStore.MediaColumns.DATE_ADDED)
+            val dataCol = c.getColumnIndex(MediaStore.MediaColumns.DATA)
+            val mimeCol = c.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE)
+            val durCol = if (durationCol == null) -1 else c.getColumnIndex(durationCol)
+            val bucketCol = c.getColumnIndex("bucket_display_name")
+            val relCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) c.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH) else -1
+            if (offset < total && c.moveToPosition(offset)) {
+                do {
+                    val id = c.getLong(idCol)
+                    val path = if (dataCol >= 0) c.getString(dataCol) else null
+                    items.add(
+                        mapOf(
+                            "id" to id.toString(),
+                            "uri" to ContentUris.withAppendedId(collection, id).toString(),
+                            "path" to path,
+                            "name" to (if (nameCol >= 0) c.getString(nameCol) else null),
+                            "size" to (if (sizeCol >= 0) c.getLong(sizeCol) else 0L),
+                            "addedAt" to (if (dateCol >= 0) c.getLong(dateCol) else 0L),
+                            "durationMs" to (if (durCol >= 0) c.getLong(durCol) else 0L),
+                            "mime" to (if (mimeCol >= 0) c.getString(mimeCol) else null),
+                            "bucket" to (if (bucketCol >= 0) c.getString(bucketCol) else null),
+                            "relativePath" to (if (relCol >= 0) c.getString(relCol) else null),
+                        ),
+                    )
+                } while (items.size < limit && c.moveToNext())
+            }
+        }
+        return mapOf("total" to total, "items" to items)
     }
 
     private fun listVideos(): List<Map<String, Any?>> {

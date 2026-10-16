@@ -1032,7 +1032,28 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
   HotspotInfo? _info;
   HandoffOffer? _offer;
   String? _link;
-  final _meter = TransferMeter();
+  var _meter = TransferMeter();
+  bool _restarting = false;
+
+  /// Band changed in the dialog: start the hotspot again on the new band.
+  Future<void> _restart() async {
+    if (_restarting) return;
+    _restarting = true;
+    setState(() {
+      _info = null;
+      _offer = null;
+      _link = null;
+      _error = null;
+      _step = 'Restarting the hotspot…';
+      _meter = TransferMeter();
+    });
+    ShareSession.hostsHotspotPending = false;
+    await PhoneHandoff.stop();
+    await HotspotShare.stop();
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    _restarting = false;
+    if (mounted) await _start();
+  }
   int _size = 0;
 
   @override
@@ -1134,6 +1155,31 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(widget.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+              const SizedBox(height: 10),
+              Center(
+                child: HotspotBandPicker(
+                  enabled: !started && !_restarting,
+                  onChanged: (_) => unawaited(_restart()),
+                ),
+              ),
+              if (info != null) ...[
+                const SizedBox(height: 6),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(info.band == 2 || info.band == 4 ? Icons.speed_rounded : Icons.wifi_rounded,
+                        size: 18, color: theme.colorScheme.primary),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(info.bandLabel,
+                          key: const ValueKey('hotspot-band-label'),
+                          style: theme.textTheme.labelLarge?.copyWith(color: theme.colorScheme.primary)),
+                    ),
+                  ],
+                ),
+                if (info.bandNote.isNotEmpty)
+                  Text(info.bandNote, style: small, textAlign: TextAlign.center),
+              ],
               const SizedBox(height: 12),
               if (_error != null) ...[
                 Icon(Icons.error_outline_rounded, color: theme.colorScheme.error, size: 36),
@@ -1167,6 +1213,14 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
                 _JoinByHand(info: info, code: offer.code),
                 const SizedBox(height: 12),
                 if (started) ...[
+                  if (!done)
+                    Center(
+                      child: Text(
+                        _meter.speed > 0 ? '${(_meter.speed / (1024 * 1024)).toStringAsFixed(1)} MB/s' : '— MB/s',
+                        key: const ValueKey('hotspot-speed'),
+                        style: theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                    ),
                   LinearProgressIndicator(value: _size > 0 ? sent / _size : null),
                   const SizedBox(height: 4),
                   Text(

@@ -26,6 +26,10 @@ import 'package:social_save/core/platform/open_with.dart';
 import 'package:social_save/features/library/nearby_ui.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:social_save/features/library/share_session.dart';
+import 'package:social_save/features/library/session_media_picker.dart';
+import 'package:social_save/features/library/session_ui.dart';
+import 'package:flutter/rendering.dart';
+import 'dart:ui' as ui;
 import 'package:social_save/features/library/transfer_meter.dart';
 import 'package:social_save/features/library/presentation/library_screen.dart';
 import 'package:social_save/features/library/vault_service.dart';
@@ -275,6 +279,7 @@ Future<void> main(List<String> args) async {
     ),
   );
   installNearbyUi();
+  if (args.contains('--picker-test')) unawaited(_pickerTest());
   unawaited(NearbyService.start());
   listenForOpenedVideos();
 
@@ -400,4 +405,35 @@ Future<void> _runWeb() async {
       child: const SocialSaveApp(),
     ),
   );
+}
+
+
+/// `--picker-test`: opens the Connected screen with a pretend peer, lets the
+/// media grid load, saves a screenshot to %TEMP%\ss_picker.png and exits.
+Future<void> _pickerTest() async {
+  await Future<void>.delayed(const Duration(seconds: 5));
+  debugPickerAutoSelect = 3;
+  ShareSession.peer.value = SessionPeer(
+    id: 'picker-test',
+    name: 'Test phone',
+    kind: 'phone',
+    host: '127.0.0.1',
+    port: 9,
+    link: 'wifi',
+  );
+  unawaited(openSessionScreen());
+  await Future<void>.delayed(const Duration(seconds: 20));
+  try {
+    final view = RendererBinding.instance.renderViews.first;
+    // ignore: invalid_use_of_protected_member
+    final layer = view.layer! as OffsetLayer;
+    final image = await layer.toImage(Offset.zero & view.flutterView.physicalSize);
+    final data = await image.toByteData(format: ui.ImageByteFormat.png);
+    final file = File('${Directory.systemTemp.path}${Platform.pathSeparator}ss_picker.png');
+    await file.writeAsBytes(data!.buffer.asUint8List());
+    print('debug picker shot ${file.path}');
+  } catch (e) {
+    print('debug picker shot failed $e');
+  }
+  exit(0);
 }

@@ -54,6 +54,9 @@ class SessionItem {
   File? file;
   SessionItemState state;
   String detail = '';
+
+  /// Live speed in bytes per second while active.
+  double speed = 0;
   final DateTime at = DateTime.now();
 
   double? get fraction => size > 0 ? (done / size).clamp(0.0, 1.0) : null;
@@ -429,6 +432,7 @@ class ShareSession {
               if (!meter.update(sent, total)) return;
               next.done = sent;
               next.size = total;
+              next.speed = meter.speed;
               next.detail = sent >= total && total > 0 ? 'Finishing…' : meter.label;
               _changed();
             },
@@ -455,6 +459,7 @@ class ShareSession {
   }
 
   static SessionItem? _incomingItem;
+  static TransferMeter _incomingMeter = TransferMeter();
 
   static void _onIncoming() {
     final v = NearbyService.incoming.value;
@@ -471,7 +476,10 @@ class ShareSession {
         items.add(it);
       }
       _incomingItem = it;
+      _incomingMeter = TransferMeter();
     }
+    _incomingMeter.update(v.received, v.total);
+    it.speed = _incomingMeter.speed;
     it.name = v.fileName;
     it.size = v.total;
     it.done = v.received;
@@ -516,6 +524,7 @@ class ShareSession {
       _servedItem = null;
       PhoneHandoff.served.removeListener(_onServed);
     } else if (_servedMeter.update(it.done, it.size)) {
+      it.speed = _servedMeter.speed;
       it.detail = it.done == 0 ? 'Waiting for ${peer.value?.name ?? 'the other device'}…' : _servedMeter.label;
     } else {
       return;

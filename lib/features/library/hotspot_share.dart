@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:social_save/core/platform/plat.dart';
 
@@ -69,11 +71,36 @@ class HotspotShare {
     return null;
   }
 
+  static const _bandKey = 'hotspot_band';
+
+  /// 'auto' (prefer 5 GHz), '5' or '2.4'. Remembered across launches.
+  static final ValueNotifier<String> band = ValueNotifier<String>('auto');
+  static bool _bandLoaded = false;
+
+  static Future<String> loadBand() async {
+    if (!_bandLoaded) {
+      _bandLoaded = true;
+      try {
+        final v = (await SharedPreferences.getInstance()).getString(_bandKey);
+        if (v == 'auto' || v == '5' || v == '2.4') band.value = v!;
+      } catch (_) {}
+    }
+    return band.value;
+  }
+
+  static Future<void> setBand(String v) async {
+    band.value = v;
+    _bandLoaded = true;
+    try {
+      await (await SharedPreferences.getInstance()).setString(_bandKey, v);
+    } catch (_) {}
+  }
+
   /// Starts the hotspot. Returns ssid / password / ip.
   static Future<HotspotInfo> start() async {
     _wire();
     try {
-      final raw = await _channel.invokeMethod<Map<Object?, Object?>>('start');
+      final raw = await _channel.invokeMethod<Map<Object?, Object?>>('start', {'band': await loadBand()});
       final m = (raw ?? const {}).map((k, v) => MapEntry('$k', v));
       var ip = m['ip'] as String?;
       // The interface can take a moment to get its address.
@@ -85,7 +112,14 @@ class HotspotShare {
       if (ssid == null || ssid.isEmpty) {
         throw const HotspotError('The hotspot started but the phone did not share its name.');
       }
-      return HotspotInfo(ssid: ssid, password: (m['password'] as String?) ?? '', ip: ip, custom: m['custom'] == true);
+      return HotspotInfo(
+        ssid: ssid,
+        password: (m['password'] as String?) ?? '',
+        ip: ip,
+        custom: m['custom'] == true,
+        band: (m['band'] as num?)?.toInt(),
+        bandNote: (m['bandNote'] as String?) ?? '',
+      );
     } on PlatformException catch (e) {
       throw HotspotError(e.message ?? 'The hotspot could not start.');
     }
@@ -132,7 +166,29 @@ class HotspotShare {
 }
 
 class HotspotInfo {
-  const HotspotInfo({required this.ssid, required this.password, this.ip, this.custom = false});
+  const HotspotInfo({
+    required this.ssid,
+    required this.password,
+    this.ip,
+    this.custom = false,
+    this.band,
+    this.bandNote = '',
+  });
+
+  /// SoftAp band mask of the running hotspot: 1 = 2.4 GHz, 2 = 5 GHz,
+  /// 3 = either (phone picks), 4 = 6 GHz; null when the phone doesn't say.
+  final int? band;
+
+  /// Why the band differs from the choice (or empty).
+  final String bandNote;
+
+  String get bandLabel => switch (band) {
+        2 => 'Hotspot on 5 GHz',
+        1 => 'Hotspot on 2.4 GHz',
+        3 => 'Hotspot on 2.4 or 5 GHz (phone picks)',
+        4 => 'Hotspot on 6 GHz',
+        _ => 'Hotspot band: phone default',
+      };
 
   /// True when the phone accepted SocialSave's short 8-digit password.
   final bool custom;
@@ -152,4 +208,86 @@ class HotspotError implements Exception {
   final String message;
   @override
   String toString() => message;
+}
+
+
+/// Auto / 5 GHz / 2.4 GHz choice for Fast share (dialog and Settings).
+class HotspotBandPicker extends StatefulWidget {
+  const HotspotBandPicker({super.key, this.onChanged, this.enabled = true});
+  final ValueChanged<String>? onChanged;
+  final bool enabled;
+
+  @override
+  State<HotspotBandPicker> createState() => _HotspotBandPickerState();
+}
+
+class _HotspotBandPickerState extends State<HotspotBandPicker> {
+  @override
+  void initState() {
+    super.initState();
+    HotspotShare.loadBand().then((_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<String>(
+      valueListenable: HotspotShare.band,
+      builder: (context, v, _) => SegmentedButton<String>(
+        key: const ValueKey('hotspot-band'),
+        showSelectedIcon: false,
+        segments: const [
+          ButtonSegment(value: 'auto', label: Text('Auto'), tooltip: 'Prefer 5 GHz, fall back to 2.4 GHz'),
+          ButtonSegment(value: '5', label: Text('5 GHz'), tooltip: 'Fastest'),
+          ButtonSegment(value: '2.4', label: Text('2.4 GHz'), tooltip: 'Works with every phone and PC'),
+        ],
+        selected: {v},
+        onSelectionChanged: widget.enabled
+            ? (s) async {
+                await HotspotShare.setBand(s.first);
+                widget.onChanged?.call(s.first);
+              }
+            : null,
+      ),
+    );
+  }
+}
+
+/// Settings row for the Fast share band.
+class HotspotBandTile extends StatelessWidget {
+  const HotspotBandTile({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.wifi_tethering_rounded, color: scheme.onSurfaceVariant),
+              const SizedBox(width: 16),
+              const Expanded(
+                child: Text('Fast share hotspot band', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Padding(
+            padding: const EdgeInsets.only(left: 40),
+            child: Text(
+              '5 GHz is fastest (both phones must support it). 2.4 GHz works everywhere. '
+              'Android 13+ only; older phones use their default.',
+              style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Padding(padding: EdgeInsets.only(left: 40), child: HotspotBandPicker()),
+        ],
+      ),
+    );
+  }
 }
