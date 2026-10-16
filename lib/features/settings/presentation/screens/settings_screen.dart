@@ -455,7 +455,7 @@ class SettingsScreen extends ConsumerWidget {
                         ],
                       ),
                     ),
-                    if (!kIsWeb && Plat.isAndroid) const HotspotBandTile(),
+                    if (!kIsWeb && (Plat.isAndroid || Plat.isWindows)) const HotspotBandTile(),
                     ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: const Icon(Icons.description_outlined),

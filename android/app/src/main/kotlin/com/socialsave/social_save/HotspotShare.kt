@@ -25,14 +25,39 @@ import java.net.NetworkInterface
  * internet, just a direct Wi-Fi link) and the receiver joins it, so the
  * file moves at full Wi-Fi speed without a router.
  */
-class HotspotShare(private val context: Context, messenger: BinaryMessenger) :
+class HotspotShare private constructor(private val context: Context, messenger: BinaryMessenger) :
     MethodChannel.MethodCallHandler {
 
     companion object {
         private const val TAG = "SocialSaveHotspot"
+        private var instance: HotspotShare? = null
+
+        /**
+         * One app-wide instance: the hotspot reservation and the joined
+         * network belong to the app (and a connected session), not to an
+         * activity, so closing the screen never drops them.
+         */
+        fun attach(context: Context, messenger: BinaryMessenger): HotspotShare {
+            instance?.let {
+                it.rebind(messenger)
+                return it
+            }
+            return HotspotShare(context.applicationContext, messenger).also { instance = it }
+        }
+
+        fun disposeAll() {
+            instance?.dispose()
+            instance = null
+        }
     }
 
-    private val channel = MethodChannel(messenger, "socialsave/hotspot")
+    private var channel = MethodChannel(messenger, "socialsave/hotspot")
+
+    private fun rebind(messenger: BinaryMessenger) {
+        channel.setMethodCallHandler(null)
+        channel = MethodChannel(messenger, "socialsave/hotspot")
+        channel.setMethodCallHandler(this)
+    }
     private val main = Handler(Looper.getMainLooper())
     private val wifi get() = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
     private val cm get() = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -49,7 +74,13 @@ class HotspotShare(private val context: Context, messenger: BinaryMessenger) :
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "status" -> result.success(status())
-            "start" -> start(result, call.argument<String>("band") ?: "auto")
+            "start" -> {
+                // Re-opening for a connected session: same name and password,
+                // so the other phone can join again by itself.
+                reuseSsid = call.argument<String>("ssid")
+                reusePassword = call.argument<String>("password")
+                start(result, call.argument<String>("band") ?: "auto")
+            }
             "stop" -> {
                 stop()
                 result.success(true)
@@ -89,6 +120,8 @@ class HotspotShare(private val context: Context, messenger: BinaryMessenger) :
     @SuppressLint("MissingPermission")
     /** What the user asked for and what we could do, shown in the dialog. */
     private var bandNote: String = ""
+    private var reuseSsid: String? = null
+    private var reusePassword: String? = null
 
     private fun start(result: MethodChannel.Result, band: String) {
         if (Build.VERSION.SDK_INT < 26) {
@@ -224,8 +257,8 @@ class HotspotShare(private val context: Context, messenger: BinaryMessenger) :
     private fun customConfig(bandMask: Int?): Any? {
         return try {
             val rnd = java.security.SecureRandom()
-            val password = (1..8).map { rnd.nextInt(10) }.joinToString("")
-            val ssid = "SocialSave-" + (1..4).map { rnd.nextInt(10) }.joinToString("")
+            val password = reusePassword?.takeIf { it.length >= 8 } ?: (1..8).map { rnd.nextInt(10) }.joinToString("")
+            val ssid = reuseSsid?.takeIf { it.isNotEmpty() } ?: ("SocialSave-" + (1..4).map { rnd.nextInt(10) }.joinToString(""))
             val builderClass = Class.forName("android.net.wifi.SoftApConfiguration\$Builder")
             val builder = builderClass.getConstructor().newInstance()
             var named = false
@@ -354,6 +387,7 @@ class HotspotShare(private val context: Context, messenger: BinaryMessenger) :
                     override fun onAvailable(network: Network) {
                         bound = cm.bindProcessToNetwork(network)
                         Log.i(TAG, "joined $ssid bound=$bound")
+                        main.post { try { channel.invokeMethod("available", null) } catch (_: Exception) {} }
                         main.post { answer { result.success(mapOf("joined" to true, "bound" to bound)) } }
                     }
 

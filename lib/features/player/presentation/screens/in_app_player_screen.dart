@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'package:social_save/features/library/session_ui.dart';
+import 'package:social_save/features/library/share_session.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -2155,6 +2157,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       icon: const Icon(Icons.more_vert_rounded, color: Colors.white, size: 22),
       onSelected: (value) {
         if (value == 'pip') unawaited(_playOverApps());
+        if (value == 'session') sendToSessionPeer(context, File(_session.filePath!));
         if (value == 'send') {
           unawaited(
             showSendToPhone(context, File(_session.filePath!), _session.title),
@@ -2165,6 +2168,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         if (value == 'rotate') unawaited(_rotate());
       },
       itemBuilder: (_) => [
+        if (_session.filePath != null && !_session.isVault && ShareSession.active)
+          PopupMenuItem(value: 'session', child: Text('Send to ${ShareSession.peer.value!.name}')),
         if (_session.filePath != null && !_session.isVault) ...const [
           PopupMenuItem(value: 'send', child: Text('Send to another device')),
           PopupMenuItem(value: 'open', child: Text('Open in another app')),
@@ -2459,8 +2464,14 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                   );
                 if (v == 'tv') unawaited(_playOnTv());
                 if (v == 'open') unawaited(_openExternal());
+                if (v == 'session') sendToSessionPeer(context, File(_session.filePath!));
               },
               itemBuilder: (_) => [
+                if (_session.filePath != null && !_session.isVault && ShareSession.active)
+                  PopupMenuItem(
+                    value: 'session',
+                    child: Text('Send to ${ShareSession.peer.value!.name}'),
+                  ),
                 if (!_session.isVault &&
                     !DesktopSupport.isWindows)
                   const PopupMenuItem(

@@ -1,3 +1,4 @@
+import 'package:social_save/features/library/session_ui.dart';
 import 'package:social_save/web/web_pages.dart';
 import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
 import 'package:social_save/core/platform/plat.dart';
@@ -44,6 +45,7 @@ class SocialSaveApp extends ConsumerWidget {
             const GlassBackground(),
             if (child != null) Positioned.fill(child: _desktopKeys(child)),
             if (!kIsWeb) const NearbyIncomingCard(),
+            if (!kIsWeb) const SessionPill(),
           ],
         );
         return kIsWeb ? _WebPhoneFrame(child: app) : app;

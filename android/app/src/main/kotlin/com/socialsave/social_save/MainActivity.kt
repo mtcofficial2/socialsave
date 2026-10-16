@@ -24,6 +24,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
@@ -269,11 +270,48 @@ class MainActivity : FlutterFragmentActivity() {
 
     private var hotspotShare: HotspotShare? = null
 
+    companion object {
+        private const val ENGINE_ID = "socialsave_main"
+
+        /** Ends the engine that outlived its activity (session over, app closed). */
+        fun destroyDetachedEngine() {
+            if (SessionBridge.activityAlive || SessionBridge.active) return
+            val engine = FlutterEngineCache.getInstance().get(ENGINE_ID) ?: return
+            FlutterEngineCache.getInstance().remove(ENGINE_ID)
+            HotspotShare.disposeAll()
+            SessionBridge.detach()
+            try {
+                engine.destroy()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /**
+     * The app's Flutter engine is owned here (not by the activity's fragment)
+     * so a connected share session keeps running after the activity is
+     * closed (Back on the home screen, swiped from Recents). Without a
+     * session it is destroyed with the activity exactly as before.
+     */
+    override fun provideFlutterEngine(context: android.content.Context): FlutterEngine? {
+        FlutterEngineCache.getInstance().get(ENGINE_ID)?.let { return it }
+        val engine = FlutterEngine(context.applicationContext)
+        FlutterEngineCache.getInstance().put(ENGINE_ID, engine)
+        return engine
+    }
+
+    /** Back on the first screen while connected: go to the background instead of closing. */
+    override fun finish() {
+        if (SessionBridge.active && isTaskRoot && moveTaskToBack(true)) return
+        super.finish()
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         phoneBody?.stop()
-        hotspotShare?.dispose()
-        hotspotShare = HotspotShare(this, flutterEngine.dartExecutor.binaryMessenger)
+        hotspotShare = HotspotShare.attach(this, flutterEngine.dartExecutor.binaryMessenger)
+        SessionBridge.attach(this, flutterEngine.dartExecutor.binaryMessenger)
+        SessionBridge.onIdleWithoutActivity = { destroyDetachedEngine() }
         val body = PhoneBody(this)
         phoneBody = body
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, "socialsave/phone").setStreamHandler(body)
@@ -642,22 +680,37 @@ class MainActivity : FlutterFragmentActivity() {
     }
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
+        SessionBridge.activities++
         super.onCreate(savedInstanceState)
         captureShare(intent)
         captureOpenedVideo(intent)
+        captureOpenSession(intent)
     }
 
     override fun onDestroy() {
-        hotspotShare?.dispose()
+        SessionBridge.activities = maxOf(0, SessionBridge.activities - 1)
         hotspotShare = null
         phoneBody?.stop()
         phoneBody = null
         super.onDestroy()
+        if (!SessionBridge.active) {
+            // No session: tear everything down like before.
+            destroyDetachedEngine()
+        }
+    }
+
+    /** Tapped the "Connected to …" notification: show the session screen. */
+    private fun captureOpenSession(intent: Intent?) {
+        if (intent?.getBooleanExtra(SessionKeepAliveService.EXTRA_OPEN_SESSION, false) != true) return
+        intent.removeExtra(SessionKeepAliveService.EXTRA_OPEN_SESSION)
+        SessionBridge.pendingOpen = true
+        SessionBridge.sendToDart("open")
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        captureOpenSession(intent)
         captureShare(intent)
         channel?.invokeMethod("sharedText", pendingShare)
         captureOpenedVideo(intent)

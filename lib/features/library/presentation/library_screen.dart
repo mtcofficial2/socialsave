@@ -18,6 +18,8 @@ import 'package:social_save/features/library/device_media.dart';
 import 'package:social_save/features/library/library_catalog.dart';
 import 'package:social_save/features/library/nearby_ui.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
+import 'package:social_save/features/library/session_ui.dart';
+import 'package:social_save/features/library/share_session.dart';
 import 'package:social_save/features/library/presentation/library_look.dart';
 import 'package:social_save/features/library/summarize_sheet.dart';
 import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
@@ -1398,6 +1400,15 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
             onPressed: () => Navigator.pop(context, 'delete'),
           ),
         ),
+        if (ShareSession.active)
+          ListTile(
+            key: const ValueKey('menu-session-send'),
+            leading: Icon(Icons.send_rounded, color: Theme.of(context).colorScheme.primary),
+            title: Text('Send to ${ShareSession.peer.value!.name}',
+                style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.w700)),
+            subtitle: const Text('Connected · goes straight there'),
+            onTap: () => Navigator.pop(context, 'session'),
+          ),
         ListTile(
           leading: const Icon(Icons.play_arrow_rounded),
           title: const Text('Play'),
@@ -1518,9 +1529,14 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
         action == 'near' ||
         action == 'tv' ||
         action == 'handoff' ||
+        action == 'session' ||
         action == 'sound') {
       final path = await DeviceMediaService().resolvePlayablePath(video);
       if (path == null || !mounted) return;
+      if (action == 'session') {
+        sendToSessionPeer(context, File(path));
+        return;
+      }
       if (action == 'share' || action == 'near') {
         await Share.shareXFiles([XFile(path)], text: video.title);
         return;

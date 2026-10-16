@@ -765,6 +765,19 @@ String _sizeText(int bytes) {
 }
 
 Future<void> showSendToPhone(BuildContext context, File file, String title) async {
+  // Connected to a device: one tap sends it there (other ways stay available).
+  if (ShareSession.active) {
+    final handled = await offerSessionSend(context, file, title);
+    if (handled || !context.mounted) return;
+    if (ShareSession.hostsHotspot) {
+      // The connected phone is on this phone's hotspot: a new code/hotspot
+      // would cut it off, so keep to the session.
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+        content: Text('Connected to ${ShareSession.peer.value?.name ?? 'a phone'} over Fast share. Disconnect first to use another way.'),
+      ));
+      return;
+    }
+  }
   final offer = await PhoneHandoff.offer(file, title: title);
   if (!context.mounted) return;
   final codeCtrl = TextEditingController();
@@ -818,7 +831,7 @@ Future<void> showSendToPhone(BuildContext context, File file, String title) asyn
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(title, maxLines: 2, overflow: TextOverflow.ellipsis),
-                if (HotspotShare.supported) ...[
+                if (HotspotShare.hostSupported) ...[
                   const SizedBox(height: 12),
                   FilledButton.tonalIcon(
                     key: const ValueKey('hotspot-send'),
@@ -827,7 +840,12 @@ Future<void> showSendToPhone(BuildContext context, File file, String title) asyn
                     label: const Text('Fast share (hotspot)'),
                   ),
                   const SizedBox(height: 2),
-                  Text('Phone to phone, no Wi-Fi needed. Fastest.', style: small, textAlign: TextAlign.center),
+                  Text(
+                      DesktopSupport.isWindows
+                          ? 'This PC opens its own Wi-Fi hotspot; the phone scans and joins it. No router needed.'
+                          : 'Phone to phone, no Wi-Fi needed. Fastest.',
+                      style: small,
+                      textAlign: TextAlign.center),
                 ],
                 const SizedBox(height: 12),
                 Text('Nearby devices — tap one to send', style: Theme.of(context).textTheme.titleSmall),
@@ -1588,6 +1606,7 @@ Future<bool> _receiveHandoff(BuildContext context, String raw, {String? mode, bo
       target,
       cancel: cancel,
       onProgress: (r, t) {
+        if (viaHotspot) ShareSession.touch();
         if (!meter.update(r, t)) return;
         progress.value = t > 0 ? r / t : null;
         detail.value = meter.label;

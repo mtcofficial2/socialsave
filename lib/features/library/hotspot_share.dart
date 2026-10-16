@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:social_save/core/platform/plat.dart';
+import 'package:social_save/features/library/pc_hotspot.dart';
 
 /// Xender-style "Fast share": the sending phone opens its own local-only
 /// Wi-Fi hotspot and the receiving phone joins it, so the file goes phone
@@ -24,14 +25,70 @@ class HotspotShare {
   /// loses the link).
   static final ValueNotifier<String?> event = ValueNotifier<String?>(null);
 
+  /// Joining a hotspot from the app (Android phones).
   static bool get supported => !kIsWeb && Plat.isAndroid;
+
+  /// Opening a hotspot to send from: Android phones and Windows PCs
+  /// (Windows Mobile hotspot).
+  static bool get hostSupported => !kIsWeb && (Plat.isAndroid || Plat.isWindows);
+  static bool get _pc => !kIsWeb && Plat.isWindows;
 
   static void _wire() {
     if (_wired) return;
     _wired = true;
     _channel.setMethodCallHandler((call) async {
+      if (call.method == 'lost') joinedLinkUp.value = false;
+      if (call.method == 'available') joinedLinkUp.value = true;
+      if (call.method == 'stopped') hostRunning.value = false;
       event.value = '${call.method}@${DateTime.now().millisecondsSinceEpoch}';
     });
+  }
+
+  /// Last hotspot this phone opened (host) and joined (receiver); used to
+  /// bring a connected session's link back after a drop.
+  static HotspotInfo? lastInfo;
+  static HotspotJoin? lastJoin;
+
+  /// Host: is our hotspot up? Receiver: is the joined link up?
+  static final ValueNotifier<bool> hostRunning = ValueNotifier<bool>(false);
+  static final ValueNotifier<bool> joinedLinkUp = ValueNotifier<bool>(false);
+
+  /// Is the hotspot reservation still alive (asks Android)?
+  static Future<bool> isRunning() async {
+    if (_pc) return PcHotspot.isRunning();
+    if (!supported) return false;
+    try {
+      return (await status())['hotspotRunning'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Opens the hotspot again with the same name and password (Android 13+
+  /// lets us choose them), so the other phone can rejoin by itself.
+  static Future<HotspotInfo?> reopen() async {
+    final last = lastInfo;
+    if (last == null || !supported) return null;
+    try {
+      final info = await start(reuseSsid: last.custom ? last.ssid : null, reusePassword: last.custom ? last.password : null);
+      return info;
+    } catch (e) {
+      debugPrint('[hotspot] reopen failed: $e');
+      return null;
+    }
+  }
+
+  /// Joins the last hotspot again (after the link dropped).
+  static Future<bool> rejoin() async {
+    final j = lastJoin;
+    if (j == null || !supported) return false;
+    try {
+      await join(j.ssid, j.password);
+      return true;
+    } catch (e) {
+      debugPrint('[hotspot] rejoin failed: $e');
+      return false;
+    }
   }
 
   static Future<Map<String, dynamic>> status() async {
@@ -43,6 +100,7 @@ class HotspotShare {
   /// Asks for the needed permission and checks Wi-Fi / Location.
   /// Returns a user-facing message when something blocks Fast share.
   static Future<String?> prepare({required bool sending}) async {
+    if (_pc && sending) return PcHotspot.prepare();
     if (!supported) return 'Fast share works between Android phones.';
     final s = await status();
     final sdk = (s['sdk'] as int?) ?? 0;
@@ -97,10 +155,15 @@ class HotspotShare {
   }
 
   /// Starts the hotspot. Returns ssid / password / ip.
-  static Future<HotspotInfo> start() async {
+  static Future<HotspotInfo> start({String? reuseSsid, String? reusePassword}) async {
+    if (_pc) return _startPc(reuseSsid, reusePassword);
     _wire();
     try {
-      final raw = await _channel.invokeMethod<Map<Object?, Object?>>('start', {'band': await loadBand()});
+      final raw = await _channel.invokeMethod<Map<Object?, Object?>>('start', {
+        'band': await loadBand(),
+        if (reuseSsid != null) 'ssid': reuseSsid,
+        if (reusePassword != null) 'password': reusePassword,
+      });
       final m = (raw ?? const {}).map((k, v) => MapEntry('$k', v));
       var ip = m['ip'] as String?;
       // The interface can take a moment to get its address.
@@ -112,7 +175,7 @@ class HotspotShare {
       if (ssid == null || ssid.isEmpty) {
         throw const HotspotError('The hotspot started but the phone did not share its name.');
       }
-      return HotspotInfo(
+      final info = HotspotInfo(
         ssid: ssid,
         password: (m['password'] as String?) ?? '',
         ip: ip,
@@ -120,13 +183,59 @@ class HotspotShare {
         band: (m['band'] as num?)?.toInt(),
         bandNote: (m['bandNote'] as String?) ?? '',
       );
+      lastInfo = info;
+      hostRunning.value = true;
+      return info;
     } on PlatformException catch (e) {
       throw HotspotError(e.message ?? 'The hotspot could not start.');
     }
   }
 
+  /// Windows Mobile hotspot (see [PcHotspot]).
+  static Future<HotspotInfo> _startPc(String? reuseSsid, String? reusePassword) async {
+    final want = await loadBand();
+    final r = await PcHotspot.start(band: want, ssid: reuseSsid, password: reusePassword);
+    if (r['ok'] != true) {
+      throw HotspotError(PcHotspot.blockMessage(r) ?? '${r['error'] ?? 'Mobile hotspot did not start.'}');
+    }
+    final block = PcHotspot.blockMessage(r);
+    if (block != null) throw HotspotError(block);
+    final ip = await PcHotspot.address();
+    final band = switch ('${r['band']}') {
+      'FiveGigahertz' => 2,
+      'TwoPointFourGigahertz' => 1,
+      'SixGigahertz' => 4,
+      'Auto' => 3,
+      _ => null,
+    };
+    final notes = <String>[
+      if ('${r['note'] ?? ''}'.isNotEmpty) '${r['note']}',
+      if (r['reused'] == true) 'Using your Mobile hotspot that was already on (it stays on afterwards).',
+      if (want == '5' && band != 2 && '${r['note'] ?? ''}'.isEmpty && r['has5'] != true) 'This PC\'s Wi-Fi can\'t host on 5 GHz.',
+    ];
+    final info = HotspotInfo(
+      ssid: '${r['ssid']}',
+      password: '${r['password'] ?? ''}',
+      ip: ip,
+      custom: r['custom'] == true,
+      band: band,
+      bandNote: notes.join(' '),
+    );
+    if (info.ssid.isEmpty || info.ssid == 'null') throw const HotspotError('Mobile hotspot started but Windows did not share its name.');
+    lastInfo = info;
+    hostRunning.value = true;
+    return info;
+  }
+
   static Future<void> stop() async {
+    if (_pc) {
+      if (!hostRunning.value && lastInfo == null) return;
+      hostRunning.value = false;
+      await PcHotspot.stop();
+      return;
+    }
     if (!supported) return;
+    hostRunning.value = false;
     try {
       await _channel.invokeMethod<void>('stop');
     } catch (_) {}
@@ -137,6 +246,8 @@ class HotspotShare {
     _wire();
     try {
       await _channel.invokeMethod<Object?>('join', {'ssid': ssid, 'password': password});
+      lastJoin = HotspotJoin(ssid: ssid, password: password);
+      joinedLinkUp.value = true;
     } on PlatformException catch (e) {
       throw HotspotError(e.message ?? 'Could not join $ssid.');
     }
@@ -144,6 +255,7 @@ class HotspotShare {
 
   static Future<void> leave() async {
     if (!supported) return;
+    joinedLinkUp.value = false;
     try {
       await _channel.invokeMethod<void>('leave');
     } catch (_) {}
@@ -279,8 +391,11 @@ class HotspotBandTile extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(left: 40),
             child: Text(
-              '5 GHz is fastest (both phones must support it). 2.4 GHz works everywhere. '
-              'Android 13+ only; older phones use their default.',
+              Plat.isWindows
+                  ? '5 GHz is fastest if this PC\'s Wi-Fi and the phone support it. 2.4 GHz works everywhere. '
+                      'Windows may stay on the band your Wi-Fi is using.'
+                  : '5 GHz is fastest (both phones must support it). 2.4 GHz works everywhere. '
+                      'Android 13+ only; older phones use their default.',
               style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
             ),
           ),

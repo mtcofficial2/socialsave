@@ -4,6 +4,10 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show WidgetsBinding, AppLifecycleState;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:social_save/core/platform/plat.dart';
+import 'package:social_save/features/library/session_keepalive.dart';
 import 'package:path/path.dart' as p;
 import 'package:social_save/features/library/hotspot_share.dart';
 import 'package:social_save/features/library/nearby_service.dart';
@@ -59,36 +63,85 @@ class SessionItem {
   double speed = 0;
   final DateTime at = DateTime.now();
 
+  /// Automatic retries after a connection drop (the user can retry more).
+  int autoRetries = 0;
+
+  /// Received into the phone's gallery (videos and photos on Android).
+  bool get inGallery => !outgoing && state == SessionItemState.done && file != null && Plat.isAndroid && _galleryName(file!.path);
+
   double? get fraction => size > 0 ? (done / size).clamp(0.0, 1.0) : null;
   bool get active => state == SessionItemState.sending || state == SessionItemState.receiving;
+}
+
+bool _galleryName(String path) {
+  final e = p.extension(path).toLowerCase();
+  return const {'.mp4', '.mkv', '.webm', '.mov', '.3gp', '.avi', '.m4v', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic'}.contains(e);
+}
+
+/// A file that arrived in an earlier (or this) session; kept across launches.
+class ReceivedRecord {
+  ReceivedRecord({required this.name, required this.path, required this.size, required this.at, required this.from});
+  final String name;
+  final String path;
+  final int size;
+  final DateTime at;
+  final String from;
+
+  bool get exists => FileSystemEntity.typeSync(path) != FileSystemEntityType.notFound;
+  bool get inGallery => Plat.isAndroid && _galleryName(path);
+
+  Map<String, dynamic> toJson() => {'n': name, 'p': path, 's': size, 'a': at.millisecondsSinceEpoch, 'f': from};
+  static ReceivedRecord? fromJson(Object? j) {
+    if (j is! Map) return null;
+    return ReceivedRecord(
+      name: '${j['n'] ?? ''}',
+      path: '${j['p'] ?? ''}',
+      size: (j['s'] as num?)?.toInt() ?? 0,
+      at: DateTime.fromMillisecondsSinceEpoch((j['a'] as num?)?.toInt() ?? 0),
+      from: '${j['f'] ?? ''}',
+    );
+  }
 }
 
 /// Xender-style connection between two SocialSave apps.
 ///
 /// After one pairing (hotspot QR, or "Connect" on a nearby device) both apps
 /// keep each other as the session peer: either side can send files at any
-/// time, the other side accepts them automatically, and a heartbeat notices
-/// when the other device goes away. Files still travel over the normal
-/// nearby inbox (`/ask` + `/upload`), so nothing about saving changes.
+/// time, the other side accepts them automatically, and a heartbeat watches
+/// the link. Files still travel over the normal nearby inbox (`/ask` +
+/// `/upload`), so nothing about saving changes.
+///
+/// 1.0.33: the session lives here (app level), never in a screen. It ends
+/// only when someone presses Disconnect (in the app, on either device, or in
+/// the notification). A dropped link shows "Reconnecting…" and is brought
+/// back automatically (hotspot re-joined / re-opened, new address picked up);
+/// only after [giveUpAfter] without any contact does it end by itself.
 ///
 /// Wire protocol (on the nearby inbox port):
-/// * `POST /session/open`  {id, name, kind, port, pair?} -> {ok, token, id, name, kind}
-/// * `POST /session/ping`  {token} -> 200 while the session lives, 410 after
+/// * `POST /session/open`  {id, name, kind, port, pair?, resume?} -> {ok, token, id, name, kind}
+/// * `POST /session/ping`  {token, port} -> 200 while the session lives, 410 after
 /// * `POST /session/close` {token}
 class ShareSession {
   ShareSession._();
 
   static final ValueNotifier<SessionPeer?> peer = ValueNotifier<SessionPeer?>(null);
 
-  /// 'connected', 'reconnecting' or 'closed'.
+  /// 'connecting', 'connected', 'reconnecting' or 'closed'.
   static final ValueNotifier<String> state = ValueNotifier<String>('closed');
 
   /// Why the last session ended (shown on the session screen).
   static String endReason = '';
 
+  /// The device of the last session (for "Reconnect").
+  static SessionPeer? lastPeer;
+  static bool _lastWasHotspotHost = false;
+
   /// Bumped whenever [items] change.
   static final ValueNotifier<int> revision = ValueNotifier<int>(0);
   static final List<SessionItem> items = [];
+
+  /// Files received in any session (newest first), kept across launches.
+  static final ValueNotifier<List<ReceivedRecord>> history = ValueNotifier<List<ReceivedRecord>>(const []);
 
   /// Asks the user whether [name] may connect. Set by the UI.
   static Future<bool> Function(String name, String kind)? onRequest;
@@ -100,16 +153,34 @@ class ShareSession {
   static int suppressAutoOpen = 0;
 
   /// True while the session screen is visible.
-  static bool screenOpen = false;
+  static final ValueNotifier<bool> screenVisible = ValueNotifier<bool>(false);
+  static bool get screenOpen => screenVisible.value;
+  static set screenOpen(bool v) => screenVisible.value = v;
+
+  /// No contact at all for this long ends the session (after trying to
+  /// reconnect the whole time).
+  static Duration giveUpAfter = const Duration(minutes: 10);
+
+  /// "Reconnecting…" shows after this long without contact.
+  static Duration quietAfter = const Duration(seconds: 12);
+
+  /// Test hooks turn this off so test runs never touch the saved session
+  /// or the received history.
+  static bool persist = true;
 
   static String? _token;
   static String? _pairToken;
   static bool hostsHotspot = false;
   static bool joinedHotspot = false;
   static Timer? _beat;
-  static int _misses = 0;
+  static bool _pinging = false;
+  static DateTime _lastHeard = DateTime.now();
+  static DateTime _lastTouch = DateTime.fromMillisecondsSinceEpoch(0);
+  static DateTime _lastRecover = DateTime.fromMillisecondsSinceEpoch(0);
+  static Duration _giveUp = const Duration(minutes: 10);
   static bool _pumping = false;
   static bool _installed = false;
+  static final Map<String, DateTime> _closedIds = {};
 
   static bool get active => peer.value != null;
 
@@ -119,9 +190,17 @@ class ShareSession {
     NearbyService.autoAccept = (fromId) => peer.value != null && peer.value!.id == fromId;
     NearbyService.extraRoute = _route;
     NearbyService.incoming.addListener(_onIncoming);
+    SessionKeepAlive.onDisconnect = disconnect;
+    SessionKeepAlive.wire();
+    HotspotShare.event.addListener(_onHotspotEvent);
+    unawaited(_loadHistory());
+    unawaited(_restore());
   }
 
-  static void _changed() => revision.value++;
+  static void _changed() {
+    revision.value++;
+    _updateNotification();
+  }
 
   static String _newToken() {
     final r = Random.secure();
@@ -131,6 +210,16 @@ class ShareSession {
   /// A one-time token for a QR pairing: whoever brings it back connects
   /// without a prompt.
   static String armPairing() => _pairToken = _newToken();
+
+  /// Something is moving on the link (e.g. the first hotspot file being
+  /// downloaded outside the session list): count it as contact.
+  static void touch() {
+    _lastTouch = DateTime.now();
+    _heard();
+  }
+
+  static bool get transferActive =>
+      items.any((i) => i.active) || DateTime.now().difference(_lastTouch) < const Duration(seconds: 10);
 
   // ------------------------------------------------------------ host side
 
@@ -151,19 +240,44 @@ class ShareSession {
         final ok = _token != null && body['token'] == _token;
         res.statusCode = ok ? HttpStatus.ok : HttpStatus.gone;
         res.write(jsonEncode({'ok': ok}));
-        if (ok) _heard();
+        if (ok) {
+          _learnRoute(req, body);
+          _heard();
+        }
       case 'close':
         final ok = _token != null && body['token'] == _token;
         res.write(jsonEncode({'ok': ok}));
         if (ok) {
           final name = peer.value?.name ?? 'The other device';
-          unawaited(Future<void>.delayed(Duration.zero, () => _end('$name disconnected.')));
+          unawaited(Future<void>.delayed(Duration.zero, () => _end('$name disconnected.', explicit: true)));
         }
       default:
         res.statusCode = HttpStatus.notFound;
     }
     await res.close();
     return true;
+  }
+
+  /// A ping tells us where the other device is now (its address can change
+  /// after a Wi-Fi drop, its inbox port after a restart).
+  static void _learnRoute(HttpRequest req, Map<String, dynamic> body) {
+    final pr = peer.value;
+    if (pr == null || pr.link == 'usb') return;
+    final from = req.connectionInfo?.remoteAddress;
+    final port = (body['port'] as num?)?.toInt();
+    var moved = false;
+    if (from != null && !from.isLoopback && from.address != pr.host) {
+      pr.host = from.address;
+      moved = true;
+    }
+    if (port != null && port > 0 && port != pr.port) {
+      pr.port = port;
+      moved = true;
+    }
+    if (moved) {
+      debugPrint('[session] ${pr.name} is now at ${pr.host}:${pr.port}');
+      unawaited(_save());
+    }
   }
 
   static Future<void> _handleOpen(HttpRequest req, Map<String, dynamic> body) async {
@@ -173,6 +287,7 @@ class ShareSession {
     final kind = '${body['kind'] ?? 'phone'}';
     final port = (body['port'] as num?)?.toInt() ?? NearbyService.inboxPort;
     final pair = body['pair'] as String?;
+    final resume = body['resume'] == true;
     if (id.isEmpty) {
       res.statusCode = HttpStatus.badRequest;
       res.write(jsonEncode({'ok': false}));
@@ -185,6 +300,17 @@ class ShareSession {
     }
     var ok = current != null && current.id == id; // reconnect from the same device
     if (!ok && pair != null && pair == _pairToken) ok = true;
+    if (!ok && resume) {
+      // Silent resume after a drop: never after an explicit Disconnect, and
+      // only for devices this one already trusts.
+      final closedAt = _closedIds[id];
+      final recentlyClosed = closedAt != null && DateTime.now().difference(closedAt) < const Duration(minutes: 30);
+      if (!recentlyClosed && await NearbyService.isTrusted(id)) ok = true;
+      if (!ok) {
+        res.write(jsonEncode({'ok': false, 'closed': recentlyClosed}));
+        return;
+      }
+    }
     if (!ok && await NearbyService.isTrusted(id)) ok = true;
     if (!ok) {
       final ask = onRequest;
@@ -199,7 +325,7 @@ class ShareSession {
     final from = req.connectionInfo?.remoteAddress;
     String? host;
     var toPort = port;
-    var link = pair != null && pair == _pairToken && hostsHotspotPending ? 'hotspot' : 'wifi';
+    var link = (pair != null && pair == _pairToken && hostsHotspotPending) || (current?.link == 'hotspot') ? 'hotspot' : 'wifi';
     final known = NearbyService.devices.value.where((d) => d.id == id).toList()
       ..sort((a, b) => b.rank.compareTo(a.rank));
     if (from != null && from.isLoopback) {
@@ -225,6 +351,7 @@ class ShareSession {
     }
     if (link == 'hotspot') hostsHotspot = true;
     _pairToken = null;
+    _closedIds.remove(id);
     final token = current != null ? _token! : _newToken();
     _start(SessionPeer(id: id, name: name, kind: kind, host: host, port: toPort, link: link), token);
     res.write(jsonEncode({
@@ -248,7 +375,10 @@ class ShareSession {
     required int port,
     String? pair,
     String link = 'wifi',
+    bool resume = false,
   }) async {
+    final wasClosed = peer.value == null;
+    if (wasClosed) state.value = 'connecting';
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
     try {
       final req = await client.postUrl(Uri.http('$host:$port', '/session/open'));
@@ -259,6 +389,7 @@ class ShareSession {
         'kind': NearbyService.kind,
         'port': NearbyService.inboxBoundPort,
         if (pair != null) 'pair': pair,
+        if (resume) 'resume': true,
       }));
       final res = await req.close().timeout(const Duration(seconds: 75));
       final text = await utf8.decoder.bind(res).join();
@@ -268,6 +399,7 @@ class ShareSession {
       final j = jsonDecode(text) as Map<String, dynamic>;
       if (j['ok'] != true) {
         if (j['busy'] == true) return 'The other device is already connected to ${j['with'] ?? 'another device'}.';
+        if (j['closed'] == true) return 'The other device disconnected.';
         return 'The other device did not accept the connection.';
       }
       _start(
@@ -288,61 +420,173 @@ class ShareSession {
       return 'Could not reach the other device.';
     } finally {
       client.close(force: true);
+      if (wasClosed && peer.value == null && state.value == 'connecting') state.value = 'closed';
     }
+  }
+
+  /// "Reconnect" after the session ended: same device, same way if possible.
+  /// Returns null on success, otherwise a short reason.
+  static Future<String?> reconnect() async {
+    final last = lastPeer;
+    if (last == null) return 'Nothing to reconnect to.';
+    if (peer.value != null) return null;
+    if (last.link == 'hotspot') {
+      if (_lastWasHotspotHost) return 'Start Fast share again and let ${last.name} scan the new code.';
+      state.value = 'connecting';
+      if (!await HotspotShare.rejoin()) {
+        state.value = 'closed';
+        return 'Could not join ${last.name}\'s hotspot again. Scan its code again.';
+      }
+      joinedHotspot = true;
+      String? err;
+      for (var i = 0; i < 4; i++) {
+        err = await connect(host: last.host, port: last.port, link: 'hotspot', resume: true);
+        if (err == null || err.contains('disconnected') || err.contains('accept')) break;
+        await Future<void>.delayed(const Duration(seconds: 1));
+      }
+      if (err != null) {
+        joinedHotspot = false;
+        await HotspotShare.leave();
+      }
+      return err;
+    }
+    // Wi-Fi / cable: use the newest address we heard for that device.
+    final seen = NearbyService.devices.value.where((d) => d.id == last.id).toList()..sort((a, b) => b.rank.compareTo(a.rank));
+    if (seen.isNotEmpty) return connect(host: seen.first.host, port: seen.first.port, link: seen.first.link);
+    return connect(host: last.host, port: last.port, link: last.link);
   }
 
   // ------------------------------------------------------------- session
 
-  static void _start(SessionPeer p, String token) {
+  static void _start(SessionPeer p, String token, {bool restored = false}) {
     final fresh = peer.value == null;
     _token = token;
     peer.value = p;
-    state.value = 'connected';
+    lastPeer = p;
+    _lastWasHotspotHost = hostsHotspot && p.link == 'hotspot';
+    state.value = restored ? 'reconnecting' : 'connected';
     endReason = '';
-    _misses = 0;
+    _lastHeard = DateTime.now();
+    _giveUp = restored ? const Duration(minutes: 3) : giveUpAfter;
     if (fresh) {
       items.clear();
       _changed();
     }
     _beat?.cancel();
-    _beat = Timer.periodic(const Duration(seconds: 3), (_) => unawaited(_ping()));
-    debugPrint('[session] connected to ${p.name} ${p.host}:${p.port} via ${p.link}');
-    if (fresh && suppressAutoOpen == 0) onOpened?.call();
+    _beat = Timer.periodic(const Duration(seconds: 3), (_) => unawaited(_tick()));
+    debugPrint('[session] ${restored ? 'restored' : 'connected'} ${p.name} ${p.host}:${p.port} via ${p.link}');
+    unawaited(_save());
+    if (fresh) unawaited(SessionKeepAlive.start(_title(), _text()));
+    _updateNotification();
+    if (fresh && !restored && suppressAutoOpen == 0) onOpened?.call();
   }
 
   static void _heard() {
-    _misses = 0;
-    if (state.value == 'reconnecting') state.value = 'connected';
+    _lastHeard = DateTime.now();
+    if (state.value == 'reconnecting' && peer.value != null) {
+      state.value = 'connected';
+      _giveUp = giveUpAfter;
+      debugPrint('[session] link back');
+      _updateNotification();
+      unawaited(_pump());
+    }
   }
 
-  static Future<void> _ping() async {
-    final p = peer.value;
-    final token = _token;
-    if (p == null || token == null) return;
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 4);
+  static Future<void> _tick() async {
+    if (_pinging || peer.value == null) return;
+    _pinging = true;
     try {
-      final req = await client.postUrl(Uri.http('${p.host}:${p.port}', '/session/ping'));
-      req.headers.contentType = ContentType.json;
-      req.write(jsonEncode({'token': token}));
-      final res = await req.close().timeout(const Duration(seconds: 5));
-      await res.drain<void>();
-      if (res.statusCode == HttpStatus.gone) {
+      final r = await _ping();
+      if (peer.value == null) return;
+      if (r == 200) {
+        _heard();
+        return;
+      }
+      if (r == HttpStatus.gone) {
+        // They no longer know this session (restarted, or it ended there).
+        final p = peer.value!;
+        final err = await connect(host: p.host, port: p.port, link: p.link, resume: true);
+        if (err == null) {
+          debugPrint('[session] resumed with ${p.name}');
+          return;
+        }
         await _end('${p.name} ended the connection.');
         return;
       }
-      if (res.statusCode == 200) _heard();
+      // No answer. A busy link (big transfer) can miss beats: that's fine.
+      if (transferActive) return;
+      final quiet = DateTime.now().difference(_lastHeard);
+      if (quiet > quietAfter && state.value == 'connected') {
+        state.value = 'reconnecting';
+        debugPrint('[session] no answer for ${quiet.inSeconds}s: reconnecting');
+        _updateNotification();
+      }
+      if (state.value == 'reconnecting') unawaited(_recover());
+      if (quiet > _giveUp) {
+        await _end('Lost the connection to ${peer.value?.name ?? 'the other device'}. Tap Reconnect to try again.');
+      }
+    } finally {
+      _pinging = false;
+    }
+  }
+
+  /// Returns the HTTP status of a ping, or 0 when nobody answered.
+  static Future<int> _ping() async {
+    final p = peer.value;
+    final token = _token;
+    if (p == null || token == null) return 0;
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+    try {
+      final req = await client.postUrl(Uri.http('${p.host}:${p.port}', '/session/ping'));
+      req.headers.contentType = ContentType.json;
+      req.write(jsonEncode({'token': token, 'port': NearbyService.inboxBoundPort}));
+      final res = await req.close().timeout(const Duration(seconds: 8));
+      await res.drain<void>();
+      return res.statusCode;
     } catch (_) {
-      // A busy link (big transfer) can miss a beat; only give up after ~30 s.
-      if (items.any((i) => i.active)) return;
-      _misses++;
-      if (_misses >= 3 && state.value == 'connected') state.value = 'reconnecting';
-      if (_misses >= 10) await _end('Lost the connection to ${p.name}.');
+      return 0;
     } finally {
       client.close(force: true);
     }
   }
 
-  /// Ends the session on both sides.
+  /// Tries to bring the link back while "Reconnecting…".
+  static Future<void> _recover() async {
+    final p = peer.value;
+    if (p == null) return;
+    final now = DateTime.now();
+    if (now.difference(_lastRecover) < const Duration(seconds: 15)) return;
+    _lastRecover = now;
+    // A new address for the same device (Wi-Fi drop, DHCP)?
+    final seen = NearbyService.devices.value.where((d) => d.id == p.id && d.host != p.host).toList()
+      ..sort((a, b) => b.rank.compareTo(a.rank));
+    if (seen.isNotEmpty && p.link != 'hotspot') {
+      debugPrint('[session] trying ${p.name} at ${seen.first.host}:${seen.first.port}');
+      p.host = seen.first.host;
+      p.port = seen.first.port;
+    }
+    if (joinedHotspot && !HotspotShare.joinedLinkUp.value) {
+      debugPrint('[session] re-joining the hotspot');
+      await HotspotShare.rejoin();
+    }
+    if (hostsHotspot && !await HotspotShare.isRunning()) {
+      debugPrint('[session] re-opening the hotspot');
+      await HotspotShare.reopen();
+    }
+  }
+
+  static void _onHotspotEvent() {
+    final e = HotspotShare.event.value ?? '';
+    if (peer.value == null) return;
+    if (e.startsWith('stopped') && hostsHotspot) {
+      debugPrint('[session] hotspot stopped by the phone; re-opening');
+      _lastRecover = DateTime.fromMillisecondsSinceEpoch(0);
+      unawaited(Future<void>.delayed(const Duration(seconds: 2), _recover));
+    }
+    if (e.startsWith('available') && joinedHotspot) _heard();
+  }
+
+  /// Ends the session on both sides (the Disconnect button / notification).
   static Future<void> disconnect() async {
     final p = peer.value;
     final token = _token;
@@ -358,12 +602,14 @@ class ShareSession {
         client.close(force: true);
       }
     }
-    await _end('Disconnected.');
+    await _end('Disconnected.', explicit: true);
   }
 
-  static Future<void> _end(String reason) async {
+  static Future<void> _end(String reason, {bool explicit = false}) async {
     if (peer.value == null && !hostsHotspot && !joinedHotspot) return;
     debugPrint('[session] ended: $reason');
+    final p = peer.value;
+    if (explicit && p != null) _closedIds[p.id] = DateTime.now();
     _beat?.cancel();
     _beat = null;
     _token = null;
@@ -380,6 +626,8 @@ class ShareSession {
     state.value = 'closed';
     _servedItem = null;
     PhoneHandoff.served.removeListener(_onServed);
+    unawaited(_clearSaved());
+    await SessionKeepAlive.stop();
     if (hostsHotspot) {
       hostsHotspot = false;
       await PhoneHandoff.stop();
@@ -391,16 +639,180 @@ class ShareSession {
     }
   }
 
+  // --------------------------------------------------- notification text
+
+  static int _batchTotal = 0;
+  static int _batchDone = 0;
+
+  /// Status lines for the notification (Android) and the tray tooltip (Windows).
+  static String get statusTitle => _title();
+  static String get statusText => _text();
+
+  static String _title() {
+    final p = peer.value;
+    if (p == null) return 'SocialSave';
+    return state.value == 'reconnecting' ? 'Reconnecting to ${p.name}…' : 'Connected to ${p.name}';
+  }
+
+  static String _speed(double bps) => bps > 0 ? ' · ${(bps / (1024 * 1024)).toStringAsFixed(1)} MB/s' : '';
+
+  static String _text() {
+    final p = peer.value;
+    if (p == null) return '';
+    if (state.value == 'reconnecting') return 'Trying to reach ${p.name}. Keep Wi-Fi on.';
+    final sending = items.where((i) => i.outgoing && i.state == SessionItemState.sending).firstOrNull;
+    final receiving = items.where((i) => !i.outgoing && i.state == SessionItemState.receiving).firstOrNull;
+    final parts = <String>[];
+    if (sending != null) {
+      parts.add('Sending ${min(_batchDone + 1, max(_batchTotal, 1))} of ${max(_batchTotal, 1)}${_speed(sending.speed)}');
+    }
+    if (receiving != null) parts.add('Receiving ${receiving.name}${_speed(receiving.speed)}');
+    if (parts.isEmpty) return '${p.linkLabel} · Tap to send videos and files';
+    return parts.join(' · ');
+  }
+
+  static void _updateNotification() {
+    if (peer.value == null) return;
+    SessionKeepAlive.update(_title(), _text());
+  }
+
+  // -------------------------------------------------------- persistence
+
+  static const _savedKey = 'share_session_live';
+  static const _historyKey = 'share_session_received';
+
+  static Future<void> _save() async {
+    if (!persist) return;
+    final p = peer.value;
+    final token = _token;
+    if (p == null || token == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_savedKey, jsonEncode({
+        'id': p.id,
+        'name': p.name,
+        'kind': p.kind,
+        'host': p.host,
+        'port': p.port,
+        'link': p.link,
+        'token': token,
+        'at': DateTime.now().millisecondsSinceEpoch,
+      }));
+    } catch (_) {}
+  }
+
+  static Future<void> _clearSaved() async {
+    if (!persist) return;
+    try {
+      (await SharedPreferences.getInstance()).remove(_savedKey);
+    } catch (_) {}
+  }
+
+  /// The app was closed while connected (Wi-Fi / cable): pick the session
+  /// up again; the other device still has it while it is reconnecting.
+  static Future<void> _restore() async {
+    if (!persist) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_savedKey);
+      if (raw == null || peer.value != null) return;
+      final j = jsonDecode(raw) as Map<String, dynamic>;
+      final at = DateTime.fromMillisecondsSinceEpoch((j['at'] as num?)?.toInt() ?? 0);
+      final link = '${j['link']}';
+      if (link == 'hotspot' || DateTime.now().difference(at) > const Duration(minutes: 30)) {
+        await prefs.remove(_savedKey);
+        return;
+      }
+      // Wait for the inbox (it answers the other side's pings).
+      for (var i = 0; i < 20 && NearbyService.id.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+      }
+      if (peer.value != null) return;
+      _start(
+        SessionPeer(
+          id: '${j['id']}',
+          name: '${j['name']}',
+          kind: '${j['kind']}',
+          host: '${j['host']}',
+          port: (j['port'] as num?)?.toInt() ?? NearbyService.inboxPort,
+          link: link,
+        ),
+        '${j['token']}',
+        restored: true,
+      );
+    } catch (_) {}
+  }
+
+  static Future<void> _loadHistory() async {
+    if (!persist) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list = (jsonDecode(prefs.getString(_historyKey) ?? '[]') as List).map(ReceivedRecord.fromJson).whereType<ReceivedRecord>().toList();
+      history.value = list;
+    } catch (_) {}
+  }
+
+  static void _remember(ReceivedRecord r) {
+    final list = [r, ...history.value.where((x) => x.path != r.path)];
+    if (list.length > 200) list.removeRange(200, list.length);
+    history.value = list;
+    if (!persist) return;
+    unawaited(() async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_historyKey, jsonEncode([for (final x in list) x.toJson()]));
+      } catch (_) {}
+    }());
+  }
+
+  static Future<void> clearHistory() async {
+    history.value = const [];
+    try {
+      (await SharedPreferences.getInstance()).remove(_historyKey);
+    } catch (_) {}
+  }
+
   // ------------------------------------------------------------ transfers
 
   /// Queues files for the peer; they go one after another.
   static void enqueue(List<File> files) {
+    final idle = !items.any((i) => i.outgoing && (i.state == SessionItemState.queued || i.state == SessionItemState.sending));
+    if (idle) {
+      _batchTotal = 0;
+      _batchDone = 0;
+    }
     for (final f in files) {
       if (!f.existsSync()) continue;
       items.add(SessionItem(outgoing: true, name: p.basename(f.path), size: f.lengthSync(), file: f));
+      _batchTotal++;
     }
     _changed();
     unawaited(_pump());
+  }
+
+  /// Sends a failed item again.
+  static void retry(SessionItem it) {
+    if (!it.outgoing || it.state != SessionItemState.failed || it.file == null || !it.file!.existsSync()) return;
+    final idle = !items.any((i) => i.outgoing && (i.state == SessionItemState.queued || i.state == SessionItemState.sending));
+    if (idle) {
+      _batchTotal = 0;
+      _batchDone = 0;
+    }
+    _batchTotal++;
+    it.state = SessionItemState.queued;
+    it.done = 0;
+    it.speed = 0;
+    it.autoRetries = 0;
+    it.detail = '';
+    _changed();
+    unawaited(_pump());
+  }
+
+  /// Retries every failed outgoing item.
+  static void retryAll() {
+    for (final it in items.where((i) => i.outgoing && i.state == SessionItemState.failed).toList()) {
+      retry(it);
+    }
   }
 
   static void remove(SessionItem it) {
@@ -414,6 +826,10 @@ class ShareSession {
     _pumping = true;
     try {
       while (true) {
+        // Hold the queue while the link is being brought back.
+        for (var w = 0; w < 600 && peer.value != null && state.value == 'reconnecting'; w++) {
+          await Future<void>.delayed(const Duration(seconds: 1));
+        }
         final p = peer.value;
         if (p == null) return;
         final next = items.where((i) => i.outgoing && i.state == SessionItemState.queued).firstOrNull;
@@ -442,11 +858,28 @@ class ShareSession {
           _changed();
           await Future<void>.delayed(const Duration(seconds: 2));
         }
+        next.speed = 0;
         if (error == null) {
           next.state = SessionItemState.done;
           next.done = next.size;
           next.detail = 'Sent · ${meter.doneLabel}';
+          _batchDone++;
           _heard();
+        } else if (peer.value != null && next.autoRetries < 3 && !error.contains('declined') && !error.contains('could not save')) {
+          // The link dropped: wait for it and send this one again.
+          next.autoRetries++;
+          next.state = SessionItemState.queued;
+          next.done = 0;
+          next.detail = 'Waiting for the connection… (retry ${next.autoRetries} of 3)';
+          debugPrint('[session] send failed ($error); retry ${next.autoRetries}');
+          if (state.value == 'connected') {
+            final r = await _ping();
+            if (r != 200 && peer.value != null) {
+              state.value = 'reconnecting';
+              _lastHeard = DateTime.now().subtract(quietAfter);
+            }
+          }
+          await Future<void>.delayed(const Duration(seconds: 2));
         } else {
           next.state = SessionItemState.failed;
           next.detail = error;
@@ -491,6 +924,10 @@ class ShareSession {
       if (saved) {
         it.done = it.size;
         it.detail = 'Received${v.detail.isEmpty ? '' : ' · ${v.detail}'}';
+        final path = (v.dir ?? v.file!).path;
+        _remember(ReceivedRecord(name: v.fileName, path: path, size: v.total, at: DateTime.now(), from: p.name));
+        final fg = WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+        if (!fg) unawaited(SessionKeepAlive.received('Received from ${p.name}', v.fileName));
       } else {
         it.detail = 'Stopped before the end';
       }
@@ -517,6 +954,7 @@ class ShareSession {
   static void _onServed() {
     final it = _servedItem;
     if (it == null) return;
+    _lastTouch = DateTime.now();
     it.done = min(PhoneHandoff.served.value, it.size);
     if (it.done >= it.size && it.size > 0) {
       it.state = SessionItemState.done;

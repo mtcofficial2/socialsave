@@ -2,7 +2,11 @@ import 'dart:io';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/platform/plat.dart';
+import 'package:social_save/features/library/session_keepalive.dart';
+import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
 import 'package:social_save/features/library/bundle_transfer.dart';
 import 'package:social_save/features/library/nearby_service.dart';
 import 'package:social_save/features/library/session_media_picker.dart';
@@ -37,6 +41,144 @@ void installSessionUi() {
     return ok == true;
   };
   ShareSession.onOpened = () => unawaited(openSessionScreen());
+  SessionKeepAlive.onOpen = () => unawaited(openSessionScreen());
+  SessionKeepAlive.wire();
+  SessionPeer? before;
+  ShareSession.peer.addListener(() {
+    final now = ShareSession.peer.value;
+    if (now != null && before == null) unawaited(_afterConnected());
+    before = now;
+  });
+}
+
+const _batteryAskedKey = 'session_battery_asked';
+
+/// First connection on Android: notifications (for the "Connected" and
+/// "File received" notices) and, once, the battery exemption so the link
+/// survives the screen going off.
+Future<void> _afterConnected() async {
+  if (!SessionKeepAlive.supported) return;
+  await Future<void>.delayed(const Duration(milliseconds: 800));
+  try {
+    final st = await Permission.notification.status;
+    if (!st.isGranted && !st.isPermanentlyDenied) await Permission.notification.request();
+  } catch (_) {}
+  if (await SessionKeepAlive.batteryExempt()) return;
+  final prefs = await SharedPreferences.getInstance();
+  if (prefs.getBool(_batteryAskedKey) == true) return;
+  await prefs.setBool(_batteryAskedKey, true);
+  final context = appRouter.routerDelegate.navigatorKey.currentContext;
+  if (context == null || !context.mounted) return;
+  await askBatteryExemption(context);
+}
+
+/// Explains and asks Android to let SocialSave run in the background.
+Future<void> askBatteryExemption(BuildContext context) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      icon: const Icon(Icons.battery_saver_rounded),
+      title: const Text('Stay connected in the background'),
+      content: const Text(
+        'So the connection keeps going when the screen turns off or you switch apps, '
+        'allow SocialSave to run without battery restrictions.\n\n'
+        'It only stays active while you are connected, and stops when you press Disconnect.',
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Not now')),
+        FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Allow')),
+      ],
+    ),
+  );
+  if (ok == true) await SessionKeepAlive.requestBatteryExempt();
+}
+
+/// "Disconnect from X?" — the only way a session ends on purpose.
+Future<void> confirmDisconnect(BuildContext context) async {
+  final p = ShareSession.peer.value;
+  if (p == null) return;
+  final busy = ShareSession.items.where((i) => i.active || i.state == SessionItemState.queued).length;
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      icon: const Icon(Icons.link_off_rounded),
+      title: Text('Disconnect from ${p.name}?'),
+      content: Text(busy > 0
+          ? '$busy transfer${busy == 1 ? ' is' : 's are'} still going and will stop. '
+              'You can connect again any time.'
+          : 'You can connect again any time. Files already received stay saved.'),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Stay connected')),
+        FilledButton(
+          key: const ValueKey('session-disconnect-confirm'),
+          style: FilledButton.styleFrom(
+            backgroundColor: Theme.of(context).colorScheme.error,
+            foregroundColor: Theme.of(context).colorScheme.onError,
+          ),
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('Disconnect'),
+        ),
+      ],
+    ),
+  );
+  if (ok == true) await ShareSession.disconnect();
+}
+
+/// Queues [file] for the connected device and says so.
+void sendToSessionPeer(BuildContext context, File file) {
+  final p = ShareSession.peer.value;
+  if (p == null) return;
+  ShareSession.enqueue([file]);
+  ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+    content: Text('Sending to ${p.name}…'),
+    action: SnackBarAction(label: 'View', onPressed: () => unawaited(openSessionScreen())),
+  ));
+}
+
+/// While connected, "Send to another device" first offers the connected
+/// device. Returns true when the file was queued (or the user cancelled).
+Future<bool> offerSessionSend(BuildContext context, File file, String title) async {
+  final p = ShareSession.peer.value;
+  if (p == null) return false;
+  final choice = await showModalBottomSheet<String>(
+    context: context,
+    showDragHandle: true,
+    builder: (context) {
+      final theme = Theme.of(context);
+      return SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(title, maxLines: 2, overflow: TextOverflow.ellipsis, style: theme.textTheme.titleMedium),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                key: const ValueKey('session-quick-send'),
+                style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(56)),
+                onPressed: () => Navigator.pop(context, 'session'),
+                icon: Icon(p.kind == 'pc' ? Icons.computer_rounded : Icons.smartphone_rounded),
+                label: Text('Send to ${p.name}', overflow: TextOverflow.ellipsis),
+              ),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+                onPressed: () => Navigator.pop(context, 'other'),
+                icon: const Icon(Icons.qr_code_rounded),
+                label: const Text('Other ways (QR, code)'),
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+  if (choice == 'session') {
+    if (context.mounted) sendToSessionPeer(context, file);
+    return true;
+  }
+  return choice != 'other';
 }
 
 /// Shows the "Connected to …" screen (once).
@@ -144,35 +286,123 @@ class SessionBanner extends StatelessWidget {
       builder: (context, peer, _) {
         if (peer == null) return const SizedBox.shrink();
         final scheme = Theme.of(context).colorScheme;
-        return Padding(
-          padding: const EdgeInsets.only(top: 8),
-          child: Material(
-            color: scheme.primaryContainer,
-            borderRadius: BorderRadius.circular(12),
-            child: InkWell(
-              key: const ValueKey('session-banner'),
-              borderRadius: BorderRadius.circular(12),
-              onTap: () => openSessionScreen(context),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                child: Row(
-                  children: [
-                    Icon(Icons.link_rounded, color: scheme.onPrimaryContainer, size: 20),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Connected to ${peer.name} · ${peer.linkLabel}',
-                        style: TextStyle(color: scheme.onPrimaryContainer, fontWeight: FontWeight.w700),
-                        overflow: TextOverflow.ellipsis,
-                      ),
+        return ValueListenableBuilder<String>(
+          valueListenable: ShareSession.state,
+          builder: (context, state, _) {
+            final re = state == 'reconnecting';
+            final bg = re ? scheme.tertiaryContainer : scheme.primaryContainer;
+            final fg = re ? scheme.onTertiaryContainer : scheme.onPrimaryContainer;
+            return Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Material(
+                color: bg,
+                borderRadius: BorderRadius.circular(12),
+                child: InkWell(
+                  key: const ValueKey('session-banner'),
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () => openSessionScreen(context),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    child: Row(
+                      children: [
+                        Icon(re ? Icons.sync_rounded : Icons.link_rounded, color: fg, size: 20),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            re ? 'Reconnecting to ${peer.name}…' : 'Connected to ${peer.name} · ${peer.linkLabel}',
+                            style: TextStyle(color: fg, fontWeight: FontWeight.w700),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Text('Open', style: TextStyle(color: fg)),
+                        Icon(Icons.chevron_right_rounded, color: fg),
+                      ],
                     ),
-                    Text('Open', style: TextStyle(color: scheme.onPrimaryContainer)),
-                    Icon(Icons.chevron_right_rounded, color: scheme.onPrimaryContainer),
-                  ],
+                  ),
                 ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+/// Floating "Connected to X" pill shown over the whole app (Home, Library,
+/// the player…) while a session runs; tap to reopen the session.
+class SessionPill extends StatelessWidget {
+  const SessionPill({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        ShareSession.peer,
+        ShareSession.state,
+        ShareSession.screenVisible,
+        ShareSession.revision,
+        NearbyService.incoming,
+        appRouter.routerDelegate,
+      ]),
+      builder: (context, _) {
+        final peer = ShareSession.peer.value;
+        if (peer == null || ShareSession.screenOpen) return const SizedBox.shrink();
+        // The incoming card is showing (it says the same and more).
+        final inc = NearbyService.incoming.value;
+        if (inc != null && !inc.done) return const SizedBox.shrink();
+        final scheme = Theme.of(context).colorScheme;
+        final mq = MediaQuery.of(context);
+        final re = ShareSession.state.value == 'reconnecting';
+        final busy = ShareSession.items.where((i) => i.active || i.state == SessionItemState.queued).length;
+        final inPlayer = InAppPlayerScreen.openCount > 0;
+        final bg = re ? scheme.tertiaryContainer : scheme.primaryContainer;
+        final fg = re ? scheme.onTertiaryContainer : scheme.onPrimaryContainer;
+        final pill = Material(
+          color: bg.withValues(alpha: 0.96),
+          elevation: 4,
+          shape: const StadiumBorder(),
+          child: InkWell(
+            key: const ValueKey('session-pill'),
+            customBorder: const StadiumBorder(),
+            onTap: () => unawaited(openSessionScreen()),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (re)
+                    SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: fg))
+                  else
+                    Icon(busy > 0 ? Icons.swap_vert_rounded : Icons.link_rounded, size: 18, color: fg),
+                  const SizedBox(width: 8),
+                  ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: mq.size.width * 0.6),
+                    child: Text(
+                      re
+                          ? 'Reconnecting to ${peer.name}…'
+                          : busy > 0
+                              ? '${peer.name} · $busy transfer${busy == 1 ? '' : 's'}'
+                              : 'Connected to ${peer.name}',
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: fg, fontWeight: FontWeight.w700, fontSize: 13),
+                    ),
+                  ),
+                  Icon(Icons.chevron_right_rounded, size: 18, color: fg),
+                ],
               ),
             ),
           ),
+        );
+        if (Plat.isWindows) {
+          return Positioned(right: 16, bottom: 16, child: pill);
+        }
+        return Positioned(
+          left: 0,
+          right: 0,
+          top: inPlayer ? mq.padding.top + 56 : null,
+          bottom: inPlayer ? null : mq.padding.bottom + 92,
+          child: Center(child: pill),
         );
       },
     );
@@ -190,7 +420,20 @@ class SessionScreen extends StatefulWidget {
 class _SessionScreenState extends State<SessionScreen> with SingleTickerProviderStateMixin {
   SessionPeer? _last;
   bool _picking = false;
+  bool _reconnecting = false;
+  bool? _exempt;
   late final TabController _tabs = TabController(length: 2, vsync: this);
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_checkBattery());
+  }
+
+  Future<void> _checkBattery() async {
+    final v = await SessionKeepAlive.batteryExempt();
+    if (mounted) setState(() => _exempt = v);
+  }
 
   @override
   void dispose() {
@@ -228,6 +471,7 @@ class _SessionScreenState extends State<SessionScreen> with SingleTickerProvider
       final bundle = folder ? await pickAnyFolder() : await pickAnyFiles();
       if (bundle == null) return;
       ShareSession.enqueue([for (final it in bundle.items) it.file]);
+      if (mounted) _tabs.animateTo(1);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not open the picker: $e')));
@@ -237,21 +481,81 @@ class _SessionScreenState extends State<SessionScreen> with SingleTickerProvider
     }
   }
 
-  Future<void> _disconnect() async {
-    await ShareSession.disconnect();
+  Future<void> _reconnect() async {
+    if (_reconnecting) return;
+    setState(() => _reconnecting = true);
+    final err = await ShareSession.reconnect();
+    if (!mounted) return;
+    setState(() => _reconnecting = false);
+    if (err != null) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+  }
+
+  void _openPath(String path, String name) {
+    if (FileSystemEntity.isDirectorySync(path)) {
+      unawaited(openWithSystem(path));
+    } else if (isVideoName(path)) {
+      unawaited(appRouter.push(
+        '/player',
+        extra: PlayerSession(title: name, platform: SocialPlatform.direct, filePath: path),
+      ));
+    } else {
+      unawaited(openWithSystem(path));
+    }
   }
 
   void _open(SessionItem it) {
     final f = it.file;
     if (f == null) return;
-    if (isVideoName(f.path)) {
-      unawaited(appRouter.push(
-        '/player',
-        extra: PlayerSession(title: it.name, platform: SocialPlatform.direct, filePath: f.path),
-      ));
-    } else {
-      unawaited(openWithSystem(f.path));
+    _openPath(f.path, it.name);
+  }
+
+  Widget _stateBanner(BuildContext context, SessionPeer? peer, String state) {
+    final scheme = Theme.of(context).colorScheme;
+    if (peer == null && state == 'connecting') {
+      return _Banner(
+        color: scheme.secondaryContainer,
+        onColor: scheme.onSecondaryContainer,
+        icon: Icons.link_rounded,
+        busy: true,
+        text: 'Connecting…',
+      );
     }
+    if (peer == null) {
+      final last = ShareSession.lastPeer ?? _last;
+      final canReconnect = last != null;
+      return _Banner(
+        color: scheme.errorContainer,
+        onColor: scheme.onErrorContainer,
+        icon: Icons.link_off_rounded,
+        text: ShareSession.endReason.isEmpty ? 'Disconnected.' : ShareSession.endReason,
+        action: canReconnect
+            ? FilledButton.tonalIcon(
+                key: const ValueKey('session-reconnect'),
+                onPressed: _reconnecting ? null : _reconnect,
+                icon: _reconnecting
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.refresh_rounded),
+                label: const Text('Reconnect'),
+              )
+            : null,
+      );
+    }
+    if (state == 'reconnecting') {
+      return _Banner(
+        color: scheme.tertiaryContainer,
+        onColor: scheme.onTertiaryContainer,
+        icon: Icons.sync_rounded,
+        busy: true,
+        text: 'Reconnecting to ${peer.name}… Transfers continue when it\'s back. '
+            'Keep Wi-Fi on${peer.link == 'hotspot' ? ' and stay near the other phone' : ''}.',
+      );
+    }
+    return _Banner(
+      color: scheme.primaryContainer,
+      onColor: scheme.onPrimaryContainer,
+      icon: Icons.check_circle_rounded,
+      text: 'Connected · you can leave this screen or the app — it stays connected until you press Disconnect.',
+    );
   }
 
   @override
@@ -262,7 +566,7 @@ class _SessionScreenState extends State<SessionScreen> with SingleTickerProvider
       valueListenable: ShareSession.peer,
       builder: (context, peer, _) {
         if (peer != null) _last = peer;
-        final shown = peer ?? _last;
+        final shown = peer ?? _last ?? ShareSession.lastPeer;
         return ValueListenableBuilder<String>(
           valueListenable: ShareSession.state,
           builder: (context, state, _) => Scaffold(
@@ -271,7 +575,11 @@ class _SessionScreenState extends State<SessionScreen> with SingleTickerProvider
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    peer == null ? 'Disconnected' : 'Connected to ${peer.name}',
+                    peer == null
+                        ? (state == 'connecting' ? 'Connecting…' : 'Disconnected')
+                        : state == 'reconnecting'
+                            ? 'Reconnecting to ${peer.name}…'
+                            : 'Connected to ${peer.name}',
                     overflow: TextOverflow.ellipsis,
                   ),
                   if (shown != null)
@@ -305,7 +613,7 @@ class _SessionScreenState extends State<SessionScreen> with SingleTickerProvider
                     child: TextButton.icon(
                       key: const ValueKey('session-disconnect'),
                       style: TextButton.styleFrom(foregroundColor: scheme.error),
-                      onPressed: _disconnect,
+                      onPressed: () => confirmDisconnect(context),
                       icon: const Icon(Icons.link_off_rounded),
                       label: const Text('Disconnect'),
                     ),
@@ -316,19 +624,23 @@ class _SessionScreenState extends State<SessionScreen> with SingleTickerProvider
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (peer == null)
-                    _Banner(
-                      color: scheme.errorContainer,
-                      onColor: scheme.onErrorContainer,
-                      icon: Icons.link_off_rounded,
-                      text: ShareSession.endReason.isEmpty ? 'Disconnected.' : ShareSession.endReason,
-                    )
-                  else if (state == 'reconnecting')
-                    _Banner(
-                      color: scheme.tertiaryContainer,
-                      onColor: scheme.onTertiaryContainer,
-                      icon: Icons.sync_problem_rounded,
-                      text: 'Can\'t reach ${peer.name} right now… keep SocialSave open on both devices.',
+                  _stateBanner(context, peer, state),
+                  if (peer != null && _exempt == false && SessionKeepAlive.supported)
+                    Material(
+                      color: scheme.surfaceContainerHigh,
+                      child: ListTile(
+                        dense: true,
+                        leading: const Icon(Icons.battery_alert_rounded),
+                        title: const Text('Battery saver may pause the connection when the screen is off'),
+                        trailing: TextButton(
+                          onPressed: () async {
+                            await askBatteryExemption(context);
+                            await Future<void>.delayed(const Duration(seconds: 2));
+                            await _checkBattery();
+                          },
+                          child: const Text('Fix'),
+                        ),
+                      ),
                     ),
                   Expanded(
                     child: TabBarView(
@@ -339,79 +651,7 @@ class _SessionScreenState extends State<SessionScreen> with SingleTickerProvider
                           onBrowseFiles: () => _send(folder: false),
                           onSend: _sendPicked,
                         ),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: FilledButton.icon(
-                                    key: const ValueKey('session-send'),
-                                    style: FilledButton.styleFrom(minimumSize: const Size(0, 52)),
-                                    onPressed: peer == null || _picking ? null : () => _send(folder: false),
-                                    icon: const Icon(Icons.send_rounded),
-                                    label: const Text('Browse files'),
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
-                                OutlinedButton.icon(
-                                  key: const ValueKey('session-send-folder'),
-                                  style: OutlinedButton.styleFrom(minimumSize: const Size(0, 52)),
-                                  onPressed: peer == null || _picking ? null : () => _send(folder: true),
-                                  icon: const Icon(Icons.drive_folder_upload_rounded),
-                                  label: const Text('Folder'),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            child: Text(
-                              peer == null
-                                  ? 'Connect again from Nearby share › Connect, or scan a new hotspot QR.'
-                                  : 'Pick media for videos, photos and music, or Browse files for anything else — they queue and go one after another. '
-                                      'Anything ${peer.name} sends appears here and is saved automatically.',
-                              style: theme.textTheme.bodySmall,
-                            ),
-                          ),
-                          const Divider(height: 24),
-                          Expanded(
-                            child: ValueListenableBuilder<int>(
-                              valueListenable: ShareSession.revision,
-                              builder: (context, _, __) {
-                                final list = ShareSession.items.reversed.toList();
-                                if (list.isEmpty) {
-                                  return Center(
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(24),
-                                      child: Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Icon(Icons.swap_vert_rounded, size: 48, color: scheme.outline),
-                                          const SizedBox(height: 8),
-                                          Text('Nothing sent yet', style: theme.textTheme.titleMedium),
-                                        ],
-                                      ),
-                                    ),
-                                  );
-                                }
-                                return ListView.separated(
-                                  padding: const EdgeInsets.fromLTRB(8, 0, 8, 24),
-                                  itemCount: list.length,
-                                  separatorBuilder: (_, __) => const SizedBox(height: 2),
-                                  itemBuilder: (context, i) => _ItemTile(
-                                    item: list[i],
-                                    peerName: shown?.name ?? '',
-                                    onOpen: _open,
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                          ],
-                        ),
+                        _transfersTab(context, peer, shown),
                       ],
                     ),
                   ),
@@ -423,26 +663,147 @@ class _SessionScreenState extends State<SessionScreen> with SingleTickerProvider
       },
     );
   }
+
+  Widget _transfersTab(BuildContext context, SessionPeer? peer, SessionPeer? shown) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  key: const ValueKey('session-send'),
+                  style: FilledButton.styleFrom(minimumSize: const Size(0, 56)),
+                  onPressed: peer == null || _picking ? null : () => _send(folder: false),
+                  icon: const Icon(Icons.send_rounded),
+                  label: const Text('Browse files'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              OutlinedButton.icon(
+                key: const ValueKey('session-send-folder'),
+                style: OutlinedButton.styleFrom(minimumSize: const Size(0, 56)),
+                onPressed: peer == null || _picking ? null : () => _send(folder: true),
+                icon: const Icon(Icons.drive_folder_upload_rounded),
+                label: const Text('Folder'),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListenableBuilder(
+            listenable: Listenable.merge([ShareSession.revision, ShareSession.history]),
+            builder: (context, _) {
+              final list = ShareSession.items.reversed.toList();
+              final failed = list.where((i) => i.outgoing && i.state == SessionItemState.failed).length;
+              final sessionPaths = {for (final i in list) if (i.file != null) i.file!.path};
+              final earlier = ShareSession.history.value.where((r) => !sessionPaths.contains(r.path)).take(50).toList();
+              if (list.isEmpty && earlier.isEmpty) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(32),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.swap_vert_circle_outlined, size: 64, color: scheme.primary),
+                        const SizedBox(height: 12),
+                        Text('Nothing sent yet', style: theme.textTheme.titleLarge),
+                        const SizedBox(height: 6),
+                        Text(
+                          peer == null
+                              ? 'Connect again to send and receive.'
+                              : 'Pick videos in "Pick media" or tap Browse files. '
+                                  'Anything ${peer.name} sends shows up here and is saved automatically.',
+                          textAlign: TextAlign.center,
+                          style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                        ),
+                        if (peer != null) ...[
+                          const SizedBox(height: 16),
+                          FilledButton.tonalIcon(
+                            onPressed: () => _tabs.animateTo(0),
+                            icon: const Icon(Icons.video_library_rounded),
+                            label: const Text('Pick media'),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                );
+              }
+              return ListView(
+                padding: const EdgeInsets.fromLTRB(8, 0, 8, 24),
+                children: [
+                  if (failed > 0 && peer != null)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                      child: OutlinedButton.icon(
+                        key: const ValueKey('session-retry-all'),
+                        onPressed: ShareSession.retryAll,
+                        icon: const Icon(Icons.refresh_rounded),
+                        label: Text('Retry $failed failed'),
+                      ),
+                    ),
+                  for (final it in list) ...[
+                    _ItemTile(
+                      item: it,
+                      peerName: shown?.name ?? '',
+                      canRetry: peer != null,
+                      onOpen: _open,
+                    ),
+                    const SizedBox(height: 2),
+                  ],
+                  if (earlier.isNotEmpty) ...[
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 16, 8, 6),
+                      child: Row(
+                        children: [
+                          Expanded(child: Text('Received earlier', style: theme.textTheme.titleSmall)),
+                          TextButton(onPressed: ShareSession.clearHistory, child: const Text('Clear')),
+                        ],
+                      ),
+                    ),
+                    for (final r in earlier)
+                      _HistoryTile(record: r, onOpen: () => _openPath(r.path, r.name)),
+                  ],
+                ],
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _Banner extends StatelessWidget {
-  const _Banner({required this.color, required this.onColor, required this.icon, required this.text});
+  const _Banner({required this.color, required this.onColor, required this.icon, required this.text, this.busy = false, this.action});
   final Color color;
   final Color onColor;
   final IconData icon;
   final String text;
+  final bool busy;
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
     return Material(
+      key: const ValueKey('session-state-banner'),
       color: color,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         child: Row(
           children: [
-            Icon(icon, color: onColor),
+            if (busy)
+              SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2.4, color: onColor))
+            else
+              Icon(icon, color: onColor),
             const SizedBox(width: 10),
             Expanded(child: Text(text, style: TextStyle(color: onColor))),
+            if (action != null) ...[const SizedBox(width: 8), action!],
           ],
         ),
       ),
@@ -450,10 +811,36 @@ class _Banner extends StatelessWidget {
   }
 }
 
+/// "✓ Saved to Gallery" (Android videos/photos) or the folder it went to.
+Widget _savedChip(BuildContext context, {required bool gallery, required String path}) {
+  final scheme = Theme.of(context).colorScheme;
+  final where = gallery
+      ? 'Saved to Gallery'
+      : Plat.isWindows
+          ? 'Saved to ${File(path).parent.path.split(Platform.pathSeparator).last}'
+          : 'Saved to Received';
+  return Padding(
+    padding: const EdgeInsets.only(top: 4),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.check_circle_rounded, size: 14, color: scheme.primary),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(where,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(color: scheme.primary, fontWeight: FontWeight.w700)),
+        ),
+      ],
+    ),
+  );
+}
+
 class _ItemTile extends StatelessWidget {
-  const _ItemTile({required this.item, required this.peerName, required this.onOpen});
+  const _ItemTile({required this.item, required this.peerName, required this.onOpen, required this.canRetry});
   final SessionItem item;
   final String peerName;
+  final bool canRetry;
   final void Function(SessionItem) onOpen;
 
   @override
@@ -464,7 +851,7 @@ class _ItemTile extends StatelessWidget {
     final failed = it.state == SessionItemState.failed;
     final done = it.state == SessionItemState.done;
     final status = switch (it.state) {
-      SessionItemState.queued => 'Queued',
+      SessionItemState.queued => it.autoRetries > 0 ? 'Waiting' : 'Queued',
       SessionItemState.sending => it.fraction == null ? 'Sending…' : 'Sending… ${(it.fraction! * 100).floor()}%',
       SessionItemState.receiving => it.fraction == null ? 'Receiving…' : 'Receiving… ${(it.fraction! * 100).floor()}%',
       SessionItemState.done => it.outgoing ? 'Sent' : 'Received',
@@ -477,12 +864,12 @@ class _ItemTile extends StatelessWidget {
         child: Row(
           children: [
             CircleAvatar(
-              radius: 18,
-              backgroundColor: failed ? scheme.errorContainer : scheme.secondaryContainer,
+              radius: 20,
+              backgroundColor: failed ? scheme.errorContainer : (done ? scheme.primaryContainer : scheme.secondaryContainer),
               child: Icon(
-                it.outgoing ? Icons.north_east_rounded : Icons.south_west_rounded,
-                size: 18,
-                color: failed ? scheme.onErrorContainer : scheme.onSecondaryContainer,
+                done ? Icons.check_rounded : (it.outgoing ? Icons.north_east_rounded : Icons.south_west_rounded),
+                size: 20,
+                color: failed ? scheme.onErrorContainer : (done ? scheme.onPrimaryContainer : scheme.onSecondaryContainer),
               ),
             ),
             const SizedBox(width: 12),
@@ -504,7 +891,9 @@ class _ItemTile extends StatelessWidget {
                     const SizedBox(height: 6),
                     LinearProgressIndicator(value: it.state == SessionItemState.queued ? 0 : it.fraction),
                   ],
-                  if (it.detail.isNotEmpty && !(done && it.outgoing && it.detail == 'Sent'))
+                  if (done && !it.outgoing && it.file != null)
+                    _savedChip(context, gallery: it.inGallery, path: it.file!.path)
+                  else if (it.detail.isNotEmpty && !(done && it.outgoing && it.detail == 'Sent'))
                     Padding(
                       padding: const EdgeInsets.only(top: 4),
                       child: Text(
@@ -527,11 +916,23 @@ class _ItemTile extends StatelessWidget {
                 ),
               ),
             if (done && !it.outgoing && it.file != null)
-              TextButton(
+              FilledButton.tonal(
                 onPressed: () => onOpen(it),
                 child: Text(isVideoName(it.file!.path) ? 'Play' : 'Open'),
               )
-            else if (it.state == SessionItemState.queued || failed)
+            else if (failed && it.outgoing && canRetry && it.file != null) ...[
+              FilledButton.tonalIcon(
+                key: ValueKey('session-retry-${it.key}'),
+                onPressed: () => ShareSession.retry(it),
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                label: const Text('Retry'),
+              ),
+              IconButton(
+                tooltip: 'Remove',
+                onPressed: () => ShareSession.remove(it),
+                icon: const Icon(Icons.close_rounded),
+              ),
+            ] else if (it.state == SessionItemState.queued || failed)
               IconButton(
                 tooltip: 'Remove',
                 onPressed: () => ShareSession.remove(it),
@@ -544,3 +945,30 @@ class _ItemTile extends StatelessWidget {
   }
 }
 
+class _HistoryTile extends StatelessWidget {
+  const _HistoryTile({required this.record, required this.onOpen});
+  final ReceivedRecord record;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final exists = record.exists;
+    final d = record.at;
+    final when = '${d.day}/${d.month} ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+      leading: Icon(isVideoName(record.path) ? Icons.movie_rounded : Icons.insert_drive_file_rounded),
+      title: Text(record.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(['From ${record.from}', when, if (record.size > 0) formatBytes(record.size)].join(' · '),
+              style: theme.textTheme.bodySmall),
+          if (exists) _savedChip(context, gallery: record.inGallery, path: record.path) else Text('Moved or deleted', style: theme.textTheme.bodySmall),
+        ],
+      ),
+      trailing: exists ? TextButton(onPressed: onOpen, child: Text(isVideoName(record.path) ? 'Play' : 'Open')) : null,
+    );
+  }
+}

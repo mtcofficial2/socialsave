@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:social_save/features/library/desktop_tray.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'dart:io';
 
@@ -130,10 +131,19 @@ Future<void> main(List<String> args) async {
   }
 
   // Session test hooks (no UI, no database):
-  //   --session-host <name> <reply-file>          accept one session, send reply-file back
-  //   --session-join <name> <ip:port> <file>...    connect, queue files, wait for the reply
+  //   --session-host <name> <reply-file>          accept one session, send reply-file back once
+  //   --session-join <name> <ip:port> <file> [<second-file>]
+  //       connect, send <file>, wait for the reply, stay idle 15 s and check
+  //       the session is still alive, then send <second-file> in the same
+  //       session (1.0.33: "a finished transfer never ends the session").
+  //   --session-quiet <s>   (either side) pretend the link is quiet sooner
+  final sq = args.indexOf('--session-quiet');
+  if (sq >= 0 && sq + 1 < args.length) {
+    ShareSession.quietAfter = Duration(seconds: int.parse(args[sq + 1]));
+  }
   final sh = args.indexOf('--session-host');
   if (sh >= 0 && sh + 2 < args.length) {
+    ShareSession.persist = false;
     await NearbyService.start(testId: 'host${args[sh + 1]}', testName: args[sh + 1]);
     ShareSession.install();
     ShareSession.onRequest = (name, kind) async {
@@ -143,12 +153,18 @@ Future<void> main(List<String> args) async {
     var replied = false;
     ShareSession.onOpened = () => print('debug session opened with ${ShareSession.peer.value?.name} '
         '${ShareSession.peer.value?.host}:${ShareSession.peer.value?.port}');
+    var lastLog = '';
     ShareSession.revision.addListener(() {
-      for (final it in ShareSession.items) {
-        print('debug item ${it.outgoing ? 'out' : 'in'} ${it.name} ${it.state.name} ${it.done}/${it.size} ${it.detail}');
+      final log = [
+        for (final it in ShareSession.items)
+          'debug item ${it.outgoing ? 'out' : 'in'} ${it.name} ${it.state.name} ${it.state == SessionItemState.done || it.state == SessionItemState.failed ? '${it.done}/${it.size} ${it.detail}' : ''}',
+      ].join('\n');
+      if (log != lastLog) {
+        lastLog = log;
+        print(log);
       }
       final got = ShareSession.items.where((i) => !i.outgoing && i.state == SessionItemState.done).length;
-      if (got >= 1 && !replied) {
+      if (got >= 1 && !replied && args[sh + 2] != '-') {
         replied = true;
         print('debug host sends reply ${args[sh + 2]}');
         ShareSession.enqueue([File(args[sh + 2])]);
@@ -157,36 +173,69 @@ Future<void> main(List<String> args) async {
     ShareSession.state.addListener(() {
       print('debug session state ${ShareSession.state.value} ${ShareSession.endReason}');
       if (ShareSession.state.value == 'closed') {
+        final got = ShareSession.items.where((i) => !i.outgoing && i.state == SessionItemState.done).length;
+        print('debug host received $got file(s) in one session');
         Future<void>.delayed(const Duration(seconds: 1), () => exit(0));
       }
     });
     print('debug session-host ready port=${NearbyService.inboxBoundPort}');
-    await Future<void>.delayed(const Duration(minutes: 5));
+    await Future<void>.delayed(const Duration(minutes: 10));
     exit(2);
   }
   final sj = args.indexOf('--session-join');
   if (sj >= 0 && sj + 3 < args.length) {
+    ShareSession.persist = false;
     await NearbyService.start(testId: 'join${args[sj + 1]}', testName: args[sj + 1]);
     ShareSession.install();
     final hp = args[sj + 2].split(':');
     final err = await ShareSession.connect(host: hp[0], port: int.parse(hp[1]));
     print('debug session connect ${err ?? 'ok'} peer=${ShareSession.peer.value?.name}');
     if (err != null) exit(1);
-    final files = [for (final f in args.sublist(sj + 3)) if (!f.startsWith('--')) File(f)];
-    ShareSession.enqueue(files);
-    final done = Completer<void>();
+    final files = [for (final f in args.sublist(sj + 3)) if (!f.startsWith('--') && File(f).existsSync()) File(f)];
+    final first = files.first;
+    final second = files.length > 1 ? files[1] : null;
+    ShareSession.state.addListener(() => print('debug session state ${ShareSession.state.value} ${ShareSession.endReason}'));
+    var lastLog = '';
     ShareSession.revision.addListener(() {
-      for (final it in ShareSession.items) {
-        print('debug item ${it.outgoing ? 'out' : 'in'} ${it.name} ${it.state.name} ${it.done}/${it.size} ${it.detail}');
+      final log = [
+        for (final it in ShareSession.items)
+          'debug item ${it.outgoing ? 'out' : 'in'} ${it.name} ${it.state.name} ${it.state == SessionItemState.done || it.state == SessionItemState.failed ? '${it.done}/${it.size} ${it.detail}' : ''}',
+      ].join('\n');
+      if (log != lastLog) {
+        lastLog = log;
+        print(log);
       }
-      final sent = ShareSession.items.where((i) => i.outgoing && i.state == SessionItemState.done).length;
-      final got = ShareSession.items.where((i) => !i.outgoing && i.state == SessionItemState.done).length;
-      if (sent == files.length && got >= 1 && !done.isCompleted) done.complete();
     });
-    await done.future.timeout(const Duration(minutes: 3), onTimeout: () {
-      print('debug session-join timeout');
-      exit(1);
-    });
+    Future<void> waitFor(bool Function() ok, String what, Duration limit) async {
+      final end = DateTime.now().add(limit);
+      while (!ok()) {
+        if (DateTime.now().isAfter(end)) {
+          print('debug session-join timeout waiting for $what');
+          exit(1);
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+      }
+    }
+
+    int sent() => ShareSession.items.where((i) => i.outgoing && i.state == SessionItemState.done).length;
+    int got() => ShareSession.items.where((i) => !i.outgoing && i.state == SessionItemState.done).length;
+    ShareSession.enqueue([first]);
+    await waitFor(() => sent() >= 1 && got() >= 1, 'first send + reply', const Duration(minutes: 4));
+    print('debug phase1 ok: sent 1, received reply');
+    // 1.0.33 regression: the session must survive the end of a transfer.
+    for (var i = 0; i < 15; i++) {
+      await Future<void>.delayed(const Duration(seconds: 1));
+      if (!ShareSession.active) {
+        print('debug FAIL session ended ${i + 1}s after the transfer: ${ShareSession.endReason}');
+        exit(1);
+      }
+    }
+    print('debug alive-after-transfer ok state=${ShareSession.state.value}');
+    if (second != null) {
+      ShareSession.enqueue([second]);
+      await waitFor(() => sent() >= 2, 'second send', const Duration(minutes: 4));
+      print('debug second-send ok (same session)');
+    }
     print('debug all transfers done; disconnecting');
     await ShareSession.disconnect();
     print('debug session-join result=ok ${ShareSession.endReason}');
@@ -278,8 +327,12 @@ Future<void> main(List<String> args) async {
       child: const SocialSaveApp(),
     ),
   );
+  if (args.contains('--session-ui-test') || args.contains('--picker-test')) ShareSession.persist = false;
+  unawaited(DesktopTray.install());
   installNearbyUi();
   if (args.contains('--picker-test')) unawaited(_pickerTest());
+  final su = args.indexOf('--session-ui-test');
+  if (su >= 0 && su + 2 < args.length) unawaited(_sessionUiTest(args[su + 1], args[su + 2]));
   unawaited(NearbyService.start());
   listenForOpenedVideos();
 
@@ -435,5 +488,65 @@ Future<void> _pickerTest() async {
   } catch (e) {
     print('debug picker shot failed $e');
   }
+  exit(0);
+}
+
+
+Future<void> _shot(String name) async {
+  try {
+    final view = RendererBinding.instance.renderViews.first;
+    // ignore: invalid_use_of_protected_member
+    final layer = view.layer! as OffsetLayer;
+    final image = await layer.toImage(Offset.zero & view.flutterView.physicalSize);
+    final data = await image.toByteData(format: ui.ImageByteFormat.png);
+    final file = File('${Directory.systemTemp.path}${Platform.pathSeparator}$name.png');
+    await file.writeAsBytes(data!.buffer.asUint8List());
+    print('debug shot ${file.path}');
+  } catch (e) {
+    print('debug shot failed $e');
+  }
+}
+
+/// `--session-ui-test <ip:port> <file>`: windowed check that leaving the
+/// Connected screen keeps the session: connect, open the screen, go back,
+/// wait, send a file from outside the screen, screenshot the pill, then
+/// disconnect. Prints `debug ui-test result=ok` on success.
+Future<void> _sessionUiTest(String hostPort, String file) async {
+  ShareSession.persist = false;
+  await Future<void>.delayed(const Duration(seconds: 6));
+  final hp = hostPort.split(':');
+  final err = await ShareSession.connect(host: hp[0], port: int.parse(hp[1]));
+  print('debug ui-test connect ${err ?? 'ok'}');
+  if (err != null) exit(1);
+  await Future<void>.delayed(const Duration(seconds: 4));
+  print('debug ui-test screen open=${ShareSession.screenOpen}');
+  await _shot('ss_session_screen');
+  final nav = appRouter.routerDelegate.navigatorKey.currentState;
+  nav?.pop();
+  await Future<void>.delayed(const Duration(seconds: 2));
+  print('debug ui-test left screen open=${ShareSession.screenOpen} active=${ShareSession.active}');
+  for (var i = 0; i < 20; i++) {
+    await Future<void>.delayed(const Duration(seconds: 1));
+    if (!ShareSession.active) {
+      print('debug ui-test FAIL session ended after leaving the screen: ${ShareSession.endReason}');
+      exit(1);
+    }
+  }
+  print('debug ui-test still connected 20s after leaving the screen');
+  ShareSession.enqueue([File(file)]);
+  final end = DateTime.now().add(const Duration(minutes: 3));
+  while (!ShareSession.items.any((i) => i.outgoing && i.state == SessionItemState.done)) {
+    if (DateTime.now().isAfter(end) || ShareSession.items.any((i) => i.state == SessionItemState.failed)) {
+      print('debug ui-test FAIL send from outside the screen');
+      exit(1);
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+  }
+  print('debug ui-test sent from outside the screen ok; active=${ShareSession.active}');
+  await Future<void>.delayed(const Duration(seconds: 3));
+  await _shot('ss_session_pill');
+  await ShareSession.disconnect();
+  print('debug ui-test result=ok');
+  await Future<void>.delayed(const Duration(seconds: 1));
   exit(0);
 }

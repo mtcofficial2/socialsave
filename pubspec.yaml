@@ -1,7 +1,7 @@
 name: social_save
 description: SocialSave - a compliant social media video downloader and manager.
 publish_to: "none"
-version: 1.0.32+38
+version: 1.0.33+39
 
 environment:
   sdk: ^3.12.2
@@ -47,6 +47,8 @@ dependencies:
   win32: ^5.15.0
   ffi: ^2.1.0
   web: ^1.1.1
+  window_manager: ^0.5.2
+  tray_manager: ^0.5.3
 
 dependency_overrides:
   # Windows only: skips the ATL-dependent native notification code (see third_party/).
@@ -66,3 +68,4 @@ flutter:
     - assets/config/
     - assets/brand/
     - assets/platforms/
+    - assets/tray/
