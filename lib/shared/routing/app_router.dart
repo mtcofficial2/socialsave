@@ -26,6 +26,9 @@ bool debugOpenVault = false;
 /// Set by --open-menu: Library opens the first video's menu (screenshots).
 bool debugOpenMenu = false;
 
+/// Set by --dock-first: Library plays the first video docked (tests).
+bool debugDockFirst = false;
+
 final appRouter = GoRouter(
   initialLocation: debugInitialLocation,
   routes: [

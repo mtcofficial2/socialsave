@@ -23,7 +23,7 @@ import 'package:social_save/features/library/summarize_sheet.dart';
 import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
 import 'package:social_save/features/library/vault_service.dart';
 import 'package:social_save/shared/routing/app_router.dart'
-    show debugOpenVault, debugOpenMenu;
+    show debugOpenVault, debugOpenMenu, debugDockFirst;
 import 'package:social_save/shared/widgets/skeleton.dart';
 import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/features/player/player_session.dart';
@@ -194,6 +194,13 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
           debugOpenMenu = false;
           Future<void>.delayed(const Duration(seconds: 2), () {
             if (mounted && _device.isNotEmpty) _deviceActions(_device.first);
+          });
+        }
+        // Test hook (`--dock-first`): play the first video beside the list.
+        if (debugDockFirst && batch.isNotEmpty) {
+          debugDockFirst = false;
+          Future<void>.delayed(const Duration(seconds: 2), () {
+            if (mounted && _device.isNotEmpty) _playDevice(_device.first);
           });
         }
       },

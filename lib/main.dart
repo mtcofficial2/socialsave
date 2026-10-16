@@ -41,7 +41,10 @@ Future<void> main(List<String> args) async {
   }
   // Before the database. A second Open with launch must still be listed,
   // even when another SocialSave already holds the downloads box.
-  if (Plat.isWindows) unawaited(registerWindowsVideoPlayer());
+  // Test copies (--test-data) leave the installed app's Open with entry alone.
+  if (Plat.isWindows && !args.contains('--test-data')) {
+    unawaited(registerWindowsVideoPlayer());
+  }
   // Test hook: a sender with no UI and no database, so it can run next to
   // the normal app on the same PC. `SocialSave.exe --send-only <file>`
   // Nearby test hooks (no UI, no database):
@@ -180,6 +183,7 @@ Future<void> main(List<String> args) async {
   if (op >= 0 && op + 1 < args.length) debugInitialLocation = args[op + 1];
   if (args.contains('--open-vault')) debugOpenVault = true;
   if (args.contains('--open-menu')) debugOpenMenu = true;
+  if (args.contains('--dock-first')) debugDockFirst = true;
   final notifications = NotificationService();
   await notifications.init();
 
@@ -283,6 +287,8 @@ Future<void> main(List<String> args) async {
 
   // `--key-log`: print every key the player handles (keyboard tests).
   if (args.contains('--key-log')) InAppPlayerScreen.keyLog = true;
+  if (args.contains('--seek-bench')) InAppPlayerScreen.seekBench = true;
+  if (args.contains('--fs-ui-test')) InAppPlayerScreen.fsUiTest = true;
 
   // Open with, or `SocialSave.exe --play <file>`, opens that video.
   final opened = openedVideoArgument(args);

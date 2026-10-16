@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'package:social_save/core/platform/plat.dart';
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:flutter/gestures.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/material.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:flutter/services.dart';
@@ -39,16 +41,34 @@ class InAppPlayerScreen extends ConsumerStatefulWidget {
 
   /// Test copies (--test-data) never write resume positions.
   static bool noPersist = false;
+
+  /// `--seek-bench`: time seeks, print the results, quit (tests only).
+  static bool seekBench = false;
+
+  /// `--fs-ui-test`: drive full screen with synthetic mouse and keys, log
+  /// and capture the controls, quit (tests only).
+  static bool fsUiTest = false;
   const InAppPlayerScreen({
     super.key,
     required this.session,
     this.embedded = false,
     this.onClose,
+    this.startAt,
+    this.fullscreenOnly = false,
+    this.autoPlay = true,
   });
 
   final PlayerSession session;
   final bool embedded;
   final VoidCallback? onClose;
+
+  /// Start here instead of the saved resume spot (no "Resumed at" note).
+  final Duration? startAt;
+
+  /// PC: the docked player's full screen. Opens in full screen and leaving
+  /// full screen closes this page, handing the position back.
+  final bool fullscreenOnly;
+  final bool autoPlay;
 
   @override
   ConsumerState<InAppPlayerScreen> createState() => _InAppPlayerScreenState();
@@ -114,6 +134,14 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   Offset? _lastClickPos;
   static const _mkChannel = MethodChannel('com.alexmercerind/media_kit_video');
   late int _queueIndex;
+  // PC seeking: key / button presses that land close together add up to one
+  // seek instead of restarting the decoder on every press.
+  Duration? _pendingSeek;
+  Duration? _trailSeek;
+  Timer? _seekTimer;
+  bool _gpuDecode = false;
+  // Docked player while its full-screen page is open.
+  bool _handoff = false;
 
   PlayerSession get _session {
     if (_queue.isEmpty) return widget.session;
@@ -151,15 +179,24 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     }
     _player = Player(
       configuration: PlayerConfiguration(
-        bufferSize: 64 * 1024 * 1024,
+        // PC: a bigger demuxer buffer keeps recent and upcoming video in RAM,
+        // so short rewinds and skips don't go back to the disk.
+        bufferSize: DesktopSupport.isWindows
+            ? 150 * 1024 * 1024
+            : 64 * 1024 * 1024,
         title: thisPlayerName,
       ),
     );
     _video = VideoController(
       _player,
-      configuration: const VideoControllerConfiguration(
-        // YouTube files are often AV1 or VP9. Hardware decode fails on many phones.
-        enableHardwareAcceleration: false,
+      configuration: VideoControllerConfiguration(
+        // Phones: YouTube files are often AV1 or VP9 and hardware decode
+        // fails on many phones. PC: draw on the GPU (CPU drawing copied every
+        // frame). Decode on the CPU up to 1080p: in tests it landed seeks in
+        // about half the time of the GPU decoder, which also stalled at times;
+        // bigger videos switch to the GPU decoder once their size is known.
+        enableHardwareAcceleration: DesktopSupport.isWindows,
+        hwdec: DesktopSupport.isWindows ? 'no' : null,
       ),
     );
     _subs.add(
@@ -195,6 +232,13 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     _subs.add(
       _player.stream.width.listen((value) {
         if (!mounted || value == null || value <= 0) return;
+        if (DesktopSupport.isWindows && value > 1920 && !_gpuDecode) {
+          _gpuDecode = true;
+          try {
+            final dynamic native = _player.platform;
+            unawaited(native.setProperty('hwdec', 'auto-safe') as Future<void>);
+          } catch (_) {}
+        }
         setState(() => _frameWidth = value);
         _syncPipAspect();
         _nudgeResume();
@@ -240,6 +284,11 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     }
     _open();
     _showChrome();
+    if (widget.fullscreenOnly && DesktopSupport.isWindows) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_setFs(true));
+      });
+    }
   }
 
   void _bindPhone() {
@@ -345,6 +394,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     );
   }
 
+  // PC: pointer is over the top bar or the controls band; keep them up.
+  bool _overControls = false;
+
   void _showChrome() {
     _chromeTimer?.cancel();
     if (mounted && !_chrome) {
@@ -352,10 +404,143 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     } else {
       _chrome = true;
     }
-    _chromeTimer = Timer(const Duration(seconds: 3), () {
+    // PC full screen: 5 s after the last mouse move or key press.
+    final idle = DesktopSupport.isWindows && _fs
+        ? const Duration(seconds: 5)
+        : const Duration(seconds: 3);
+    _chromeTimer = Timer(idle, () {
       if (!mounted || _showEndCard) return;
+      if (_overControls) {
+        _showChrome();
+        return;
+      }
       setState(() => _chrome = false);
+      if (InAppPlayerScreen.keyLog) debugPrint('debug chrome hidden fs=$_fs');
     });
+  }
+
+  int _shotCount = 0;
+
+  Future<void> _runFsUiTest() async {
+    Future<void> wait(int ms) => Future<void>.delayed(Duration(milliseconds: ms));
+    await wait(3000);
+    if (!mounted) return;
+    Future<void> shot(String label) async {
+      debugPrint(
+        'debug ui $label: chrome=$_chrome fs=$_fs over=$_overControls '
+        'cursorHidden=${_fs && !_chrome && !_overControls} pos=${_player.state.position.inSeconds}s',
+      );
+      await _debugShot();
+    }
+
+    if (widget.embedded) {
+      await shot('docked before full screen');
+      await _setFs(true);
+      await wait(1500);
+      await shot('docked after full screen closed (handoff=$_handoff playing=${_player.state.playing})');
+      exit(0);
+    }
+    void hover(Offset at) => GestureBinding.instance.handlePointerEvent(
+      PointerHoverEvent(position: at, kind: PointerDeviceKind.mouse),
+    );
+    void key(LogicalKeyboardKey logical, PhysicalKeyboardKey physical) {
+      _onHardwareKey(
+        KeyDownEvent(
+          physicalKey: physical,
+          logicalKey: logical,
+          timeStamp: Duration.zero,
+        ),
+      );
+    }
+
+    if (!_fs) {
+      await shot('windowed');
+      key(LogicalKeyboardKey.keyF, PhysicalKeyboardKey.keyF);
+      await wait(2500);
+    }
+    if (!mounted) return;
+    final size = MediaQuery.sizeOf(context);
+    final c = size.center(Offset.zero);
+    hover(c);
+    await wait(150);
+    hover(c + const Offset(15, 0));
+    await wait(800);
+    await shot('full screen, mouse moved');
+    await wait(3000);
+    await shot('4 s after the move');
+    await wait(2500);
+    await shot('6.5 s after the move');
+    hover(c + const Offset(-30, 0));
+    await wait(500);
+    await shot('mouse moved again');
+    await wait(5600);
+    await shot('5.6 s idle');
+    final before = _player.state.position.inSeconds;
+    key(LogicalKeyboardKey.arrowRight, PhysicalKeyboardKey.arrowRight);
+    await wait(700);
+    await shot('Right arrow (from ${before}s)');
+    await wait(5600);
+    hover(Offset(c.dx, 24));
+    await wait(7000);
+    await shot('resting on the top bar 7 s');
+    hover(Offset(c.dx, size.height - 30));
+    await wait(7000);
+    await shot('resting on the bottom controls 7 s');
+    hover(c);
+    await wait(5600);
+    await shot('back on the picture 5.6 s');
+    key(LogicalKeyboardKey.escape, PhysicalKeyboardKey.escape);
+    await wait(1500);
+    if (widget.fullscreenOnly) return;
+    await shot('after Esc');
+    exit(0);
+  }
+
+  /// `--key-log` tests: F12 saves the app's own frame (controls included,
+  /// video picture not) to the temp folder and logs the control state.
+  Future<void> _debugShot() async {
+    try {
+      final view = RendererBinding.instance.renderViews.first;
+      // ignore: invalid_use_of_protected_member
+      final layer = view.layer! as OffsetLayer;
+      final size = view.size;
+      // The root layer is in physical pixels.
+      final physical = view.flutterView.physicalSize;
+      final image = await layer.toImage(Offset.zero & physical);
+      final data = await image.toByteData(format: ui.ImageByteFormat.png);
+      final n = ++_shotCount;
+      final file = File(
+        '${Directory.systemTemp.path}${Platform.pathSeparator}ss_shot_$n.png',
+      );
+      await file.writeAsBytes(data!.buffer.asUint8List());
+      debugPrint(
+        'debug shot $n chrome=$_chrome fs=$_fs over=$_overControls size=${size.width.round()}x${size.height.round()} ${file.path}',
+      );
+    } catch (e) {
+      debugPrint('debug shot failed $e');
+    }
+  }
+
+  /// Keeps the controls up while the pointer rests on them.
+  Widget _holdControls(Widget child, [String name = '']) {
+    if (!DesktopSupport.isWindows) return child;
+    return MouseRegion(
+      onEnter: (_) {
+        if (InAppPlayerScreen.keyLog || InAppPlayerScreen.fsUiTest) {
+          debugPrint('debug enter $name');
+        }
+        _overControls = true;
+        _showChrome();
+      },
+      onExit: (_) {
+        if (InAppPlayerScreen.keyLog || InAppPlayerScreen.fsUiTest) {
+          debugPrint('debug exit $name');
+        }
+        _overControls = false;
+        _showChrome();
+      },
+      child: child,
+    );
   }
 
   void _setSleep(int minutes) {
@@ -477,15 +662,20 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       return;
     }
     try {
-      final start = await _savedStart();
-      await _player.open(Media(uri, httpHeaders: headers));
+      if (DesktopSupport.isWindows) await _tuneDesktopPlayer();
+      final startAt = widget.startAt;
+      final start = startAt == null ? await _savedStart() : null;
+      await _player.open(
+        Media(uri, httpHeaders: headers, start: startAt),
+        play: widget.autoPlay,
+      );
       if (Plat.isWeb) {
         // A browser can refuse autoplay (no recent tap); the play button
         // still works, so keep the player open instead of failing.
         try {
           await _player.play();
         } catch (_) {}
-      } else {
+      } else if (widget.autoPlay) {
         await _player.play();
       }
       if (start != null) _armResume(start);
@@ -499,6 +689,10 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         await PipController.setAllowed(true);
       }
       if (mounted) setState(() => _ready = true);
+      if (InAppPlayerScreen.seekBench && !widget.embedded) {
+        unawaited(_runSeekBench());
+      }
+      if (InAppPlayerScreen.fsUiTest) unawaited(_runFsUiTest());
     } catch (error) {
       if (Plat.isWeb) debugPrint('SocialSave web player: $error');
       if (mounted) {
@@ -509,6 +703,28 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         });
       }
     }
+  }
+
+  /// libmpv settings for smooth seeking on PC.
+  Future<void> _tuneDesktopPlayer() async {
+    try {
+      // NativePlayer (libmpv) is not part of the web build; call it loosely.
+      final dynamic native = _player.platform;
+      const props = {
+        'cache': 'yes',
+        'demuxer-max-back-bytes': '${75 * 1024 * 1024}',
+        'demuxer-readahead-secs': '30',
+        // Exact seeks for clicks and keys; the seek bar uses keyframe seeks
+        // while it is dragged.
+        'hr-seek': 'default',
+        // While catching up to an exact seek point, skip drawing the frames
+        // in between instead of showing each one.
+        'hr-seek-framedrop': 'yes',
+      };
+      for (final e in props.entries) {
+        await native.setProperty(e.key, e.value);
+      }
+    } catch (_) {}
   }
 
   Future<Duration?> _savedStart() async {
@@ -653,13 +869,141 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     await prefs.remove(key);
   }
 
-  Future<void> _skip(int seconds) async {
-    final next = _player.state.position + Duration(seconds: seconds);
+  // ---- `--seek-bench` (test only): time from a seek until playback moves.
+  Future<void> _benchSkip(int s) => _skip(s);
+  void _benchKey(int s) => unawaited(_seekKey(s));
+  // Mirrors _DockSeek: keyframe seeks at most every 90 ms, exact on release.
+  DateTime? _benchLast;
+  void _benchDragTick(Duration t) {
+    final now = DateTime.now();
+    if (_benchLast != null &&
+        now.difference(_benchLast!) < const Duration(milliseconds: 90)) {
+      return;
+    }
+    _benchLast = now;
+    final dynamic native = _player.platform;
+    unawaited(
+      native.command([
+        'seek',
+        (t.inMilliseconds / 1000).toStringAsFixed(3),
+        'absolute+keyframes',
+      ]) as Future<void>,
+    );
+  }
+
+  void _benchDragEnd(Duration t) {
+    _benchLast = null;
+    unawaited(_player.seek(t));
+  }
+
+  Future<void> _runSeekBench() async {
+    await Future<void>.delayed(const Duration(seconds: 4));
+    final d = _player.state.duration;
+    try {
+      final dynamic native = _player.platform;
+      debugPrint('debug bench hwdec=${await native.getProperty('hwdec-current')} codec=${await native.getProperty('video-codec')} '
+          'size=${_frameWidth}x$_frameHeight dur=${d.inSeconds}s hr=${await native.getProperty('hr-seek')} '
+          'cache=${await native.getProperty('cache')} dmb=${await native.getProperty('demuxer-max-bytes')} dmbb=${await native.getProperty('demuxer-max-back-bytes')}');
+    } catch (e) {
+      debugPrint('debug bench props $e');
+    }
+    var total = 0;
+    Future<void> measure(String label, Duration Function() target, Future<void> Function() act) async {
+      final sw = Stopwatch()..start();
+      await act();
+      final acted = sw.elapsedMilliseconds;
+      final t = target();
+      Duration? first;
+      final done = Completer<void>();
+      final sub = _player.stream.position.listen((pos) {
+        if ((pos - t).abs() > const Duration(seconds: 6)) return;
+        first ??= pos;
+        if (pos - first! >= const Duration(milliseconds: 150) && !done.isCompleted) done.complete();
+      });
+      try {
+        await done.future.timeout(const Duration(seconds: 15));
+      } catch (_) {}
+      await sub.cancel();
+      final ms = sw.elapsedMilliseconds - acted;
+      total += ms;
+      debugPrint('debug bench $label ${ms}ms (input ${acted}ms) at ${_player.state.position.inMilliseconds / 1000}s');
+      await Future<void>.delayed(const Duration(milliseconds: 1500));
+    }
+    final variants = (Platform.environment['SS_BENCH_HWDEC'] ?? '').split(',')
+      ..removeWhere((v) => v.isEmpty);
+    for (var round = 0; round < (variants.isEmpty ? 2 : variants.length); round++) {
+      if (variants.isNotEmpty) {
+        final dynamic native = _player.platform;
+        await native.setProperty('hwdec', variants[round]);
+        await Future<void>.delayed(const Duration(seconds: 2));
+        debugPrint('debug bench variant hwdec=${variants[round]} now=${await native.getProperty('hwdec-current')}');
+      }
+      await measure('jump50', () => d * 0.5, () async => _player.seek(d * 0.5));
+      var base = _player.state.position;
+      await measure('back10', () => base - const Duration(seconds: 10), () => _benchSkip(-10));
+      base = _player.state.position;
+      await measure('fwd10', () => base + const Duration(seconds: 10), () => _benchSkip(10));
+      base = _player.state.position;
+      await measure('keys+5x3', () => base + const Duration(seconds: 15), () async {
+        for (var i = 0; i < 3; i++) {
+          _benchKey(5);
+          await Future<void>.delayed(const Duration(milliseconds: 80));
+        }
+      });
+      await measure('drag50to20', () => d * 0.2, () async {
+        for (var i = 0; i <= 15; i++) {
+          _benchDragTick(d * (0.5 - 0.02 * i));
+          await Future<void>.delayed(const Duration(milliseconds: 30));
+        }
+        _benchDragEnd(d * 0.2);
+      });
+      await measure('jump80', () => d * 0.8, () async => _player.seek(d * 0.8));
+      await measure('jump15', () => d * 0.15, () async => _player.seek(d * 0.15));
+    }
+    debugPrint('debug bench TOTAL ${total}ms');
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    exit(0);
+  }
+
+  Duration _clampSeek(Duration target) {
     final duration = _player.state.duration;
-    var target = next;
-    if (target < Duration.zero) target = Duration.zero;
-    if (duration > Duration.zero && target > duration) target = duration;
-    await _player.seek(target);
+    if (target < Duration.zero) return Duration.zero;
+    if (duration > Duration.zero && target > duration) return duration;
+    return target;
+  }
+
+  Future<void> _skip(int seconds) async {
+    if (DesktopSupport.isWindows) {
+      // Count from a seek that is still on its way, so three quick presses
+      // of +5 s land 15 s ahead.
+      _queueSeek((_pendingSeek ?? _player.state.position) + Duration(seconds: seconds));
+      return;
+    }
+    final next = _player.state.position + Duration(seconds: seconds);
+    await _player.seek(_clampSeek(next));
+  }
+
+  /// First press seeks at once; presses during the next 150 ms are added up
+  /// and sent as one seek when they stop.
+  void _queueSeek(Duration target) {
+    final t = _clampSeek(target);
+    _pendingSeek = t;
+    if (_seekTimer == null) {
+      unawaited(_player.seek(t));
+    } else {
+      _trailSeek = t;
+      _seekTimer!.cancel();
+    }
+    _seekTimer = Timer(const Duration(milliseconds: 150), () {
+      _seekTimer = null;
+      final trail = _trailSeek;
+      _trailSeek = null;
+      if (trail != null) {
+        unawaited(_player.seek(trail).whenComplete(() => _pendingSeek = null));
+      } else {
+        _pendingSeek = null;
+      }
+    });
   }
 
   Future<void> _setRate(double rate) async {
@@ -911,6 +1255,58 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     );
   }
 
+  Future<void> _openDockedFullscreen() async {
+    if (_handoff || !mounted) return;
+    final wasPlaying = _player.state.playing;
+    final at = _pendingSeek ?? _player.state.position;
+    setState(() => _handoff = true);
+    await _player.pause();
+    if (!mounted) return;
+    final s = widget.session;
+    final session = PlayerSession(
+      title: s.title,
+      platform: s.platform,
+      filePath: s.filePath,
+      networkUrl: s.networkUrl,
+      thumbnailUrl: s.thumbnailUrl,
+      author: s.author,
+      referer: s.referer,
+      httpHeaders: s.httpHeaders,
+      isPreview: s.isPreview,
+      isVault: s.isVault,
+      queue: _queue,
+      queueIndex: _queueIndex,
+    );
+    final back = await Navigator.of(context, rootNavigator: true)
+        .push<_FsHandBack>(
+          PageRouteBuilder<_FsHandBack>(
+            transitionDuration: Duration.zero,
+            reverseTransitionDuration: Duration.zero,
+            pageBuilder: (_, _, _) => InAppPlayerScreen(
+              session: session,
+              startAt: at,
+              fullscreenOnly: true,
+              autoPlay: wasPlaying,
+            ),
+          ),
+        );
+    if (!mounted) return;
+    setState(() => _handoff = false);
+    if (back != null) {
+      if (back.queueIndex != _queueIndex &&
+          back.queueIndex >= 0 &&
+          back.queueIndex < _queue.length) {
+        setState(() => _queueIndex = back.queueIndex - 1);
+        await _playNext();
+      }
+      if (back.rate != _rate) await _setRate(back.rate);
+      await _player.setVolume(back.volume);
+      await _player.seek(back.position);
+      if (back.playing) await _player.play();
+    }
+    _refocus();
+  }
+
   bool get _landscapeVideo => (_frameWidth ?? 16) >= (_frameHeight ?? 9);
 
   Future<void> _toggleFs() => _setFs(!_fs);
@@ -932,9 +1328,26 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   Future<void> _setFs(bool on) async {
     if (on == _fs || !mounted) return;
     if (widget.embedded && DesktopSupport.isWindows) {
-      // Docked beside the Library: use the video's own full-screen page.
-      final state = _videoKey.currentState;
-      if (state != null) await state.toggleFullscreen();
+      // Docked beside the Library: open the full player in full screen (same
+      // controls and buttons), then carry on here where it stopped.
+      if (on) await _openDockedFullscreen();
+      return;
+    }
+    if (!on && widget.fullscreenOnly && DesktopSupport.isWindows) {
+      try {
+        await _mkChannel.invokeMethod<void>('Utils.ExitNativeFullscreen');
+      } catch (_) {}
+      if (!mounted) return;
+      setState(() => _fs = false);
+      Navigator.of(context).pop(
+        _FsHandBack(
+          position: _pendingSeek ?? _player.state.position,
+          playing: _player.state.playing,
+          queueIndex: _queueIndex,
+          rate: _rate,
+          volume: _player.state.volume,
+        ),
+      );
       return;
     }
     setState(() => _fs = on);
@@ -1025,8 +1438,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
             now.difference(last) < const Duration(milliseconds: 350) &&
             (e.position - pos).distance < 24) {
           _lastClick = null;
-          // Docked: media_kit's own double-click already toggles.
-          if (!widget.embedded) unawaited(_toggleFs());
+          unawaited(_toggleFs());
         } else {
           _lastClick = now;
           _lastClickPos = e.position;
@@ -1279,7 +1691,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   /// clicks). Skipped while typing in a text field or when a dialog/menu is
   /// on top of the player.
   bool _onHardwareKey(KeyEvent event) {
-    if (!mounted || event is KeyUpEvent) return false;
+    if (!mounted || event is KeyUpEvent || _handoff) return false;
     // Docked player in media_kit's own full-screen page: that page is a
     // separate route on top, so take every player key while it is open.
     final dockedFs =
@@ -1296,6 +1708,10 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       // Docked beside the Library: only when the player area has focus.
       if (!_keyFocus.hasFocus) return false;
     }
+    if (InAppPlayerScreen.keyLog && event.logicalKey == LogicalKeyboardKey.f12) {
+      unawaited(_debugShot());
+      return true;
+    }
     final keyboard = HardwareKeyboard.instance;
     for (final entry in _keyMap.entries) {
       if (entry.key.accepts(event, keyboard)) {
@@ -1306,6 +1722,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
           );
         }
         entry.value();
+        _showChrome();
         return true;
       }
     }
@@ -1946,6 +2363,182 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     );
   }
 
+  /// PC top bar: back, title, lock, options, send, TV, open elsewhere.
+  Widget _desktopTopBar(bool narrow) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 4, 8, 8),
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: () {
+              if (_fs) {
+                unawaited(_setFs(false));
+              } else if (widget.embedded) {
+                widget.onClose?.call();
+              } else {
+                Navigator.maybePop(context);
+              }
+            },
+            icon: const Icon(
+              Icons.arrow_back_rounded,
+              color: Colors.white,
+            ),
+          ),
+          PlatformLogo(platform: _session.platform, size: 22),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _session.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                  ),
+                ),
+                Text(
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  softWrap: false,
+                  _session.isPreview
+                      ? 'Preview · not saved yet'
+                      : _session.isVault
+                      ? 'Vault · PIN protected'
+                      : DesktopSupport.isWindows
+                      ? '$thisPlayerName · Space play · ←/→ seek · ↑/↓ volume · F full screen'
+                      : '$thisPlayerName · Double-tap sides to skip · pinch to fill',
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 12,
+                    height: 1.2,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Lock screen',
+            onPressed: () => setState(() {
+              _locked = true;
+              _chrome = false;
+              _lockHint = true;
+            }),
+            icon: const Icon(
+              Icons.lock_outline_rounded,
+              color: Colors.white,
+            ),
+          ),
+          IconButton(
+            tooltip: 'Playback options',
+            onPressed: _showTools,
+            icon: const Icon(
+              Icons.tune_rounded,
+              color: Colors.white,
+            ),
+          ),
+          if (narrow)
+            PopupMenuButton<String>(
+              tooltip: 'More',
+              icon: const Icon(
+                Icons.more_vert_rounded,
+                color: Colors.white,
+              ),
+              onSelected: (v) {
+                if (v == 'pip') unawaited(_playOverApps());
+                if (v == 'send')
+                  unawaited(
+                    showSendToPhone(
+                      context,
+                      File(_session.filePath!),
+                      _session.title,
+                    ),
+                  );
+                if (v == 'tv') unawaited(_playOnTv());
+                if (v == 'open') unawaited(_openExternal());
+              },
+              itemBuilder: (_) => [
+                if (!_session.isVault &&
+                    !DesktopSupport.isWindows)
+                  const PopupMenuItem(
+                    value: 'pip',
+                    child: Text('Play over other apps'),
+                  ),
+                if (_session.filePath != null &&
+                    !_session.isVault) ...const [
+                  PopupMenuItem(
+                    value: 'send',
+                    child: Text('Send to another device'),
+                  ),
+                  PopupMenuItem(
+                    value: 'tv',
+                    child: Text('Play on TV'),
+                  ),
+                  PopupMenuItem(
+                    value: 'open',
+                    child: Text('Open in another app'),
+                  ),
+                ],
+              ],
+            ),
+          if (!narrow &&
+              !_session.isVault &&
+              !DesktopSupport.isWindows)
+            IconButton(
+              tooltip: 'Play over other apps',
+              onPressed: _playOverApps,
+              icon: const Icon(
+                Icons.picture_in_picture_alt_rounded,
+                color: Colors.white,
+              ),
+            ),
+          if (!narrow &&
+              _session.filePath != null &&
+              !_session.isVault)
+            IconButton(
+              tooltip: 'Send to another device',
+              onPressed: () => unawaited(
+                showSendToPhone(
+                  context,
+                  File(_session.filePath!),
+                  _session.title,
+                ),
+              ),
+              icon: const Icon(
+                Icons.send_to_mobile_rounded,
+                color: Colors.white,
+              ),
+            ),
+          if (!narrow &&
+              _session.filePath != null &&
+              !_session.isVault)
+            IconButton(
+              tooltip: 'Play on TV',
+              onPressed: () => unawaited(_playOnTv()),
+              icon: const Icon(
+                Icons.tv_rounded,
+                color: Colors.white,
+              ),
+            ),
+          if (!narrow &&
+              _session.filePath != null &&
+              !_session.isVault)
+            IconButton(
+              tooltip: 'Open in another app',
+              onPressed: _openExternal,
+              icon: const Icon(
+                Icons.open_in_new_rounded,
+                color: Colors.white,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   /// Progress bar and buttons in the black band under the picture.
   Widget _controlDock() {
     return ColoredBox(
@@ -2072,12 +2665,15 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     final desktop = MaterialDesktopVideoControlsThemeData(
       playAndPauseOnTap: true,
       // Double-click is ours (real window full screen).
-      toggleFullscreenOnDoublePress: widget.embedded,
+      toggleFullscreenOnDoublePress: false,
       modifyVolumeOnScroll: true,
       hideMouseOnControlsRemoval: true,
-      controlsHoverDuration: const Duration(seconds: 2),
+      // Same idle time as our controls, so the cursor hides with them.
+      controlsHoverDuration: Duration(seconds: _fs ? 5 : 3),
       seekBarPositionColor: AppColors.secondaryContainer,
       seekBarThumbColor: AppColors.secondaryContainer,
+      // A seek that lands quickly shouldn't flash a spinner.
+      bufferingIndicatorBuilder: (_) => const _DelayedSpinner(),
       // The progress bar and buttons sit in the black area under the picture.
       displaySeekBar: false,
       bottomButtonBar: const [],
@@ -2146,6 +2742,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     WidgetsBinding.instance.removeObserver(this);
     _cancelCountdown();
     _chromeTimer?.cancel();
+    _seekTimer?.cancel();
     _osdTimer?.cancel();
     if (DesktopSupport.isWindows) {
       HardwareKeyboard.instance.removeHandler(_onHardwareKey);
@@ -2232,12 +2829,21 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       },
       child: Scaffold(
         backgroundColor: Colors.black,
-        body: Listener(
+        body: MouseRegion(
+          // PC full screen: the cursor hides with the controls.
+          cursor: DesktopSupport.isWindows && _fs && !_chrome && !_overControls
+              ? SystemMouseCursors.none
+              : MouseCursor.defer,
+          child: Listener(
           onPointerDown: _onPointerDown,
           onPointerMove: _onPointerMove,
           onPointerUp: _onPointerUp,
           onPointerCancel: _onPointerUp,
           onPointerSignal: _onPointerSignal,
+          // PC: moving the mouse brings the controls back (also in full screen).
+          onPointerHover: (_) {
+            if (DesktopSupport.isWindows) _showChrome();
+          },
           child: SafeArea(
             top: !_fs,
             bottom: !_fs,
@@ -2254,176 +2860,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                     maintainSize: true,
                     maintainAnimation: true,
                     maintainState: true,
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(4, 4, 8, 8),
-                      child: Row(
-                        children: [
-                          IconButton(
-                            onPressed: () {
-                              if (widget.embedded) {
-                                widget.onClose?.call();
-                              } else {
-                                Navigator.maybePop(context);
-                              }
-                            },
-                            icon: const Icon(
-                              Icons.arrow_back_rounded,
-                              color: Colors.white,
-                            ),
-                          ),
-                          PlatformLogo(platform: _session.platform, size: 22),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  _session.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 15,
-                                  ),
-                                ),
-                                Text(
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  softWrap: false,
-                                  _session.isPreview
-                                      ? 'Preview · not saved yet'
-                                      : _session.isVault
-                                      ? 'Vault · PIN protected'
-                                      : DesktopSupport.isWindows
-                                      ? '$thisPlayerName · Space play · ←/→ seek · ↑/↓ volume · F full screen'
-                                      : '$thisPlayerName · Double-tap sides to skip · pinch to fill',
-                                  style: const TextStyle(
-                                    color: Colors.white70,
-                                    fontSize: 12,
-                                    height: 1.2,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          IconButton(
-                            tooltip: 'Lock screen',
-                            onPressed: () => setState(() {
-                              _locked = true;
-                              _chrome = false;
-                              _lockHint = true;
-                            }),
-                            icon: const Icon(
-                              Icons.lock_outline_rounded,
-                              color: Colors.white,
-                            ),
-                          ),
-                          IconButton(
-                            tooltip: 'Playback options',
-                            onPressed: _showTools,
-                            icon: const Icon(
-                              Icons.tune_rounded,
-                              color: Colors.white,
-                            ),
-                          ),
-                          if (narrow)
-                            PopupMenuButton<String>(
-                              tooltip: 'More',
-                              icon: const Icon(
-                                Icons.more_vert_rounded,
-                                color: Colors.white,
-                              ),
-                              onSelected: (v) {
-                                if (v == 'pip') unawaited(_playOverApps());
-                                if (v == 'send')
-                                  unawaited(
-                                    showSendToPhone(
-                                      context,
-                                      File(_session.filePath!),
-                                      _session.title,
-                                    ),
-                                  );
-                                if (v == 'tv') unawaited(_playOnTv());
-                                if (v == 'open') unawaited(_openExternal());
-                              },
-                              itemBuilder: (_) => [
-                                if (!_session.isVault &&
-                                    !DesktopSupport.isWindows)
-                                  const PopupMenuItem(
-                                    value: 'pip',
-                                    child: Text('Play over other apps'),
-                                  ),
-                                if (_session.filePath != null &&
-                                    !_session.isVault) ...const [
-                                  PopupMenuItem(
-                                    value: 'send',
-                                    child: Text('Send to another device'),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'tv',
-                                    child: Text('Play on TV'),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'open',
-                                    child: Text('Open in another app'),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          if (!narrow &&
-                              !_session.isVault &&
-                              !DesktopSupport.isWindows)
-                            IconButton(
-                              tooltip: 'Play over other apps',
-                              onPressed: _playOverApps,
-                              icon: const Icon(
-                                Icons.picture_in_picture_alt_rounded,
-                                color: Colors.white,
-                              ),
-                            ),
-                          if (!narrow &&
-                              _session.filePath != null &&
-                              !_session.isVault)
-                            IconButton(
-                              tooltip: 'Send to another device',
-                              onPressed: () => unawaited(
-                                showSendToPhone(
-                                  context,
-                                  File(_session.filePath!),
-                                  _session.title,
-                                ),
-                              ),
-                              icon: const Icon(
-                                Icons.send_to_mobile_rounded,
-                                color: Colors.white,
-                              ),
-                            ),
-                          if (!narrow &&
-                              _session.filePath != null &&
-                              !_session.isVault)
-                            IconButton(
-                              tooltip: 'Play on TV',
-                              onPressed: () => unawaited(_playOnTv()),
-                              icon: const Icon(
-                                Icons.tv_rounded,
-                                color: Colors.white,
-                              ),
-                            ),
-                          if (!narrow &&
-                              _session.filePath != null &&
-                              !_session.isVault)
-                            IconButton(
-                              tooltip: 'Open in another app',
-                              onPressed: _openExternal,
-                              icon: const Icon(
-                                Icons.open_in_new_rounded,
-                                color: Colors.white,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
+                    child: _holdControls(_desktopTopBar(narrow), 'top'),
                   ),
                 Expanded(
                   child: Stack(
@@ -2470,10 +2907,35 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                                   ? 1
                                   : 0,
                               duration: const Duration(milliseconds: 180),
-                              child: _controlDock(),
+                              child: _holdControls(_controlDock(), 'dock'),
                             ),
                           ),
                           child: _videoHero(video),
+                        ),
+                      // PC full screen: the same top bar floats over the picture
+                      // and hides with the other controls.
+                      if (!phone && _fs && !_locked && _error == null)
+                        Positioned(
+                          left: 0,
+                          right: 0,
+                          top: 0,
+                          child: IgnorePointer(
+                            ignoring: !_chrome && !_showEndCard,
+                            child: AnimatedOpacity(
+                              opacity: _chrome || _showEndCard ? 1 : 0,
+                              duration: const Duration(milliseconds: 180),
+                              child: DecoratedBox(
+                                decoration: const BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: [Color(0xCC000000), Color(0x00000000)],
+                                  ),
+                                ),
+                                child: _holdControls(_desktopTopBar(narrow), 'top'),
+                              ),
+                            ),
+                          ),
                         ),
                       if (_locked) _lockLayer(phone),
                       _osdLayer(),
@@ -2505,6 +2967,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
               ],
             ),
           ),
+        ),
         ),
       ),
     );
@@ -2615,6 +3078,11 @@ class _DockSeekState extends State<_DockSeek> {
   Duration _buffer = Duration.zero;
   bool _dragging = false;
   double _drag = 0;
+  // Dragging: quick keyframe seeks at most every 90 ms so the picture
+  // follows the thumb, then one exact seek where it is let go.
+  Duration? _scrubTarget;
+  DateTime? _lastScrub;
+  Timer? _scrubTimer;
 
   @override
   void initState() {
@@ -2645,13 +3113,14 @@ class _DockSeekState extends State<_DockSeek> {
 
   @override
   void dispose() {
+    _scrubTimer?.cancel();
     for (final sub in _subs) {
       unawaited(sub.cancel());
     }
     super.dispose();
   }
 
-  void _apply(double dx, double width) {
+  void _apply(double dx, double width, {bool drag = false}) {
     if (width <= 0 || _duration <= Duration.zero) return;
     final fraction = (dx / width).clamp(0.0, 1.0);
     final target = _duration * fraction;
@@ -2660,7 +3129,54 @@ class _DockSeekState extends State<_DockSeek> {
       _drag = fraction;
       _position = target;
     });
-    unawaited(widget.player.seek(target));
+    if (!drag) {
+      unawaited(widget.player.seek(target));
+      return;
+    }
+    _scrubTarget = target;
+    final now = DateTime.now();
+    final since = _lastScrub == null
+        ? const Duration(days: 1)
+        : now.difference(_lastScrub!);
+    const gap = Duration(milliseconds: 90);
+    if (since >= gap) {
+      _scrubTimer?.cancel();
+      _scrubTimer = null;
+      _fastSeek(target);
+    } else {
+      _scrubTimer ??= Timer(gap - since, () {
+        _scrubTimer = null;
+        final t = _scrubTarget;
+        if (t != null && _dragging) _fastSeek(t);
+      });
+    }
+  }
+
+  void _fastSeek(Duration target) {
+    _lastScrub = DateTime.now();
+    try {
+      // NativePlayer (libmpv) is not part of the web build; call it loosely.
+      final dynamic native = widget.player.platform;
+      unawaited(
+        native.command([
+          'seek',
+          (target.inMilliseconds / 1000).toStringAsFixed(3),
+          'absolute+keyframes',
+        ]) as Future<void>,
+      );
+    } catch (_) {
+      unawaited(widget.player.seek(target));
+    }
+  }
+
+  void _endDrag() {
+    _scrubTimer?.cancel();
+    _scrubTimer = null;
+    final t = _scrubTarget;
+    _scrubTarget = null;
+    _lastScrub = null;
+    if (t != null) unawaited(widget.player.seek(t));
+    setState(() => _dragging = false);
   }
 
   String _clock(Duration value) {
@@ -2700,11 +3216,18 @@ class _DockSeekState extends State<_DockSeek> {
                 behavior: HitTestBehavior.opaque,
                 onTapDown: (details) =>
                     _apply(details.localPosition.dx, constraints.maxWidth),
-                onHorizontalDragStart: (details) =>
-                    _apply(details.localPosition.dx, constraints.maxWidth),
-                onHorizontalDragUpdate: (details) =>
-                    _apply(details.localPosition.dx, constraints.maxWidth),
-                onHorizontalDragEnd: (_) => setState(() => _dragging = false),
+                onHorizontalDragStart: (details) => _apply(
+                  details.localPosition.dx,
+                  constraints.maxWidth,
+                  drag: true,
+                ),
+                onHorizontalDragUpdate: (details) => _apply(
+                  details.localPosition.dx,
+                  constraints.maxWidth,
+                  drag: true,
+                ),
+                onHorizontalDragEnd: (_) => _endDrag(),
+                onHorizontalDragCancel: _endDrag,
                 onTapUp: (_) => setState(() => _dragging = false),
                 child: SizedBox(
                   height: 28,
@@ -2906,5 +3429,57 @@ Map<String, String> _platformHeaders(SocialPlatform platform) {
       };
     default:
       return const {};
+  }
+}
+
+/// What the docked player's full-screen page hands back when it closes.
+class _FsHandBack {
+  const _FsHandBack({
+    required this.position,
+    required this.playing,
+    required this.queueIndex,
+    required this.rate,
+    required this.volume,
+  });
+
+  final Duration position;
+  final bool playing;
+  final int queueIndex;
+  final double rate;
+  final double volume;
+}
+
+/// Buffering spinner that only appears if the wait lasts over 300 ms.
+class _DelayedSpinner extends StatefulWidget {
+  const _DelayedSpinner();
+
+  @override
+  State<_DelayedSpinner> createState() => _DelayedSpinnerState();
+}
+
+class _DelayedSpinnerState extends State<_DelayedSpinner> {
+  bool _show = false;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) setState(() => _show = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_show) return const SizedBox.shrink();
+    return const CircularProgressIndicator(
+      color: AppColors.secondaryContainer,
+    );
   }
 }
