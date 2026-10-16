@@ -411,17 +411,12 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     );
     state = state.copyWithTask(task);
     try {
-      if (task.downloadUrl.isEmpty && task.jobId != null) {
-        final ready = await _waitIfNeeded(
-          DownloadTicket(
-            downloadUrl: '',
-            jobId: task.jobId,
-            state: DownloadJobState.processing,
-          ),
-        );
+      if (task.downloadUrl.isEmpty) {
+        final ready = await _webReadyTicket(task, () => token.isCancelled);
         if (token.isCancelled) return;
         task = task.copyWith(
           downloadUrl: ready.downloadUrl,
+          jobId: ready.jobId ?? '',
           directUrl: ready.directUrl ?? task.directUrl,
           totalBytes: ready.filesize ?? task.totalBytes,
         );
@@ -434,7 +429,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
           message: ErrorMessages.serverError,
         );
       }
-      final saved = await webFetchAndSave(
+      final result = await webFetchAndSave(
         urls: urls,
         fileName: _webFileName(task),
         storeKey: id,
@@ -456,11 +451,18 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       if (token.isCancelled) return;
       final completed = state.byId(id);
       if (completed == null) return;
+      final note = !result.fetched
+          ? 'Your browser is downloading this video. Check its Downloads.'
+          : (result.stored
+              ? null
+              : 'Saved to your Downloads. This browser had no room to keep a copy for the Library.');
       final finished = completed.copyWith(
         status: DownloadStatus.completed,
-        localPath: saved,
+        localPath: result.url,
         receivedBytes: completed.totalBytes ?? completed.receivedBytes,
         bytesPerSecond: 0,
+        errorMessage: note,
+        clearError: note == null,
       );
       await ref.read(downloadsRepositoryProvider).upsert(
             DownloadRecord.fromTask(finished),
@@ -478,6 +480,49 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     } finally {
       _tokens.remove(id);
     }
+  }
+
+  /// Web: waits for the server's prepared file. When the job is gone or
+  /// failed (or this is a retry), asks the server to prepare it again once.
+  Future<DownloadTicket> _webReadyTicket(
+    DownloadTask task,
+    bool Function() cancelled,
+  ) async {
+    final jobId = task.jobId ?? '';
+    Object? firstError;
+    if (jobId.isNotEmpty) {
+      try {
+        return await _waitIfNeeded(
+          DownloadTicket(
+            downloadUrl: '',
+            jobId: jobId,
+            state: DownloadJobState.processing,
+          ),
+        );
+      } catch (error) {
+        firstError = error;
+        // A real refusal (private, removed, too large) will not change on a
+        // second try; a storage hiccup or an expired job may.
+        if (error is AppException &&
+            error.code != AppErrorCode.timeout &&
+            !error.message.toLowerCase().contains('stored') &&
+            !error.message.toLowerCase().contains('try again')) {
+          rethrow;
+        }
+      }
+    }
+    if (cancelled()) {
+      throw firstError ?? const AppException(code: AppErrorCode.unknown, message: 'Download cancelled.');
+    }
+    final fresh = await ref.read(mediaRepositoryProvider).requestDownload(
+          url: task.sourceUrl,
+          formatId: task.format.id,
+        );
+    final current = state.byId(task.id);
+    if (current != null && fresh.jobId != null) {
+      state = state.copyWithTask(current.copyWith(jobId: fresh.jobId));
+    }
+    return _waitIfNeeded(fresh);
   }
 
   String _webFileName(DownloadTask task) {
@@ -585,13 +630,17 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     if (task == null || !task.status.canRetry) {
       return;
     }
-    await _deletePartial(task.localPath);
+    if (!kIsWeb) await _deletePartial(task.localPath);
     state = state.copyWithTask(
       task.copyWith(
         status: DownloadStatus.queued,
         receivedBytes: 0,
         bytesPerSecond: 0,
         clearError: true,
+        // Web: the old server job failed or its link expired; prepare again.
+        downloadUrl: kIsWeb ? '' : null,
+        jobId: kIsWeb ? '' : null,
+        directUrl: kIsWeb ? '' : null,
       ),
     );
     await start(id);

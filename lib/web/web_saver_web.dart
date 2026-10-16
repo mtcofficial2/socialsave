@@ -9,11 +9,30 @@ final _urlByKey = <String, String>{};
 const _dbName = 'socialsave_videos';
 const _storeName = 'files';
 
+/// What happened to a web save.
+class WebSaveResult {
+  const WebSaveResult({
+    required this.url,
+    required this.stored,
+    required this.fetched,
+  });
+
+  /// A blob URL this tab can play, or the remote link when it could not be read.
+  final String url;
+
+  /// A copy is in IndexedDB, so the Library can play it after a reload.
+  final bool stored;
+
+  /// The bytes came into the page (false: handed to the browser as a link).
+  final bool fetched;
+}
+
 /// Fetches the first of [urls] the page may read, saves it with the
 /// browser's download, keeps a copy in IndexedDB under [storeKey] (so the
-/// web Library can play it after a reload), and returns a blob URL. When no
-/// URL can be read, the last one is opened as a plain browser download.
-Future<String> webFetchAndSave({
+/// web Library can play it after a reload), and returns where it ended up.
+/// When no URL can be read, the last one is opened as a plain browser
+/// download so the user still gets the video.
+Future<WebSaveResult> webFetchAndSave({
   required List<String> urls,
   required String fileName,
   String? storeKey,
@@ -26,16 +45,20 @@ Future<String> webFetchAndSave({
       final blob = await _fetchBlob(url, cancelled: cancelled, onProgress: onProgress);
       final objectUrl = web.URL.createObjectURL(blob);
       _blobs.add(objectUrl);
+      var stored = false;
       if (storeKey != null) {
         _urlByKey[storeKey] = objectUrl;
         try {
+          await _askPersistence();
           await _put(storeKey, blob);
-        } catch (_) {
+          stored = true;
+        } catch (error) {
           // Storage full or private mode: the browser download still has it.
+          web.console.warn('SocialSave: could not keep a copy ($error)'.toJS);
         }
       }
       _clickAnchor(objectUrl, fileName, newTab: false);
-      return objectUrl;
+      return WebSaveResult(url: objectUrl, stored: stored, fetched: true);
     } on _Cancelled {
       rethrow;
     } catch (error) {
@@ -47,7 +70,18 @@ Future<String> webFetchAndSave({
   if (lastError != null) {
     web.console.warn('SocialSave: browser download fallback ($lastError)'.toJS);
   }
-  return urls.last;
+  return WebSaveResult(url: urls.last, stored: false, fetched: false);
+}
+
+bool _askedPersistence = false;
+
+/// Asks the browser not to clear saved videos when space runs low.
+Future<void> _askPersistence() async {
+  if (_askedPersistence) return;
+  _askedPersistence = true;
+  try {
+    await web.window.navigator.storage.persist().toDart;
+  } catch (_) {}
 }
 
 class _Cancelled implements Exception {
@@ -64,6 +98,7 @@ Future<web.Blob> _fetchBlob(
   final xhr = web.XMLHttpRequest();
   xhr.open('GET', url);
   xhr.responseType = 'blob';
+  xhr.timeout = 20 * 60 * 1000;
   xhr.onprogress = ((web.ProgressEvent event) {
     onProgress?.call(
       event.loaded.toInt(),
@@ -81,6 +116,9 @@ Future<web.Blob> _fetchBlob(
   }).toJS;
   xhr.onerror = ((web.Event _) {
     if (!done.isCompleted) done.completeError(StateError('blocked or offline'));
+  }).toJS;
+  xhr.ontimeout = ((web.Event _) {
+    if (!done.isCompleted) done.completeError(StateError('timed out'));
   }).toJS;
   xhr.onabort = ((web.Event _) {
     if (!done.isCompleted) done.completeError(_Cancelled());
@@ -145,10 +183,27 @@ Future<JSAny?> _request(web.IDBRequest request) {
   return done.future;
 }
 
+/// Writes [blob] and waits for the transaction to commit: a full disk
+/// aborts the transaction after the put request itself has succeeded.
 Future<void> _put(String key, web.Blob blob) async {
   final db = await _db();
-  final store = db.transaction(_storeName.toJS, 'readwrite').objectStore(_storeName);
-  await _request(store.put(blob, key.toJS));
+  final tx = db.transaction(_storeName.toJS, 'readwrite');
+  final done = Completer<void>();
+  tx.oncomplete = ((web.Event _) {
+    if (!done.isCompleted) done.complete();
+  }).toJS;
+  tx.onabort = ((web.Event _) {
+    if (!done.isCompleted) {
+      done.completeError(StateError('IndexedDB write aborted (${tx.error?.name ?? 'unknown'})'));
+    }
+  }).toJS;
+  tx.onerror = ((web.Event _) {
+    if (!done.isCompleted) {
+      done.completeError(StateError('IndexedDB write failed (${tx.error?.name ?? 'unknown'})'));
+    }
+  }).toJS;
+  tx.objectStore(_storeName).put(blob, key.toJS);
+  await done.future;
 }
 
 Future<web.Blob?> _get(String key) async {

@@ -1,5 +1,13 @@
 // Native builds never call these; the web build gets web_saver_web.dart.
-Future<String> webFetchAndSave({
+class WebSaveResult {
+  const WebSaveResult({required this.url, required this.stored, required this.fetched});
+
+  final String url;
+  final bool stored;
+  final bool fetched;
+}
+
+Future<WebSaveResult> webFetchAndSave({
   required List<String> urls,
   required String fileName,
   String? storeKey,

@@ -180,3 +180,42 @@ func TestNewFromConfigUsesHTTPWhenS3IsUnset(t *testing.T) {
 		t.Fatal("empty S3 credentials should not select S3")
 	}
 }
+
+func TestObjectKeyDropsCharactersS3SignsDifferently(t *testing.T) {
+	key := objectKey("Marriott_moods_now_@GaviGadgetsUg_.mp4")
+	name := key[strings.LastIndex(key, "/")+1:]
+	if name != "Marriott_moods_now_GaviGadgetsUg.mp4" {
+		t.Fatalf("name = %q", name)
+	}
+	if got := objectKey("@@@"); !strings.HasSuffix(got, "/video.mp4") {
+		t.Fatalf("empty name = %q", got)
+	}
+	if got := escapeKey("videos/a@b c+d~e.mp4"); got != "videos/a%40b%20c%2Bd~e.mp4" {
+		t.Fatalf("escape = %q", got)
+	}
+}
+
+func TestS3PutPathIsStrictlyEscaped(t *testing.T) {
+	var path string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			path = r.URL.EscapedPath()
+			_, _ = io.Copy(io.Discard, r.Body)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	file, err := os.CreateTemp(t.TempDir(), "video-*.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = file.WriteString("video-bytes")
+	_ = file.Close()
+	client := NewS3(config.Config{S3Endpoint: server.URL, S3Region: "auto", S3Bucket: "socialsave", S3AccessKeyID: "a", S3SecretAccessKey: "b"})
+	if _, err := client.Put(context.Background(), file.Name(), "Only the strong survive @Marriott Hotels.mp4", "video/mp4"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(path, "@ +") || !strings.HasSuffix(path, "/Only_the_strong_survive_Marriott_Hotels.mp4") {
+		t.Fatalf("path = %q", path)
+	}
+}

@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -232,26 +234,45 @@ func (s *S3) objectURL(key string) (*url.URL, error) {
 		if err != nil {
 			return nil, err
 		}
-		base.Path = strings.TrimRight(base.Path, "/") + "/" + s.Bucket + "/" + key
+		raw := strings.TrimRight(base.EscapedPath(), "/") + "/" + sigV4Escape(s.Bucket) + "/" + key
+		path, err := url.PathUnescape(raw)
+		if err != nil {
+			return nil, err
+		}
+		base.Path, base.RawPath = path, raw
 		base.RawQuery = ""
 		return base, nil
 	}
 	return url.Parse("https://" + s.Bucket + ".s3." + s.Region + ".amazonaws.com/" + key)
 }
 
+// objectKey keeps the stored name to plain letters, digits, '.', '_' and '-'.
+// Titles like "Marriott moods @Gavi" used to keep the '@', which Go leaves
+// unescaped in a path while S3/R2 expect it escaped in the signature, so the
+// upload was refused and the save failed with "could not be stored".
 func objectKey(name string) string {
 	name = strings.TrimSpace(name)
-	name = strings.ReplaceAll(name, "\\", "-")
-	name = strings.ReplaceAll(name, "/", "-")
-	name = strings.Trim(name, ". ")
-	if name == "" || name == "." || name == ".." {
-		name = "video.mp4"
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(name), "."))
+	base := strings.TrimSuffix(name, filepath.Ext(name))
+	base = unsafeKeyChars.ReplaceAllString(base, "_")
+	base = strings.Trim(repeatedUnderscores.ReplaceAllString(base, "_"), "._-")
+	ext = unsafeKeyChars.ReplaceAllString(ext, "")
+	if ext == "" || len(ext) > 5 {
+		ext = "mp4"
 	}
-	if len(name) > 180 {
-		name = name[len(name)-180:]
+	if base == "" {
+		base = "video"
 	}
-	return "videos/" + time.Now().UTC().Format("20060102") + "/" + randomObjectID() + "/" + name
+	if len(base) > 120 {
+		base = base[:120]
+	}
+	return "videos/" + time.Now().UTC().Format("20060102") + "/" + randomObjectID() + "/" + base + "." + ext
 }
+
+var (
+	unsafeKeyChars      = regexp.MustCompile(`[^A-Za-z0-9_\-]+`)
+	repeatedUnderscores = regexp.MustCompile(`_{2,}`)
+)
 
 func randomObjectID() string {
 	var buf [8]byte
@@ -261,12 +282,30 @@ func randomObjectID() string {
 	return hex.EncodeToString(buf[:])
 }
 
+// escapeKey percent-encodes every byte except the SigV4 unreserved set
+// (A-Z a-z 0-9 - . _ ~), the way S3 and R2 build the canonical URI.
 func escapeKey(key string) string {
 	parts := strings.Split(key, "/")
 	for i, part := range parts {
-		parts[i] = url.PathEscape(part)
+		parts[i] = sigV4Escape(part)
 	}
 	return strings.Join(parts, "/")
+}
+
+func sigV4Escape(value string) string {
+	const hexDigits = "0123456789ABCDEF"
+	var b strings.Builder
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '.' || c == '_' || c == '~' {
+			b.WriteByte(c)
+			continue
+		}
+		b.WriteByte('%')
+		b.WriteByte(hexDigits[c>>4])
+		b.WriteByte(hexDigits[c&15])
+	}
+	return b.String()
 }
 
 func canonicalPath(u *url.URL) string {

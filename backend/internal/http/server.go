@@ -507,6 +507,15 @@ func (s *Server) prepare(jobID, rawURL, formatID, publicBase string) {
 func (s *Server) publishPrepared(ctx context.Context, jobID string, result providers.DownloadResult, publicBase string) {
 	size := result.Filesize
 	stored, putErr := s.putObject(ctx, result)
+	if putErr != nil && putErr.Error() != "object storage disabled" {
+		// One more try for a brief network or storage hiccup.
+		slog.Info("object storage upload failed, retrying", "err", safeStorageErr(putErr))
+		select {
+		case <-ctx.Done():
+		case <-time.After(2 * time.Second):
+			stored, putErr = s.putObject(ctx, result)
+		}
+	}
 	if putErr == nil {
 		s.Jobs.MarkReady(jobID, "", result.MIME, result.Name, stored, &size)
 		jobs.DeleteMedia(result.Path)

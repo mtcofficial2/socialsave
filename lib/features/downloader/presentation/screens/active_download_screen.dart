@@ -259,6 +259,16 @@ class ActiveDownloadScreen extends ConsumerWidget {
                         if (task.status == DownloadStatus.completed) ...[
                           const SizedBox(height: 12),
                           _CompletedRow(task: task),
+                          if (kIsWeb && (task.errorMessage ?? '').isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              task.errorMessage!,
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
                         ],
                       ],
                     ),
