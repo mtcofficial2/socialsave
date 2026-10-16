@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:collection/collection.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
@@ -97,7 +98,7 @@ class DownloadDetailScreen extends ConsumerWidget {
                   fact(Icons.sd_storage_outlined, formatters.bytes(record.fileSize)),
                 ],
               ),
-              if (record.localPath != null) ...[
+              if (record.localPath != null && !kIsWeb) ...[
                 const SizedBox(height: 16),
                 Text(
                   'Saved file',
@@ -140,22 +141,25 @@ class DownloadDetailScreen extends ConsumerWidget {
                   label: const Text('Show in folder'),
                 ),
               ],
-              const SizedBox(height: 8),
-              FilledButton.tonalIcon(
-                onPressed: record.localPath == null
-                    ? null
-                    : () => showSendToPhone(context, File(record.localPath!), record.title),
-                icon: const Icon(Icons.send_to_mobile_rounded),
-                label: const Text('Send to another phone or PC'),
-              ),
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                onPressed: record.localPath == null
-                    ? null
-                    : () => moveDownloadToVault(context, ref, record),
-                icon: const Icon(Icons.lock_outline),
-                label: const Text('Move to vault'),
-              ),
+              // Web: sending to a device and the Vault are app-only.
+              if (!kIsWeb) ...[
+                const SizedBox(height: 8),
+                FilledButton.tonalIcon(
+                  onPressed: record.localPath == null
+                      ? null
+                      : () => showSendToPhone(context, File(record.localPath!), record.title),
+                  icon: const Icon(Icons.send_to_mobile_rounded),
+                  label: const Text('Send to another phone or PC'),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: record.localPath == null
+                      ? null
+                      : () => moveDownloadToVault(context, ref, record),
+                  icon: const Icon(Icons.lock_outline),
+                  label: const Text('Move to vault'),
+                ),
+              ],
               const SizedBox(height: 8),
               OutlinedButton.icon(
                 onPressed: () async {

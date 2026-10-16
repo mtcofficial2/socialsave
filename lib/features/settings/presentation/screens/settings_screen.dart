@@ -1,8 +1,10 @@
 import 'dart:convert';
+import 'package:social_save/core/platform/plat.dart';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -137,6 +139,9 @@ class SettingsScreen extends ConsumerWidget {
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
+                    // Web: the browser picks where files go and cannot tell
+                    // Wi-Fi from mobile data, so these rows are app-only.
+                    if (!kIsWeb) ...[
                     _toggleRow(
                       context,
                       icon: Icons.wifi,
@@ -159,6 +164,7 @@ class SettingsScreen extends ConsumerWidget {
                       ),
                     ),
                     const SizedBox(height: 12),
+                    ],
                     _navRow(
                       context,
                       icon: Icons.high_quality_outlined,
@@ -167,8 +173,8 @@ class SettingsScreen extends ConsumerWidget {
                       trailing: settings.defaultQuality.label,
                       onTap: () => _pickQuality(context, controller, settings),
                     ),
-                    const SizedBox(height: 8),
-                    _navRow(
+                    if (!kIsWeb) const SizedBox(height: 8),
+                    if (!kIsWeb) _navRow(
                       context,
                       icon: Icons.folder_special_outlined,
                       title: 'Download Location',
@@ -205,7 +211,7 @@ class SettingsScreen extends ConsumerWidget {
             ),
                   ],
                 ),
-                if (!DesktopSupport.isWindows)
+                if (!DesktopSupport.isWindows && !kIsWeb)
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -242,7 +248,7 @@ class SettingsScreen extends ConsumerWidget {
                       onChanged: controller.setPocketPause,
                     ),
                     const SizedBox(height: 16),
-                    if (Platform.isAndroid) ...[
+                    if (Plat.isAndroid) ...[
                       _toggleRow(
                         context,
                         icon: Icons.screen_lock_portrait_rounded,
@@ -296,6 +302,7 @@ class SettingsScreen extends ConsumerWidget {
             ),
                     ],
                   ),
+                if (!kIsWeb)
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -344,6 +351,7 @@ class SettingsScreen extends ConsumerWidget {
             ),
                   ],
                 ),
+                if (!kIsWeb)
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -482,7 +490,7 @@ class SettingsScreen extends ConsumerWidget {
                             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                           ),
                           onPressed: () async {
-                            await ref.read(downloadPathServiceProvider).clearCache();
+                            if (!kIsWeb) await ref.read(downloadPathServiceProvider).clearCache();
                             await ref.read(thumbnailCacheManagerProvider).emptyCache();
                             if (context.mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(

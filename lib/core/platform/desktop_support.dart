@@ -9,7 +9,8 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:social_save/core/platform/windows_video_scan.dart';
+import 'package:social_save/core/platform/windows_video_scan_stub.dart'
+    if (dart.library.ffi) 'package:social_save/core/platform/windows_video_scan.dart';
 import 'package:social_save/core/storage/download_path_service.dart';
 import 'package:url_launcher/url_launcher.dart';
 

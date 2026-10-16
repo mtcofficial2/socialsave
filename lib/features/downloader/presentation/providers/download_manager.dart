@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -15,6 +16,7 @@ import 'package:social_save/core/storage/download_path_service.dart';
 import 'package:social_save/core/storage/media_store_service.dart';
 import 'package:social_save/core/errors/error_mapper.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
+import 'package:social_save/features/downloads/presentation/providers/downloads_controller.dart';
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
 import 'package:social_save/core/errors/error_messages.dart';
 import 'package:social_save/core/errors/exceptions.dart';
@@ -25,6 +27,7 @@ import 'package:social_save/shared/models/download_task.dart';
 import 'package:social_save/shared/models/download_ticket.dart';
 import 'package:social_save/shared/models/media_format.dart';
 import 'package:social_save/shared/models/media_info.dart';
+import 'package:social_save/web/web_saver.dart';
 import 'package:uuid/uuid.dart';
 
 final downloadManagerProvider =
@@ -83,7 +86,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       if (action == 'cancel') await cancel(id);
       if (action == 'resume') await resume(id);
     });
-    PhoneBody.ensure();
+    if (!kIsWeb) PhoneBody.ensure();
     _phoneSub = PhoneBody.snapshots.stream.listen((_) {
       unawaited(_applyPower());
     });
@@ -119,9 +122,11 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       );
     }
 
-    final allowed = await ref
-        .read(permissionServiceProvider)
-        .ensureDownloadPermissions(settings.downloadLocation);
+    // The browser asks no storage permission; it saves to its Downloads.
+    final allowed = kIsWeb ||
+        await ref
+            .read(permissionServiceProvider)
+            .ensureDownloadPermissions(settings.downloadLocation);
     if (!allowed) {
       throw const AppException(
         code: AppErrorCode.permissionDenied,
@@ -153,6 +158,17 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       directUrl: ticket.directUrl,
       requestHeaders: ticket.requestHeaders,
     );
+
+    if (kIsWeb) {
+      // No file to prepare: the browser saves it when the download finishes.
+      state = state.copyWithTask(task);
+      if (start) {
+        unawaited(this.start(id));
+      } else {
+        await _persist();
+      }
+      return state.byId(id) ?? task;
+    }
 
     File target;
     try {
@@ -206,6 +222,10 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     }
     _powerHolds.remove(id);
     await _wifiWaits.remove(id)?.cancel();
+    if (kIsWeb) {
+      await _startWeb(id, existing);
+      return;
+    }
 
     final token = CancelToken();
     _tokens[id] = token;
@@ -314,6 +334,8 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       await ref.read(downloadsRepositoryProvider).upsert(
             DownloadRecord.fromTask(finished),
           );
+      // Recent downloads and the Library list read the history; refresh it.
+      ref.invalidate(downloadsControllerProvider);
       state = state.copyWithTask(finished);
       await _persist();
       await _signalActive();
@@ -374,6 +396,95 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     } finally {
       _tokens.remove(id);
     }
+  }
+
+  /// Web build: fetch the file in the browser, hand it to the browser's
+  /// Downloads, and keep a blob URL so it can be played in this tab.
+  Future<void> _startWeb(String id, DownloadTask existing) async {
+    final token = CancelToken();
+    _tokens[id] = token;
+    _speeds[id] = _SpeedTracker();
+    var task = existing.copyWith(
+      status: DownloadStatus.running,
+      receivedBytes: 0,
+      clearError: true,
+    );
+    state = state.copyWithTask(task);
+    try {
+      if (task.downloadUrl.isEmpty && task.jobId != null) {
+        final ready = await _waitIfNeeded(
+          DownloadTicket(
+            downloadUrl: '',
+            jobId: task.jobId,
+            state: DownloadJobState.processing,
+          ),
+        );
+        if (token.isCancelled) return;
+        task = task.copyWith(
+          downloadUrl: ready.downloadUrl,
+          directUrl: ready.directUrl ?? task.directUrl,
+          totalBytes: ready.filesize ?? task.totalBytes,
+        );
+        state = state.copyWithTask(task);
+      }
+      final urls = _candidateUrls(task).toList();
+      if (urls.isEmpty) {
+        throw const AppException(
+          code: AppErrorCode.serverError,
+          message: ErrorMessages.serverError,
+        );
+      }
+      final saved = await webFetchAndSave(
+        urls: urls,
+        fileName: _webFileName(task),
+        cancelled: token.whenCancel.then((_) {}),
+        onProgress: (received, total) {
+          final current = state.byId(id);
+          if (current == null || current.status != DownloadStatus.running) return;
+          final tracker = _speeds[id] ?? _SpeedTracker();
+          tracker.record(received);
+          state = state.copyWithTask(
+            current.copyWith(
+              receivedBytes: received,
+              totalBytes: total ?? current.totalBytes,
+              bytesPerSecond: tracker.bytesPerSecond,
+            ),
+          );
+        },
+      );
+      if (token.isCancelled) return;
+      final completed = state.byId(id);
+      if (completed == null) return;
+      final finished = completed.copyWith(
+        status: DownloadStatus.completed,
+        localPath: saved,
+        receivedBytes: completed.totalBytes ?? completed.receivedBytes,
+        bytesPerSecond: 0,
+      );
+      await ref.read(downloadsRepositoryProvider).upsert(
+            DownloadRecord.fromTask(finished),
+          );
+      // Recent downloads and the Library list read the history; refresh it.
+      ref.invalidate(downloadsControllerProvider);
+      state = state.copyWithTask(finished);
+      await _persist();
+    } catch (error) {
+      if (token.isCancelled) return;
+      await _fail(
+        id,
+        error is AppException ? error : _errorMapper.fromObject(error),
+      );
+    } finally {
+      _tokens.remove(id);
+    }
+  }
+
+  String _webFileName(DownloadTask task) {
+    var base = task.title.replaceAll(RegExp(r'[\\/:*?"<>|\n\r\t]+'), ' ').trim();
+    if (base.isEmpty) base = 'SocialSave video';
+    if (base.length > 80) base = base.substring(0, 80).trim();
+    final ext = task.format.format.trim().toLowerCase();
+    return '$base.${ext.isEmpty ? 'mp4' : ext}';
   }
 
   AppException _mapAttemptError(Object? error) {
@@ -561,6 +672,8 @@ class DownloadManager extends Notifier<DownloadManagerState> {
   }
 
   Future<bool> _wifiBlocked(AppSettings settings) async {
+    // Web: the browser cannot tell Wi-Fi from mobile data reliably.
+    if (kIsWeb) return false;
     final connectivity = ref.read(connectivityServiceProvider);
     final access = await connectivity.current();
     return !connectivity.canDownload(access: access, wifiOnly: settings.wifiOnly);
@@ -641,6 +754,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
   }
 
   Future<bool> _alreadySaved(String url, String quality) async {
+    if (kIsWeb) return false;
     final records = await ref.read(downloadsRepositoryProvider).getAll();
     for (final record in records) {
       if (record.status != DownloadStatus.completed) continue;
@@ -754,7 +868,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
   }
 
   Future<int> _existingBytes(String? path) async {
-    if (path == null) {
+    if (path == null || kIsWeb) {
       return 0;
     }
     final file = File(path);
@@ -765,7 +879,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
   }
 
   Future<void> _deletePartial(String? path) async {
-    if (path == null) {
+    if (path == null || kIsWeb) {
       return;
     }
     final file = File(path);

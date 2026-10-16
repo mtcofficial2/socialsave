@@ -14,6 +14,8 @@ import 'package:social_save/features/settings/presentation/screens/legal_screen.
 import 'package:social_save/features/settings/presentation/screens/settings_screen.dart';
 import 'package:social_save/shared/models/media_info.dart';
 import 'package:social_save/shared/routing/app_shell.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:social_save/web/web_pages.dart';
 
 /// Set before runApp by the `--open <path>` test switch.
 String debugInitialLocation = '/';
@@ -47,7 +49,7 @@ final appRouter = GoRouter(
             GoRoute(
               path: '/library',
               pageBuilder: (context, state) => const NoTransitionPage(
-                child: LibraryScreen(),
+                child: kIsWeb ? WebLibraryScreen() : LibraryScreen(),
               ),
             ),
           ],

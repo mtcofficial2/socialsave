@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:social_save/core/platform/plat.dart';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -53,7 +54,7 @@ class UpdateController extends Notifier<UpdateState> {
     if (_checked) return;
     _checked = true;
     // Releases ship an APK; the Windows build is installed separately.
-    if (!Platform.isAndroid) return;
+    if (!Plat.isAndroid) return;
     try {
       final current = AppConstants.appVersion;
       final response = await Dio(

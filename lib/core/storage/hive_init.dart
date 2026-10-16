@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:social_save/core/platform/plat.dart';
 import 'dart:io';
 
 import 'package:hive_flutter/hive_flutter.dart';
@@ -16,7 +17,7 @@ class HiveInit {
     if (dir != null) {
       await Directory(dir).create(recursive: true);
       Hive.init(dir);
-    } else if (Platform.isWindows &&
+    } else if (Plat.isWindows &&
         await _documentsBoxLocked(AppConstants.downloadsBoxName)) {
       // Open with starts a second process. The copy already running holds
       // the downloads box, so this one plays from a private folder.

@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'package:social_save/core/platform/plat.dart';
 
 import 'package:flutter/foundation.dart';
 
@@ -56,7 +56,7 @@ class EnvConfig {
       return productionApiBaseUrl;
     }
     // Android emulator maps the computer's loopback to 10.0.2.2.
-    if (Platform.isAndroid) {
+    if (Plat.isAndroid) {
       return 'http://10.0.2.2:8000';
     }
     return 'http://127.0.0.1:8000';

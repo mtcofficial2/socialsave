@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:social_save/core/platform/plat.dart';
 import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
@@ -18,7 +19,7 @@ class TransferBoost {
 
   static Future<void> begin() async {
     _active++;
-    if (_active == 1 && Platform.isAndroid) {
+    if (_active == 1 && Plat.isAndroid) {
       try {
         await _media.invokeMethod<bool>('wifiLock', {'on': true});
       } catch (_) {}
@@ -28,7 +29,7 @@ class TransferBoost {
   static Future<void> end() async {
     if (_active == 0) return;
     _active--;
-    if (_active == 0 && Platform.isAndroid) {
+    if (_active == 0 && Plat.isAndroid) {
       try {
         await _media.invokeMethod<bool>('wifiLock', {'on': false});
       } catch (_) {}

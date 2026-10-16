@@ -9,6 +9,7 @@ class NotificationService {
   bool _initialized = false;
 
   Future<void> init() async {
+    if (kIsWeb) return; // The browser build shows no system notifications.
     if (_initialized) {
       return;
     }
@@ -37,6 +38,7 @@ class NotificationService {
   }
 
   Future<void> requestPermission() async {
+    if (kIsWeb) return; // The browser build shows no system notifications.
     await init();
     final android = _plugin.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
@@ -50,6 +52,7 @@ class NotificationService {
     required String id,
     required String title,
   }) async {
+    if (kIsWeb) return; // The browser build shows no system notifications.
     if (!_initialized) {
       await init();
     }
@@ -85,6 +88,7 @@ class NotificationService {
     required String id,
     required String title,
   }) async {
+    if (kIsWeb) return; // The browser build shows no system notifications.
     if (!_initialized) {
       await init();
     }

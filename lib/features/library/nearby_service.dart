@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:social_save/core/platform/plat.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -140,7 +141,7 @@ class NearbyService {
   static final Map<String, IncomingOffer> _tokens = {};
   static bool _busy = false;
 
-  static String get kind => Platform.isWindows ? 'pc' : 'phone';
+  static String get kind => Plat.isWindows ? 'pc' : 'phone';
 
   /// `pc` or `phone` from a transfer request. Older apps omit it, so fall
   /// back to a device we have already seen.
@@ -156,7 +157,7 @@ class NearbyService {
   }
 
   static Future<void> start({String? testId, String? testName}) async {
-    if (_started || !(Platform.isWindows || Platform.isAndroid)) return;
+    if (_started || !(Plat.isWindows || Plat.isAndroid)) return;
     _started = true;
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -167,21 +168,21 @@ class NearbyService {
         await prefs.setString('socialsave_nearby_id', id);
       }
       name = testName ?? await _deviceName();
-      if (Platform.isAndroid) {
+      if (Plat.isAndroid) {
         try {
           await _media.invokeMethod<bool>('nearbyLock', {'on': true});
         } catch (_) {}
       }
       await _openInbox();
       await _openBeacon();
-      if (Platform.isWindows) UsbLink.start();
+      if (Plat.isWindows) UsbLink.start();
     } catch (error) {
       debugPrint('nearby start failed: $error');
     }
   }
 
   static Future<String> _deviceName() async {
-    if (Platform.isWindows) {
+    if (Plat.isWindows) {
       final n = Platform.environment['COMPUTERNAME'] ?? Platform.localHostname;
       return n.isEmpty ? 'Windows PC' : n;
     }
@@ -691,7 +692,7 @@ class NearbyService {
       } catch (_) {}
       return '${device.name} could not save it: $why.';
     } on SocketException {
-      return Platform.isWindows || device.isPc
+      return Plat.isWindows || device.isPc
           ? 'Could not connect to ${device.name}. If it is a PC, allow SocialSave in its Windows firewall prompt.'
           : 'Could not connect to ${device.name}. Stay on the same Wi-Fi.';
     } on TimeoutException {

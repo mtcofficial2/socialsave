@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:social_save/core/platform/plat.dart';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -195,7 +196,7 @@ class _ReceivedScreenState extends State<ReceivedScreen> {
       builder: (context) => AlertDialog(
         icon: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
         title: Text('Delete $what?'),
-        content: Text(Platform.isWindows
+        content: Text(Plat.isWindows
             ? 'This removes it from your device (moved to the Recycle Bin). Folders are removed with everything inside.'
             : 'This removes it from your device. Folders are removed with everything inside.'),
         actions: [
@@ -263,7 +264,7 @@ class _ReceivedScreenState extends State<ReceivedScreen> {
             ),
             IconButton(tooltip: 'Cancel', onPressed: () => setState(_selected.clear), icon: const Icon(Icons.close_rounded)),
           ],
-          if (Platform.isWindows && _dir != null)
+          if (Plat.isWindows && _dir != null)
             IconButton(
               tooltip: 'Open in Explorer',
               onPressed: () => openWithSystem(_dir!.path),
@@ -301,7 +302,7 @@ class _ReceivedScreenState extends State<ReceivedScreen> {
                     },
                     itemBuilder: (_) => [
                       const PopupMenuItem(value: 'open', child: Text('Open with system app')),
-                      if (Platform.isWindows) const PopupMenuItem(value: 'show', child: Text('Show in folder')),
+                      if (Plat.isWindows) const PopupMenuItem(value: 'show', child: Text('Show in folder')),
                       const PopupMenuItem(value: 'select', child: Text('Select')),
                       const PopupMenuItem(value: 'delete', child: Text('Delete')),
                     ],

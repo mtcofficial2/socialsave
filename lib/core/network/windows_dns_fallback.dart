@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:social_save/core/platform/plat.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -14,7 +15,7 @@ class WindowsDnsFallback {
 
   static void install() {
     // Android too: some ISPs, routers and VPNs block *.onrender.com in DNS.
-    if (!Platform.isWindows && !Platform.isAndroid) return;
+    if (!Plat.isWindows && !Plat.isAndroid) return;
     HttpOverrides.global = _FallbackOverrides();
   }
 

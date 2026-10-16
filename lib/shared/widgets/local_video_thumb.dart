@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:social_save/features/library/device_media.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 class LocalVideoThumb extends StatefulWidget {
   const LocalVideoThumb({
@@ -43,6 +44,10 @@ class _LocalVideoThumbState extends State<LocalVideoThumb> {
   }
 
   Future<void> _load() async {
+    if (kIsWeb) {
+      setState(() => _loading = false);
+      return;
+    }
     final cached = _memory[widget.cacheKey];
     if (cached != null && File(cached).existsSync()) {
       setState(() {
@@ -78,7 +83,7 @@ class _LocalVideoThumbState extends State<LocalVideoThumb> {
         borderRadius: BorderRadius.circular(widget.borderRadius),
         child: ColoredBox(
           color: scheme.surfaceContainerHigh,
-          child: file != null && File(file).existsSync()
+          child: !kIsWeb && file != null && File(file).existsSync()
               ? Image.file(
                   File(file),
                   fit: BoxFit.cover,

@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'package:social_save/core/platform/plat.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -41,6 +41,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      // Web: no files to migrate, and reading the clipboard on load would
+      // pop a browser permission prompt. Paste reads it on a tap instead.
+      if (Plat.isWeb) return;
       final repo = ref.read(downloadsRepositoryProvider);
       final vault = ref.read(vaultServiceProvider);
       unawaited(() async {
@@ -59,7 +62,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
+    if (state == AppLifecycleState.resumed && !Plat.isWeb) {
       unawaited(_onArrive());
     }
   }
@@ -133,7 +136,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   @override
   Widget build(BuildContext context) {
-    if (Platform.isWindows) {
+    if (Plat.isWindows) {
       return CallbackShortcuts(
         bindings: {
           const SingleActivator(LogicalKeyboardKey.keyV, control: true): () =>
@@ -150,7 +153,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
-            if (constraints.maxWidth >= kDesktopSplitWidth) {
+            if (!Plat.isWeb && constraints.maxWidth >= kDesktopSplitWidth) {
               return _desktopHome(context);
             }
             return _narrowHome(context);

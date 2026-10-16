@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:hive/hive.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
 import 'package:social_save/features/downloads/domain/repositories/downloads_repository.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 class HiveDownloadHistoryStore implements DownloadsRepository {
   HiveDownloadHistoryStore(this._box);
@@ -76,7 +77,8 @@ class HiveDownloadHistoryStore implements DownloadsRepository {
   }
 
   Future<void> _deleteFile(String? path) async {
-    if (path == null || path.isEmpty) {
+    // Web: the file is in the browser's Downloads, out of the page's reach.
+    if (path == null || path.isEmpty || kIsWeb) {
       return;
     }
     final file = File(path);

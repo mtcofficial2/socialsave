@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:social_save/core/platform/plat.dart';
 
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -21,7 +22,7 @@ class DownloadPathService {
       ];
       // Android: write straight to the public Download/SocialSave (one copy).
       // The app-private downloads folder is only used on other platforms.
-      final systemDownloads = Platform.isAndroid ? null : await getDownloadsDirectory();
+      final systemDownloads = Plat.isAndroid ? null : await getDownloadsDirectory();
       if (systemDownloads != null) {
         candidates.insert(
           0,

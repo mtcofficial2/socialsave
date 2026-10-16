@@ -21,6 +21,8 @@ import 'package:social_save/features/library/nearby_ui.dart';
 import 'package:social_save/features/player/player_session.dart';
 import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/routing/app_router.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:social_save/web/web_pages.dart';
 
 /// Sends one video to another SocialSave app (phone or PC) on the same Wi-Fi.
 ///
@@ -1375,6 +1377,7 @@ class NearbyShareBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (kIsWeb) return const WebNearbyCard();
     if (compact) return _compact(context);
     final scheme = Theme.of(context).colorScheme;
     final body = Padding(

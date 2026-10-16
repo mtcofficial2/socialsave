@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:social_save/core/platform/plat.dart';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/services.dart';
@@ -64,7 +65,7 @@ const _media = MethodChannel('socialsave/media');
 
 /// System picker for any files (several allowed).
 Future<SendBundle?> pickAnyFiles() async {
-  if (Platform.isAndroid) {
+  if (Plat.isAndroid) {
     final paths = await _media.invokeListMethod<String>('pickSendFiles');
     if (paths == null || paths.isEmpty) return null;
     return SendBundle.fromFiles(paths.map(File.new).toList());
@@ -76,7 +77,7 @@ Future<SendBundle?> pickAnyFiles() async {
 
 /// System picker for a folder; its whole tree is sent.
 Future<SendBundle?> pickAnyFolder() async {
-  if (Platform.isAndroid) {
+  if (Plat.isAndroid) {
     // The phone copies the chosen tree (Storage Access Framework) into the
     // app cache, so no broad storage permission is needed.
     final path = await _media.invokeMethod<String>('pickSendFolder');
@@ -173,7 +174,7 @@ Future<File> destInside(Directory root, String rel) async {
 
 /// Make received media visible in the phone gallery / Files app.
 Future<void> indexReceived(File f) async {
-  if (!Platform.isAndroid) return;
+  if (!Plat.isAndroid) return;
   try {
     await _media.invokeMethod<void>('scanFile', {'path': f.path});
   } catch (_) {}
@@ -182,11 +183,11 @@ Future<void> indexReceived(File f) async {
 /// Open with the system's default app.
 Future<bool> openWithSystem(String path) async {
   try {
-    if (Platform.isWindows) {
+    if (Plat.isWindows) {
       await Process.start('explorer.exe', [path], runInShell: false);
       return true;
     }
-    if (Platform.isAndroid) {
+    if (Plat.isAndroid) {
       return await _media.invokeMethod<bool>('openFile', {'path': path}) ?? false;
     }
   } catch (_) {}
@@ -195,7 +196,7 @@ Future<bool> openWithSystem(String path) async {
 
 /// Windows Explorer with the item selected.
 Future<void> showInFolder(String path) async {
-  if (!Platform.isWindows) return;
+  if (!Plat.isWindows) return;
   try {
     await Process.start('explorer.exe', ['/select,', path]);
   } catch (_) {}

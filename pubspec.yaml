@@ -46,6 +46,7 @@ dependencies:
   file_selector: ^1.0.3
   win32: ^5.15.0
   ffi: ^2.1.0
+  web: ^1.1.1
 
 dependency_overrides:
   # Windows only: skips the ATL-dependent native notification code (see third_party/).

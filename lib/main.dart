@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'package:social_save/core/platform/plat.dart';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -10,6 +12,8 @@ import 'package:social_save/features/downloader/presentation/providers/download_
 import 'package:media_kit/media_kit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/app.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:social_save/core/constants/app_constants.dart';
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/network/windows_dns_fallback.dart';
 import 'package:social_save/core/notifications/notification_service.dart';
@@ -31,9 +35,13 @@ import 'package:social_save/shared/routing/app_router.dart';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (kIsWeb) {
+    await _runWeb();
+    return;
+  }
   // Before the database. A second Open with launch must still be listed,
   // even when another SocialSave already holds the downloads box.
-  if (Platform.isWindows) unawaited(registerWindowsVideoPlayer());
+  if (Plat.isWindows) unawaited(registerWindowsVideoPlayer());
   // Test hook: a sender with no UI and no database, so it can run next to
   // the normal app on the same PC. `SocialSave.exe --send-only <file>`
   // Nearby test hooks (no UI, no database):
@@ -283,4 +291,42 @@ Future<void> main(List<String> args) async {
       unawaited(playOpenedVideo(opened));
     });
   }
+}
+
+/// Browser build: the same app and screens, without the parts a browser
+/// cannot do (files on disk, nearby share, the Vault, native players).
+/// Downloads are kept in this browser's storage (IndexedDB via Hive).
+Future<void> _runWeb() async {
+  MediaKit.ensureInitialized();
+  await Hive.initFlutter();
+  final box = await Hive.openBox<String>(AppConstants.downloadsBoxName);
+  final prefs = await SharedPreferences.getInstance();
+  final settingsStore = SharedPreferencesSettingsStore(prefs);
+  var settings = await settingsStore.load();
+  if (prefs.getBool('ui_v14_defaults') != true) {
+    if (settings.themeMode == ThemeMode.system && settings.useDynamicColor) {
+      settings = settings.copyWith(themeMode: ThemeMode.dark, useDynamicColor: false);
+      await settingsStore.save(settings);
+    }
+    await prefs.setBool('ui_v14_defaults', true);
+  }
+  AppTheme.dark(fontFamily: settings.fontFamily);
+  AppTheme.light(fontFamily: settings.fontFamily);
+  try {
+    await GoogleFonts.pendingFonts().timeout(const Duration(seconds: 4));
+  } catch (_) {}
+  runApp(
+    ProviderScope(
+      overrides: [
+        downloadsRepositoryProvider.overrideWithValue(
+          HiveDownloadHistoryStore(box),
+        ),
+        settingsRepositoryProvider.overrideWithValue(settingsStore),
+        initialSettingsProvider.overrideWithValue(settings),
+        notificationServiceProvider.overrideWithValue(NotificationService()),
+        vaultServiceProvider.overrideWithValue(VaultService(prefs)),
+      ],
+      child: const SocialSaveApp(),
+    ),
+  );
 }

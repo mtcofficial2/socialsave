@@ -1,9 +1,10 @@
 import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
+import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/features/library/nearby_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/gestures.dart';
-import 'dart:io';
 import 'package:dynamic_color/dynamic_color.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:social_save/core/constants/app_constants.dart';
@@ -35,14 +36,15 @@ class SocialSaveApp extends ConsumerWidget {
       ),
       themeMode: settings.themeMode,
       builder: (context, child) {
-        return Stack(
+        final app = Stack(
           fit: StackFit.expand,
           children: [
             const GlassBackground(),
             if (child != null) Positioned.fill(child: _desktopKeys(child)),
-            const NearbyIncomingCard(),
+            if (!kIsWeb) const NearbyIncomingCard(),
           ],
         );
+        return kIsWeb ? _WebPhoneFrame(child: app) : app;
       },
       routerConfig: appRouter,
     );
@@ -53,7 +55,7 @@ class SocialSaveApp extends ConsumerWidget {
 
 /// Windows: Esc and the mouse "back" button go back a screen.
 Widget _desktopKeys(Widget child) {
-  if (!Platform.isWindows) return child;
+  if (!Plat.isWindows) return child;
   void back() {
     if (appRouter.canPop()) appRouter.pop();
   }
@@ -72,4 +74,48 @@ Widget _desktopKeys(Widget child) {
       child: child,
     ),
   );
+}
+
+/// Web: the site is the phone app. On a wide browser window the phone
+/// layout is shown centred at phone width instead of stretching.
+class _WebPhoneFrame extends StatelessWidget {
+  const _WebPhoneFrame({required this.child});
+
+  final Widget child;
+
+  static const double _phoneWidth = 440;
+
+  @override
+  Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
+    if (media.size.width <= _phoneWidth + 48) return child;
+    final scheme = Theme.of(context).colorScheme;
+    final tall = media.size.height >= 760;
+    final height = tall ? (media.size.height - 48).clamp(0.0, 940.0) : media.size.height;
+    return ColoredBox(
+      color: scheme.surfaceContainerLowest,
+      child: Center(
+        child: Container(
+          width: _phoneWidth,
+          height: height,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(tall ? 28 : 0),
+            border: Border.all(color: scheme.outlineVariant),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.18),
+                blurRadius: 40,
+                offset: const Offset(0, 12),
+              ),
+            ],
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: MediaQuery(
+            data: media.copyWith(size: Size(_phoneWidth, height)),
+            child: child,
+          ),
+        ),
+      ),
+    );
+  }
 }

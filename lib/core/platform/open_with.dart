@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:social_save/core/platform/plat.dart';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -72,7 +73,7 @@ Future<void> _playPayload(dynamic args) async {
 /// PC: list SocialSave under Open with for the video types it plays.
 /// Does not change the default player.
 Future<void> registerWindowsVideoPlayer() async {
-  if (!Platform.isWindows) return;
+  if (!Plat.isWindows) return;
   final exe = Platform.resolvedExecutable;
   final command = '"$exe" "%1"';
   final extensions = [for (final ext in AppConstants.allowedVideoExtensions) '.$ext'];

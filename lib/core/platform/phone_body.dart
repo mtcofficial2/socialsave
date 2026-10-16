@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:social_save/core/platform/desktop_support.dart';
 import 'package:social_save/core/platform/media_events.dart';
@@ -76,7 +77,8 @@ class PhoneBody {
   static var _listening = false;
 
   static void ensure() {
-    if (_listening) return;
+    // No Android shell in a browser.
+    if (_listening || kIsWeb) return;
     _listening = true;
     try {
       _events.receiveBroadcastStream().listen(

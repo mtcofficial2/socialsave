@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:social_save/core/platform/plat.dart';
 import 'dart:io';
 
 import 'package:social_save/features/library/bundle_transfer.dart';
@@ -155,7 +156,7 @@ class NearbyIncomingCard extends StatelessWidget {
                               openWithSystem((v.dir ?? v.file!).path),
                           child: const Text('Open'),
                         ),
-                        if (Platform.isWindows)
+                        if (Plat.isWindows)
                           IconButton(
                             tooltip: 'Show in folder',
                             onPressed: () =>

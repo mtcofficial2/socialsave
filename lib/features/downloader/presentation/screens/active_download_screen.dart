@@ -1,4 +1,5 @@
 import 'package:collection/collection.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -335,7 +336,10 @@ String _speedLine(DownloadTask task, Formatters formatters) {
       (task.status == DownloadStatus.running &&
           task.receivedBytes == 0 &&
           task.bytesPerSecond <= 0);
-  if (preparing) return 'Preparing on your computer';
+  if (task.status == DownloadStatus.completed) {
+    return kIsWeb ? 'Saved to your browser\'s Downloads' : 'Saved';
+  }
+  if (preparing) return kIsWeb ? 'Preparing the video' : 'Preparing on your computer';
   if (task.status == DownloadStatus.paused) return 'Paused';
   if (task.status == DownloadStatus.waitingWifi) return 'Waiting for Wi-Fi';
   if (task.status == DownloadStatus.waitingPower) {

@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'package:social_save/core/platform/plat.dart';
 
 import 'package:permission_handler/permission_handler.dart';
 import 'package:social_save/core/storage/download_path_service.dart';
@@ -10,11 +10,11 @@ class PermissionService {
     if (location == DownloadLocation.appStorage) {
       return true;
     }
-    if (Platform.isIOS) {
+    if (Plat.isIOS) {
       final photos = await Permission.photosAddOnly.request();
       return photos.isGranted || photos.isLimited;
     }
-    if (Platform.isAndroid) {
+    if (Plat.isAndroid) {
       final videos = await Permission.videos.request();
       final storage = await Permission.storage.request();
       if (videos.isGranted || videos.isLimited || storage.isGranted) {

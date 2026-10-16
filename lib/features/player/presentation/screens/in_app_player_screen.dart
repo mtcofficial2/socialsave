@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:social_save/core/platform/plat.dart';
 import 'dart:io';
 
 import 'package:flutter/gestures.dart';
@@ -11,7 +12,8 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:social_save/core/platform/desktop_support.dart';
 import 'package:social_save/core/platform/player_identity.dart';
-import 'package:social_save/core/platform/win_focus.dart';
+import 'package:social_save/core/platform/win_focus_stub.dart'
+    if (dart.library.ffi) 'package:social_save/core/platform/win_focus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -336,7 +338,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         headset: settings.headsetControls,
         volumeSeek: settings.volumeKeysSeek,
         background:
-            Platform.isAndroid && settings.backgroundPlay && !_session.isVault,
+            Plat.isAndroid && settings.backgroundPlay && !_session.isVault,
         positionMs: _player.state.position.inMilliseconds,
         durationMs: _player.state.duration.inMilliseconds,
       ),
@@ -426,7 +428,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     // With "Keep playing when screen is off" turned off, stop when the app
     // leaves the screen (not in picture-in-picture).
     if (state == AppLifecycleState.paused &&
-        Platform.isAndroid &&
+        Plat.isAndroid &&
         !_inPip &&
         !ref.read(settingsControllerProvider).backgroundPlay &&
         _player.state.playing) {
@@ -477,9 +479,19 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     try {
       final start = await _savedStart();
       await _player.open(Media(uri, httpHeaders: headers));
-      await _player.play();
+      if (Plat.isWeb) {
+        // A browser can refuse autoplay (no recent tap); the play button
+        // still works, so keep the player open instead of failing.
+        try {
+          await _player.play();
+        } catch (_) {}
+      } else {
+        await _player.play();
+      }
       if (start != null) _armResume(start);
-      await WakelockPlus.enable();
+      // Web: wakelock_plus's no_sleep.js throws in browsers; a playing
+      // <video> already keeps the screen on.
+      if (!Plat.isWeb) await WakelockPlus.enable();
       if (session.isVault) {
         await DeviceMediaService().setSecure(true);
         await PipController.setAllowed(false);
@@ -487,7 +499,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         await PipController.setAllowed(true);
       }
       if (mounted) setState(() => _ready = true);
-    } catch (_) {
+    } catch (error) {
+      if (Plat.isWeb) debugPrint('SocialSave web player: $error');
       if (mounted) {
         setState(() {
           _error = session.isPreview
@@ -1179,8 +1192,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   Future<void> _frameStep(bool forward) async {
     try {
       await _player.pause();
-      final native = _player.platform;
-      if (native is NativePlayer) {
+      if (!Plat.isWeb) {
+        // NativePlayer (libmpv) is not part of the web build; call it loosely.
+        final dynamic native = _player.platform;
         await native.command([forward ? 'frame-step' : 'frame-back-step']);
       }
       _flash(

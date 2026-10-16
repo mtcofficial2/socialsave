@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:social_save/core/platform/plat.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -18,7 +19,7 @@ class UsbLink {
   static const String offHint = 'Turn on USB debugging or USB tethering for cable transfers';
 
   /// Short status line for the UI; empty when a cable link is working.
-  static final ValueNotifier<String> hint = ValueNotifier(Platform.isAndroid ? offHint : '');
+  static final ValueNotifier<String> hint = ValueNotifier(Plat.isAndroid ? offHint : '');
 
   static bool _started = false;
   static bool _tick = false;
@@ -27,7 +28,7 @@ class UsbLink {
   static final Map<String, String> _models = {};
 
   static void start() {
-    if (_started || !Platform.isWindows) return;
+    if (_started || !Plat.isWindows) return;
     _started = true;
     unawaited(_scan());
     Timer.periodic(const Duration(seconds: 3), (_) => unawaited(_scan()));

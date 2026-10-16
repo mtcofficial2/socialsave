@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:social_save/core/platform/plat.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -23,7 +24,7 @@ class StorageMigration {
   static bool _running = false;
 
   static Future<void> run(DownloadsRepository repo, {VaultService? vault}) async {
-    if (!Platform.isAndroid || _running) return;
+    if (!Plat.isAndroid || _running) return;
     _running = true;
     try {
       final prefs = await SharedPreferences.getInstance();
