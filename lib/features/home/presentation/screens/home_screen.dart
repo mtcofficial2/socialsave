@@ -1,3 +1,5 @@
+import 'package:social_save/web/web_relay.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:social_save/core/platform/plat.dart';
 import 'dart:async';
 
@@ -36,6 +38,8 @@ class HomeScreen extends ConsumerStatefulWidget {
 
 class _HomeScreenState extends ConsumerState<HomeScreen>
     with WidgetsBindingObserver {
+  static bool _receiveHandled = false;
+
   @override
   void initState() {
     super.initState();
@@ -43,7 +47,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       // Web: no files to migrate, and reading the clipboard on load would
       // pop a browser permission prompt. Paste reads it on a tap instead.
-      if (Plat.isWeb) return;
+      if (Plat.isWeb) {
+        // A QR / link from web nearby share: ?receive=CODE
+        final code = Uri.base.queryParameters['receive'];
+        if (!_receiveHandled && code != null && code.trim().isNotEmpty && mounted) {
+          _receiveHandled = true;
+          await showRelayReceive(context, code: code.trim().toUpperCase());
+        }
+        return;
+      }
       final repo = ref.read(downloadsRepositoryProvider);
       final vault = ref.read(vaultServiceProvider);
       unawaited(() async {
@@ -117,7 +129,35 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     final state = ref.read(homeControllerProvider);
     if (state.error != null || state.url.isEmpty) return;
     HapticFeedback.lightImpact();
+    if (kIsWeb && !await _confirmDownload(state.url)) return;
+    if (!mounted) return;
     await context.push('/preview', extra: state.url);
+  }
+
+  /// Centered "Download this video?" check before a pasted link is analyzed.
+  Future<bool> _confirmDownload(String url) async {
+    final scheme = Theme.of(context).colorScheme;
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (d) => AlertDialog(
+        key: const ValueKey('confirm-download'),
+        icon: Icon(Icons.download_rounded, color: scheme.primary),
+        title: const Text('Download this video?'),
+        content: Text(
+          url,
+          maxLines: 3,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13),
+        ),
+        actionsAlignment: MainAxisAlignment.center,
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('Not now')),
+          FilledButton(onPressed: () => Navigator.pop(d, true), child: const Text('Download')),
+        ],
+      ),
+    );
+    return yes == true;
   }
 
   Future<void> _analyze() async {

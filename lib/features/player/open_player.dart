@@ -5,7 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
 import 'package:social_save/features/player/player_session.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:social_save/web/web_saver.dart';
+import 'package:social_save/web/web_library.dart';
 
 Future<void> openInAppPlayer(
   BuildContext context,
@@ -13,27 +13,8 @@ Future<void> openInAppPlayer(
 ) async {
   final path = record.localPath;
   if (kIsWeb) {
-    // Web: a video saved in this tab plays from its blob; after a reload the
-    // file only lives in the browser's Downloads folder.
-    if (path != null && (webCanPlay(path) || path.startsWith('http'))) {
-      await context.push(
-        '/player',
-        extra: PlayerSession(
-          title: record.title,
-          platform: record.platform,
-          networkUrl: path,
-          thumbnailUrl: record.thumbnailUrl,
-          author: record.author,
-          referer: record.sourceUrl,
-        ),
-      );
-    } else if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Saved to your browser\'s Downloads folder. Open it from there to watch.'),
-        ),
-      );
-    }
+    // Web: plays the copy stored in this browser (IndexedDB).
+    await openWebPlayer(context, null, [record], 0);
     return;
   }
   if (path == null || path.isEmpty || !File(path).existsSync()) {
@@ -51,5 +32,13 @@ Future<void> openPreviewPlayer(
   BuildContext context,
   PlayerSession session,
 ) {
+  if (kIsWeb) {
+    return context.push(
+      '/player',
+      extra: WebPlayerArgs(
+        items: [WebPlayItem(title: session.title, url: session.networkUrl, sourceUrl: session.referer)],
+      ),
+    );
+  }
   return context.push('/player', extra: session);
 }

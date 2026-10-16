@@ -1,3 +1,4 @@
+import 'package:social_save/web/web_saver.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -40,6 +41,7 @@ class HiveDownloadHistoryStore implements DownloadsRepository {
     if (deleteFile) {
       final existing = await getById(id);
       await _deleteFile(existing?.localPath);
+      if (kIsWeb) await webDeleteStoredVideo(id);
     }
     await _box.delete(id);
   }
@@ -50,6 +52,7 @@ class HiveDownloadHistoryStore implements DownloadsRepository {
       final records = await getAll();
       for (final record in records) {
         await _deleteFile(record.localPath);
+        if (kIsWeb) await webDeleteStoredVideo(record.id);
       }
     }
     await _box.clear();

@@ -437,6 +437,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       final saved = await webFetchAndSave(
         urls: urls,
         fileName: _webFileName(task),
+        storeKey: id,
         cancelled: token.whenCancel.then((_) {}),
         onProgress: (received, total) {
           final current = state.byId(id);

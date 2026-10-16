@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -527,7 +528,8 @@ extension on _PreviewScreenState {
             formatId: playFormat,
           );
       final direct = ticket.directUrl;
-      final directPlayable = direct != null &&
+      final directPlayable = !kIsWeb &&
+          direct != null &&
           direct.isNotEmpty &&
           !direct.contains('onrender.com');
       var url = directPlayable ? direct! : ticket.downloadUrl;

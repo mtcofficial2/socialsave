@@ -43,6 +43,10 @@ class EnvConfig {
       'https://socialsave-api-p2tm.onrender.com';
 
   static String get apiBaseUrl {
+    // Web build served by the API itself (Render): talk to the same origin.
+    if (kIsWeb && Uri.base.host.endsWith('onrender.com')) {
+      return Uri.base.origin;
+    }
     if (_apiBaseUrlDefine.isNotEmpty) {
       return _stripTrailingSlash(_apiBaseUrlDefine);
     }

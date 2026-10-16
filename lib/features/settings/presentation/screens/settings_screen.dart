@@ -95,8 +95,9 @@ class SettingsScreen extends ConsumerWidget {
                         }
                       },
                     ),
-                    const SizedBox(height: 8),
-                    Row(
+                    // Web: browsers give no wallpaper palette.
+                    if (!kIsWeb) const SizedBox(height: 8),
+                    if (!kIsWeb) Row(
                       children: [
                         CircleAvatar(
                           radius: 16,

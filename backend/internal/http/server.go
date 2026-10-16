@@ -46,6 +46,7 @@ type Server struct {
 	preparing sync.Map
 	limiter   *rateLimiter
 	pairs     pairStore
+	relay     *relayStore
 }
 
 // New wires the handlers. jobs may be nil and will be created from config.
@@ -84,6 +85,7 @@ func New(cfg config.Config, validator *security.Validator, store *jobs.Store) *S
 		Validator: validator,
 		Objects:   storage.NewFromConfig(cfg),
 		upstream:  upstream,
+		relay:     newRelayStore(""),
 		limiter: &rateLimiter{
 			analyze:  cfg.AnalyzeRateLimit,
 			download: cfg.DownloadRateLimit,
@@ -116,6 +118,11 @@ func (s *Server) Router() http.Handler {
 		r.Get("/download/{job_id}", s.jobStatus)
 		r.Get("/files/{token}", s.file)
 	})
+	// Web "nearby share": upload a file, get a code, download it elsewhere.
+	r.Post("/relay", s.relayUpload)
+	r.Get("/relay/{code}", s.relayInfo)
+	r.Get("/relay/{code}/file", s.relayFile)
+	r.Head("/relay/{code}/file", s.relayFile)
 	r.NotFound(s.serveWeb)
 	return r
 }

@@ -1,3 +1,5 @@
+import 'package:social_save/web/web_library.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -553,7 +555,16 @@ class _HistoryCard extends ConsumerWidget {
         case 'open':
           await openInAppPlayer(context, record);
         case 'vault':
-          await moveDownloadToVault(context, ref, record);
+          if (kIsWeb) {
+            await ref.read(webLibraryProvider.notifier).update(record.id, (m) => m.copyWith(vault: true));
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Moved to the Vault. Open it from Library.')),
+              );
+            }
+          } else {
+            await moveDownloadToVault(context, ref, record);
+          }
         case 'share':
           await controller.share(record);
         case 'redownload':

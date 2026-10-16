@@ -1,3 +1,4 @@
+import 'package:social_save/web/web_pages.dart';
 import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/features/library/nearby_ui.dart';
@@ -24,6 +25,7 @@ class SocialSaveApp extends ConsumerWidget {
       builder: (lightDynamic, darkDynamic) {
         final dynamicOn = settings.useDynamicColor;
         return MaterialApp.router(
+      scaffoldMessengerKey: kIsWeb ? webMessengerKey : null,
       title: AppConstants.appName,
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(

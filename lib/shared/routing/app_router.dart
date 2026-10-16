@@ -15,7 +15,7 @@ import 'package:social_save/features/settings/presentation/screens/settings_scre
 import 'package:social_save/shared/models/media_info.dart';
 import 'package:social_save/shared/routing/app_shell.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:social_save/web/web_pages.dart';
+import 'package:social_save/web/web_library.dart';
 
 /// Set before runApp by the `--open <path>` test switch.
 String debugInitialLocation = '/';
@@ -135,6 +135,7 @@ final appRouter = GoRouter(
       path: '/player',
       builder: (context, state) {
         final extra = state.extra;
+        if (extra is WebPlayerArgs) return WebPlayerScreen(args: extra);
         if (extra is! PlayerSession) {
           return const Scaffold(
             body: Center(child: Text('Nothing to play.')),

@@ -1,3 +1,6 @@
+import 'package:social_save/web/web_pages.dart';
+import 'package:social_save/web/web_saver.dart';
+import 'package:flutter/services.dart';
 import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -51,10 +54,17 @@ class DownloadsController extends AsyncNotifier<List<DownloadRecord>> {
 
   Future<void> share(DownloadRecord record) async {
     if (kIsWeb) {
-      // A browser cannot share a file from its Downloads; share the source link.
-      await SharePlus.instance.share(
-        ShareParams(text: '${record.title}\n${record.sourceUrl}'),
+      // Web Share API with the stored file (or the link); else copy the link.
+      final ok = await webShare(
+        title: record.title,
+        url: record.sourceUrl,
+        fileKey: record.id,
+        fileName: '${record.title}.${(record.format ?? 'mp4').toLowerCase()}',
       );
+      if (!ok) {
+        await Clipboard.setData(ClipboardData(text: record.sourceUrl));
+        webToast('Link copied. Paste it anywhere to share.');
+      }
       return;
     }
     final path = record.localPath;
