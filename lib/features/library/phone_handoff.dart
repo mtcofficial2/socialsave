@@ -7,6 +7,7 @@ import 'package:dio/dio.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:social_save/features/library/bundle_transfer.dart';
 import 'package:social_save/features/library/bundle_ui.dart';
+import 'package:social_save/features/library/hotspot_share.dart';
 import 'package:social_save/features/library/transfer_boost.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
 import 'package:flutter/material.dart';
@@ -45,11 +46,20 @@ class PhoneHandoff {
   static Timer? _timer;
   static HandoffOffer? current;
 
-  static Future<HandoffOffer?> offer(File file, {String? title}) async {
+  /// Bytes the sender has served for the current offer (all requests).
+  static final ValueNotifier<int> served = ValueNotifier<int>(0);
+
+  /// [preferIp] goes first in the offer (the hotspot address for Fast share).
+  static Future<HandoffOffer?> offer(File file, {String? title, String? preferIp}) async {
     await stop();
     if (!file.existsSync()) return null;
     final ips = await lanIps();
+    if (preferIp != null) {
+      ips.remove(preferIp);
+      ips.insert(0, preferIp);
+    }
     if (ips.isEmpty) return null;
+    served.value = 0;
     final code = newCode();
     HttpServer server;
     try {
@@ -157,7 +167,10 @@ class PhoneHandoff {
       }
       await TransferBoost.begin();
       try {
-        await res.addStream(TransferBoost.read(file, start, end + 1));
+        await res.addStream(TransferBoost.read(file, start, end + 1).map((chunk) {
+          served.value += chunk.length;
+          return chunk;
+        }));
       } finally {
         await TransferBoost.end();
       }
@@ -754,7 +767,7 @@ Future<void> showSendToPhone(BuildContext context, File file, String title) asyn
   String? status;
   double? pushProgress;
   var pushing = false;
-  await showDialog<void>(
+  final next = await showDialog<String>(
     context: context,
     barrierDismissible: false,
     builder: (context) => StatefulBuilder(
@@ -801,6 +814,17 @@ Future<void> showSendToPhone(BuildContext context, File file, String title) asyn
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(title, maxLines: 2, overflow: TextOverflow.ellipsis),
+                if (HotspotShare.supported) ...[
+                  const SizedBox(height: 12),
+                  FilledButton.tonalIcon(
+                    key: const ValueKey('hotspot-send'),
+                    onPressed: pushing ? null : () => Navigator.pop(context, 'hotspot'),
+                    icon: const Icon(Icons.wifi_tethering_rounded),
+                    label: const Text('Fast share (hotspot)'),
+                  ),
+                  const SizedBox(height: 2),
+                  Text('Phone to phone, no Wi-Fi needed. Fastest.', style: small, textAlign: TextAlign.center),
+                ],
                 const SizedBox(height: 12),
                 Text('Nearby devices — tap one to send', style: Theme.of(context).textTheme.titleSmall),
                 const SizedBox(height: 4),
@@ -887,6 +911,209 @@ Future<void> showSendToPhone(BuildContext context, File file, String title) asyn
     ),
   );
   await PhoneHandoff.stop();
+  if (next == 'hotspot' && context.mounted) {
+    await showHotspotSend(context, file, title);
+  }
+}
+
+/// Sender side of Fast share: opens a local-only hotspot, serves the file on
+/// it and shows a QR that carries the hotspot name and password.
+Future<void> showHotspotSend(BuildContext context, File file, String title) async {
+  await showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => _HotspotSendDialog(file: file, title: title),
+  );
+  await PhoneHandoff.stop();
+  await HotspotShare.stop();
+}
+
+class _HotspotSendDialog extends StatefulWidget {
+  const _HotspotSendDialog({required this.file, required this.title});
+  final File file;
+  final String title;
+
+  @override
+  State<_HotspotSendDialog> createState() => _HotspotSendDialogState();
+}
+
+class _HotspotSendDialogState extends State<_HotspotSendDialog> {
+  String _step = 'Checking permissions…';
+  String? _error;
+  HotspotInfo? _info;
+  HandoffOffer? _offer;
+  String? _link;
+  final _meter = TransferMeter();
+  int _size = 0;
+  bool _showPass = false;
+
+  @override
+  void initState() {
+    super.initState();
+    PhoneHandoff.served.addListener(_onServed);
+    HotspotShare.event.addListener(_onEvent);
+    unawaited(_start());
+  }
+
+  @override
+  void dispose() {
+    PhoneHandoff.served.removeListener(_onServed);
+    HotspotShare.event.removeListener(_onEvent);
+    super.dispose();
+  }
+
+  void _onServed() {
+    if (!mounted || _size <= 0) return;
+    final sent = min(PhoneHandoff.served.value, _size);
+    if (_meter.update(sent, _size)) setState(() {});
+  }
+
+  void _onEvent() {
+    final e = HotspotShare.event.value ?? '';
+    if (e.startsWith('stopped') && mounted && _info != null) {
+      setState(() => _error = 'The hotspot was turned off by the phone. Close and try again.');
+    }
+  }
+
+  Future<void> _start() async {
+    try {
+      final blocked = await HotspotShare.prepare(sending: true);
+      if (blocked != null) throw HotspotError(blocked);
+      if (!mounted) return;
+      setState(() => _step = 'Starting hotspot…');
+      final info = await HotspotShare.start();
+      if (!mounted) {
+        await HotspotShare.stop();
+        return;
+      }
+      _size = await widget.file.length();
+      final offer = await PhoneHandoff.offer(widget.file, title: widget.title, preferIp: info.ip);
+      if (offer == null) throw const HotspotError('Could not start sharing on the hotspot.');
+      debugPrint('[hotspot] ready ssid=${info.ssid} ip=${info.ip} port=${offer.port} code=${offer.code}');
+      if (!mounted) return;
+      setState(() {
+        _info = info;
+        _offer = offer;
+        _link = HotspotShare.link(offer.url, info);
+      });
+    } catch (e) {
+      debugPrint('[hotspot] start failed: $e');
+      if (mounted) setState(() => _error = e is HotspotError ? e.message : 'Fast share could not start: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final small = theme.textTheme.bodySmall;
+    final info = _info;
+    final offer = _offer;
+    final sent = min(PhoneHandoff.served.value, _size);
+    final started = sent > 0;
+    final done = _size > 0 && sent >= _size;
+    return AlertDialog(
+      title: const Row(
+        children: [
+          Icon(Icons.wifi_tethering_rounded),
+          SizedBox(width: 8),
+          Expanded(child: Text('Fast share (hotspot)')),
+        ],
+      ),
+      content: SizedBox(
+        width: 400,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(widget.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+              const SizedBox(height: 12),
+              if (_error != null) ...[
+                Icon(Icons.error_outline_rounded, color: theme.colorScheme.error, size: 36),
+                const SizedBox(height: 8),
+                Text(_error!, textAlign: TextAlign.center),
+                const SizedBox(height: 8),
+                Text('You can still use "Send to another device" on the same Wi-Fi.',
+                    style: small, textAlign: TextAlign.center),
+              ] else if (info == null || offer == null) ...[
+                const Center(child: CircularProgressIndicator()),
+                const SizedBox(height: 12),
+                Text(_step, textAlign: TextAlign.center),
+              ] else ...[
+                Center(
+                  child: ColoredBox(
+                    color: Colors.white,
+                    child: Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: QrImageView(key: const ValueKey('hotspot-qr'), data: _link!, size: 200),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'On the other phone: SocialSave › Receive › scan this. '
+                  'It joins this phone\'s hotspot by itself.',
+                  style: small,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 10),
+                Card(
+                  margin: EdgeInsets.zero,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Or join by hand', style: theme.textTheme.labelLarge),
+                        SelectableText('Wi-Fi: ${info.ssid}'),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: SelectableText(
+                                'Password: ${_showPass ? info.password : '•' * min(info.password.length, 12)}',
+                              ),
+                            ),
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              tooltip: _showPass ? 'Hide' : 'Show',
+                              onPressed: () => setState(() => _showPass = !_showPass),
+                              icon: Icon(_showPass ? Icons.visibility_off_outlined : Icons.visibility_outlined),
+                            ),
+                          ],
+                        ),
+                        Text(
+                          'Then type code ${offer.code.substring(0, 3)} ${offer.code.substring(3)} in Receive.',
+                          style: small,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                if (started) ...[
+                  LinearProgressIndicator(value: _size > 0 ? sent / _size : null),
+                  const SizedBox(height: 4),
+                  Text(
+                    done
+                        ? 'Sent ✓ ${_meter.doneLabel}'
+                        : 'Sending… ${(sent * 100 / _size).toStringAsFixed(0)}% · ${_meter.label}',
+                    style: small,
+                  ),
+                ] else
+                  Text('Waiting for the other phone… (${info.ip ?? '?'}:${offer.port})', style: small),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(done ? 'Done' : (_error != null ? 'Close' : 'Stop')),
+        ),
+      ],
+    );
+  }
 }
 
 /// Returns true when a copy was saved (so the Library can refresh).
@@ -1072,9 +1299,55 @@ Future<bool> _showDropProgress(BuildContext context) async {
 
 /// Finds the sender, then asks Watch or Save.
 Future<bool> receiveHandoff(BuildContext context, String raw, {String? mode}) async {
+  final join = HotspotShare.parse(raw);
+  if (join == null) return _receiveHandoff(context, raw, mode: mode);
   final messenger = ScaffoldMessenger.of(context);
-  messenger.showSnackBar(const SnackBar(content: Text('Looking for the other device on this Wi-Fi…')));
-  final target = await PhoneHandoff.resolve(raw);
+  if (!HotspotShare.supported) {
+    messenger.showSnackBar(SnackBar(
+      duration: const Duration(seconds: 12),
+      content: Text('Join Wi-Fi "${join.ssid}" (password ${join.password}), then type the code in Receive.'),
+    ));
+    return false;
+  }
+  final blocked = await HotspotShare.prepare(sending: false);
+  if (!context.mounted) return false;
+  if (blocked != null) {
+    messenger.showSnackBar(SnackBar(content: Text(blocked)));
+    return false;
+  }
+  messenger.showSnackBar(SnackBar(
+    duration: const Duration(seconds: 50),
+    content: Text('Joining the other phone\'s hotspot "${join.ssid}"… tap Connect if Android asks.'),
+  ));
+  try {
+    await HotspotShare.join(join.ssid, join.password);
+  } on HotspotError catch (e) {
+    await HotspotShare.leave();
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(SnackBar(duration: const Duration(seconds: 10), content: Text(e.message)));
+    return false;
+  }
+  messenger.hideCurrentSnackBar();
+  try {
+    if (!context.mounted) return false;
+    return await _receiveHandoff(context, raw, mode: mode, viaHotspot: true);
+  } finally {
+    await HotspotShare.leave();
+  }
+}
+
+Future<bool> _receiveHandoff(BuildContext context, String raw, {String? mode, bool viaHotspot = false}) async {
+  final messenger = ScaffoldMessenger.of(context);
+  messenger.showSnackBar(SnackBar(
+    content: Text(viaHotspot ? 'Connected. Finding the video…' : 'Looking for the other device on this Wi-Fi…'),
+  ));
+  var found = await PhoneHandoff.resolve(raw);
+  // A fresh hotspot link can need a moment before it carries traffic.
+  for (var i = 0; viaHotspot && found == null && i < 4; i++) {
+    await Future<void>.delayed(const Duration(seconds: 1));
+    found = await PhoneHandoff.resolve(raw);
+  }
+  final target = found;
   messenger.hideCurrentSnackBar();
   if (!context.mounted) return false;
   if (target == null) {

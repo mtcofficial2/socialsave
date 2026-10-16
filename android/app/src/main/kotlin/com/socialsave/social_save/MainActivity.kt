@@ -267,9 +267,13 @@ class MainActivity : FlutterFragmentActivity() {
         }
     }
 
+    private var hotspotShare: HotspotShare? = null
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         phoneBody?.stop()
+        hotspotShare?.dispose()
+        hotspotShare = HotspotShare(this, flutterEngine.dartExecutor.binaryMessenger)
         val body = PhoneBody(this)
         phoneBody = body
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, "socialsave/phone").setStreamHandler(body)
@@ -630,6 +634,8 @@ class MainActivity : FlutterFragmentActivity() {
     }
 
     override fun onDestroy() {
+        hotspotShare?.dispose()
+        hotspotShare = null
         phoneBody?.stop()
         phoneBody = null
         super.onDestroy()
