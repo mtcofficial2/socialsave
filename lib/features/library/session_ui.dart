@@ -2,7 +2,10 @@ import 'dart:io';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+import 'package:social_save/features/library/hotspot_share.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/features/library/session_keepalive.dart';
@@ -40,7 +43,7 @@ void installSessionUi() {
     );
     return ok == true;
   };
-  ShareSession.onOpened = () => unawaited(openSessionScreen());
+  ShareSession.onOpened = () => unawaited(landOnSession());
   SessionKeepAlive.onOpen = () => unawaited(openSessionScreen());
   SessionKeepAlive.wire();
   SessionPeer? before;
@@ -181,6 +184,82 @@ Future<bool> offerSessionSend(BuildContext context, File file, String title) asy
   return choice != 'other';
 }
 
+/// Wraps pairing UI (QR / code dialogs, Connect picker, Receive sheet) so it
+/// closes by itself the moment a session opens.
+class PairingUiScope extends StatefulWidget {
+  const PairingUiScope({super.key, required this.child});
+  final Widget child;
+
+  @override
+  State<PairingUiScope> createState() => _PairingUiScopeState();
+}
+
+class _PairingUiScopeState extends State<PairingUiScope> {
+  late final void Function() _close = () {
+    if (!mounted) return;
+    final route = ModalRoute.of(context);
+    if (route == null || !route.isActive) return;
+    final nav = Navigator.of(context);
+    if (route.isCurrent) {
+      nav.pop();
+    } else {
+      nav.removeRoute(route);
+    }
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    ShareSession.pairingUi.add(_close);
+  }
+
+  @override
+  void dispose() {
+    ShareSession.pairingUi.remove(_close);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
+/// A session just opened (either side): close every pairing dialog/sheet,
+/// then show the Connected screen with a short "Connected to X" toast. If
+/// the user is watching something, don't interrupt: the pill shows instead.
+Future<void> landOnSession() async {
+  final p = ShareSession.peer.value;
+  if (p == null) return;
+  for (final close in ShareSession.pairingUi.toList()) {
+    try {
+      close();
+    } catch (_) {}
+  }
+  ShareSession.pairingUi.clear();
+  final nav = appRouter.routerDelegate.navigatorKey.currentState;
+  if (nav == null) return;
+  // Any other dialog left on top (e.g. a Watch/Save choice) goes too.
+  var popped = 0;
+  nav.popUntil((route) {
+    if (route is PopupRoute && !route.isFirst) {
+      popped++;
+      return false;
+    }
+    return true;
+  });
+  debugPrint('[session] landed: closed $popped dialog(s)');
+  await Future<void>.delayed(const Duration(milliseconds: 50));
+  final messenger = ScaffoldMessenger.maybeOf(nav.context);
+  messenger?.hideCurrentSnackBar();
+  final watching = InAppPlayerScreen.openCount > 0;
+  if (!watching && !ShareSession.screenOpen) unawaited(openSessionScreen());
+  await Future<void>.delayed(const Duration(milliseconds: 300));
+  messenger?.showSnackBar(SnackBar(
+    duration: const Duration(seconds: 2),
+    content: Text('Connected to ${p.name}'),
+    action: watching ? SnackBarAction(label: 'Open', onPressed: () => unawaited(openSessionScreen())) : null,
+  ));
+}
+
 /// Shows the "Connected to …" screen (once).
 Future<void> openSessionScreen([BuildContext? from]) async {
   if (ShareSession.screenOpen) return;
@@ -205,7 +284,7 @@ Future<void> showConnectPicker(BuildContext context) async {
   NearbyService.ping();
   final device = await showDialog<NearbyDevice>(
     context: context,
-    builder: (context) => AlertDialog(
+    builder: (context) => PairingUiScope(child: AlertDialog(
       icon: const Icon(Icons.link_rounded),
       title: const Text('Connect to a device'),
       content: SizedBox(
@@ -257,21 +336,89 @@ Future<void> showConnectPicker(BuildContext context) async {
         ),
       ),
       actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel'))],
-    ),
+    )),
   );
-  if (device == null || !context.mounted) return;
+  if (device == null || !context.mounted || ShareSession.active) return;
   final messenger = ScaffoldMessenger.of(context);
   messenger.showSnackBar(SnackBar(
     duration: const Duration(seconds: 60),
     content: Text('Waiting for ${device.name} to accept…'),
   ));
   final error = await ShareSession.connect(host: device.host, port: device.port, link: device.link);
-  messenger.hideCurrentSnackBar();
   if (error != null) {
+    messenger.hideCurrentSnackBar();
     messenger.showSnackBar(SnackBar(content: Text(error)));
     return;
   }
-  if (context.mounted) await openSessionScreen(context);
+  // Success: landOnSession() already closed this and opened the screen.
+  if (context.mounted && !ShareSession.screenOpen && InAppPlayerScreen.openCount == 0) {
+    await openSessionScreen(context);
+  }
+}
+
+/// Hotspot details (name, password, Wi-Fi QR) of the running session, so a
+/// third device can still join. Null when the session isn't on a hotspot.
+({String ssid, String password})? sessionHotspotDetails() {
+  final info = HotspotShare.lastInfo;
+  if (ShareSession.hostsHotspot && info != null) {
+    return (ssid: info.ssid, password: info.password);
+  }
+  final join = HotspotShare.lastJoin;
+  if (ShareSession.joinedHotspot && join != null) return (ssid: join.ssid, password: join.password);
+  return null;
+}
+
+String _wifiEsc(String v) => v.replaceAllMapped(RegExp(r'([\\;,:"])'), (m) => '\\${m[1]}');
+
+Future<void> showSessionHotspotCode(BuildContext context) async {
+  final d = sessionHotspotDetails();
+  if (d == null) return;
+  await showDialog<void>(
+    context: context,
+    builder: (context) {
+      final theme = Theme.of(context);
+      Widget row(String label, String value, String key) => ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(label, style: theme.textTheme.bodySmall),
+            subtitle: SelectableText(value, key: ValueKey(key), style: theme.textTheme.titleMedium),
+            trailing: IconButton(
+              tooltip: 'Copy',
+              icon: const Icon(Icons.copy_rounded),
+              onPressed: () => Clipboard.setData(ClipboardData(text: value)),
+            ),
+          );
+      return AlertDialog(
+        key: const ValueKey('session-code-dialog'),
+        icon: const Icon(Icons.wifi_tethering_rounded),
+        title: const Text('Hotspot details'),
+        content: SizedBox(
+          width: 360,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  color: Colors.white,
+                  padding: const EdgeInsets.all(8),
+                  child: QrImageView(
+                    key: const ValueKey('session-code-qr'),
+                    data: 'WIFI:T:WPA;S:${_wifiEsc(d.ssid)};P:${_wifiEsc(d.password)};;',
+                    size: 180,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text('Another device can scan this with its camera, or join by hand:',
+                    style: theme.textTheme.bodySmall, textAlign: TextAlign.center),
+                row('Wi-Fi name', d.ssid, 'session-code-ssid'),
+                row('Password', d.password, 'session-code-pass'),
+              ],
+            ),
+          ),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))],
+      );
+    },
+  );
 }
 
 /// Slim "Connected to …" strip for the share cards, so a session that runs
@@ -422,7 +569,9 @@ class _SessionScreenState extends State<SessionScreen> with SingleTickerProvider
   bool _picking = false;
   bool _reconnecting = false;
   bool? _exempt;
-  late final TabController _tabs = TabController(length: 2, vsync: this);
+  // A file picked before connecting is already the first transfer: show it.
+  late final TabController _tabs =
+      TabController(length: 2, vsync: this, initialIndex: ShareSession.items.isNotEmpty ? 1 : 0);
 
   @override
   void initState() {
@@ -607,6 +756,13 @@ class _SessionScreenState extends State<SessionScreen> with SingleTickerProvider
                 ],
               ),
               actions: [
+                if (sessionHotspotDetails() != null)
+                  IconButton(
+                    key: const ValueKey('session-show-code'),
+                    tooltip: 'Show code (hotspot name, password, QR)',
+                    icon: const Icon(Icons.qr_code_2_rounded),
+                    onPressed: () => showSessionHotspotCode(context),
+                  ),
                 if (peer != null)
                   Padding(
                     padding: const EdgeInsets.only(right: 8),

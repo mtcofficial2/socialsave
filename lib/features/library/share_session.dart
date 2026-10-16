@@ -152,6 +152,16 @@ class ShareSession {
   /// While true, [onOpened] is not called (a dialog handles it itself).
   static int suppressAutoOpen = 0;
 
+  /// Pairing UI that is open right now (QR / code dialogs, the Connect
+  /// picker, the Receive sheet). Each entry closes its own route. All of
+  /// them close the moment a session opens (Xender-style).
+  static final Set<void Function()> pairingUi = {};
+
+  /// A file picked before connecting (the QR / code dialog's file): it is
+  /// sent as the first item of the session, so it shows in Transfers on both
+  /// devices instead of a separate Watch/Save step.
+  static File? pendingFirst;
+
   /// True while the session screen is visible.
   static final ValueNotifier<bool> screenVisible = ValueNotifier<bool>(false);
   static bool get screenOpen => screenVisible.value;
@@ -478,7 +488,18 @@ class ShareSession {
     unawaited(_save());
     if (fresh) unawaited(SessionKeepAlive.start(_title(), _text()));
     _updateNotification();
-    if (fresh && !restored && suppressAutoOpen == 0) onOpened?.call();
+    if (fresh && !restored) {
+      final first = pendingFirst;
+      pendingFirst = null;
+      if (first != null && first.existsSync()) {
+        // Give the other side a moment to finish opening its end, so the
+        // file isn't offered before it knows this session (no accept prompt).
+        _holdUntil = DateTime.now().add(const Duration(milliseconds: 1500));
+        enqueue([first]);
+      }
+      // 1.0.34: always land on the Connected screen (closes pairing UI).
+      onOpened?.call();
+    }
   }
 
   static void _heard() {
@@ -821,10 +842,15 @@ class ShareSession {
     _changed();
   }
 
+  static DateTime _holdUntil = DateTime(2000);
+
   static Future<void> _pump() async {
     if (_pumping) return;
     _pumping = true;
     try {
+      while (DateTime.now().isBefore(_holdUntil) && peer.value != null) {
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      }
       while (true) {
         // Hold the queue while the link is being brought back.
         for (var w = 0; w < 600 && peer.value != null && state.value == 'reconnecting'; w++) {

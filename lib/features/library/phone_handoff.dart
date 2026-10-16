@@ -784,10 +784,13 @@ Future<void> showSendToPhone(BuildContext context, File file, String title) asyn
   String? status;
   double? pushProgress;
   var pushing = false;
+  // If the other device connects (Connect / session) while this is open, the
+  // picked file goes first in the session and this dialog closes by itself.
+  ShareSession.pendingFirst = file;
   final next = await showDialog<String>(
     context: context,
     barrierDismissible: false,
-    builder: (context) => StatefulBuilder(
+    builder: (context) => PairingUiScope(child: StatefulBuilder(
       builder: (context, setState) {
         Future<void> doPush() async {
           if (pushing) return;
@@ -930,10 +933,11 @@ Future<void> showSendToPhone(BuildContext context, File file, String title) asyn
           ],
         );
       },
-    ),
+    )),
   );
+  if (identical(ShareSession.pendingFirst, file)) ShareSession.pendingFirst = null;
   await PhoneHandoff.stop();
-  if (next == 'hotspot' && context.mounted) {
+  if (next == 'hotspot' && context.mounted && !ShareSession.active) {
     await showHotspotSend(context, file, title);
   }
 }
@@ -944,13 +948,16 @@ Future<void> showHotspotSend(BuildContext context, File file, String title) asyn
   final result = await showDialog<String>(
     context: context,
     barrierDismissible: false,
-    builder: (context) => _HotspotSendDialog(file: file, title: title),
+    builder: (context) => PairingUiScope(child: _HotspotSendDialog(file: file, title: title)),
   );
-  if (result == 'session' && ShareSession.active) {
+  if (identical(ShareSession.pendingFirst, file)) ShareSession.pendingFirst = null;
+  // Closing the dialog never stops the hotspot of a live session.
+  if (ShareSession.active && (result == 'session' || ShareSession.hostsHotspot || ShareSession.hostsHotspotPending)) {
     // The other phone connected: keep the hotspot (and the first file's
     // server) up for the whole session. Disconnect stops them.
     ShareSession.hostsHotspot = true;
-    if (context.mounted) await openSessionScreen(context);
+    ShareSession.hostsHotspotPending = false;
+    if (context.mounted && !ShareSession.screenOpen && result == 'session') await openSessionScreen(context);
     return;
   }
   await PhoneHandoff.stop();
@@ -1079,7 +1086,7 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
     super.initState();
     PhoneHandoff.served.addListener(_onServed);
     HotspotShare.event.addListener(_onEvent);
-    ShareSession.suppressAutoOpen++;
+    ShareSession.pendingFirst = widget.file;
     ShareSession.peer.addListener(_onPeer);
     unawaited(_start());
   }
@@ -1089,8 +1096,7 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
     PhoneHandoff.served.removeListener(_onServed);
     HotspotShare.event.removeListener(_onEvent);
     ShareSession.peer.removeListener(_onPeer);
-    ShareSession.suppressAutoOpen--;
-    ShareSession.hostsHotspotPending = false;
+    if (!ShareSession.active) ShareSession.hostsHotspotPending = false;
     super.dispose();
   }
 
@@ -1101,8 +1107,13 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
     if (_leaving || !mounted || ShareSession.peer.value == null || _info == null) return;
     _leaving = true;
     ShareSession.hostsHotspot = true;
-    ShareSession.trackServed(widget.file, widget.title);
-    Navigator.pop(context, 'session');
+    // The session lands by itself (closes this dialog, sends the file as the
+    // first transfer). Fallback only if this dialog is somehow still up.
+    Future<void>.delayed(const Duration(seconds: 2), () {
+      if (!mounted) return;
+      final route = ModalRoute.of(context);
+      if (route != null && route.isCurrent) Navigator.pop(context, 'session');
+    });
   }
 
   void _onServed() {
@@ -1140,7 +1151,8 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
       setState(() {
         _info = info;
         _offer = offer;
-        _link = '${HotspotShare.link(offer.url, info)}&sid=$pair&sp=${NearbyService.inboxBoundPort}';
+        // sf=1: this sender sends the file inside the session (1.0.34+).
+        _link = '${HotspotShare.link(offer.url, info)}&sid=$pair&sp=${NearbyService.inboxBoundPort}&sf=1';
       });
     } catch (e) {
       debugPrint('[hotspot] start failed: $e');
@@ -1277,7 +1289,7 @@ Future<bool> showReceiveFromPhone(BuildContext context) async {
     context: context,
     isScrollControlled: true,
     builder: (context) {
-      return ValueListenableBuilder<DropState?>(
+      return PairingUiScope(child: ValueListenableBuilder<DropState?>(
         valueListenable: PhoneHandoff.drop,
         builder: (context, dropState, _) {
           if (dropState != null && !picked) {
@@ -1376,7 +1388,7 @@ Future<bool> showReceiveFromPhone(BuildContext context) async {
             ),
           );
         },
-      );
+      ));
     },
   );
   if (raw == '__drop__' && context.mounted) {
@@ -1481,8 +1493,8 @@ Future<bool> receiveHandoff(BuildContext context, String raw, {String? mode}) as
   final sid = q?.queryParameters['sid'];
   final sp = int.tryParse(q?.queryParameters['sp'] ?? '');
   var session = false;
+  final sendsInSession = q?.queryParameters['sf'] == '1';
   if (q != null && sid != null && sp != null) {
-    ShareSession.suppressAutoOpen++;
     try {
       String? err;
       for (var i = 0; i < 4; i++) {
@@ -1493,9 +1505,13 @@ Future<bool> receiveHandoff(BuildContext context, String raw, {String? mode}) as
       session = err == null;
       if (session) ShareSession.joinedHotspot = true;
       debugPrint('[session] hotspot pairing ${session ? 'ok' : 'failed: $err'}');
-    } finally {
-      ShareSession.suppressAutoOpen--;
-    }
+    } finally {}
+  }
+  if (session && sendsInSession && ShareSession.active) {
+    // Xender-style: no Watch/Save step. The file arrives as the first item
+    // in Transfers; the Connected screen is already open.
+    messenger.hideCurrentSnackBar();
+    return true;
   }
   try {
     if (!context.mounted) return false;

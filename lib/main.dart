@@ -327,12 +327,16 @@ Future<void> main(List<String> args) async {
       child: const SocialSaveApp(),
     ),
   );
-  if (args.contains('--session-ui-test') || args.contains('--picker-test')) ShareSession.persist = false;
+  if (args.contains('--session-ui-test') || args.contains('--picker-test') || args.contains('--pair-test')) {
+    ShareSession.persist = false;
+  }
   unawaited(DesktopTray.install());
   installNearbyUi();
   if (args.contains('--picker-test')) unawaited(_pickerTest());
   final su = args.indexOf('--session-ui-test');
   if (su >= 0 && su + 2 < args.length) unawaited(_sessionUiTest(args[su + 1], args[su + 2]));
+  final pt = args.indexOf('--pair-test');
+  if (pt >= 0 && pt + 2 < args.length) unawaited(_pairTest(args[pt + 1], args[pt + 2]));
   unawaited(NearbyService.start());
   listenForOpenedVideos();
 
@@ -547,6 +551,132 @@ Future<void> _sessionUiTest(String hostPort, String file) async {
   await _shot('ss_session_pill');
   await ShareSession.disconnect();
   print('debug ui-test result=ok');
+  await Future<void>.delayed(const Duration(seconds: 1));
+  exit(0);
+}
+
+
+/// True when a dialog / bottom sheet is on top of the root navigator.
+bool _popupOnTop() {
+  final nav = appRouter.routerDelegate.navigatorKey.currentState;
+  var popup = false;
+  nav?.popUntil((r) {
+    popup = r is PopupRoute;
+    return true;
+  });
+  return popup;
+}
+
+Future<bool> _waitFor(bool Function() ok, Duration max) async {
+  final end = DateTime.now().add(max);
+  while (!ok()) {
+    if (DateTime.now().isAfter(end)) return false;
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+  }
+  return true;
+}
+
+String _pairState() => 'popupOnTop=${_popupOnTop()} pairingUi=${ShareSession.pairingUi.length} '
+    'screenOpen=${ShareSession.screenOpen} active=${ShareSession.active}';
+
+/// `--pair-test host <file>` / `--pair-test join <file>` (run both): checks
+/// that every pairing dialog closes by itself the moment the session opens
+/// (Xender-style), that both land on the Connected screen, that the file
+/// picked before connecting is the first transfer, and that files go both
+/// ways. The host opens the Send code dialog with <file>; the joiner opens
+/// the Connect picker and connects to the host's inbox port. Prints
+/// `debug pair-test <role> result=ok`.
+Future<void> _pairTest(String role, String file) async {
+  ShareSession.persist = false;
+  // The two copies run with their own TEMP (separate test data), so the
+  // port file can be put in a shared place.
+  final portFile = File(Platform.environment['SS_PAIR_PORT_FILE'] ??
+      '${Directory.systemTemp.path}${Platform.pathSeparator}ss_pair_port.txt');
+  final name = file.split(RegExp(r'[\\/]')).last;
+  Never fail(String why) {
+    print('debug pair-test $role FAIL $why');
+    exit(1);
+  }
+
+  await Future<void>.delayed(const Duration(seconds: 6));
+  final nav = appRouter.routerDelegate.navigatorKey.currentState!;
+  if (role == 'host') {
+    ShareSession.onRequest = (n, k) async => true; // auto-accept in the test
+    unawaited(showSendToPhone(nav.context, File(file), name));
+    await Future<void>.delayed(const Duration(seconds: 3));
+    print('debug pair-test host before ${_pairState()}');
+    await _shot('ss_pair_host_before');
+    if (!_popupOnTop()) fail('code dialog did not open');
+    await portFile.writeAsString('${NearbyService.inboxBoundPort}');
+    if (!await _waitFor(() => ShareSession.active, const Duration(minutes: 2))) fail('no session');
+    final at = DateTime.now();
+    final closed = await _waitFor(() => !_popupOnTop() && ShareSession.pairingUi.isEmpty && ShareSession.screenOpen,
+        const Duration(seconds: 5));
+    print('debug pair-test host connected; dialog closed=$closed after ${DateTime.now().difference(at).inMilliseconds} ms; ${_pairState()}');
+    await Future<void>.delayed(const Duration(milliseconds: 700));
+    await _shot('ss_pair_host_after');
+    if (!closed) fail('dialog still open after connecting');
+    final first = ShareSession.items.isEmpty ? null : ShareSession.items.reduce((a, b) => a.key < b.key ? a : b);
+    print('debug pair-test host first item=${first?.name} outgoing=${first?.outgoing}');
+    if (first == null || !first.outgoing || first.name != name) fail('picked file is not the first transfer');
+    if (!await _waitFor(() => first.state == SessionItemState.done, const Duration(minutes: 3))) fail('first file not sent');
+    print('debug pair-test host first file sent');
+    if (!await _waitFor(() => ShareSession.items.any((i) => !i.outgoing && i.state == SessionItemState.done),
+        const Duration(minutes: 3))) {
+      fail('nothing received back');
+    }
+    final back = ShareSession.items.firstWhere((i) => !i.outgoing && i.state == SessionItemState.done);
+    print('debug pair-test host received back ${back.name} ${back.size} bytes -> ${back.file?.path}');
+    await Future<void>.delayed(const Duration(seconds: 1));
+    await _shot('ss_pair_host_transfers');
+    await _waitFor(() => !ShareSession.active, const Duration(seconds: 60));
+    print('debug pair-test host result=ok (session ended: ${ShareSession.endReason})');
+    try {
+      await portFile.delete();
+    } catch (_) {}
+    await Future<void>.delayed(const Duration(seconds: 1));
+    exit(0);
+  }
+  // Joiner.
+  unawaited(showConnectPicker(nav.context));
+  await Future<void>.delayed(const Duration(seconds: 2));
+  print('debug pair-test join before ${_pairState()}');
+  await _shot('ss_pair_join_before');
+  if (!_popupOnTop()) fail('connect picker did not open');
+  if (!await _waitFor(() => portFile.existsSync() && portFile.readAsStringSync().trim().isNotEmpty, const Duration(minutes: 2))) {
+    fail('no host port');
+  }
+  final port = int.parse(portFile.readAsStringSync().trim());
+  final ip = Platform.environment['SS_PAIR_IP'] ?? '127.0.0.1';
+  // Same as tapping the device in the picker (picker stays open meanwhile).
+  final err = await ShareSession.connect(host: ip, port: port);
+  print('debug pair-test join connect ${err ?? 'ok'} to $ip:$port');
+  if (err != null) fail('connect: $err');
+  final at = DateTime.now();
+  final closed = await _waitFor(() => !_popupOnTop() && ShareSession.pairingUi.isEmpty && ShareSession.screenOpen,
+      const Duration(seconds: 5));
+  print('debug pair-test join picker closed=$closed after ${DateTime.now().difference(at).inMilliseconds} ms; ${_pairState()}');
+  await Future<void>.delayed(const Duration(milliseconds: 700));
+  await _shot('ss_pair_join_after');
+  if (!closed) fail('picker still open after connecting');
+  if (!await _waitFor(() => ShareSession.items.any((i) => !i.outgoing && i.state == SessionItemState.done),
+      const Duration(minutes: 3))) {
+    fail("host's picked file never arrived");
+  }
+  final first = ShareSession.items.reduce((a, b) => a.key < b.key ? a : b);
+  print('debug pair-test join first item=${first.name} outgoing=${first.outgoing} ${first.size} bytes -> ${first.file?.path}');
+  print('debug pair-test join popupOnTop after receiving=${_popupOnTop()} (no Watch/Save dialog expected)');
+  if (_popupOnTop()) fail('a receive dialog popped up in session mode');
+  ShareSession.enqueue([File(file)]);
+  if (!await _waitFor(() => ShareSession.items.any((i) => i.outgoing && i.state == SessionItemState.done),
+      const Duration(minutes: 3))) {
+    fail('send back failed');
+  }
+  print('debug pair-test join sent back $name; active=${ShareSession.active}');
+  await Future<void>.delayed(const Duration(seconds: 2));
+  await _shot('ss_pair_join_transfers');
+  await ShareSession.disconnect();
+  print('debug pair-test join result=ok');
   await Future<void>.delayed(const Duration(seconds: 1));
   exit(0);
 }
