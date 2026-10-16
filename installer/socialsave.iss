@@ -3,7 +3,7 @@
 ;   flutter build windows --release --dart-define=API_BASE_URL=https://socialsave-api-p2tm.onrender.com
 ; Then compile this script with Inno Setup (ISCC).
 
-#define AppVersion "1.0.35"
+#define AppVersion "1.0.36"
 #define SourceDir "..\build\windows\x64\runner\Release"
 
 [Setup]

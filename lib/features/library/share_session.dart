@@ -26,8 +26,15 @@ class SessionPeer {
     required this.link,
     this.legacy = false,
     this.version,
+    this.limited = false,
   });
   final String id;
+
+  /// 1.0.36: this side found the other device (code / hotspot) but could not
+  /// open a full session with it. It still shows the Connected screen, says
+  /// why ([ShareSession.limitedReason]), and receives what the other side
+  /// serves; "Try full connection" upgrades it.
+  final bool limited;
 
   /// An older SocialSave (1.0.30 or earlier) that can't open a session: it
   /// only downloads what this device serves under the pairing code.
@@ -239,7 +246,7 @@ class ShareSession {
   /// Someone fetched the pairing offer (/info or /v). If no session follows
   /// within a few seconds it's an older SocialSave: open a "legacy" session
   /// anyway, so this side still lands on the Connected screen.
-  static void _onContact(String host, bool download) {
+  static void _onContact(String host, bool download, bool joining) {
     _lastTouch = DateTime.now();
     final cur = peer.value;
     if (cur != null) {
@@ -248,7 +255,9 @@ class ShareSession {
     }
     if (_legacyCheck) return;
     _legacyCheck = true;
-    Future<void>.delayed(const Duration(seconds: 3), () {
+    // 1.0.36 receivers say they'll open a session (joining): give that time
+    // (hotspot links can take a while) before guessing "older app".
+    Future<void>.delayed(Duration(seconds: joining ? 25 : 3), () {
       _legacyCheck = false;
       if (peer.value == null && PhoneHandoff.current != null) startLegacy(host);
     });
@@ -268,7 +277,8 @@ class ShareSession {
       legacy: true,
     );
     _token = null;
-    _pairToken = null;
+    // The pairing token stays valid: a newer app that is just slow to open
+    // its session still gets in (and this leaves legacy mode).
     _beat?.cancel();
     _beat = null;
     items.clear();
@@ -290,6 +300,241 @@ class ShareSession {
     onOpened?.call();
   }
 
+  /// Added to the pairing server's /info: whoever found this offer by its
+  /// code can open a session with it (no prompt: the code is the secret).
+  static Map<String, dynamic>? _sessionInfo() {
+    final cur = peer.value;
+    if (cur != null && !cur.legacy) return null;
+    if (NearbyService.id.isEmpty) return null;
+    _pairToken ??= _newToken();
+    return {
+      'sid': _pairToken,
+      'sp': NearbyService.inboxBoundPort,
+      'sf': 1,
+      'v': AppConstants.appVersion,
+      'dn': NearbyService.name,
+      'dk': NearbyService.kind,
+    };
+  }
+
+  // ------------------------------------------- limited session (joiner)
+
+  /// Why the session is limited (shown on the Connected screen).
+  static String? limitedReason;
+  static HandoffTarget? _limitedTarget;
+  static Timer? _limitedPoll;
+  static bool _limitedPolling = false;
+  static int _limitedMisses = 0;
+  static String _limitedSeen = '';
+
+  static bool get isLimited => peer.value?.limited == true;
+
+  /// Lands on the Connected screen even though no full session opened.
+  static void startLimited(HandoffTarget t, String reason, {required String link}) {
+    if (peer.value != null) return;
+    final pr = SessionPeer(
+      id: 'limited:${t.host}',
+      name: t.senderName ?? (t.senderKind == 'pc' ? 'PC' : 'Other device'),
+      kind: t.senderKind ?? 'phone',
+      host: t.host,
+      port: t.sp ?? NearbyService.inboxPort,
+      link: link,
+      version: t.version,
+      limited: true,
+    );
+    _token = null;
+    _beat?.cancel();
+    _beat = null;
+    items.clear();
+    limitedReason = reason;
+    _limitedTarget = t;
+    _limitedMisses = 0;
+    _limitedSeen = '';
+    peer.value = pr;
+    lastPeer = pr;
+    _lastWasHotspotHost = false;
+    state.value = 'connected';
+    endReason = '';
+    pendingFirst = null;
+    landOnTransfers = t.hasFile;
+    _changed();
+    debugPrint('[session] limited session with ${t.host}:${t.port} ($reason)');
+    unawaited(SessionKeepAlive.start(_title(), _text()));
+    _updateNotification();
+    onOpened?.call();
+    _limitedPoll?.cancel();
+    _limitedPoll = Timer.periodic(const Duration(seconds: 2), (_) => unawaited(_pollLimited()));
+    unawaited(_pollLimited());
+  }
+
+  /// A full session opened, but the sender serves its first file instead
+  /// of pushing it (older sender): fetch it into Transfers.
+  static void receiveOffered(HandoffTarget t) {
+    final pr = peer.value;
+    if (pr == null || !t.hasFile) return;
+    landOnTransfers = true;
+    unawaited(_downloadOffered(t, pr));
+  }
+
+  static Future<void> _pollLimited() async {
+    final t = _limitedTarget;
+    final pr = peer.value;
+    if (t == null || pr == null || !pr.limited) {
+      _limitedPoll?.cancel();
+      _limitedPoll = null;
+      return;
+    }
+    if (_limitedPolling) return;
+    _limitedPolling = true;
+    try {
+      final now = await PhoneHandoff.probe(t.host, t.port, t.code);
+      if (peer.value != pr) return;
+      if (now == null) {
+        _limitedMisses++;
+        if (_limitedMisses == 8 && state.value == 'connected') {
+          state.value = 'reconnecting';
+          _updateNotification();
+        }
+        if (_limitedMisses > 300) {
+          await _end('Lost the connection to ${pr.name}. Receive the code again to reconnect.');
+        }
+        return;
+      }
+      _limitedMisses = 0;
+      if (state.value == 'reconnecting') {
+        state.value = 'connected';
+        _updateNotification();
+      }
+      _limitedTarget = HandoffTarget(
+        host: t.host,
+        port: t.port,
+        code: t.code,
+        fileName: now.fileName,
+        title: now.title,
+        size: now.size,
+        sid: now.sid ?? t.sid,
+        sp: now.sp ?? t.sp,
+        sendsInSession: now.sendsInSession,
+        version: now.version ?? t.version,
+        senderName: now.senderName ?? t.senderName,
+        senderKind: now.senderKind ?? t.senderKind,
+      );
+      if (!now.hasFile) return;
+      final sig = '${now.fileName}|${now.size}';
+      if (sig == _limitedSeen) return;
+      if (items.any((i) => !i.outgoing && i.state == SessionItemState.receiving)) return;
+      _limitedSeen = sig;
+      await _downloadOffered(now, pr);
+    } finally {
+      _limitedPolling = false;
+    }
+  }
+
+  static Future<void> _downloadOffered(HandoffTarget t, SessionPeer from) async {
+    final it = SessionItem(outgoing: false, name: t.fileName, size: t.size, state: SessionItemState.receiving);
+    it.detail = 'Starting…';
+    items.add(it);
+    _changed();
+    final meter = TransferMeter();
+    File? file;
+    try {
+      file = await PhoneHandoff.download(t, onProgress: (r, total) {
+        _lastTouch = DateTime.now();
+        if (!meter.update(r, total)) return;
+        it.done = r;
+        it.size = total;
+        it.speed = meter.speed;
+        it.detail = meter.label;
+        _changed();
+      });
+    } catch (e) {
+      debugPrint('[session] download of ${t.fileName} failed: $e');
+    }
+    it.speed = 0;
+    if (file != null) {
+      it.state = SessionItemState.done;
+      it.file = file;
+      it.done = it.size;
+      it.detail = 'Received · ${meter.doneLabel}';
+      _remember(ReceivedRecord(name: t.fileName, path: file.path, size: it.size, at: DateTime.now(), from: from.name));
+      final fg = WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+      if (!fg) unawaited(SessionKeepAlive.received('Received from ${from.name}', t.fileName));
+    } else {
+      it.state = SessionItemState.failed;
+      it.detail = 'Stopped before the end';
+    }
+    _changed();
+  }
+
+  /// "Try full connection" on a limited session. Null on success.
+  static Future<String?> upgradeLimited() async {
+    final pr = peer.value;
+    final t = _limitedTarget;
+    if (pr == null || !pr.limited || t == null) return null;
+    final fresh = await PhoneHandoff.probe(t.host, t.port, t.code, joining: true);
+    final sid = fresh?.sid ?? t.sid;
+    final sp = fresh?.sp ?? t.sp;
+    if (sp == null) {
+      return '${pr.name} has an older SocialSave. Update it to connect fully.';
+    }
+    final keep = List<SessionItem>.of(items);
+    _limitedPoll?.cancel();
+    _limitedPoll = null;
+    peer.value = null;
+    String? err;
+    for (var i = 0; i < 3; i++) {
+      err = await connect(host: t.host, port: sp, pair: sid, link: pr.link);
+      if (err == null || peer.value != null) break;
+      await Future<void>.delayed(const Duration(seconds: 1));
+    }
+    if (peer.value != null && !peer.value!.limited) {
+      limitedReason = null;
+      _limitedTarget = null;
+      items.insertAll(0, keep.where((i) => !items.contains(i)));
+      _changed();
+      return null;
+    }
+    // Still limited: put it back as it was.
+    peer.value = pr;
+    state.value = 'connected';
+    limitedReason = '${err ?? 'Could not connect.'} Files from ${pr.name} still arrive here.';
+    _changed();
+    _limitedPoll = Timer.periodic(const Duration(seconds: 2), (_) => unawaited(_pollLimited()));
+    return err ?? 'Could not connect.';
+  }
+
+  /// Limited session: try the other device's inbox directly (it may ask
+  /// its user to accept); say clearly when it can't be reached.
+  static Future<void> _sendLimited(SessionPeer to, SessionItem next) async {
+    next.state = SessionItemState.sending;
+    next.detail = 'Starting…';
+    _changed();
+    final meter = TransferMeter();
+    final error = await NearbyService.sendTo(
+      to.device,
+      next.file!,
+      onProgress: (sent, total) {
+        if (!meter.update(sent, total)) return;
+        next.done = sent;
+        next.size = total;
+        next.speed = meter.speed;
+        next.detail = meter.label;
+        _changed();
+      },
+    );
+    next.speed = 0;
+    if (error == null) {
+      next.state = SessionItemState.done;
+      next.done = next.size;
+      next.detail = 'Sent · ${meter.doneLabel}';
+      _batchDone++;
+    } else {
+      next.state = SessionItemState.failed;
+      next.detail = 'Not sent: $error Tap "Try full connection" above, then Retry.';
+    }
+    _changed();
+  }
+
   static String legacyCode() {
     final c = PhoneHandoff.current?.code ?? '';
     return c.length == 6 ? '${c.substring(0, 3)} ${c.substring(3)}' : c;
@@ -305,6 +550,7 @@ class ShareSession {
     NearbyService.extraRoute = _route;
     NearbyService.incoming.addListener(_onIncoming);
     PhoneHandoff.onContact = _onContact;
+    PhoneHandoff.sessionInfo = _sessionInfo;
     PhoneHandoff.keepAlive = () => active;
     SessionKeepAlive.onDisconnect = disconnect;
     SessionKeepAlive.wire();
@@ -542,7 +788,8 @@ class ShareSession {
       return null;
     } on TimeoutException {
       return 'The other device did not answer.';
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[session] open $host:$port failed: $e');
       return 'Could not reach the other device.';
     } finally {
       client.close(force: true);
@@ -788,6 +1035,10 @@ class ShareSession {
     _beat = null;
     _token = null;
     _pairToken = null;
+    _limitedPoll?.cancel();
+    _limitedPoll = null;
+    _limitedTarget = null;
+    limitedReason = null;
     endReason = reason;
     for (final it in items) {
       if (it.state == SessionItemState.queued) {
@@ -1018,6 +1269,10 @@ class ShareSession {
         if (p == null) return;
         final next = items.where((i) => i.outgoing && i.state == SessionItemState.queued).firstOrNull;
         if (next == null) return;
+        if (p.limited) {
+          await _sendLimited(p, next);
+          continue;
+        }
         if (p.legacy) {
           await _sendLegacy(p, next);
           continue;

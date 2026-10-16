@@ -334,15 +334,18 @@ class NearbyService {
   // ---------------- receiving ----------------
 
   static Future<void> _openInbox() async {
-    HttpServer server;
-    try {
-      server = await HttpServer.bind(InternetAddress.anyIPv4, inboxPort);
-    } catch (_) {
-      server = await HttpServer.bind(InternetAddress.anyIPv4, 0);
+    HttpServer? server;
+    // 1.0.36: spare ports stay inside the firewall rule's range (47321-47330).
+    for (final n in const [inboxPort, 47327, 47328]) {
+      try {
+        server = await HttpServer.bind(InternetAddress.anyIPv4, n);
+        break;
+      } catch (_) {}
     }
-    _inbox = server;
+    final srv = server ?? await HttpServer.bind(InternetAddress.anyIPv4, 0);
+    _inbox = srv;
     unawaited(() async {
-      await for (final req in server) {
+      await for (final req in srv) {
         unawaited(_handle(req));
       }
     }());

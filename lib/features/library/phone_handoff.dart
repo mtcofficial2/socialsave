@@ -9,6 +9,7 @@ import 'package:dio/dio.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:social_save/features/library/bundle_transfer.dart';
 import 'package:social_save/features/library/bundle_ui.dart';
+import 'package:social_save/features/library/firewall_check.dart';
 import 'package:social_save/features/library/hotspot_share.dart';
 import 'package:social_save/features/library/nearby_service.dart';
 import 'package:social_save/features/library/session_ui.dart';
@@ -73,7 +74,11 @@ class PhoneHandoff {
   /// Someone fetched /info or /v from [host] (download: true for /v). The
   /// session uses this to spot older SocialSave versions that never open a
   /// session, and still move on to the Connected screen.
-  static void Function(String host, bool download)? onContact;
+  static void Function(String host, bool download, bool joining)? onContact;
+
+  /// Session details added to /info (1.0.36): a device that found this offer
+  /// by its code can open a lasting session from it, not only download.
+  static Map<String, dynamic>? Function()? sessionInfo;
 
   /// While true the offer outlives [lifetime] (a session is using it).
   static bool Function()? keepAlive;
@@ -120,11 +125,7 @@ class PhoneHandoff {
     contacts = 0;
     final code = newCode();
     HttpServer server;
-    try {
-      server = await HttpServer.bind(InternetAddress.anyIPv4, port, shared: false);
-    } catch (_) {
-      server = await HttpServer.bind(InternetAddress.anyIPv4, 0);
-    }
+    server = await _bindNear(port);
     _server = server;
     final name = file == null ? '' : p.basename(file.path);
     final offer = HandoffOffer(
@@ -155,6 +156,17 @@ class PhoneHandoff {
       // Port busy or blocked. The subnet sweep still finds us.
     }
     return offer;
+  }
+
+  /// Binds [first], else a spare port inside the firewall rule's range
+  /// (47321-47330), else any port.
+  static Future<HttpServer> _bindNear(int first) async {
+    for (final n in [first, 47329, 47330]) {
+      try {
+        return await HttpServer.bind(InternetAddress.anyIPv4, n, shared: false);
+      } catch (_) {}
+    }
+    return HttpServer.bind(InternetAddress.anyIPv4, 0);
   }
 
   static void _armTimer() {
@@ -228,7 +240,7 @@ class PhoneHandoff {
       if (from != null && !from.isLoopback && (parts[0] == 'info' || parts[0] == 'v')) {
         if (parts[0] == 'v' && request.method == 'GET') downloads++;
         contacts++;
-        onContact?.call(from.address, parts[0] == 'v');
+        onContact?.call(from.address, parts[0] == 'v', request.uri.queryParameters['s'] == '1');
       }
       if (parts[0] == 'info') {
         res.headers.contentType = ContentType.json;
@@ -239,6 +251,7 @@ class PhoneHandoff {
           'name': offer.fileName,
           'title': offer.title,
           'size': offer.size,
+          ...?sessionInfo?.call(),
         }));
         await res.close();
         return;
@@ -330,22 +343,29 @@ class PhoneHandoff {
 
   /// Turns a scanned link, a typed link or a 6-character code into the
   /// sender's address. Returns null when nobody answers on this Wi-Fi.
-  static Future<HandoffTarget?> resolve(String raw) async {
+  /// [joining]: this device will open a session right after (1.0.36), so
+  /// the sender waits for it instead of treating it as an older app.
+  static Future<HandoffTarget?> resolve(String raw, {bool joining = false}) async {
     final text = raw.trim();
     final uri = Uri.tryParse(text);
     if (uri != null && uri.scheme == 'http' && uri.host.isNotEmpty) {
       final segs = uri.pathSegments;
       if (segs.length >= 2 && segs[0] == 'v') {
-        return _probe(uri.host, uri.port, segs[1].toUpperCase());
+        return _probe(uri.host, uri.port, segs[1].toUpperCase(), joining: joining);
       }
       return null;
     }
     final code = normalizeCode(text);
     if (code == null) return null;
-    final viaUdp = await _discoverUdp(code);
+    final viaUdp = await _discoverUdp(code, joining: joining);
     if (viaUdp != null) return viaUdp;
-    return _sweep(code);
+    return _sweep(code, joining: joining);
   }
+
+  /// Asks [host] for the offer again (limited sessions poll it for the next
+  /// file). Null when it doesn't answer.
+  static Future<HandoffTarget?> probe(String host, int port, String code, {bool joining = false}) =>
+      _probe(host, port, code, joining: joining, timeout: const Duration(seconds: 3));
 
   static String? normalizeCode(String text) {
     final code = text.toUpperCase().replaceAll(RegExp('[^A-Z0-9]'), '');
@@ -353,7 +373,7 @@ class PhoneHandoff {
     return code;
   }
 
-  static Future<HandoffTarget?> _discoverUdp(String code, {String role = 'sender'}) async {
+  static Future<HandoffTarget?> _discoverUdp(String code, {String role = 'sender', bool joining = false}) async {
     RawDatagramSocket? udp;
     try {
       udp = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
@@ -367,7 +387,7 @@ class PhoneHandoff {
         if (parts.length == 3 && parts[0] == 'SSHERE' && parts[1] == code) {
           final port = int.tryParse(parts[2]);
           if (port == null) return;
-          unawaited(_probe(dg.address.address, port, code, role: role).then((t) {
+          unawaited(_probe(dg.address.address, port, code, role: role, joining: joining).then((t) {
             if (t != null && !found.isCompleted) found.complete(t);
           }));
         }
@@ -394,7 +414,7 @@ class PhoneHandoff {
     }
   }
 
-  static Future<HandoffTarget?> _sweep(String code, {int port = port, String role = 'sender'}) async {
+  static Future<HandoffTarget?> _sweep(String code, {int port = port, String role = 'sender', bool joining = false}) async {
     final own = await lanIps();
     final hosts = <String>[];
     for (final ip in own) {
@@ -411,7 +431,7 @@ class PhoneHandoff {
     Future<void> worker() async {
       while (next < hosts.length && !found.isCompleted) {
         final host = hosts[next++];
-        final t = await _probe(host, port, code, role: role, timeout: const Duration(milliseconds: 900));
+        final t = await _probe(host, port, code, role: role, joining: joining, timeout: const Duration(milliseconds: 900));
         pending--;
         if (t != null && !found.isCompleted) found.complete(t);
       }
@@ -424,10 +444,12 @@ class PhoneHandoff {
   }
 
   static Future<HandoffTarget?> _probe(String host, int port, String code,
-      {String role = 'sender', Duration timeout = const Duration(seconds: 4)}) async {
+      {String role = 'sender', Duration timeout = const Duration(seconds: 4), bool joining = false}) async {
     final client = HttpClient()..connectionTimeout = timeout;
     try {
-      final req = await client.getUrl(Uri.http('$host:$port', '/info/$code')).timeout(timeout);
+      final req = await client
+          .getUrl(Uri.http('$host:$port', '/info/$code', joining ? const {'s': '1'} : null))
+          .timeout(timeout);
       final res = await req.close().timeout(timeout);
       if (res.statusCode != 200) {
         await res.drain<void>();
@@ -444,6 +466,12 @@ class PhoneHandoff {
         fileName: json['name'] as String? ?? 'video.mp4',
         title: json['title'] as String? ?? 'Video',
         size: (json['size'] as num?)?.toInt() ?? 0,
+        sid: json['sid'] as String?,
+        sp: (json['sp'] as num?)?.toInt(),
+        sendsInSession: json['sf'] == 1,
+        version: json['v'] as String?,
+        senderName: json['dn'] as String?,
+        senderKind: json['dk'] as String?,
       );
     } catch (_) {
       return null;
@@ -855,6 +883,12 @@ class HandoffTarget {
     required this.fileName,
     required this.title,
     required this.size,
+    this.sid,
+    this.sp,
+    this.sendsInSession = false,
+    this.version,
+    this.senderName,
+    this.senderKind,
   });
 
   final String host;
@@ -863,6 +897,17 @@ class HandoffTarget {
   final String fileName;
   final String title;
   final int size;
+
+  /// 1.0.36+ senders: a pairing token and inbox port to open a lasting
+  /// session from a typed code (not only from the hotspot QR).
+  final String? sid;
+  final int? sp;
+  final bool sendsInSession;
+  final String? version;
+  final String? senderName;
+  final String? senderKind;
+
+  bool get hasFile => size > 0 && fileName.isNotEmpty;
 
   String get videoUrl => 'http://$host:$port/v/$code/${Uri.encodeComponent(fileName)}';
 }
@@ -1152,7 +1197,7 @@ class _JoinByHand extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               'Join this Wi-Fi on the other device (type the password without spaces), '
-              'then open SocialSave › Receive and type the code — or use Connect to stay connected.',
+              'then open SocialSave › Receive and type the code: both devices go to the Connected screen.',
               style: theme.textTheme.bodySmall,
             ),
             if (!info.custom)
@@ -1374,6 +1419,7 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
                   style: small,
                   textAlign: TextAlign.center,
                 ),
+                if (Plat.isWindows) const FirewallPrompt(),
                 const SizedBox(height: 10),
                 _JoinByHand(info: info, code: offer.code),
                 const SizedBox(height: 12),
@@ -1476,6 +1522,11 @@ Future<bool> showReceiveFromPhone(BuildContext context) async {
                       padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
                       child: Text('…or enter the code shown on the sending device'),
                     ),
+                    if (Plat.isWindows)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 16),
+                        child: FirewallPrompt(compact: true),
+                      ),
                     if (!DesktopSupport.isWindows)
                       SizedBox(
                         height: 220,
@@ -1632,10 +1683,12 @@ Future<bool> receiveHandoff(BuildContext context, String raw, {String? mode}) as
   if (q != null && sid != null && sp != null) {
     try {
       String? err;
-      for (var i = 0; i < 4; i++) {
+      // A fresh hotspot link can take a few seconds to carry traffic.
+      for (var i = 0; i < 8; i++) {
         err = await ShareSession.connect(host: q.host, port: sp, pair: sid, link: 'hotspot');
-        if (err == null || err.contains('Update') || err.contains('accept')) break;
-        await Future<void>.delayed(const Duration(seconds: 1));
+        if (err == null || err.contains('Update') || err.contains('accept') || err.contains('already')) break;
+        debugPrint('[session] hotspot pairing try ${i + 1}: $err');
+        await Future<void>.delayed(const Duration(milliseconds: 1500));
       }
       session = err == null;
       if (session) ShareSession.joinedHotspot = true;
@@ -1652,7 +1705,9 @@ Future<bool> receiveHandoff(BuildContext context, String raw, {String? mode}) as
     if (!context.mounted) return false;
     return await _receiveHandoff(context, raw, mode: mode, viaHotspot: true);
   } finally {
-    if (session && ShareSession.active) {
+    if (ShareSession.active) {
+      // Full or limited session: the hotspot link stays for it.
+      ShareSession.joinedHotspot = true;
       if (context.mounted) unawaited(openSessionScreen(context));
     } else {
       await HotspotShare.leave();
@@ -1660,16 +1715,65 @@ Future<bool> receiveHandoff(BuildContext context, String raw, {String? mode}) as
   }
 }
 
+bool _hotspotAddress(String host) =>
+    host.startsWith('192.168.137.') || host.startsWith('192.168.43.') || host.startsWith('192.168.49.');
+
+/// 1.0.36: the receiver found the sender (typed code, Wi-Fi joined by hand,
+/// or a QR whose session could not open). Open a lasting session from the
+/// sender's /info details so both sides land on the Connected screen. When
+/// that's impossible (older sender, connection refused) land anyway in a
+/// limited session that says why and still receives.
+Future<bool> _joinAfterFind(BuildContext context, HandoffTarget t, {required bool viaHotspot}) async {
+  final messenger = ScaffoldMessenger.of(context);
+  final link = viaHotspot || _hotspotAddress(t.host) ? 'hotspot' : 'wifi';
+  final who = t.senderName ?? (t.senderKind == 'pc' ? 'the PC' : 'the other device');
+  final whoCap = who.isEmpty ? who : '${who[0].toUpperCase()}${who.substring(1)}';
+  String reason;
+  if (t.sid != null && t.sp != null) {
+    messenger.showSnackBar(SnackBar(duration: const Duration(seconds: 20), content: Text('Connecting to $who…')));
+    String? err;
+    for (var i = 0; i < 6; i++) {
+      err = await ShareSession.connect(host: t.host, port: t.sp!, pair: t.sid, link: link);
+      if (err == null || err.contains('accept') || err.contains('already') || ShareSession.active) break;
+      debugPrint('[session] code pairing try ${i + 1}: $err');
+      await Future<void>.delayed(const Duration(milliseconds: 1500));
+    }
+    messenger.hideCurrentSnackBar();
+    if (err == null || ShareSession.active) {
+      debugPrint('[session] code pairing ok with ${t.host}:${t.sp}');
+      if (link == 'hotspot' && viaHotspot) ShareSession.joinedHotspot = true;
+      if (!t.sendsInSession && t.hasFile && ShareSession.active) {
+        // Sender doesn't push its picked file in the session: fetch it.
+        ShareSession.receiveOffered(t);
+      }
+      return true;
+    }
+    debugPrint('[session] code pairing failed: $err');
+    reason = '$err Files from $who still arrive here; '
+        'sending to $who may not work until it connects fully.';
+    if (Plat.isWindows) {
+      reason += ' If Windows Firewall blocks SocialSave, allow it below.';
+    }
+  } else {
+    reason = '$whoCap has an older SocialSave: files it sends arrive here by themselves. '
+        'Update it to send both ways.';
+  }
+  ShareSession.startLimited(t, reason, link: link);
+  if (link == 'hotspot' && viaHotspot) ShareSession.joinedHotspot = true;
+  return true;
+}
+
 Future<bool> _receiveHandoff(BuildContext context, String raw, {String? mode, bool viaHotspot = false}) async {
   final messenger = ScaffoldMessenger.of(context);
   messenger.showSnackBar(SnackBar(
     content: Text(viaHotspot ? 'Connected. Finding the video…' : 'Looking for the other device on this Wi-Fi…'),
   ));
-  var found = await PhoneHandoff.resolve(raw);
+  final joining = mode == null && !ShareSession.active;
+  var found = await PhoneHandoff.resolve(raw, joining: joining);
   // A fresh hotspot link can need a moment before it carries traffic.
-  for (var i = 0; viaHotspot && found == null && i < 4; i++) {
+  for (var i = 0; viaHotspot && found == null && i < 6; i++) {
     await Future<void>.delayed(const Duration(seconds: 1));
-    found = await PhoneHandoff.resolve(raw);
+    found = await PhoneHandoff.resolve(raw, joining: joining);
   }
   final target = found;
   messenger.hideCurrentSnackBar();
@@ -1679,6 +1783,10 @@ Future<bool> _receiveHandoff(BuildContext context, String raw, {String? mode, bo
       content: Text('Could not find it. Check the code, keep the code open on the other device, and use the same Wi-Fi.'),
     ));
     return false;
+  }
+  if (joining) {
+    // Xender-style: no Watch/Save step; both devices land on Connected.
+    return _joinAfterFind(context, target, viaHotspot: viaHotspot);
   }
   final choice = mode ??
       await showDialog<String>(

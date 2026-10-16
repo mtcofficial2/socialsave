@@ -14,6 +14,7 @@ import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:social_save/features/library/session_keepalive.dart';
 import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
 import 'package:social_save/features/library/bundle_transfer.dart';
+import 'package:social_save/features/library/firewall_check.dart';
 import 'package:social_save/features/library/nearby_service.dart';
 import 'package:social_save/features/library/session_media_picker.dart';
 import 'package:social_save/features/library/share_session.dart';
@@ -260,9 +261,11 @@ Future<void> landOnSession() async {
   final offerUpdate = p.older && p.kind == 'phone' && !watching;
   messenger?.showSnackBar(SnackBar(
     duration: Duration(seconds: offerUpdate ? 6 : 2),
-    content: Text(p.legacy
-        ? 'Connected to ${p.name} · it has an older SocialSave'
-        : 'Connected to ${p.name}${offerUpdate ? ' · it has an older SocialSave' : ''}'),
+    content: Text(p.limited
+        ? 'Connected to ${p.name} · limited connection (see the top of the screen)'
+        : p.legacy
+            ? 'Connected to ${p.name} · it has an older SocialSave'
+            : 'Connected to ${p.name}${offerUpdate ? ' · it has an older SocialSave' : ''}'),
     action: watching
         ? SnackBarAction(label: 'Open', onPressed: () => unawaited(openSessionScreen()))
         : offerUpdate
@@ -828,8 +831,41 @@ class _SessionScreenState extends State<SessionScreen> with SingleTickerProvider
     );
   }
 
+  bool _upgrading = false;
+
+  Future<void> _upgrade() async {
+    if (_upgrading) return;
+    setState(() => _upgrading = true);
+    final err = await ShareSession.upgradeLimited();
+    if (!mounted) return;
+    setState(() => _upgrading = false);
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+      content: Text(err == null ? 'Fully connected: send both ways.' : err),
+    ));
+  }
+
+  Widget _limitedBanner(BuildContext context, SessionPeer peer) {
+    final scheme = Theme.of(context).colorScheme;
+    return _Banner(
+      key: const ValueKey('session-limited'),
+      color: scheme.secondaryContainer,
+      onColor: scheme.onSecondaryContainer,
+      icon: Icons.link_rounded,
+      text: 'Limited connection · ${ShareSession.limitedReason ?? 'Could not open a full connection.'}',
+      action: FilledButton.tonalIcon(
+        key: const ValueKey('session-try-full'),
+        onPressed: _upgrading ? null : _upgrade,
+        icon: _upgrading
+            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+            : const Icon(Icons.refresh_rounded),
+        label: const Text('Try full connection'),
+      ),
+    );
+  }
+
   Widget _stateBanner(BuildContext context, SessionPeer? peer, String state) {
     final scheme = Theme.of(context).colorScheme;
+    if (peer != null && peer.limited && state != 'reconnecting') return _limitedBanner(context, peer);
     if (peer == null && state == 'connecting') {
       return _Banner(
         color: scheme.secondaryContainer,
@@ -951,6 +987,10 @@ class _SessionScreenState extends State<SessionScreen> with SingleTickerProvider
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _stateBanner(context, peer, state),
+                  if (Plat.isWindows) const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 8),
+                    child: FirewallPrompt(compact: true),
+                  ),
                   if (peer != null && peer.older) _updateBanner(context, peer),
                   if (peer != null && _exempt == false && SessionKeepAlive.supported)
                     Material(
@@ -1107,7 +1147,7 @@ class _SessionScreenState extends State<SessionScreen> with SingleTickerProvider
 }
 
 class _Banner extends StatelessWidget {
-  const _Banner({required this.color, required this.onColor, required this.icon, required this.text, this.busy = false, this.action});
+  const _Banner({super.key, required this.color, required this.onColor, required this.icon, required this.text, this.busy = false, this.action});
   final Color color;
   final Color onColor;
   final IconData icon;

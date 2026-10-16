@@ -3,7 +3,8 @@ import 'package:social_save/features/library/desktop_tray.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
+import 'package:social_save/core/platform/media_events.dart';
 import 'package:flutter/material.dart';
 import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -42,6 +43,17 @@ import 'package:social_save/shared/routing/app_router.dart';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (Plat.isAndroid) {
+    // 1.0.36: session / hotspot diagnostics also reach logcat in release
+    // builds (tag SocialSaveSession), so pairing problems can be read back.
+    final base = debugPrint;
+    debugPrint = (String? m, {int? wrapWidth}) {
+      base(m, wrapWidth: wrapWidth);
+      if (m != null && m.startsWith('[')) {
+        MediaEvents.channel.invokeMethod<void>('log', {'m': m}).then((_) {}, onError: (_) {});
+      }
+    };
+  }
   if (kIsWeb) {
     await _runWeb();
     return;
@@ -654,7 +666,9 @@ Future<void> _pairTest(String role, String file, [String? file2]) async {
     await _shot('ss_quick_host_qr');
     if (link == null) fail('no QR (hotspot failed to start?)');
     final q = Uri.parse(link);
-    await portFile.writeAsString('${q.queryParameters['sp']}|${q.queryParameters['sid']}');
+    // sp|sid|code|ssid|password: a real phone joins by hand and types the code.
+    await portFile.writeAsString('${q.queryParameters['sp']}|${q.queryParameters['sid']}|${PhoneHandoff.current?.code}|'
+        '${HotspotShare.lastInfo?.ssid}|${HotspotShare.lastInfo?.password}');
     if (!await _waitFor(() => ShareSession.active, const Duration(minutes: 2))) fail('no session');
     final at = DateTime.now();
     final closed = await _waitFor(() => !_popupOnTop() && ShareSession.pairingUi.isEmpty && ShareSession.screenOpen,
@@ -730,6 +744,43 @@ Future<void> _pairTest(String role, String file, [String? file2]) async {
     print('debug pair-test legacy-host result=ok');
     await Future<void>.delayed(const Duration(seconds: 1));
     exit(0);
+  }
+  if (role == 'code-join') {
+    // 1.0.36: this PC types the other device's code (Receive), the way a
+    // user does after joining its hotspot by hand: it must land on the
+    // Connected screen (full session, or limited with a clear status).
+    if (!await _waitFor(() => portFile.existsSync() && portFile.readAsStringSync().trim().isNotEmpty, const Duration(minutes: 5))) {
+      fail('no code');
+    }
+    final code = portFile.readAsStringSync().trim();
+    final at = DateTime.now();
+    unawaited(receiveHandoff(nav.context, code));
+    if (!await _waitFor(() => ShareSession.active, const Duration(minutes: 2))) fail('no session after typing the code');
+    final landed = await _waitFor(() => !_popupOnTop() && ShareSession.screenOpen, const Duration(seconds: 8));
+    final peer = ShareSession.peer.value!;
+    print('debug pair-test code-join landed=$landed limited=${peer.limited} legacy=${peer.legacy} with ${peer.name} '
+        '${peer.host}:${peer.port} via ${peer.link} after ${DateTime.now().difference(at).inMilliseconds} ms; ${_pairState()}');
+    await Future<void>.delayed(const Duration(milliseconds: 800));
+    await _shot('ss_code_join_after');
+    if (!landed) fail('did not land on the Connected screen');
+    if (!await _waitFor(() => ShareSession.items.any((i) => !i.outgoing && i.state == SessionItemState.done),
+        const Duration(minutes: 4))) {
+      fail('nothing received');
+    }
+    final got = ShareSession.items.firstWhere((i) => !i.outgoing && i.state == SessionItemState.done);
+    print('debug pair-test code-join received ${got.name} ${got.size} bytes -> ${got.file?.path}');
+    ShareSession.enqueue([File(file)]);
+    if (!await _waitFor(() => ShareSession.items.any((i) => i.outgoing && i.state != SessionItemState.queued && !i.active),
+        const Duration(minutes: 3))) {
+      fail('send did not finish');
+    }
+    final sent = ShareSession.items.firstWhere((i) => i.outgoing);
+    print('debug pair-test code-join sent ${sent.name}: ${sent.state.name} ${sent.detail}');
+    await Future<void>.delayed(const Duration(seconds: 1));
+    await _shot('ss_code_join_transfers');
+    await _waitFor(() => !ShareSession.active, const Duration(seconds: 90));
+    print('debug pair-test code-join result=${sent.state == SessionItemState.done ? 'ok' : 'FAIL'} (ended: ${ShareSession.endReason})');
+    exit(sent.state == SessionItemState.done ? 0 : 1);
   }
   // Joiner.
   unawaited(showConnectPicker(nav.context));

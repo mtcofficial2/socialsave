@@ -527,6 +527,10 @@ class MainActivity : FlutterFragmentActivity() {
                     result.success(secure)
                 }
                 "apkPath" -> result.success(applicationInfo.sourceDir)
+                "log" -> {
+                    android.util.Log.i("SocialSaveSession", call.argument<String>("m") ?: "")
+                    result.success(null)
+                }
                 "installApk" -> {
                     val path = call.argument<String>("path")
                     if (path.isNullOrBlank()) {

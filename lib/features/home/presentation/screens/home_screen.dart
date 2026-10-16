@@ -221,9 +221,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             _playlistButton(),
             const SaveQueueSection(),
             const SizedBox(height: 8),
-            const RecentDownloadsSection(),
-            const SizedBox(height: 12),
+            // 1.0.36: sharing sits above Recent Downloads.
             const NearbyShareBar(compact: true),
+            const SizedBox(height: 12),
+            const RecentDownloadsSection(),
             const SizedBox(height: 16),
             const SupportedPlatformsSection(),
             const SizedBox(height: 16),
@@ -288,9 +289,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                   child: ListView(
                     padding: const EdgeInsets.only(bottom: 12),
                     children: const [
-                      RecentDownloadsSection(),
-                      SizedBox(height: 16),
+                      // 1.0.36: sharing sits above Recent Downloads.
                       NearbyShareBar(compact: true),
+                      SizedBox(height: 16),
+                      RecentDownloadsSection(),
                       SizedBox(height: 16),
                       SupportedPlatformsSection(),
                     ],
