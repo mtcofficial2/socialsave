@@ -85,7 +85,7 @@ class HotspotShare {
       if (ssid == null || ssid.isEmpty) {
         throw const HotspotError('The hotspot started but the phone did not share its name.');
       }
-      return HotspotInfo(ssid: ssid, password: (m['password'] as String?) ?? '', ip: ip);
+      return HotspotInfo(ssid: ssid, password: (m['password'] as String?) ?? '', ip: ip, custom: m['custom'] == true);
     } on PlatformException catch (e) {
       throw HotspotError(e.message ?? 'The hotspot could not start.');
     }
@@ -132,7 +132,10 @@ class HotspotShare {
 }
 
 class HotspotInfo {
-  const HotspotInfo({required this.ssid, required this.password, this.ip});
+  const HotspotInfo({required this.ssid, required this.password, this.ip, this.custom = false});
+
+  /// True when the phone accepted SocialSave's short 8-digit password.
+  final bool custom;
   final String ssid;
   final String password;
   final String? ip;

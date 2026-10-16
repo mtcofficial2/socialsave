@@ -83,6 +83,9 @@ class HotspotShare(private val context: Context, messenger: BinaryMessenger) :
 
     // ---------------------------------------------------------------- sender
 
+    /** Short password we ask for (Android 13+ only, see [customConfig]). */
+    private var wantedPassword: String? = null
+
     @SuppressLint("MissingPermission")
     private fun start(result: MethodChannel.Result) {
         if (Build.VERSION.SDK_INT < 26) {
@@ -102,42 +105,114 @@ class HotspotShare(private val context: Context, messenger: BinaryMessenger) :
         // Some phones never call back when the maker blocks it.
         main.postDelayed({
             answer { result.error("timeout", "The hotspot did not start. Turn off the phone's own hotspot and try again.", null) }
-        }, 15000)
+        }, 20000)
+
+        fun callback(onFail: (Int) -> Unit) = object : WifiManager.LocalOnlyHotspotCallback() {
+            override fun onStarted(res: WifiManager.LocalOnlyHotspotReservation) {
+                if (answered) {
+                    // Timed out meanwhile: give it back.
+                    try { res.close() } catch (_: Exception) {}
+                    return
+                }
+                reservation = res
+                val info = describe(res)
+                Log.i(TAG, "hotspot started ssid=${info["ssid"]} ip=${info["ip"]} custom=${info["custom"]}")
+                answer { result.success(info) }
+            }
+
+            override fun onStopped() {
+                Log.i(TAG, "hotspot stopped")
+                reservation = null
+                main.post { channel.invokeMethod("stopped", null) }
+            }
+
+            override fun onFailed(reason: Int) {
+                Log.w(TAG, "hotspot failed reason=$reason")
+                onFail(reason)
+            }
+        }
+
+        fun fail(reason: Int) {
+            val message = when (reason) {
+                WifiManager.LocalOnlyHotspotCallback.ERROR_INCOMPATIBLE_MODE ->
+                    "The phone's own hotspot or another Wi-Fi mode is on. Turn off Mobile Hotspot and try again."
+                WifiManager.LocalOnlyHotspotCallback.ERROR_TETHERING_DISALLOWED ->
+                    "This phone's settings or maker don't allow a hotspot."
+                WifiManager.LocalOnlyHotspotCallback.ERROR_NO_CHANNEL ->
+                    "No free Wi-Fi channel for a hotspot right now. Try again in a moment."
+                else -> "The hotspot could not start (code $reason)."
+            }
+            answer { result.error("failed_$reason", message, null) }
+        }
+
+        fun standard() {
+            wantedPassword = null
+            try {
+                wifi.startLocalOnlyHotspot(callback(::fail), main)
+            } catch (e: SecurityException) {
+                answer { result.error("permission", "SocialSave needs the Nearby devices (or Location) permission for Fast share.", null) }
+            } catch (e: IllegalStateException) {
+                answer { result.error("busy", "A hotspot is already running. Turn off Mobile Hotspot and try again.", null) }
+            } catch (e: Exception) {
+                answer { result.error("failed", e.message ?: "The hotspot could not start.", null) }
+            }
+        }
+
+        // Android 13+: ask for a short, easy password (hidden but app-callable
+        // overload that only needs NEARBY_WIFI_DEVICES). If the phone refuses,
+        // fall back to the normal random one.
+        val config = if (Build.VERSION.SDK_INT >= 33) customConfig() else null
+        if (config == null) {
+            standard()
+            return
+        }
         try {
-            wifi.startLocalOnlyHotspot(object : WifiManager.LocalOnlyHotspotCallback() {
-                override fun onStarted(res: WifiManager.LocalOnlyHotspotReservation) {
-                    reservation = res
-                    val info = describe(res)
-                    Log.i(TAG, "hotspot started ssid=${info["ssid"]} ip=${info["ip"]}")
-                    answer { result.success(info) }
-                }
+            WifiManager::class.java.getMethod(
+                "startLocalOnlyHotspot",
+                Class.forName("android.net.wifi.SoftApConfiguration"),
+                java.util.concurrent.Executor::class.java,
+                WifiManager.LocalOnlyHotspotCallback::class.java,
+            ).invoke(wifi, config, java.util.concurrent.Executor { main.post(it) }, callback { reason ->
+                Log.w(TAG, "short-password hotspot refused ($reason), using the normal one")
+                main.post { if (!answered) standard() }
+            })
+        } catch (e: Throwable) {
+            Log.w(TAG, "short-password hotspot not available: ${e.cause ?: e}")
+            standard()
+        }
+    }
 
-                override fun onStopped() {
-                    Log.i(TAG, "hotspot stopped")
-                    reservation = null
-                    main.post { channel.invokeMethod("stopped", null) }
+    /** SoftApConfiguration with name "SocialSave-1234" and an 8-digit password, or null. */
+    private fun customConfig(): Any? {
+        return try {
+            val rnd = java.security.SecureRandom()
+            val password = (1..8).map { rnd.nextInt(10) }.joinToString("")
+            val ssid = "SocialSave-" + (1..4).map { rnd.nextInt(10) }.joinToString("")
+            val builderClass = Class.forName("android.net.wifi.SoftApConfiguration\$Builder")
+            val builder = builderClass.getConstructor().newInstance()
+            var named = false
+            try {
+                val wifiSsidClass = Class.forName("android.net.wifi.WifiSsid")
+                val wifiSsid = wifiSsidClass.getMethod("fromBytes", ByteArray::class.java)
+                    .invoke(null, ssid.toByteArray(Charsets.UTF_8))
+                builderClass.getMethod("setWifiSsid", wifiSsidClass).invoke(builder, wifiSsid)
+                named = true
+            } catch (_: Throwable) {
+            }
+            if (!named) {
+                try {
+                    builderClass.getMethod("setSsid", String::class.java).invoke(builder, ssid)
+                } catch (_: Throwable) {
                 }
-
-                override fun onFailed(reason: Int) {
-                    Log.w(TAG, "hotspot failed reason=$reason")
-                    val message = when (reason) {
-                        WifiManager.LocalOnlyHotspotCallback.ERROR_INCOMPATIBLE_MODE ->
-                            "The phone's own hotspot or another Wi-Fi mode is on. Turn off Mobile Hotspot and try again."
-                        WifiManager.LocalOnlyHotspotCallback.ERROR_TETHERING_DISALLOWED ->
-                            "This phone's settings or maker don't allow a hotspot."
-                        WifiManager.LocalOnlyHotspotCallback.ERROR_NO_CHANNEL ->
-                            "No free Wi-Fi channel for a hotspot right now. Try again in a moment."
-                        else -> "The hotspot could not start (code $reason)."
-                    }
-                    answer { result.error("failed_$reason", message, null) }
-                }
-            }, main)
-        } catch (e: SecurityException) {
-            answer { result.error("permission", "SocialSave needs the Nearby devices (or Location) permission for Fast share.", null) }
-        } catch (e: IllegalStateException) {
-            answer { result.error("busy", "A hotspot is already running. Turn off Mobile Hotspot and try again.", null) }
-        } catch (e: Exception) {
-            answer { result.error("failed", e.message ?: "The hotspot could not start.", null) }
+            }
+            // 1 = SECURITY_TYPE_WPA2_PSK (easiest for any phone or PC to join).
+            builderClass.getMethod("setPassphrase", String::class.java, Int::class.javaPrimitiveType).invoke(builder, password, 1)
+            val config = builderClass.getMethod("build").invoke(builder)
+            wantedPassword = password
+            config
+        } catch (e: Throwable) {
+            Log.w(TAG, "custom hotspot config not possible: ${e.cause ?: e}")
+            null
         }
     }
 
@@ -158,6 +233,7 @@ class HotspotShare(private val context: Context, messenger: BinaryMessenger) :
             "ssid" to ssid?.trim('"'),
             "password" to password?.trim('"'),
             "ip" to apAddress(),
+            "custom" to (wantedPassword != null && password?.trim('"') == wantedPassword),
         )
     }
 

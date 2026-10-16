@@ -25,6 +25,7 @@ import 'package:social_save/core/platform/desktop_support.dart';
 import 'package:social_save/core/platform/open_with.dart';
 import 'package:social_save/features/library/nearby_ui.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
+import 'package:social_save/features/library/share_session.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
 import 'package:social_save/features/library/presentation/library_screen.dart';
 import 'package:social_save/features/library/vault_service.dart';
@@ -122,6 +123,70 @@ Future<void> main(List<String> args) async {
     print('debug send ${meter.doneLabel}');
     print('debug nearby-send result=${err ?? 'ok'}');
     exit(err == null ? 0 : 1);
+  }
+
+  // Session test hooks (no UI, no database):
+  //   --session-host <name> <reply-file>          accept one session, send reply-file back
+  //   --session-join <name> <ip:port> <file>...    connect, queue files, wait for the reply
+  final sh = args.indexOf('--session-host');
+  if (sh >= 0 && sh + 2 < args.length) {
+    await NearbyService.start(testId: 'host${args[sh + 1]}', testName: args[sh + 1]);
+    ShareSession.install();
+    ShareSession.onRequest = (name, kind) async {
+      print('debug session request from $name ($kind) -> accept');
+      return true;
+    };
+    var replied = false;
+    ShareSession.onOpened = () => print('debug session opened with ${ShareSession.peer.value?.name} '
+        '${ShareSession.peer.value?.host}:${ShareSession.peer.value?.port}');
+    ShareSession.revision.addListener(() {
+      for (final it in ShareSession.items) {
+        print('debug item ${it.outgoing ? 'out' : 'in'} ${it.name} ${it.state.name} ${it.done}/${it.size} ${it.detail}');
+      }
+      final got = ShareSession.items.where((i) => !i.outgoing && i.state == SessionItemState.done).length;
+      if (got >= 1 && !replied) {
+        replied = true;
+        print('debug host sends reply ${args[sh + 2]}');
+        ShareSession.enqueue([File(args[sh + 2])]);
+      }
+    });
+    ShareSession.state.addListener(() {
+      print('debug session state ${ShareSession.state.value} ${ShareSession.endReason}');
+      if (ShareSession.state.value == 'closed') {
+        Future<void>.delayed(const Duration(seconds: 1), () => exit(0));
+      }
+    });
+    print('debug session-host ready port=${NearbyService.inboxBoundPort}');
+    await Future<void>.delayed(const Duration(minutes: 5));
+    exit(2);
+  }
+  final sj = args.indexOf('--session-join');
+  if (sj >= 0 && sj + 3 < args.length) {
+    await NearbyService.start(testId: 'join${args[sj + 1]}', testName: args[sj + 1]);
+    ShareSession.install();
+    final hp = args[sj + 2].split(':');
+    final err = await ShareSession.connect(host: hp[0], port: int.parse(hp[1]));
+    print('debug session connect ${err ?? 'ok'} peer=${ShareSession.peer.value?.name}');
+    if (err != null) exit(1);
+    final files = [for (final f in args.sublist(sj + 3)) if (!f.startsWith('--')) File(f)];
+    ShareSession.enqueue(files);
+    final done = Completer<void>();
+    ShareSession.revision.addListener(() {
+      for (final it in ShareSession.items) {
+        print('debug item ${it.outgoing ? 'out' : 'in'} ${it.name} ${it.state.name} ${it.done}/${it.size} ${it.detail}');
+      }
+      final sent = ShareSession.items.where((i) => i.outgoing && i.state == SessionItemState.done).length;
+      final got = ShareSession.items.where((i) => !i.outgoing && i.state == SessionItemState.done).length;
+      if (sent == files.length && got >= 1 && !done.isCompleted) done.complete();
+    });
+    await done.future.timeout(const Duration(minutes: 3), onTimeout: () {
+      print('debug session-join timeout');
+      exit(1);
+    });
+    print('debug all transfers done; disconnecting');
+    await ShareSession.disconnect();
+    print('debug session-join result=ok ${ShareSession.endReason}');
+    exit(0);
   }
 
   // `--drop-only` waits for a pushed video; `--push-only <file> <code>` sends one.

@@ -130,6 +130,12 @@ class NearbyService {
   /// Set by the UI: shows "X wants to send you…" and returns the answer.
   static Future<bool> Function(IncomingOffer offer)? onOffer;
 
+  /// Accepts offers from this device id without asking (a connected session).
+  static bool Function(String fromId)? autoAccept;
+
+  /// Extra inbox routes (the session protocol). Returns true when handled.
+  static Future<bool> Function(HttpRequest req, List<String> parts)? extraRoute;
+
   static String id = '';
   static String name = '';
   static bool _started = false;
@@ -358,7 +364,7 @@ class NearbyService {
         bool ok;
         if (_busy) {
           ok = false;
-        } else if (await isTrusted(offer.fromId)) {
+        } else if (autoAccept?.call(offer.fromId) == true || await isTrusted(offer.fromId)) {
           ok = true;
         } else {
           final ask = onOffer;
@@ -416,7 +422,7 @@ class NearbyService {
           ok = false;
         } else if (_busy) {
           ok = false;
-        } else if (await isTrusted(offer.fromId)) {
+        } else if (autoAccept?.call(offer.fromId) == true || await isTrusted(offer.fromId)) {
           ok = true;
         } else {
           final ask = onOffer;
@@ -485,6 +491,8 @@ class NearbyService {
         await res.close();
         return;
       }
+      final extra = extraRoute;
+      if (extra != null && await extra(req, parts)) return;
       res.statusCode = HttpStatus.notFound;
       await res.close();
     } catch (_) {

@@ -6,6 +6,8 @@ import 'package:social_save/features/library/bundle_transfer.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
 import 'package:flutter/material.dart';
 import 'package:social_save/features/library/nearby_service.dart';
+import 'package:social_save/features/library/session_ui.dart';
+import 'package:social_save/features/library/share_session.dart';
 import 'package:social_save/features/library/presentation/library_look.dart';
 import 'package:social_save/features/library/usb_link.dart';
 import 'package:social_save/features/player/player_session.dart';
@@ -21,6 +23,7 @@ String _size(int bytes) {
 
 /// Hooks the receiving side to the UI. Call once after runApp.
 void installNearbyUi() {
+  installSessionUi();
   NearbyService.onOffer = (offer) async {
     final context = appRouter.routerDelegate.navigatorKey.currentContext;
     if (context == null || !context.mounted) return false;
@@ -93,7 +96,8 @@ class NearbyIncomingCard extends StatelessWidget {
     return ValueListenableBuilder<IncomingProgress?>(
       valueListenable: NearbyService.incoming,
       builder: (context, v, _) {
-        if (v == null) return const SizedBox.shrink();
+        // The session screen lists incoming files itself.
+        if (v == null || ShareSession.screenOpen) return const SizedBox.shrink();
         final saved = v.done && (v.file != null || v.dir != null);
         final openable =
             v.dir != null || (v.file != null && !isVideoName(v.file!.path));

@@ -8,9 +8,13 @@ import 'package:file_selector/file_selector.dart';
 import 'package:social_save/features/library/bundle_transfer.dart';
 import 'package:social_save/features/library/bundle_ui.dart';
 import 'package:social_save/features/library/hotspot_share.dart';
+import 'package:social_save/features/library/nearby_service.dart';
+import 'package:social_save/features/library/session_ui.dart';
+import 'package:social_save/features/library/share_session.dart';
 import 'package:social_save/features/library/transfer_boost.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:path/path.dart' as p;
 import 'package:qr_flutter/qr_flutter.dart';
@@ -919,13 +923,98 @@ Future<void> showSendToPhone(BuildContext context, File file, String title) asyn
 /// Sender side of Fast share: opens a local-only hotspot, serves the file on
 /// it and shows a QR that carries the hotspot name and password.
 Future<void> showHotspotSend(BuildContext context, File file, String title) async {
-  await showDialog<void>(
+  final result = await showDialog<String>(
     context: context,
     barrierDismissible: false,
     builder: (context) => _HotspotSendDialog(file: file, title: title),
   );
+  if (result == 'session' && ShareSession.active) {
+    // The other phone connected: keep the hotspot (and the first file's
+    // server) up for the whole session. Disconnect stops them.
+    ShareSession.hostsHotspot = true;
+    if (context.mounted) await openSessionScreen(context);
+    return;
+  }
   await PhoneHandoff.stop();
   await HotspotShare.stop();
+}
+
+/// Big, grouped Wi-Fi name / password / code with copy buttons, for joining
+/// the hotspot by hand (PCs, or phones that cannot scan).
+class _JoinByHand extends StatelessWidget {
+  const _JoinByHand({required this.info, required this.code});
+  final HotspotInfo info;
+  final String code;
+
+  static String _group(String s) {
+    if (s.length <= 6) return s;
+    final out = StringBuffer();
+    for (var i = 0; i < s.length; i++) {
+      if (i > 0 && i % 4 == 0) out.write(' ');
+      out.write(s[i]);
+    }
+    return out.toString();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final big = theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800, letterSpacing: 1.5);
+    Widget row(String label, String shown, String copy, Key key) => Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label, style: theme.textTheme.labelMedium),
+                  SelectableText(shown, style: big),
+                ],
+              ),
+            ),
+            IconButton(
+              key: key,
+              tooltip: 'Copy $label',
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: copy));
+                ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text('$label copied')));
+              },
+              icon: const Icon(Icons.copy_rounded),
+            ),
+          ],
+        );
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 10, 4, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Or join by hand', style: theme.textTheme.titleSmall),
+            const SizedBox(height: 6),
+            row('Wi-Fi name', info.ssid, info.ssid, const ValueKey('hs-copy-ssid')),
+            const SizedBox(height: 6),
+            row('Password', _group(info.password), info.password, const ValueKey('hs-copy-pass')),
+            const SizedBox(height: 6),
+            row('SocialSave code', '${code.substring(0, 3)} ${code.substring(3)}', code, const ValueKey('hs-copy-code')),
+            const SizedBox(height: 4),
+            Text(
+              'Join this Wi-Fi on the other device (type the password without spaces), '
+              'then open SocialSave › Receive and type the code — or use Connect to stay connected.',
+              style: theme.textTheme.bodySmall,
+            ),
+            if (!info.custom)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  'Android picks this password itself on this phone; scanning the QR is quicker.',
+                  style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.outline),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _HotspotSendDialog extends StatefulWidget {
@@ -945,13 +1034,14 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
   String? _link;
   final _meter = TransferMeter();
   int _size = 0;
-  bool _showPass = false;
 
   @override
   void initState() {
     super.initState();
     PhoneHandoff.served.addListener(_onServed);
     HotspotShare.event.addListener(_onEvent);
+    ShareSession.suppressAutoOpen++;
+    ShareSession.peer.addListener(_onPeer);
     unawaited(_start());
   }
 
@@ -959,7 +1049,21 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
   void dispose() {
     PhoneHandoff.served.removeListener(_onServed);
     HotspotShare.event.removeListener(_onEvent);
+    ShareSession.peer.removeListener(_onPeer);
+    ShareSession.suppressAutoOpen--;
+    ShareSession.hostsHotspotPending = false;
     super.dispose();
+  }
+
+  bool _leaving = false;
+
+  /// The other phone opened a session: move on to the "Connected" screen.
+  void _onPeer() {
+    if (_leaving || !mounted || ShareSession.peer.value == null || _info == null) return;
+    _leaving = true;
+    ShareSession.hostsHotspot = true;
+    ShareSession.trackServed(widget.file, widget.title);
+    Navigator.pop(context, 'session');
   }
 
   void _onServed() {
@@ -991,10 +1095,13 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
       if (offer == null) throw const HotspotError('Could not start sharing on the hotspot.');
       debugPrint('[hotspot] ready ssid=${info.ssid} ip=${info.ip} port=${offer.port} code=${offer.code}');
       if (!mounted) return;
+      // The QR also lets the other phone open a lasting two-way session.
+      ShareSession.hostsHotspotPending = true;
+      final pair = ShareSession.armPairing();
       setState(() {
         _info = info;
         _offer = offer;
-        _link = HotspotShare.link(offer.url, info);
+        _link = '${HotspotShare.link(offer.url, info)}&sid=$pair&sp=${NearbyService.inboxBoundPort}';
       });
     } catch (e) {
       debugPrint('[hotspot] start failed: $e');
@@ -1057,38 +1164,7 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 10),
-                Card(
-                  margin: EdgeInsets.zero,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Or join by hand', style: theme.textTheme.labelLarge),
-                        SelectableText('Wi-Fi: ${info.ssid}'),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: SelectableText(
-                                'Password: ${_showPass ? info.password : '•' * min(info.password.length, 12)}',
-                              ),
-                            ),
-                            IconButton(
-                              visualDensity: VisualDensity.compact,
-                              tooltip: _showPass ? 'Hide' : 'Show',
-                              onPressed: () => setState(() => _showPass = !_showPass),
-                              icon: Icon(_showPass ? Icons.visibility_off_outlined : Icons.visibility_outlined),
-                            ),
-                          ],
-                        ),
-                        Text(
-                          'Then type code ${offer.code.substring(0, 3)} ${offer.code.substring(3)} in Receive.',
-                          style: small,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+                _JoinByHand(info: info, code: offer.code),
                 const SizedBox(height: 12),
                 if (started) ...[
                   LinearProgressIndicator(value: _size > 0 ? sent / _size : null),
@@ -1328,11 +1404,36 @@ Future<bool> receiveHandoff(BuildContext context, String raw, {String? mode}) as
     return false;
   }
   messenger.hideCurrentSnackBar();
+  // Newer senders put a session token in the QR: stay connected afterwards.
+  final q = Uri.tryParse(raw.trim());
+  final sid = q?.queryParameters['sid'];
+  final sp = int.tryParse(q?.queryParameters['sp'] ?? '');
+  var session = false;
+  if (q != null && sid != null && sp != null) {
+    ShareSession.suppressAutoOpen++;
+    try {
+      String? err;
+      for (var i = 0; i < 4; i++) {
+        err = await ShareSession.connect(host: q.host, port: sp, pair: sid, link: 'hotspot');
+        if (err == null || err.contains('Update') || err.contains('accept')) break;
+        await Future<void>.delayed(const Duration(seconds: 1));
+      }
+      session = err == null;
+      if (session) ShareSession.joinedHotspot = true;
+      debugPrint('[session] hotspot pairing ${session ? 'ok' : 'failed: $err'}');
+    } finally {
+      ShareSession.suppressAutoOpen--;
+    }
+  }
   try {
     if (!context.mounted) return false;
     return await _receiveHandoff(context, raw, mode: mode, viaHotspot: true);
   } finally {
-    await HotspotShare.leave();
+    if (session && ShareSession.active) {
+      if (context.mounted) unawaited(openSessionScreen(context));
+    } else {
+      await HotspotShare.leave();
+    }
   }
 }
 
@@ -1631,9 +1732,12 @@ class NearbyShareBar extends StatelessWidget {
                         pickAndSendBundle(context, folder: true);
                       case 'received':
                         _openReceived(context);
+                      case 'connect':
+                        showConnectPicker(context);
                     }
                   },
                   itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'connect', child: ListTile(leading: Icon(Icons.link_rounded), title: Text('Connect (send both ways)'))),
                     PopupMenuItem(value: 'files', child: ListTile(leading: Icon(Icons.file_present_rounded), title: Text('Send files'))),
                     PopupMenuItem(value: 'folder', child: ListTile(leading: Icon(Icons.drive_folder_upload_rounded), title: Text('Send a folder'))),
                     PopupMenuItem(value: 'received', child: ListTile(leading: Icon(Icons.inventory_2_rounded), title: Text('Received files'))),
@@ -1642,6 +1746,7 @@ class NearbyShareBar extends StatelessWidget {
               ],
             ),
             NearbyDeviceChips(pickFile: pickFile ?? () => pickVideoFile()),
+            const SessionBanner(),
           ],
         ),
       ),
@@ -1672,6 +1777,21 @@ class NearbyShareBar extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             NearbyDeviceChips(pickFile: pickFile ?? () => pickVideoFile()),
+            const SessionBanner(),
+            ValueListenableBuilder<SessionPeer?>(
+              valueListenable: ShareSession.peer,
+              builder: (context, peer, _) => peer != null
+                  ? const SizedBox.shrink()
+                  : Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: OutlinedButton.icon(
+                        key: const ValueKey('nearby-connect'),
+                        onPressed: () => showConnectPicker(context),
+                        icon: const Icon(Icons.link_rounded),
+                        label: const Text('Connect — stay connected and send both ways'),
+                      ),
+                    ),
+            ),
             const SizedBox(height: 8),
             Row(
               children: [
