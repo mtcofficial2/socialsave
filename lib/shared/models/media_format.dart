@@ -21,6 +21,20 @@ class MediaFormat extends Equatable {
   final bool hasAudio;
   final bool hasVideo;
 
+  /// Quality as people read it. 1.0.37: portrait videos (TikTok, Shorts)
+  /// were labelled by their long side, so a 720 × 1280 TikTok showed as
+  /// "1440p". The short side is the "p" number; the id stays the same.
+  String get displayQuality {
+    final q = quality.toLowerCase();
+    if (q == 'auto') return 'Auto';
+    if (q == 'audio' || (!hasVideo && hasAudio)) return 'Audio';
+    final w = width, h = height;
+    if (RegExp(r'^\d+p$').hasMatch(q) && w != null && h != null && w > 0 && w < h) {
+      return '${w}p';
+    }
+    return quality;
+  }
+
   String get label {
     if (!hasVideo && hasAudio || quality.toLowerCase() == 'audio') {
       return 'Audio only';
@@ -31,7 +45,7 @@ class MediaFormat extends Equatable {
     if (quality.toLowerCase() == 'original') {
       return 'Original · ${format.toUpperCase()}';
     }
-    return '$quality · ${format.toUpperCase()}';
+    return '$displayQuality · ${format.toUpperCase()}';
   }
 
   factory MediaFormat.fromJson(Map<String, dynamic> json) {

@@ -130,7 +130,7 @@ class ActiveDownloadScreen extends ConsumerWidget {
                                   Wrap(
                                     spacing: 6,
                                     children: [
-                                      _pill(context, task.format.quality),
+                                      _pill(context, task.format.displayQuality),
                                       _pill(context, task.format.format.toUpperCase()),
                                     ],
                                   ),
@@ -203,6 +203,9 @@ class ActiveDownloadScreen extends ConsumerWidget {
                             ),
                           ),
                         ),
+                        // 1.0.37: a finished save shows Share / Play only; the
+                        // greyed-out Pause and Cancel stayed on screen before.
+                        if (task.status != DownloadStatus.completed) ...[
                         const SizedBox(height: 16),
                         Row(
                           children: [
@@ -250,6 +253,7 @@ class ActiveDownloadScreen extends ConsumerWidget {
                             ),
                           ],
                         ),
+                        ],
                         if (task.status == DownloadStatus.failed &&
                             task.errorMessage != null) ...[
                           const SizedBox(height: 12),
@@ -315,7 +319,7 @@ class ActiveDownloadScreen extends ConsumerWidget {
                     ),
                     title: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis),
                     subtitle: Text(
-                      '${item.format.quality} • ${formatters.bytes(item.totalBytes)}',
+                      '${item.format.displayQuality} • ${formatters.bytes(item.totalBytes)}',
                     ),
                     trailing: const Icon(Icons.drag_handle),
                     onTap: () => context.push('/progress/${item.id}'),
@@ -361,7 +365,13 @@ String _speedLine(DownloadTask task, Formatters formatters) {
   if (onPhone && (preparing || (task.status == DownloadStatus.running && task.bytesPerSecond <= 0))) {
     return 'Downloading on this phone (no server)';
   }
-  if (preparing) return kIsWeb ? 'Preparing the video' : 'Preparing on your computer';
+  if (preparing) {
+    // 1.0.37: Android said "Preparing on your computer" while the server
+    // prepared the video.
+    if (kIsWeb) return 'Preparing the video';
+    if (kLocalEngine) return 'Preparing on this PC';
+    return 'Preparing on the SocialSave server';
+  }
   if (kLocalEngine && task.status == DownloadStatus.running && task.bytesPerSecond <= 0) {
     return 'Downloading and merging on this PC';
   }

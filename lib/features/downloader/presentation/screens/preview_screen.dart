@@ -262,7 +262,7 @@ class _PreviewBody extends ConsumerWidget {
                             if (media.author != null && media.author!.isNotEmpty)
                               '@${media.author}',
                             media.canDownload ? 'Public' : 'Restricted',
-                            if (format != null) format.quality,
+                            if (format != null) format.displayQuality,
                           ].join('  •  '),
                           style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                         ),
@@ -369,7 +369,7 @@ class _PreviewBody extends ConsumerWidget {
                                       child: Text(
                                         item.quality.toLowerCase() == 'original'
                                             ? 'Best Quality (${item.format.toUpperCase()})'
-                                            : '${item.quality} ${item.format.toUpperCase()}',
+                                            : '${item.displayQuality} ${item.format.toUpperCase()}',
                                         style: const TextStyle(
                                           fontWeight: FontWeight.w700,
                                           fontSize: 14,
