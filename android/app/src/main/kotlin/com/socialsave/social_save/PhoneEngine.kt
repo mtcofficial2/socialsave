@@ -134,8 +134,11 @@ object PhoneEngine {
         val dash = "bv*[height<=$height]+ba/b[height<=$height][acodec!=none][vcodec!=none]/b[height<=$height]/b"
         // Phones decode H.264 in hardware everywhere; AV1/VP9 often not. YouTube
         // has no H.264 above 1080p, so 1440p/4K use the normal choice.
+        // 70% of the asked height still counts (letterboxed 1920x804 is 1080p);
+        // then VP9 at that height, then the best below it.
+        val lo = height * 7 / 10
         return if (height <= 1080) {
-            "bv*[height<=$height][height>=${height / 2}][vcodec^=avc1]+ba[ext=m4a]/$dash"
+            "bv*[height<=$height][height>=$lo][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=$height][height>=$lo][vcodec^=vp]+ba/$dash"
         } else dash
     }
 
