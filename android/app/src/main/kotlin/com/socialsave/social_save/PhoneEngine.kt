@@ -32,6 +32,7 @@ object PhoneEngine {
         @Volatile var state = "processing"
         @Volatile var progress = 0.0
         @Volatile var eta = -1L
+        val tracker = EngineProgress()
         @Volatile var path: String? = null
         @Volatile var error: String? = null
     }
@@ -62,7 +63,9 @@ object PhoneEngine {
                     val job = jobs[call.argument<String>("id") ?: ""]
                     result.success(job?.let {
                         mapOf("state" to it.state, "progress" to it.progress, "eta" to it.eta,
-                            "path" to it.path, "error" to it.error)
+                            "path" to it.path, "error" to it.error,
+                            "downloaded_bytes" to it.tracker.downloaded, "total_bytes" to it.tracker.total,
+                            "speed" to it.tracker.speed, "phase" to it.tracker.phase)
                     })
                 }
                 "cancel" -> {
@@ -169,8 +172,10 @@ object PhoneEngine {
                     "audio-mp3" -> request.addOption("-x").addOption("--audio-format", "mp3").addOption("--audio-quality", "0")
                     else -> request.addOption("--merge-output-format", "mp4").addOption("--remux-video", "mp4")
                 }
-                YoutubeDL.execute(request, id) { progress, eta, _ ->
-                    if (progress >= 0) job.progress = (progress / 100.0).coerceIn(0.0, 0.99)
+                YoutubeDL.execute(request, id) { _, eta, line ->
+                    // One smooth value over the video, the audio and the merge.
+                    job.tracker.line(line)
+                    job.progress = maxOf(job.progress, job.tracker.value)
                     job.eta = eta
                 }
                 if (job.state == "cancelled") return@execute

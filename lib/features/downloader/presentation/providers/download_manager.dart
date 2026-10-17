@@ -270,10 +270,16 @@ class DownloadManager extends Notifier<DownloadManagerState> {
           ),
           taskId: task.id,
         );
-        task = task.copyWith(
+        final engineDone = state.byId(task.id)?.prepareFraction;
+        task = (state.byId(task.id) ?? task).copyWith(
           downloadUrl: ready.downloadUrl,
           directUrl: ready.directUrl ?? task.directUrl,
           totalBytes: ready.filesize ?? task.totalBytes,
+          // The local copy finishes the same bar (no reset to 0%).
+          phase: engineDone == null ? null : 'saving',
+          prepareFraction: engineDone == null ? null : 0.99,
+          receivedBytes: engineDone == null ? null : 0,
+          bytesPerSecond: 0,
         );
         state = state.copyWithTask(task);
       }
@@ -670,6 +676,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
         receivedBytes: 0,
         bytesPerSecond: 0,
         clearError: true,
+        clearPhase: true,
         downloadUrl: fresh ? '' : null,
         jobId: fresh ? '' : null,
         directUrl: fresh ? '' : null,
@@ -727,7 +734,8 @@ class DownloadManager extends Notifier<DownloadManagerState> {
   Future<DownloadTicket> _waitForLocalJob(String jobId, String? taskId) async {
     final repository = ref.read(mediaRepositoryProvider);
     final started = DateTime.now();
-    var lastProgress = -1.0;
+    var lastProgress = 0.0;
+    var lastReceived = 0;
     var lastChange = DateTime.now();
     while (DateTime.now().difference(started) < const Duration(hours: 12)) {
       await Future<void>.delayed(const Duration(seconds: 1));
@@ -754,19 +762,38 @@ class DownloadManager extends Notifier<DownloadManagerState> {
           message: status.errorMessage ?? ErrorMessages.serverError,
         );
       }
-      final progress = (status.progress ?? 0).clamp(0.0, 0.999);
-      if (progress > lastProgress + 0.0005) {
-        lastProgress = progress;
+      // 1.0.38: one smooth bar. The engine folds the video, the audio and
+      // the merge into one 0..0.99 value, with real bytes and speed. Before,
+      // the bar only moved when the size was known in advance (often not, for
+      // TikTok and merged YouTube), then jumped to 100% at the end.
+      final progress = (status.progress ?? 0).clamp(0.0, 0.99).toDouble();
+      final received = status.downloadedBytes ?? 0;
+      if (progress > lastProgress + 0.0005 || received > lastReceived) {
         lastChange = DateTime.now();
-        final task = taskId == null ? null : state.byId(taskId);
-        final total = task?.totalBytes ?? task?.format.filesize ?? status.filesize;
-        if (task != null && total != null && total > 0) {
-          state = state.copyWithTask(
-            task.copyWith(receivedBytes: (progress * total).round(), totalBytes: total),
-          );
-        }
       } else if (DateTime.now().difference(lastChange) > const Duration(minutes: 15)) {
         break;
+      }
+      if (progress > lastProgress) lastProgress = progress;
+      if (received > lastReceived) lastReceived = received;
+      final task = taskId == null ? null : state.byId(taskId);
+      if (task != null && task.status == DownloadStatus.running) {
+        final known = task.totalBytes ?? task.format.filesize ?? status.filesize;
+        final engineTotal = status.totalBytes ?? 0;
+        final total = engineTotal > 0 ? engineTotal : known;
+        final bytes = received > 0
+            ? received
+            : (total != null && total > 0 ? (lastProgress * total).round() : 0);
+        final next = task.copyWith(
+          phase: status.phase == 'merging' ? 'merging' : 'preparing',
+          prepareFraction: lastProgress,
+          receivedBytes: bytes,
+          totalBytes: (total != null && total > 0) ? total : null,
+          bytesPerSecond: status.phase == 'merging' ? 0 : (status.speed ?? 0),
+        );
+        if (next != task) {
+          state = state.copyWithTask(next);
+          unawaited(_signal(next));
+        }
       }
     }
     throw const AppException(code: AppErrorCode.timeout, message: ErrorMessages.timeout);
@@ -970,7 +997,9 @@ class DownloadManager extends Notifier<DownloadManagerState> {
             ? (task.errorMessage ?? 'Waiting for the phone')
             : task.status == DownloadStatus.paused
                 ? 'Paused'
-                : task.bytesPerSecond <= 0
+                : task.phase == 'merging'
+                    ? 'Merging video and sound…'
+                    : task.bytesPerSecond <= 0
                     ? 'Starting'
                     : '${(task.bytesPerSecond / (1024 * 1024)).toStringAsFixed(1)} MB/s';
     try {

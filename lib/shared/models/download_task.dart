@@ -26,6 +26,8 @@ class DownloadTask extends Equatable {
     this.jobId,
     this.directUrl,
     this.requestHeaders,
+    this.phase,
+    this.prepareFraction,
   });
 
   final String id;
@@ -49,12 +51,21 @@ class DownloadTask extends Equatable {
   final String? directUrl;
   final Map<String, String>? requestHeaders;
 
+  /// Engine saves (PC and on-phone): 'preparing' or 'merging' while yt-dlp
+  /// works, then 'saving' for the local copy. null for plain downloads.
+  final String? phase;
+
+  /// Engine progress 0..0.99 (all streams and the merge) for one smooth bar.
+  final double? prepareFraction;
+
   double get progress {
     final total = totalBytes;
-    if (total == null || total <= 0) {
-      return 0;
-    }
-    return (receivedBytes / total).clamp(0, 1);
+    final bytes = (total == null || total <= 0) ? 0.0 : (receivedBytes / total).clamp(0.0, 1.0);
+    final engine = prepareFraction;
+    if (status == DownloadStatus.completed) return 1;
+    if (engine == null || phase == null) return bytes.toDouble();
+    if (phase == 'saving') return engine + (1 - engine) * bytes;
+    return engine;
   }
 
   Duration? get eta {
@@ -80,7 +91,10 @@ class DownloadTask extends Equatable {
     String? jobId,
     String? directUrl,
     Map<String, String>? requestHeaders,
+    String? phase,
+    double? prepareFraction,
     bool clearError = false,
+    bool clearPhase = false,
   }) {
     return DownloadTask(
       id: id,
@@ -103,6 +117,8 @@ class DownloadTask extends Equatable {
       jobId: jobId ?? this.jobId,
       directUrl: directUrl ?? this.directUrl,
       requestHeaders: requestHeaders ?? this.requestHeaders,
+      phase: clearPhase ? null : (phase ?? this.phase),
+      prepareFraction: clearPhase ? null : (prepareFraction ?? this.prepareFraction),
     );
   }
 
@@ -213,5 +229,7 @@ class DownloadTask extends Equatable {
         directUrl,
         requestHeaders,
         jobId,
+        phase,
+        prepareFraction,
       ];
 }

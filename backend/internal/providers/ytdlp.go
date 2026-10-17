@@ -117,8 +117,9 @@ type DownloadResult struct {
 	Filesize int64
 }
 
-// Download runs yt-dlp into workDir. progress receives 0..0.99 while bytes arrive.
-func (r *Runner) Download(ctx context.Context, rawURL, formatID string, cfg config.Config, workDir string, progress func(float64)) (DownloadResult, error) {
+// Download runs yt-dlp into workDir. progress receives one smooth 0..0.99
+// view (all streams plus the merge) while the file is prepared.
+func (r *Runner) Download(ctx context.Context, rawURL, formatID string, cfg config.Config, workDir string, progress func(Progress)) (DownloadResult, error) {
 	if err := r.available(); err != nil {
 		return DownloadResult{}, err
 	}
@@ -127,12 +128,17 @@ func (r *Runner) Download(ctx context.Context, rawURL, formatID string, cfg conf
 	out := filepath.ToSlash(filepath.Join(workDir, "%(title).80B.%(ext)s"))
 	var stderr string
 	var runErr error
+	// One tracker for every attempt so the bar never goes backwards.
+	var tracker *ProgressTracker
+	if progress != nil {
+		tracker = NewProgressTracker(progress)
+	}
 	for _, extra := range attemptArgs(rawURL) {
 		clearPartials(workDir)
 		args := downloadArgs(rawURL, cfg, selector, out, ffmpeg, formatID)
 		args = append(args, extra...)
 		args = append(args, "--", rawURL)
-		_, errText, err := r.runProgress(ctx, args, workDir, progress)
+		_, errText, err := r.runProgress(ctx, args, workDir, tracker)
 		if err == nil {
 			if _, statErr := largestMedia(workDir); statErr == nil {
 				runErr = nil
@@ -299,7 +305,7 @@ func (r *Runner) run(ctx context.Context, args []string, dir string) (string, st
 	return stdout.String(), stderr.String(), err
 }
 
-func (r *Runner) runProgress(ctx context.Context, args []string, dir string, progress func(float64)) (string, string, error) {
+func (r *Runner) runProgress(ctx context.Context, args []string, dir string, progress *ProgressTracker) (string, string, error) {
 	if err := r.acquire(ctx); err != nil {
 		return "", "", errs.PlatformUnavailable("")
 	}
@@ -331,9 +337,7 @@ func (r *Runner) runProgress(ctx context.Context, args []string, dir string, pro
 				errBuf.WriteByte('\n')
 			}
 			if progress != nil {
-				if value, ok := percentOf(line); ok {
-					progress(value)
-				}
+				progress.Line(line)
 			}
 		}
 	}()
@@ -348,9 +352,7 @@ func (r *Runner) runProgress(ctx context.Context, args []string, dir string, pro
 		scanner := bufio.NewScanner(stdoutPipe)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for scanner.Scan() {
-			if value, ok := percentOf(scanner.Text()); ok {
-				progress(value)
-			}
+			progress.Line(scanner.Text())
 		}
 		_, _ = io.Copy(io.Discard, stdoutPipe)
 	}()

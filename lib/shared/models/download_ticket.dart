@@ -72,6 +72,10 @@ class DownloadJobStatus extends Equatable {
     this.errorMessage,
     this.progress,
     this.filesize,
+    this.downloadedBytes,
+    this.totalBytes,
+    this.speed,
+    this.phase,
   });
 
   final String id;
@@ -82,6 +86,13 @@ class DownloadJobStatus extends Equatable {
   final String? errorMessage;
   final double? progress;
   final int? filesize;
+
+  /// Engine saves (PC and on-phone): bytes, speed and step for one smooth
+  /// bar over every stream and the merge.
+  final int? downloadedBytes;
+  final int? totalBytes;
+  final double? speed;
+  final String? phase;
 
   factory DownloadJobStatus.fromJson(Map<String, dynamic> json) {
     final stateName = json['state'] as String? ?? json['status'] as String? ?? 'processing';
@@ -98,6 +109,10 @@ class DownloadJobStatus extends Equatable {
           (json['error'] is Map ? (json['error'] as Map)['message'] as String? : null),
       progress: (json['progress'] as num?)?.toDouble(),
       filesize: json['filesize'] is int ? json['filesize'] as int : null,
+      downloadedBytes: (json['downloaded_bytes'] as num?)?.toInt(),
+      totalBytes: (json['total_bytes'] as num?)?.toInt(),
+      speed: (json['speed'] as num?)?.toDouble(),
+      phase: json['phase'] as String?,
     );
   }
 

@@ -90,6 +90,11 @@ type JobStatusResponse struct {
 	Progress    float64    `json:"progress"`
 	Filesize    *int64     `json:"filesize"`
 	FileName    string     `json:"file_name"`
+	// Smooth progress while the file is prepared (all streams + merge).
+	Downloaded int64   `json:"downloaded_bytes,omitempty"`
+	Total      int64   `json:"total_bytes,omitempty"`
+	Speed      float64 `json:"speed,omitempty"`
+	Phase      string  `json:"phase,omitempty"`
 }
 
 // HealthResponse is GET /health.

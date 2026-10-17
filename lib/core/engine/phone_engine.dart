@@ -170,6 +170,10 @@ class PhoneEngine {
       state: state,
       downloadUrl: path == null ? null : Uri.file(path).toString(),
       progress: (m['progress'] as num?)?.toDouble(),
+      downloadedBytes: (m['downloaded_bytes'] as num?)?.toInt(),
+      totalBytes: (m['total_bytes'] as num?)?.toInt(),
+      speed: (m['speed'] as num?)?.toDouble(),
+      phase: m['phase'] as String?,
     );
   }
 

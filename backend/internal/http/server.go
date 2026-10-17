@@ -360,6 +360,10 @@ func (s *Server) jobStatus(w http.ResponseWriter, r *http.Request) {
 		Progress:    job.Progress,
 		Filesize:    job.Filesize,
 		FileName:    job.FileName,
+		Downloaded:  job.Downloaded,
+		Total:       job.Total,
+		Speed:       job.Speed,
+		Phase:       job.Phase,
 	}
 	if externalDownload(job.DownloadURL, r.Host) {
 		direct := job.DownloadURL
@@ -486,8 +490,8 @@ func (s *Server) prepare(jobID, rawURL, formatID, publicBase string) {
 		s.Jobs.MarkFailed(jobID, "platform_unavailable", errs.PlatformUnavailable("").Message)
 		return
 	}
-	result, err := s.Registry.Prepare(ctx, rawURL, formatID, work, func(value float64) {
-		s.Jobs.SetProgress(jobID, value)
+	result, err := s.Registry.Prepare(ctx, rawURL, formatID, work, func(p providers.Progress) {
+		s.Jobs.SetProgress(jobID, p.Value, p.Downloaded, p.Total, p.Speed, p.Phase)
 	})
 	if err != nil {
 		_ = os.RemoveAll(work)

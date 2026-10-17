@@ -85,7 +85,7 @@ func (r *Registry) Playlist(ctx context.Context, rawURL string) ([]models.Playli
 }
 
 // Prepare downloads a file with yt-dlp into workDir.
-func (r *Registry) Prepare(ctx context.Context, rawURL, formatID, workDir string, progress func(float64)) (DownloadResult, error) {
+func (r *Registry) Prepare(ctx context.Context, rawURL, formatID, workDir string, progress func(Progress)) (DownloadResult, error) {
 	return r.runner.Download(ctx, rawURL, formatID, r.cfg, workDir, progress)
 }
 

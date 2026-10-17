@@ -361,6 +361,12 @@ String _speedLine(DownloadTask task, Formatters formatters) {
   if (task.status == DownloadStatus.completed) {
     return kIsWeb ? 'Saved to your browser\'s Downloads' : 'Saved';
   }
+  if (task.status == DownloadStatus.running && task.phase == 'merging') {
+    return 'Merging video and sound…';
+  }
+  if (task.status == DownloadStatus.running && task.phase == 'saving') {
+    return 'Saving the file…';
+  }
   final onPhone = task.jobId?.startsWith(PhoneEngine.jobPrefix) ?? false;
   if (onPhone && (preparing || (task.status == DownloadStatus.running && task.bytesPerSecond <= 0))) {
     return 'Downloading on this phone (no server)';

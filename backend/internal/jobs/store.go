@@ -18,6 +18,10 @@ type Job struct {
 	ID           string
 	State        string
 	Progress     float64
+	Downloaded   int64
+	Total        int64
+	Speed        float64
+	Phase        string
 	FilePath     string
 	MimeType     string
 	FileName     string
@@ -97,7 +101,7 @@ func (s *Store) Pop(id string) (Job, bool) {
 }
 
 // SetProgress updates a processing job. Values are capped below 1 until ready.
-func (s *Store) SetProgress(id string, value float64) {
+func (s *Store) SetProgress(id string, value float64, downloaded, total int64, speed float64, phase string) {
 	if value < 0 {
 		value = 0
 	}
@@ -108,7 +112,13 @@ func (s *Store) SetProgress(id string, value float64) {
 	defer s.mu.Unlock()
 	job, ok := s.all[id]
 	if ok && job.State == "processing" {
-		job.Progress = value
+		if value > job.Progress {
+			job.Progress = value
+		}
+		job.Downloaded = downloaded
+		job.Total = total
+		job.Speed = speed
+		job.Phase = phase
 	}
 }
 
