@@ -1126,8 +1126,9 @@ Future<void> showHotspotSend(BuildContext context, File? file, String title) asy
   // Location, Hotspot...) by itself, tick it off, and only then show the
   // QR. Never a QR before the hotspot is really on.
   if (HotspotShare.supported || Plat.isWindows) {
-    final ready = await runPreflight(context,
-        title: 'Getting ready to share', items: await hotspotSenderItems());
+    final items = await hotspotSenderItems();
+    if (!context.mounted) return;
+    final ready = await runPreflight(context, title: 'Getting ready to share', items: items);
     if (!ready) {
       if (!ShareSession.active && !Plat.isWindows) await HotspotShare.stop();
       return;
