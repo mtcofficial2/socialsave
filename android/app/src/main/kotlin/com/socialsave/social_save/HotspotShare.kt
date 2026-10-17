@@ -1,7 +1,12 @@
 package com.socialsave.social_save
 
 import android.annotation.SuppressLint
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.net.wifi.WifiInfo
+import android.provider.Settings
 import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.net.Network
@@ -95,6 +100,8 @@ class HotspotShare private constructor(private val context: Context, messenger: 
                 result.success(true)
             }
             "apAddress" -> result.success(apAddress())
+            "openSettings" -> result.success(openSettings(call.argument<String>("kind") ?: "hotspot"))
+            "linkInfo" -> result.success(linkInfo())
             else -> result.notImplemented()
         }
     }
@@ -109,7 +116,83 @@ class HotspotShare private constructor(private val context: Context, messenger: 
             "locationOn" to locationOn,
             "hotspotRunning" to (reservation != null),
             "maker" to Build.MANUFACTURER,
+            // 1.0.39 guided Hotspot share: the phone's own (system) hotspot.
+            "systemApOn" to systemApOn(),
+            "apIp" to apAddress(),
+            "staFreq" to staFrequency(),
         )
+    }
+
+    /** Is the phone's own Mobile Hotspot (tethering) on? null = can't tell. */
+    private fun systemApOn(): Boolean? = try {
+        WifiManager::class.java.getMethod("isWifiApEnabled").invoke(wifi) as? Boolean
+    } catch (_: Throwable) {
+        try {
+            // WIFI_AP_STATE_ENABLED = 13, ENABLING = 12.
+            val state = WifiManager::class.java.getMethod("getWifiApState").invoke(wifi) as? Int
+            state?.let { it == 13 || it == 12 }
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /** Band and signal of the Wi-Fi link (the joined hotspot on a receiver). */
+    @SuppressLint("MissingPermission")
+    private fun linkInfo(): Map<String, Any?> {
+        var info: WifiInfo? = null
+        try {
+            if (Build.VERSION.SDK_INT >= 31) {
+                val net = cm.boundNetworkForProcess ?: cm.activeNetwork
+                info = net?.let { cm.getNetworkCapabilities(it)?.transportInfo as? WifiInfo }
+            }
+            @Suppress("DEPRECATION")
+            if (info == null) info = wifi.connectionInfo
+        } catch (_: Throwable) {
+        }
+        val freq = info?.frequency ?: -1
+        val rssi = info?.rssi ?: -127
+        return mapOf(
+            "freq" to freq,
+            "rssi" to rssi,
+            "level" to (if (rssi <= -127) -1 else WifiManager.calculateSignalLevel(rssi, 5)),
+        )
+    }
+
+    /**
+     * Opens a system screen for the guided steps. Makers move the Hotspot
+     * page, so several known screens are tried before the general ones.
+     */
+    private fun openSettings(kind: String): Boolean {
+        val candidates = mutableListOf<Intent>()
+        when (kind) {
+            "hotspot" -> {
+                candidates += Intent("android.settings.TETHER_SETTINGS")
+                candidates += Intent().setComponent(ComponentName("com.android.settings", "com.android.settings.TetherSettings"))
+                candidates += Intent().setComponent(ComponentName("com.android.settings", "com.android.settings.Settings\$TetherSettingsActivity"))
+                candidates += Intent().setComponent(ComponentName("com.android.settings", "com.android.settings.Settings\$WifiTetherSettingsActivity"))
+                // Samsung.
+                candidates += Intent().setComponent(ComponentName("com.android.settings", "com.android.settings.Settings\$WifiApSettingsActivity"))
+                candidates += Intent("android.settings.WIFI_AP_SETTINGS")
+                candidates += Intent(Settings.ACTION_WIRELESS_SETTINGS)
+            }
+            "wifi" -> {
+                if (Build.VERSION.SDK_INT >= 29) candidates += Intent(Settings.Panel.ACTION_WIFI)
+                candidates += Intent(Settings.ACTION_WIFI_SETTINGS)
+            }
+            "location" -> candidates += Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+            "app" -> candidates += Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+        }
+        candidates += Intent(Settings.ACTION_SETTINGS)
+        for (intent in candidates) {
+            try {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+                Log.i(TAG, "opened settings: $intent")
+                return true
+            } catch (_: Throwable) {
+            }
+        }
+        return false
     }
 
     // ---------------------------------------------------------------- sender
@@ -413,7 +496,7 @@ class HotspotShare private constructor(private val context: Context, messenger: 
                         bound = cm.bindProcessToNetwork(network)
                         Log.i(TAG, "joined $ssid bound=$bound")
                         main.post { try { channel.invokeMethod("available", null) } catch (_: Exception) {} }
-                        main.post { answer { result.success(mapOf("joined" to true, "bound" to bound)) } }
+                        main.post { answer { result.success(mapOf("joined" to true, "bound" to bound) + linkInfo()) } }
                     }
 
                     override fun onUnavailable() {

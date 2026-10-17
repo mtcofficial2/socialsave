@@ -10,7 +10,10 @@ import 'package:file_selector/file_selector.dart';
 import 'package:social_save/features/library/bundle_transfer.dart';
 import 'package:social_save/features/library/bundle_ui.dart';
 import 'package:social_save/features/library/firewall_check.dart';
+import 'package:social_save/features/library/hotspot_guide.dart';
 import 'package:social_save/features/library/hotspot_share.dart';
+import 'package:social_save/features/library/pc_hotspot.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:social_save/features/library/nearby_service.dart';
 import 'package:social_save/features/library/session_ui.dart';
 import 'package:social_save/features/library/share_session.dart';
@@ -1229,6 +1232,46 @@ class _HotspotSendDialog extends StatefulWidget {
 class _HotspotSendDialogState extends State<_HotspotSendDialog> {
   String _step = 'Checking permissions…';
   String? _error;
+
+  /// 1.0.39 guided pre-flight: the blocker being fixed now (null = none).
+  GuideStep? _guide;
+
+  /// Shown inside the guide card (system hotspot name/password form).
+  Widget? _guideChild;
+  Timer? _poll;
+
+  void _stopPoll() {
+    _poll?.cancel();
+    _poll = null;
+  }
+
+  /// Watches [check] every [every] and runs [then] once it is true.
+  void _watch(Future<bool> Function() check, Future<void> Function() then, {Duration every = const Duration(seconds: 1)}) {
+    _stopPoll();
+    var busy = false;
+    _poll = Timer.periodic(every, (_) async {
+      if (busy || !mounted) return;
+      busy = true;
+      try {
+        if (await check()) {
+          _stopPoll();
+          if (mounted) await then();
+        }
+      } catch (_) {
+      } finally {
+        busy = false;
+      }
+    });
+  }
+
+  void _show(GuideStep step, {Widget? child}) {
+    if (!mounted) return;
+    setState(() {
+      _guide = step;
+      _guideChild = child;
+      _error = null;
+    });
+  }
   HotspotInfo? _info;
   HandoffOffer? _offer;
   String? _link;
@@ -1272,6 +1315,7 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
     HotspotShare.event.removeListener(_onEvent);
     ShareSession.peer.removeListener(_onPeer);
     if (!ShareSession.active) ShareSession.hostsHotspotPending = false;
+    _stopPoll();
     super.dispose();
   }
 
@@ -1299,39 +1343,251 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
 
   void _onEvent() {
     final e = HotspotShare.event.value ?? '';
-    if (e.startsWith('stopped') && mounted && _info != null) {
-      setState(() => _error = 'The hotspot was turned off by the phone. Close and try again.');
+    if (e.startsWith('stopped') && mounted && _info != null && !_info!.system) {
+      _show(GuideStep(
+        icon: Icons.portable_wifi_off_rounded,
+        title: 'The hotspot stopped',
+        text: 'The phone turned SocialSave\'s hotspot off (this can happen when the screen locks or another app uses Wi-Fi).',
+        action: 'Start it again',
+        onAction: () => unawaited(_restart()),
+      ));
     }
   }
 
   Future<void> _start() async {
+    _stopPoll();
+    if (mounted) {
+      setState(() {
+        _guide = null;
+        _guideChild = null;
+        _error = null;
+        _step = 'Checking…';
+      });
+    }
     try {
-      final blocked = await HotspotShare.prepare(sending: true);
-      if (blocked != null) throw HotspotError(blocked);
+      if (Plat.isWindows) {
+        await _startPc();
+        return;
+      }
+      if (!HotspotShare.supported) throw const HotspotError('Fast share works between Android phones and Windows PCs.');
+      final s = await HotspotShare.status();
+      final sdk = (s['sdk'] as int?) ?? 0;
+      if (sdk < 26) throw const HotspotError('Fast share needs Android 8 or newer on the sending phone.');
+      // 1. Permission (Nearby devices on Android 13+, Location before).
+      if (!await _ensurePermission(sdk)) return;
+      // 2. Location services (Android 12 and older need them for a hotspot).
+      if (sdk < 33 && s['locationOn'] != true) {
+        _show(GuideStep(
+          icon: Icons.location_off_rounded,
+          title: 'Turn on Location',
+          text: 'Android needs Location turned on to start a hotspot on this version. '
+              'SocialSave doesn\'t use your location.',
+          action: 'Open Location settings',
+          onAction: () => HotspotShare.openSettings('location'),
+          waiting: 'Continues by itself when Location is on.',
+        ));
+        _watch(() async => (await HotspotShare.status())['locationOn'] == true, _start);
+        return;
+      }
+      // 3. The phone's own hotspot is already on: use it.
+      if (s['systemApOn'] == true) {
+        await _useSystem();
+        return;
+      }
       if (!mounted) return;
       setState(() => _step = 'Starting hotspot…');
-      final info = await HotspotShare.start();
+      final HotspotInfo info;
+      try {
+        info = await HotspotShare.start();
+      } on HotspotError catch (e) {
+        await _appHotspotFailed(e);
+        return;
+      }
+      await _ready(info);
+    } catch (e) {
+      debugPrint('[hotspot] start failed: $e');
+      if (mounted) setState(() => _error = e is HotspotError ? e.message : 'Fast share could not start: $e');
+    }
+  }
+
+  Future<bool> _ensurePermission(int sdk) async {
+    final perm = sdk >= 33 ? Permission.nearbyWifiDevices : Permission.locationWhenInUse;
+    if (await perm.isGranted) return true;
+    final st = await perm.request();
+    if (st.isGranted) return true;
+    final name = sdk >= 33 ? 'Nearby devices' : 'Location';
+    final forever = st.isPermanentlyDenied;
+    _show(GuideStep(
+      icon: Icons.verified_user_outlined,
+      title: 'Allow "$name"',
+      text: sdk >= 33
+          ? 'Android asks for "Nearby devices" before an app can open a Wi-Fi hotspot. SocialSave only uses it for Fast share.'
+          : 'This Android version needs Location permission for Wi-Fi hotspots. SocialSave doesn\'t use your location.',
+      action: forever ? 'Open app settings' : 'Allow',
+      onAction: () async {
+        if (forever) {
+          await HotspotShare.openSettings('app');
+        } else if ((await perm.request()).isGranted) {
+          await _start();
+        }
+      },
+      waiting: forever ? 'Turn on "$name" under Permissions. Continues by itself.' : null,
+    ));
+    if (forever) _watch(() => perm.isGranted, _start);
+    return false;
+  }
+
+  /// SocialSave's own hotspot didn't start (system hotspot on, maker
+  /// blocks it...): guide the user to the phone's Hotspot instead.
+  Future<void> _appHotspotFailed(HotspotError e) async {
+    debugPrint('[hotspot] app hotspot failed (${e.code}): ${e.message}');
+    final s = await HotspotShare.status();
+    if (s['systemApOn'] == true) {
+      await _useSystem();
+      return;
+    }
+    final unknown = s['systemApOn'] == null;
+    _show(GuideStep(
+      icon: Icons.wifi_tethering_rounded,
+      title: 'Turn on your phone\'s Hotspot',
+      text: 'SocialSave couldn\'t open its own hotspot on this phone (${e.message}) '
+          'Turn on Mobile Hotspot in Settings and come back: SocialSave carries on by itself.',
+      action: 'Open Hotspot settings',
+      onAction: () => HotspotShare.openSettings('hotspot'),
+      secondary: 'Try SocialSave\'s hotspot again',
+      onSecondary: () => unawaited(_start()),
+      waiting: 'Waiting for the hotspot to turn on…',
+    ));
+    _watch(() async {
+      final st = await HotspotShare.status();
+      return st['systemApOn'] == true || (unknown && st['apIp'] != null);
+    }, _useSystem);
+  }
+
+  /// The phone's own hotspot is on: use the name/password typed once.
+  Future<void> _useSystem({bool edit = false}) async {
+    final saved = await HotspotShare.savedSystemHotspot();
+    if (saved != null && !edit) {
+      if (!mounted) return;
+      setState(() {
+        _guide = null;
+        _step = 'Using your phone\'s hotspot "${saved.ssid}"…';
+      });
+      await _ready(await HotspotShare.useSystemHotspot(saved.ssid, saved.password));
+      return;
+    }
+    _show(
+      const GuideStep(
+        icon: Icons.wifi_tethering_rounded,
+        title: 'Your phone\'s Hotspot is on',
+        text: 'Type its name and password once (Settings › Hotspot shows them). '
+            'SocialSave remembers them and puts them in the QR, so the other phone joins by itself.',
+      ),
+      child: SystemHotspotForm(
+        ssid: saved?.ssid ?? '',
+        password: saved?.password ?? '',
+        onDone: (ssid, pass) async {
+          await HotspotShare.saveSystemHotspot(ssid, pass);
+          if (!mounted) return;
+          setState(() {
+            _guide = null;
+            _guideChild = null;
+            _info = null;
+            _offer = null;
+            _link = null;
+            _step = 'Using your phone\'s hotspot "$ssid"…';
+          });
+          await _ready(await HotspotShare.useSystemHotspot(ssid, pass));
+        },
+      ),
+    );
+  }
+
+  /// Windows: start Mobile hotspot, or explain why not and wait for it.
+  Future<void> _startPc() async {
+    if (mounted) setState(() => _step = 'Checking Mobile hotspot…');
+    final block = await HotspotShare.prepare(sending: true);
+    if (block != null) {
+      _pcGuide(block);
+      return;
+    }
+    if (mounted) setState(() => _step = 'Starting Mobile hotspot…');
+    try {
+      await _ready(await HotspotShare.start());
+    } on HotspotError catch (e) {
+      _pcGuide(e.message);
+    }
+  }
+
+  void _pcGuide(String reason) {
+    _show(GuideStep(
+      icon: Icons.wifi_tethering_error_rounded,
+      title: 'Turn on Mobile hotspot',
+      text: '$reason\n\nYou can also turn on Mobile hotspot yourself in Windows Settings: '
+          'SocialSave notices and carries on with its name and password.',
+      action: 'Open Mobile hotspot settings',
+      onAction: () => HotspotShare.openSettings('hotspot'),
+      secondary: 'Try again',
+      onSecondary: () => unawaited(_start()),
+      waiting: 'Waiting for Mobile hotspot to turn on…',
+    ));
+    _watch(PcHotspot.isRunning, () async {
+      if (mounted) {
+        setState(() {
+          _guide = null;
+          _step = 'Mobile hotspot is on. Getting its name and password…';
+        });
+      }
+      try {
+        await _ready(await HotspotShare.start());
+      } on HotspotError catch (e) {
+        _pcGuide(e.message);
+      }
+    }, every: const Duration(seconds: 3));
+  }
+
+  /// The hotspot is up: serve, arm pairing and show the QR + code.
+  Future<void> _ready(HotspotInfo info) async {
+    try {
       if (!mounted) {
-        await HotspotShare.stop();
+        if (!info.system) await HotspotShare.stop();
         return;
       }
       _size = widget.file == null ? 0 : await widget.file!.length();
       final offer = await PhoneHandoff.offer(widget.file, title: widget.title, preferIp: info.ip);
       if (offer == null) throw const HotspotError('Could not start sharing on the hotspot.');
-      debugPrint('[hotspot] ready ssid=${info.ssid} ip=${info.ip} port=${offer.port} code=${offer.code}');
+      debugPrint('[hotspot] ready ssid=${info.ssid} ip=${info.ip} port=${offer.port} code=${offer.code} system=${info.system}');
       if (!mounted) return;
       // The QR also lets the other phone open a lasting two-way session.
       ShareSession.hostsHotspotPending = true;
       final pair = ShareSession.armPairing();
       setState(() {
+        _guide = null;
+        _guideChild = null;
         _info = info;
         _offer = offer;
         // sf=1: this sender sends the file inside the session (1.0.34+).
         _link = '${HotspotShare.link(offer.url, info)}&sid=$pair&sp=${NearbyService.inboxBoundPort}&sf=1';
       });
       ShareSession.pairLink = _link;
+      if (info.system && !Plat.isWindows) {
+        // Watch the phone's own hotspot: if it goes off, guide again.
+        _watch(() async => (await HotspotShare.status())['systemApOn'] == false, () async {
+          _show(GuideStep(
+            icon: Icons.portable_wifi_off_rounded,
+            title: 'Your phone\'s Hotspot turned off',
+            text: 'Turn it on again in Settings. SocialSave carries on by itself with the same QR.',
+            action: 'Open Hotspot settings',
+            onAction: () => HotspotShare.openSettings('hotspot'),
+            waiting: 'Waiting for the hotspot to turn on…',
+          ));
+          _watch(() async => (await HotspotShare.status())['systemApOn'] == true, () async {
+            if (mounted) setState(() => _guide = null);
+          });
+        }, every: const Duration(seconds: 3));
+      }
     } catch (e) {
-      debugPrint('[hotspot] start failed: $e');
+      debugPrint('[hotspot] ready failed: $e');
       if (mounted) setState(() => _error = e is HotspotError ? e.message : 'Fast share could not start: $e');
     }
   }
@@ -1393,18 +1649,32 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
                   Text(info.bandNote, style: small, textAlign: TextAlign.center),
               ],
               const SizedBox(height: 12),
-              if (_error != null) ...[
+              if (_guide != null && info == null) ...[
+                GuideStepCard(step: _guide!, child: _guideChild),
+              ] else if (_error != null) ...[
                 Icon(Icons.error_outline_rounded, color: theme.colorScheme.error, size: 36),
                 const SizedBox(height: 8),
                 Text(_error!, textAlign: TextAlign.center),
                 const SizedBox(height: 8),
                 Text('You can still use "Send to another device" on the same Wi-Fi.',
                     style: small, textAlign: TextAlign.center),
+                const SizedBox(height: 8),
+                Center(
+                  child: FilledButton.tonal(
+                    key: const ValueKey('hotspot-retry'),
+                    onPressed: () => unawaited(_start()),
+                    child: const Text('Try again'),
+                  ),
+                ),
               ] else if (info == null || offer == null) ...[
                 const Center(child: CircularProgressIndicator()),
                 const SizedBox(height: 12),
                 Text(_step, textAlign: TextAlign.center),
               ] else ...[
+                if (_guide != null) ...[
+                  GuideStepCard(step: _guide!, child: _guideChild),
+                  const SizedBox(height: 10),
+                ],
                 Center(
                   child: ColoredBox(
                     color: Colors.white,
@@ -1424,6 +1694,24 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
                 if (Plat.isWindows) const FirewallPrompt(),
                 const SizedBox(height: 10),
                 _JoinByHand(info: info, code: offer.code),
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  children: [
+                    TextButton.icon(
+                      key: const ValueKey('wifi-qr-button'),
+                      onPressed: () => showWifiQr(context, info),
+                      icon: const Icon(Icons.qr_code_2_rounded, size: 18),
+                      label: const Text('Wi-Fi QR for cameras'),
+                    ),
+                    if (info.system)
+                      TextButton.icon(
+                        key: const ValueKey('sys-hs-edit'),
+                        onPressed: () => unawaited(_useSystem(edit: true)),
+                        icon: const Icon(Icons.edit_rounded, size: 18),
+                        label: const Text('Change name/password'),
+                      ),
+                  ],
+                ),
                 const SizedBox(height: 12),
                 if (started) ...[
                   if (!done)
@@ -1451,8 +1739,13 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
       ),
       actions: [
         TextButton(
+          key: const ValueKey('connection-help-button'),
+          onPressed: () => showConnectionHelp(context),
+          child: const Text('Connection help'),
+        ),
+        TextButton(
           onPressed: () => Navigator.pop(context),
-          child: Text(done ? 'Done' : (_error != null ? 'Close' : 'Stop')),
+          child: Text(done ? 'Done' : (_error != null || _guide != null ? 'Close' : 'Stop')),
         ),
       ],
     );
@@ -1488,10 +1781,18 @@ Future<bool> showReceiveFromPhone(BuildContext context) async {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const ListTile(
-                      title: Text('Receive a video'),
-                      subtitle: Text('Both devices on the same Wi-Fi.'),
+                    ListTile(
+                      title: const Text('Receive a video'),
+                      subtitle: Text(HotspotShare.supported
+                          ? 'Scan the sender\'s QR (it joins its hotspot), or both devices on the same Wi-Fi.'
+                          : 'Both devices on the same Wi-Fi.'),
+                      trailing: TextButton(
+                        key: const ValueKey('receive-help'),
+                        onPressed: () => showConnectionHelp(context),
+                        child: const Text('Help'),
+                      ),
                     ),
+                    if (HotspotShare.supported) const WifiOffBanner(),
                     if (myCode != null)
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -1659,30 +1960,82 @@ Future<bool> receiveHandoff(BuildContext context, String raw, {String? mode}) as
   final blocked = await HotspotShare.prepare(sending: false);
   if (!context.mounted) return false;
   if (blocked != null) {
-    messenger.showSnackBar(SnackBar(content: Text(blocked)));
+    messenger.showSnackBar(SnackBar(
+      content: Text(blocked),
+      action: blocked.contains('Wi-Fi')
+          ? SnackBarAction(label: 'Turn on Wi-Fi', onPressed: () => HotspotShare.openSettings('wifi'))
+          : null,
+    ));
     return false;
   }
-  messenger.showSnackBar(SnackBar(
-    duration: const Duration(seconds: 50),
-    content: Text('Joining the other phone\'s hotspot "${join.ssid}"… tap Connect if Android asks.'),
+  // 1.0.39: live steps instead of snackbars, auto-retry, fix-it message.
+  final progress = JoinProgress(join.ssid);
+  final navigator = Navigator.of(context, rootNavigator: true);
+  unawaited(showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    useRootNavigator: true,
+    builder: (_) => JoinProgressDialog(progress: progress),
   ));
-  try {
-    await HotspotShare.join(join.ssid, join.password);
-  } on HotspotError catch (e) {
-    await HotspotShare.leave();
-    messenger.hideCurrentSnackBar();
-    messenger.showSnackBar(SnackBar(duration: const Duration(seconds: 10), content: Text(e.message)));
-    return false;
+  var dialogOpen = true;
+  void closeDialog() {
+    if (dialogOpen) {
+      dialogOpen = false;
+      navigator.pop();
+    }
   }
-  messenger.hideCurrentSnackBar();
-  // Newer senders put a session token in the QR: stay connected afterwards.
+
   final q = Uri.tryParse(raw.trim());
   final sid = q?.queryParameters['sid'];
   final sp = int.tryParse(q?.queryParameters['sp'] ?? '');
-  var session = false;
   final sendsInSession = q?.queryParameters['sf'] == '1';
-  if (q != null && sid != null && sp != null) {
-    try {
+  final code = (q != null && q.pathSegments.length >= 2 && q.pathSegments[0] == 'v') ? q.pathSegments[1] : null;
+  var session = false;
+  while (true) {
+    progress.step.value = 0;
+    progress.detail.value = 'Tap Connect if Android asks.';
+    HotspotError? joinError;
+    // Auto-retry a few times: a hotspot that just started can be missed by
+    // the first scan. A refusal the user tapped is not retried silently.
+    for (var attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await HotspotShare.join(join.ssid, join.password);
+        joinError = null;
+        break;
+      } on HotspotError catch (e) {
+        joinError = e;
+        await HotspotShare.leave();
+        debugPrint('[hotspot] join try $attempt failed (${e.code}): ${e.message}');
+        if (e.code == 'permission' || e.code == 'declined' || attempt == 3) break;
+        progress.detail.value = 'Not joined yet. Trying again ($attempt of 3)…';
+        await Future<void>.delayed(const Duration(seconds: 2));
+      }
+    }
+    if (joinError != null) {
+      // Already on the same Wi-Fi as the sender (or USB)? Find it there.
+      if (code != null) {
+        progress.step.value = 1;
+        progress.detail.value = 'Couldn\'t join the hotspot. Looking on your current Wi-Fi instead…';
+        final viaLan = await PhoneHandoff.resolve(code);
+        if (viaLan != null && context.mounted) {
+          closeDialog();
+          return _receiveHandoff(context, code, mode: mode);
+        }
+      }
+      progress.detail.value = null;
+      final why = joinError.code == 'permission'
+          ? 'SocialSave needs the Nearby devices (or Location) permission to join. Allow it in Settings › Apps › SocialSave.'
+          : 'Couldn\'t join "${join.ssid}". Check that the sender still shows its QR, Wi-Fi is on here, and the phones are close. '
+              'You can also join "${join.ssid}" in Wi-Fi settings (password ${join.password}) and type the code.';
+      if (await progress.fail(why)) continue;
+      closeDialog();
+      return false;
+    }
+    final link = HotspotShare.lastLink;
+    progress.step.value = 1;
+    progress.detail.value = link == null || link.label.isEmpty ? null : 'Joined · ${link.label}';
+    // Newer senders put a session token in the QR: stay connected afterwards.
+    if (q != null && sid != null && sp != null) {
       String? err;
       // A fresh hotspot link can take a few seconds to carry traffic.
       for (var i = 0; i < 8; i++) {
@@ -1694,8 +2047,29 @@ Future<bool> receiveHandoff(BuildContext context, String raw, {String? mode}) as
       session = err == null;
       if (session) ShareSession.joinedHotspot = true;
       debugPrint('[session] hotspot pairing ${session ? 'ok' : 'failed: $err'}');
-    } finally {}
+      if (!session && !'$err'.contains('Update')) {
+        // Joined but the sender doesn't answer: one probe before failing.
+        final t = await PhoneHandoff.resolve(raw);
+        if (t == null) {
+          progress.detail.value = null;
+          if (await progress.fail(
+              'Joined "${join.ssid}" but couldn\'t find the other device. Keep Hotspot share open on the sender '
+              '(on a PC, allow SocialSave in Windows Firewall), then tap Retry.')) {
+            continue;
+          }
+          await HotspotShare.leave();
+          closeDialog();
+          return false;
+        }
+      }
+    }
+    break;
   }
+  progress.step.value = 2;
+  final link = HotspotShare.lastLink;
+  progress.detail.value = link == null || link.label.isEmpty ? null : link.label;
+  await Future<void>.delayed(const Duration(milliseconds: 700));
+  closeDialog();
   if (session && sendsInSession && ShareSession.active) {
     // Xender-style: no Watch/Save step. The file arrives as the first item
     // in Transfers; the Connected screen is already open.

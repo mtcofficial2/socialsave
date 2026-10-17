@@ -70,6 +70,8 @@ class HotspotShare {
   static Future<HotspotInfo?> reopen() async {
     final last = lastInfo;
     if (last == null || !supported) return null;
+    // The phone's own hotspot: SocialSave can't switch it on; it is on or off.
+    if (last.system) return (await status())['systemApOn'] == false ? null : last;
     try {
       final info = await start(reuseSsid: last.custom ? last.ssid : null, reusePassword: last.custom ? last.password : null);
       return info;
@@ -128,6 +130,86 @@ class HotspotShare {
       return 'Turn on Wi-Fi, then try again.';
     }
     return null;
+  }
+
+  // ---------------------------------------------------------- 1.0.39 guide
+
+  /// Opens a system screen: 'hotspot', 'wifi' (panel on Android 10+),
+  /// 'location' or 'app' (this app's permissions). Windows: Mobile hotspot.
+  static Future<bool> openSettings(String kind) async {
+    if (_pc) {
+      try {
+        await Process.start('explorer.exe', [kind == 'wifi' ? 'ms-settings:network-wifi' : 'ms-settings:network-mobilehotspot']);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+    if (!supported) return false;
+    _wire();
+    try {
+      return await _channel.invokeMethod<bool>('openSettings', {'kind': kind}) ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Band and signal of the Wi-Fi link (receiver: the joined hotspot).
+  static Future<LinkInfo?> linkInfo() async {
+    if (!supported) return null;
+    try {
+      final raw = await _channel.invokeMethod<Map<Object?, Object?>>('linkInfo');
+      return LinkInfo.fromMap((raw ?? const {}).map((k, v) => MapEntry('$k', v)));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Band and signal right after the last join (null before).
+  static LinkInfo? lastLink;
+
+  static const _sysSsidKey = 'system_hotspot_ssid';
+  static const _sysPassKey = 'system_hotspot_pass';
+
+  /// Name and password of the phone's own hotspot, typed once and remembered.
+  static Future<({String ssid, String password})?> savedSystemHotspot() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final ssid = prefs.getString(_sysSsidKey);
+      if (ssid == null || ssid.isEmpty) return null;
+      return (ssid: ssid, password: prefs.getString(_sysPassKey) ?? '');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> saveSystemHotspot(String ssid, String password) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_sysSsidKey, ssid);
+      await prefs.setString(_sysPassKey, password);
+    } catch (_) {}
+  }
+
+  /// Uses the phone's own Mobile Hotspot (already on) instead of SocialSave's
+  /// local-only one: the QR carries the name and password the user confirmed.
+  static Future<HotspotInfo> useSystemHotspot(String ssid, String password) async {
+    String? ip;
+    for (var i = 0; ip == null && i < 20; i++) {
+      try {
+        ip = (await status())['apIp'] as String?;
+      } catch (_) {}
+      if (ip == null) await Future<void>.delayed(const Duration(milliseconds: 300));
+    }
+    final info = HotspotInfo(
+      ssid: ssid,
+      password: password,
+      ip: ip,
+      system: true,
+      bandNote: 'Using this phone\'s own Mobile Hotspot. It stays on until you turn it off in Settings.',
+    );
+    lastInfo = info;
+    return info;
   }
 
   static const _bandKey = 'hotspot_band';
@@ -191,7 +273,7 @@ class HotspotShare {
       hostRunning.value = true;
       return info;
     } on PlatformException catch (e) {
-      throw HotspotError(e.message ?? 'The hotspot could not start.');
+      throw HotspotError(e.message ?? 'The hotspot could not start.', code: e.code);
     }
   }
 
@@ -286,11 +368,12 @@ class HotspotShare {
   static Future<void> join(String ssid, String password) async {
     _wire();
     try {
-      await _channel.invokeMethod<Object?>('join', {'ssid': ssid, 'password': password});
+      final r = await _channel.invokeMethod<Object?>('join', {'ssid': ssid, 'password': password});
       lastJoin = HotspotJoin(ssid: ssid, password: password);
+      lastLink = r is Map ? LinkInfo.fromMap(r.map((k, v) => MapEntry('$k', v))) : null;
       joinedLinkUp.value = true;
     } on PlatformException catch (e) {
-      throw HotspotError(e.message ?? 'Could not join $ssid.');
+      throw HotspotError(e.message ?? 'Could not join $ssid.', code: e.code);
     }
   }
 
@@ -326,7 +409,11 @@ class HotspotInfo {
     this.custom = false,
     this.band,
     this.bandNote = '',
+    this.system = false,
   });
+
+  /// The phone's own Mobile Hotspot (turned on in Settings), not SocialSave's.
+  final bool system;
 
   /// SoftAp band mask of the running hotspot: 1 = 2.4 GHz, 2 = 5 GHz,
   /// 3 = either (phone picks), 4 = 6 GHz; null when the phone doesn't say.
@@ -356,9 +443,45 @@ class HotspotJoin {
   final String password;
 }
 
+/// Band and signal of a Wi-Fi link.
+class LinkInfo {
+  const LinkInfo({required this.freq, required this.rssi, required this.level});
+  factory LinkInfo.fromMap(Map<String, dynamic> m) => LinkInfo(
+        freq: (m['freq'] as num?)?.toInt() ?? -1,
+        rssi: (m['rssi'] as num?)?.toInt() ?? -127,
+        level: (m['level'] as num?)?.toInt() ?? -1,
+      );
+  final int freq;
+  final int rssi;
+
+  /// 0 (weak) .. 4 (excellent), -1 unknown.
+  final int level;
+
+  String? get band => freq >= 5900
+      ? '6 GHz'
+      : freq >= 4900
+          ? '5 GHz'
+          : freq >= 2400
+              ? '2.4 GHz'
+              : null;
+
+  String? get signal => switch (level) {
+        4 => 'excellent signal',
+        3 => 'good signal',
+        2 => 'fair signal',
+        0 || 1 => 'weak signal (move the phones closer)',
+        _ => null,
+      };
+
+  String get label => [?band, ?signal].join(' · ');
+}
+
 class HotspotError implements Exception {
-  const HotspotError(this.message);
+  const HotspotError(this.message, {this.code});
   final String message;
+
+  /// Platform code: 'timeout', 'declined', 'permission', 'failed_3'…
+  final String? code;
   @override
   String toString() => message;
 }
