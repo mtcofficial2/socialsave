@@ -421,6 +421,14 @@ Future<void> main(List<String> args) async {
       print('debug send code=${offer?.code} url=${offer?.url} ips=${offer?.ips}');
     });
   }
+  //   --hotspot-test             open Hotspot share (guided pre-flight)
+  if (args.contains('--hotspot-test')) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await Future<void>.delayed(const Duration(seconds: 3));
+      final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
+      if (ctx != null && ctx.mounted) await showHotspotQuickShare(ctx);
+    });
+  }
   final ri = args.indexOf('--receive');
   if (ri >= 0 && ri + 1 < args.length) {
     final raw = args[ri + 1];
