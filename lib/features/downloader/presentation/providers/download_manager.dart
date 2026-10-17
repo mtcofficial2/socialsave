@@ -7,6 +7,10 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:social_save/core/config/build_flags.dart';
+import 'package:social_save/core/engine/phone_engine.dart';
+import 'package:social_save/core/utils/file_utils.dart';
+import 'package:social_save/core/engine/local_engine.dart';
 import 'package:social_save/core/constants/app_constants.dart';
 import 'package:social_save/core/platform/media_events.dart';
 import 'package:social_save/core/platform/phone_body.dart';
@@ -28,6 +32,7 @@ import 'package:social_save/shared/models/download_ticket.dart';
 import 'package:social_save/shared/models/media_format.dart';
 import 'package:social_save/shared/models/media_info.dart';
 import 'package:social_save/web/web_saver.dart';
+import 'package:social_save/core/config/hosted_api.dart';
 import 'package:uuid/uuid.dart';
 
 final downloadManagerProvider =
@@ -78,6 +83,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
 
   @override
   DownloadManagerState build() {
+    LocalEngine.busyCheck = () => stateOrNull?.active.isNotEmpty ?? false;
     MediaEvents.on('downloadAction', (args) async {
       if (args is! Map) return;
       final action = '${args['action']}';
@@ -115,7 +121,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
   }) async {
     final settings = ref.read(settingsControllerProvider);
     await _assertNetwork(settings);
-    if (await _alreadySaved(media.sourceUrl, format.quality)) {
+    if (await _alreadySaved(media.sourceUrl, format.quality, format.format)) {
       throw const AppException(
         code: AppErrorCode.unknown,
         message: ErrorMessages.alreadySaved,
@@ -239,13 +245,30 @@ class DownloadManager extends Notifier<DownloadManagerState> {
 
     final downloader = ref.read(fileDownloaderProvider);
     try {
-      if (task.downloadUrl.isEmpty && task.jobId != null) {
+      if (task.downloadUrl.isEmpty &&
+          (task.jobId ?? '').isEmpty &&
+          (task.directUrl ?? '').isEmpty) {
+        // A retry of an on-phone save (or "Try with server"): prepare again.
+        final fresh = await ref.read(mediaRepositoryProvider).requestDownload(
+              url: task.sourceUrl,
+              formatId: task.format.id,
+            );
+        task = task.copyWith(
+          jobId: fresh.jobId ?? '',
+          downloadUrl: fresh.isReady ? fresh.downloadUrl : '',
+          directUrl: fresh.directUrl,
+          totalBytes: fresh.filesize ?? task.totalBytes,
+        );
+        state = state.copyWithTask(task);
+      }
+      if (task.downloadUrl.isEmpty && (task.jobId ?? '').isNotEmpty) {
         final ready = await _waitIfNeeded(
           DownloadTicket(
             downloadUrl: '',
             jobId: task.jobId,
             state: DownloadJobState.processing,
           ),
+          taskId: task.id,
         );
         task = task.copyWith(
           downloadUrl: ready.downloadUrl,
@@ -268,7 +291,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
           if (!attempt.isCancelled) attempt.cancel();
         }));
         var gotBytes = false;
-        final grace = url.contains('onrender.com')
+        final grace = HostedApi.matches(url)
             ? const Duration(seconds: 90)
             : const Duration(seconds: 25);
         final watchdog = Timer(grace, () {
@@ -349,9 +372,12 @@ class DownloadManager extends Notifier<DownloadManagerState> {
             final published = await MediaStoreService().publishToDownloads(
               sourcePath: savedPath,
               fileName: p.basename(savedPath),
-              mimeType: finished.format.format.toLowerCase() == 'webm'
-                  ? 'video/webm'
-                  : 'video/mp4',
+              mimeType: switch (p.extension(savedPath).toLowerCase()) {
+                '.webm' => 'video/webm',
+                '.mp3' => 'audio/mpeg',
+                '.m4a' => 'audio/mp4',
+                _ => 'video/mp4',
+              },
             );
             final tree = ref.read(settingsControllerProvider).saveTreeUri;
             if (tree != null && tree.isNotEmpty) {
@@ -498,6 +524,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
             jobId: jobId,
             state: DownloadJobState.processing,
           ),
+          taskId: task.id,
         );
       } catch (error) {
         firstError = error;
@@ -522,7 +549,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     if (current != null && fresh.jobId != null) {
       state = state.copyWithTask(current.copyWith(jobId: fresh.jobId));
     }
-    return _waitIfNeeded(fresh);
+    return _waitIfNeeded(fresh, taskId: task.id);
   }
 
   String _webFileName(DownloadTask task) {
@@ -574,7 +601,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     if (uri.scheme != 'http' && uri.scheme != 'https') return false;
     final host = uri.host.toLowerCase();
     if (host.isEmpty) return false;
-    if (host.contains('onrender.com') ||
+    if (HostedApi.matches(host) ||
         host == 'localhost' ||
         host == '127.0.0.1' ||
         host.endsWith('.localhost')) {
@@ -631,22 +658,32 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       return;
     }
     if (!kIsWeb) await _deletePartial(task.localPath);
+    // Web: the old server job failed or its link expired. On-phone engine:
+    // the job is gone. "Try with server": the server prepares it. In all
+    // three cases, prepare again.
+    final fresh = kIsWeb ||
+        (task.jobId?.startsWith(PhoneEngine.jobPrefix) ?? false) ||
+        PhoneEngine.serverFor.contains(task.sourceUrl);
     state = state.copyWithTask(
       task.copyWith(
         status: DownloadStatus.queued,
         receivedBytes: 0,
         bytesPerSecond: 0,
         clearError: true,
-        // Web: the old server job failed or its link expired; prepare again.
-        downloadUrl: kIsWeb ? '' : null,
-        jobId: kIsWeb ? '' : null,
-        directUrl: kIsWeb ? '' : null,
+        downloadUrl: fresh ? '' : null,
+        jobId: fresh ? '' : null,
+        directUrl: fresh ? '' : null,
       ),
     );
     await start(id);
   }
 
-  Future<DownloadTicket> _waitIfNeeded(DownloadTicket ticket) async {
+  Future<DownloadTicket> _waitIfNeeded(DownloadTicket ticket, {String? taskId}) async {
+    if ((kLocalEngine || (ticket.jobId?.startsWith(PhoneEngine.jobPrefix) ?? false)) &&
+        ticket.jobId != null &&
+        !ticket.isReady) {
+      return _waitForLocalJob(ticket.jobId!, taskId);
+    }
     if (ticket.isReady || ticket.jobId == null) {
       if (!ticket.isReady) {
         throw const AppException(
@@ -681,6 +718,58 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       code: AppErrorCode.timeout,
       message: ErrorMessages.timeout,
     );
+  }
+
+  /// Desktop engine: the "prepare" step is the whole YouTube download and
+  /// merge on this PC, so a fixed 4-minute limit failed long 1080p/4K saves.
+  /// Waits while the engine keeps making progress (15 min stall limit),
+  /// shows that progress on the task, and stops on pause or cancel.
+  Future<DownloadTicket> _waitForLocalJob(String jobId, String? taskId) async {
+    final repository = ref.read(mediaRepositoryProvider);
+    final started = DateTime.now();
+    var lastProgress = -1.0;
+    var lastChange = DateTime.now();
+    while (DateTime.now().difference(started) < const Duration(hours: 12)) {
+      await Future<void>.delayed(const Duration(seconds: 1));
+      if (taskId != null) {
+        final task = state.byId(taskId);
+        if (task == null || !task.status.isActive || task.status == DownloadStatus.paused) {
+          if (jobId.startsWith(PhoneEngine.jobPrefix)) unawaited(PhoneEngine.cancel(jobId));
+          throw const AppException(code: AppErrorCode.unknown, message: 'Download cancelled.');
+        }
+      }
+      final status = await repository.getJobStatus(jobId);
+      if (status.state == DownloadJobState.ready && (status.downloadUrl ?? '').isNotEmpty) {
+        return DownloadTicket(
+          downloadUrl: status.downloadUrl!,
+          jobId: status.id,
+          state: DownloadJobState.ready,
+          filesize: status.filesize,
+          directUrl: status.directUrl,
+        );
+      }
+      if (status.state == DownloadJobState.failed) {
+        throw AppException(
+          code: AppErrorCode.serverError,
+          message: status.errorMessage ?? ErrorMessages.serverError,
+        );
+      }
+      final progress = (status.progress ?? 0).clamp(0.0, 0.999);
+      if (progress > lastProgress + 0.0005) {
+        lastProgress = progress;
+        lastChange = DateTime.now();
+        final task = taskId == null ? null : state.byId(taskId);
+        final total = task?.totalBytes ?? task?.format.filesize ?? status.filesize;
+        if (task != null && total != null && total > 0) {
+          state = state.copyWithTask(
+            task.copyWith(receivedBytes: (progress * total).round(), totalBytes: total),
+          );
+        }
+      } else if (DateTime.now().difference(lastChange) > const Duration(minutes: 15)) {
+        break;
+      }
+    }
+    throw const AppException(code: AppErrorCode.timeout, message: ErrorMessages.timeout);
   }
 
   Future<void> _fail(String id, AppException error) async {
@@ -803,8 +892,10 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     });
   }
 
-  Future<bool> _alreadySaved(String url, String quality) async {
+  Future<bool> _alreadySaved(String url, String quality, String format) async {
     if (kIsWeb) return false;
+    // Same quality but another type (audio M4A vs MP3) is a different file.
+    final ext = '.${const FileUtils().extensionFor(format)}';
     final records = await ref.read(downloadsRepositoryProvider).getAll();
     for (final record in records) {
       if (record.status != DownloadStatus.completed) continue;
@@ -812,6 +903,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       if ((record.quality ?? '').toLowerCase() != quality.toLowerCase()) continue;
       final path = record.localPath;
       if (path == null || !File(path).existsSync()) continue;
+      if (p.extension(path).toLowerCase() != ext) continue;
       return true;
     }
     return false;

@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'package:social_save/core/engine/local_engine.dart';
 import 'package:social_save/features/library/desktop_tray.dart';
 import 'package:social_save/core/platform/plat.dart';
+import 'package:social_save/core/engine/phone_engine.dart';
+import 'package:social_save/core/config/build_flags.dart';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
@@ -291,6 +294,8 @@ Future<void> main(List<String> args) async {
   }
   WindowsDnsFallback.install();
   MediaKit.ensureInitialized();
+  // Desktop: analyze and download run on this PC (bundled engine).
+  await LocalEngine.start();
 
   if (args.contains('--test-data')) {
     InAppPlayerScreen.noPersist = true;
@@ -325,6 +330,12 @@ Future<void> main(List<String> args) async {
   try {
     await GoogleFonts.pendingFonts().timeout(const Duration(seconds: 4));
   } catch (_) {}
+
+  // "Download on this phone (no server)": keep yt-dlp current (daily, only
+  // while the switch is on).
+  if (Plat.isAndroid && !kLocalEngine) {
+    unawaited(Future<void>.delayed(const Duration(seconds: 20), PhoneEngine.updateIfDue));
+  }
 
   runApp(
     ProviderScope(
@@ -370,10 +381,20 @@ Future<void> main(List<String> args) async {
       try {
         print('debug analyze $url');
         final media = await c.read(mediaRepositoryProvider).analyze(url);
-        print('debug formats ${media.formats.map((f) => f.id).toList()}');
+        print('debug formats ${media.formats.map((f) => '${f.id}:${f.quality}:${f.format}:${f.height ?? '-'}').toList()}');
+        // `--format <id|height|audio|audio-mp3>` picks one (default: first).
+        final fi = args.indexOf('--format');
+        final want = fi >= 0 && fi + 1 < args.length ? args[fi + 1] : null;
+        final format = want == null
+            ? media.formats.first
+            : media.formats.firstWhere(
+                (f) => f.id == want || '${f.height}' == want,
+                orElse: () => media.formats.first,
+              );
+        print('debug picked ${format.id} ${format.quality} ${format.format}');
         final task = await c.read(downloadManagerProvider.notifier).enqueue(
               media: media,
-              format: media.formats.first,
+              format: format,
             );
         print('debug enqueued ${task.id} -> ${task.localPath}');
         for (var i = 0; i < 150; i++) {

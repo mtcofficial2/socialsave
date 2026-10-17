@@ -11,6 +11,9 @@ import 'package:social_save/core/utils/url_validator.dart';
 import 'package:social_save/features/downloader/data/datasources/file_downloader.dart';
 import 'package:social_save/features/downloader/data/datasources/media_api_client.dart';
 import 'package:social_save/features/downloader/data/repositories/media_repository_impl.dart';
+import 'package:social_save/features/downloader/data/repositories/routing_media_repository.dart';
+import 'package:social_save/core/config/build_flags.dart';
+import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/features/downloader/domain/repositories/media_repository.dart';
 import 'package:social_save/features/downloads/data/datasources/download_history_store.dart';
 import 'package:social_save/features/downloads/domain/repositories/downloads_repository.dart';
@@ -34,7 +37,9 @@ final mediaApiClientProvider = Provider<MediaApiClient>(
   (ref) => MediaApiClient(ref.watch(dioClientProvider)),
 );
 
-final mediaRepositoryProvider = Provider<MediaRepository>(
+/// The hosted API (Render on Android/web; the bundled engine on Windows).
+/// "Try with server" uses this directly.
+final hostedMediaRepositoryProvider = Provider<MediaRepository>(
   (ref) => MediaRepositoryImpl(
     apiClient: ref.watch(mediaApiClientProvider),
     connectivity: ref.watch(connectivityServiceProvider),
@@ -42,8 +47,15 @@ final mediaRepositoryProvider = Provider<MediaRepository>(
   ),
 );
 
+final mediaRepositoryProvider = Provider<MediaRepository>((ref) {
+  final hosted = ref.watch(hostedMediaRepositoryProvider);
+  // Android only: "Download on this phone (no server)" in Settings.
+  if (kLocalEngine || !Plat.isAndroid) return hosted;
+  return RoutingMediaRepository(hosted: hosted, urlValidator: ref.watch(urlValidatorProvider));
+});
+
 final fileDownloaderProvider = Provider<FileDownloader>(
-  (ref) => DioFileDownloader(),
+  (ref) => Plat.isAndroid ? LocalAwareFileDownloader(DioFileDownloader()) : DioFileDownloader(),
 );
 
 final downloadPathServiceProvider = Provider<DownloadPathService>(

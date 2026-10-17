@@ -13,7 +13,9 @@ import 'package:social_save/features/settings/presentation/screens/about_screen.
 import 'package:social_save/features/settings/presentation/screens/legal_screen.dart';
 import 'package:social_save/features/settings/presentation/screens/settings_screen.dart';
 import 'package:social_save/shared/models/media_info.dart';
+import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/shared/routing/app_shell.dart';
+import 'package:social_save/shared/widgets/windows_drop_zone.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:social_save/web/web_library.dart';
 
@@ -34,7 +36,10 @@ final appRouter = GoRouter(
   routes: [
     StatefulShellRoute.indexedStack(
       builder: (context, state, navigationShell) {
-        return AppShell(navigationShell: navigationShell);
+        final shell = AppShell(navigationShell: navigationShell);
+        // Windows: drop videos or link shortcuts anywhere on the window.
+        if (Plat.isWindows) return WindowsDropZone(child: shell);
+        return shell;
       },
       branches: [
         StatefulShellBranch(

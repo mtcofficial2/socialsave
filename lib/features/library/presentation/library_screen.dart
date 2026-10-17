@@ -1,5 +1,7 @@
 import 'dart:math' as math;
+import 'package:social_save/core/config/build_flags.dart';
 import 'dart:async';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart' show getDirectoryPath;
@@ -71,12 +73,81 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   StreamSubscription<List<DeviceVideo>>? _scanSub;
   final TextEditingController _search = TextEditingController();
 
+  /// Library order (1.0.37): newest, oldest, name, size, length. Saved.
+  String _sort = 'newest';
+  static const _sortKey = 'library.sort.v1';
+
+  /// Saved resume spots, keyed like the player's resume_position keys.
+  Map<String, int> _resume = const {};
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _search.addListener(_onSearch);
     _reload();
+    unawaited(_loadSort());
+  }
+
+  Future<void> _loadSort() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getString(_sortKey);
+    if (!mounted || saved == null || saved == _sort) return;
+    setState(() {
+      _sort = saved;
+      _device = _sorted(_device);
+    });
+  }
+
+  Future<void> _setSort(String value) async {
+    setState(() {
+      _sort = value;
+      _device = _sorted(_device);
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_sortKey, value);
+  }
+
+  List<DeviceVideo> _sorted(List<DeviceVideo> input) {
+    final list = List<DeviceVideo>.of(input);
+    int byName(DeviceVideo a, DeviceVideo b) =>
+        a.title.toLowerCase().compareTo(b.title.toLowerCase());
+    switch (_sort) {
+      case 'oldest':
+        list.sort((a, b) => a.addedAt.compareTo(b.addedAt));
+      case 'name':
+        list.sort(byName);
+      case 'size':
+        list.sort((a, b) => b.size.compareTo(a.size));
+      case 'length':
+        list.sort((a, b) => b.durationMs.compareTo(a.durationMs));
+      default:
+        list.sort((a, b) => b.addedAt.compareTo(a.addedAt));
+    }
+    return list;
+  }
+
+  /// Reads the player's saved positions so cards can show how far you got.
+  Future<void> _loadResume() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final map = <String, int>{};
+      for (final key in prefs.getKeys()) {
+        if (!key.startsWith('player.pos.v2.')) continue;
+        final v = prefs.get(key);
+        if (v is int) map[key] = v;
+      }
+      if (mounted) setState(() => _resume = map);
+    } catch (_) {}
+  }
+
+  /// 0..1 watched fraction for [video], or null when there is no resume spot.
+  double? _progressOf(DeviceVideo video) {
+    if (video.durationMs <= 0 || _resume.isEmpty) return null;
+    final ms = _resume['player.pos.v2.file.${video.path ?? ''}'] ??
+        _resume['player.pos.v2.device.${video.id}'];
+    if (ms == null || ms < 1000) return null;
+    return (ms / video.durationMs).clamp(0.02, 1.0).toDouble();
   }
 
   void _onSearch() {
@@ -102,6 +173,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   }
 
   Future<void> _reload({bool rescan = false}) async {
+    unawaited(_loadResume());
     if (DesktopSupport.isWindows) {
       await _reloadWindows(rescan: rescan);
       return;
@@ -130,7 +202,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
       }
       if (!mounted) return;
       setState(() {
-        _device = device;
+        _device = _sorted(device);
         _vault = vault;
         _vaultPaths
           ..clear()
@@ -159,7 +231,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     setState(() {
       _error = null;
       if (cached != null && !rescan) {
-        _device = cached;
+        _device = _sorted(cached);
         _loading = false;
       } else if (_device.isEmpty) {
         _loading = true;
@@ -188,7 +260,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
       (batch) {
         if (!mounted) return;
         setState(() {
-          _device = batch;
+          _device = _sorted(batch);
           _loading = false;
         });
         // Screenshot hook (`--open-menu`): open the first video's menu once.
@@ -341,6 +413,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
       return;
     }
     await openPreviewPlayer(context, session);
+    // Back from the player: refresh the watched bars.
+    if (mounted) unawaited(_loadResume());
   }
 
   Future<void> _playVault(VaultItem item) async {
@@ -635,6 +709,34 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
               visualDensity: VisualDensity.compact,
               onPressed: _manageWindowsFolders,
               icon: Icon(Icons.create_new_folder_outlined, color: look.muted),
+            ),
+          if (_tab == 0)
+            PopupMenuButton<String>(
+              key: const ValueKey('library-sort'),
+              tooltip: 'Sort',
+              initialValue: _sort,
+              onSelected: (v) => unawaited(_setSort(v)),
+              icon: Icon(Icons.sort_rounded, color: look.muted),
+              itemBuilder: (context) => [
+                for (final (value, label, icon) in const [
+                  ('newest', 'Newest first', Icons.schedule_rounded),
+                  ('oldest', 'Oldest first', Icons.history_rounded),
+                  ('name', 'Name (A–Z)', Icons.sort_by_alpha_rounded),
+                  ('size', 'Largest first', Icons.data_usage_rounded),
+                  ('length', 'Longest first', Icons.timelapse_rounded),
+                ])
+                  CheckedPopupMenuItem<String>(
+                    value: value,
+                    checked: _sort == value,
+                    child: Row(
+                      children: [
+                        Icon(icon, size: 18),
+                        const SizedBox(width: 10),
+                        Text(label),
+                      ],
+                    ),
+                  ),
+              ],
             ),
           IconButton(
             tooltip: 'Refresh',
@@ -1090,6 +1192,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
             _collection != null ||
             _platform != 'All',
         onPlay: _playDevice,
+        progressOf: _progressOf,
+        onRefresh: () => _reload(rescan: true),
         onVault: (video) => _confirmVault(video),
         onActions: _deviceActions,
         onSend: _sendDevice,
@@ -1498,11 +1602,13 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
           title: const Text('Note'),
           onTap: () => Navigator.pop(context, 'note'),
         ),
-        ListTile(
-          leading: const Icon(Icons.auto_awesome_outlined),
-          title: const Text('Summarize'),
-          onTap: () => Navigator.pop(context, 'summary'),
-        ),
+        // Summaries use the hosted API's AI key; the desktop app is offline-only.
+        if (!kLocalEngine)
+          ListTile(
+            leading: const Icon(Icons.auto_awesome_outlined),
+            title: const Text('Summarize'),
+            onTap: () => Navigator.pop(context, 'summary'),
+          ),
         ListTile(
           leading: const Icon(Icons.info_outline),
           title: const Text('Details'),
@@ -1930,8 +2036,12 @@ class _DeviceList extends StatelessWidget {
     required this.onVault,
     required this.onActions,
     required this.onSend,
+    this.progressOf,
+    this.onRefresh,
   });
 
+  final double? Function(DeviceVideo video)? progressOf;
+  final Future<void> Function()? onRefresh;
   final ValueChanged<DeviceVideo> onSend;
   final Set<String> selected;
   final bool selecting;
@@ -1970,7 +2080,9 @@ class _DeviceList extends StatelessWidget {
             'Download your favorite reels, shorts, and TikTok videos to watch offline anytime.',
       );
     }
-    return GridView.builder(
+    final grid = GridView.builder(
+      // Always scrollable so pull-to-refresh works with only a few videos.
+      physics: const AlwaysScrollableScrollPhysics(),
       padding: EdgeInsets.fromLTRB(
         _libraryGutter(context),
         4,
@@ -2016,9 +2128,13 @@ class _DeviceList extends StatelessWidget {
           onDelete: () => onDelete(video),
           onMore: () => onActions(video),
           deleteKey: ValueKey('card-delete-${video.id}'),
+          progress: progressOf?.call(video),
         );
       },
     );
+    final refresh = onRefresh;
+    if (refresh == null) return grid;
+    return RefreshIndicator(onRefresh: refresh, child: grid);
   }
 }
 
@@ -2055,6 +2171,7 @@ class _VideoCard extends StatelessWidget {
     this.heroTag,
     this.platform,
     this.favorite = false,
+    this.progress,
     this.onFavorite,
     this.vault = false,
     this.missing = false,
@@ -2080,6 +2197,9 @@ class _VideoCard extends StatelessWidget {
   final String? heroTag;
   final String? platform;
   final bool favorite;
+
+  /// How much was watched (0..1); a thin bar along the thumbnail's bottom.
+  final double? progress;
   final VoidCallback? onFavorite;
   final bool vault;
   final bool missing;
@@ -2114,7 +2234,29 @@ class _VideoCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Expanded(child: missing ? _missingThumb(look) : _thumb(context)),
+            Expanded(
+              child: missing
+                  ? _missingThumb(look)
+                  : progress == null
+                  ? _thumb(context)
+                  : Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        _thumb(context),
+                        Positioned(
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          child: LinearProgressIndicator(
+                            value: progress,
+                            minHeight: 3,
+                            color: look.accent,
+                            backgroundColor: Colors.black.withValues(alpha: 0.35),
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
             Padding(
               padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
               child: Column(

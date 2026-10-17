@@ -681,6 +681,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         await _player.play();
       }
       if (start != null) _armResume(start);
+      await _restoreRate();
       // Web: wakelock_plus's no_sleep.js throws in browsers; a playing
       // <video> already keeps the screen on.
       if (!Plat.isWeb) await WakelockPlus.enable();
@@ -1008,9 +1009,32 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     });
   }
 
+  static const _speedPrefKey = 'player.rate.v1';
+
   Future<void> _setRate(double rate) async {
     await _player.setRate(rate);
     if (mounted) setState(() => _rate = rate);
+    // Remember the speed for the next video (1.0.37). The 2x long-press
+    // boost goes through the controls, not here, so it is never saved.
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (rate == 1) {
+        await prefs.remove(_speedPrefKey);
+      } else {
+        await prefs.setDouble(_speedPrefKey, rate);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _restoreRate() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getDouble(_speedPrefKey);
+      if (saved == null || saved == _player.state.rate) return;
+      final rate = saved.clamp(0.25, 4.0).toDouble();
+      await _player.setRate(rate);
+      if (mounted) setState(() => _rate = rate);
+    } catch (_) {}
   }
 
   Future<void> _toggleLoop() async {

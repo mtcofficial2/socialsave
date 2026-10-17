@@ -130,6 +130,69 @@ class MainActivity : FlutterFragmentActivity() {
         }
     }
 
+    /**
+     * One video or audio file for Send / Watch. 1.0.36 used file_selector,
+     * which reads the whole file into memory on Android: a 500 MB video
+     * crashed the app (OutOfMemoryError). This returns a readable path: the
+     * file itself when MediaStore knows it, otherwise a streamed copy.
+     */
+    private var pickVideoResult: MethodChannel.Result? = null
+    private val openVideo = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val pending = pickVideoResult
+        pickVideoResult = null
+        if (pending == null) return@registerForActivityResult
+        if (uri == null) {
+            pending.success(null)
+            return@registerForActivityResult
+        }
+        io.execute {
+            try {
+                val direct = readablePathFor(uri)
+                val path = direct ?: run {
+                    val name = safeName(displayName(uri) ?: "video.mp4")
+                    val out = File(freshSendDir(), name)
+                    contentResolver.openInputStream(uri)?.use { input ->
+                        FileOutputStream(out).use { input.copyTo(it, 1 shl 20) }
+                    }
+                    out.absolutePath
+                }
+                runOnUiThread { pending.success(mapOf("path" to path, "name" to (displayName(uri) ?: File(path).name))) }
+            } catch (error: Exception) {
+                runOnUiThread { pending.error("pick_failed", error.message, null) }
+            }
+        }
+    }
+
+    /** The real file behind a picked MediaStore document, when this app can read it. */
+    private fun readablePathFor(uri: Uri): String? {
+        return try {
+            var mediaUri: Uri? = null
+            if (android.provider.DocumentsContract.isDocumentUri(this, uri) &&
+                uri.authority == "com.android.providers.media.documents") {
+                val parts = android.provider.DocumentsContract.getDocumentId(uri).split(":")
+                val id = parts.getOrNull(1)?.toLongOrNull()
+                val base = when (parts.getOrNull(0)) {
+                    "video" -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                    "audio" -> MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+                    else -> null
+                }
+                if (id != null && base != null) mediaUri = ContentUris.withAppendedId(base, id)
+            } else if (uri.authority == MediaStore.AUTHORITY) {
+                mediaUri = uri
+            }
+            val target = mediaUri ?: return null
+            contentResolver.query(target, arrayOf(MediaStore.MediaColumns.DATA), null, null, null)?.use {
+                if (it.moveToFirst()) {
+                    val path = it.getString(0)
+                    if (!path.isNullOrBlank() && File(path).canRead()) return path
+                }
+            }
+            null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private var sendFilesResult: MethodChannel.Result? = null
     private var sendFolderResult: MethodChannel.Result? = null
     private val openSendFiles = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -272,6 +335,36 @@ class MainActivity : FlutterFragmentActivity() {
     private var hotspotShare: HotspotShare? = null
 
     companion object {
+        /** Library "On this phone" list; was 400, which hid older videos and every Downloads-folder video. */
+        private const val MAX_DEVICE_VIDEOS = 5000
+        private var looperGuardInstalled = false
+
+        /**
+         * 1.0.37 crash fix. After the engine is destroyed (app closed while a
+         * video surface is still producing frames), Flutter's ImageReader
+         * callback calls scheduleFrame on the dead engine and throws
+         * "FlutterJNI is not attached to native" on the main thread, which
+         * killed the app in the background. Only that exception is swallowed;
+         * anything else still crashes as before.
+         */
+        fun installLooperGuard() {
+            if (looperGuardInstalled) return
+            looperGuardInstalled = true
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                while (true) {
+                    try {
+                        android.os.Looper.loop()
+                    } catch (e: RuntimeException) {
+                        if (e.message?.contains("FlutterJNI is not attached to native") == true) {
+                            android.util.Log.w("SocialSave", "Ignored a frame for a destroyed engine")
+                            continue
+                        }
+                        throw e
+                    }
+                }
+            }
+        }
+
         const val EXTRA_QUICK_ACTION = "socialsave_quick_action"
         private const val ENGINE_ID = "socialsave_main"
 
@@ -302,6 +395,23 @@ class MainActivity : FlutterFragmentActivity() {
         return engine
     }
 
+    /**
+     * 1.0.37 crash fix. The fragment FlutterFragmentActivity builds is made
+     * "with a new engine", so it insisted on owning (and destroying) the
+     * engine. The engine really comes from provideFlutterEngine (cached and
+     * owned here), and when a second activity attached to it the first one
+     * threw "The internal FlutterEngine ... has been attached to by another
+     * activity". This activity destroys the engine itself (onDestroy ->
+     * destroyDetachedEngine), so the fragment must not.
+     */
+    override fun createFlutterFragment(): io.flutter.embedding.android.FlutterFragment {
+        val fragment = super.createFlutterFragment()
+        val args = fragment.arguments ?: android.os.Bundle()
+        args.putBoolean("destroy_engine_with_fragment", false)
+        fragment.arguments = args
+        return fragment
+    }
+
     /** Back on the first screen while connected: go to the background instead of closing. */
     override fun finish() {
         if (SessionBridge.active && isTaskRoot && moveTaskToBack(true)) return
@@ -313,6 +423,7 @@ class MainActivity : FlutterFragmentActivity() {
         phoneBody?.stop()
         hotspotShare = HotspotShare.attach(this, flutterEngine.dartExecutor.binaryMessenger)
         SessionBridge.attach(this, flutterEngine.dartExecutor.binaryMessenger)
+        PhoneEngine.register(this, flutterEngine.dartExecutor.binaryMessenger)
         SessionBridge.onIdleWithoutActivity = { destroyDetachedEngine() }
         val body = PhoneBody(this)
         phoneBody = body
@@ -599,6 +710,40 @@ class MainActivity : FlutterFragmentActivity() {
                     sendFilesResult = result
                     openSendFiles.launch(arrayOf("*/*"))
                 }
+                "pickVideo" -> {
+                    if (pickVideoResult != null) {
+                        result.error("busy", "A file picker is already open", null)
+                        return@setMethodCallHandler
+                    }
+                    pickVideoResult = result
+                    openVideo.launch(arrayOf("video/*", "audio/*"))
+                }
+                "storageStats" -> {
+                    try {
+                        val stat = android.os.StatFs(Environment.getExternalStorageDirectory().path)
+                        result.success(mapOf("free" to stat.availableBytes, "total" to stat.totalBytes))
+                    } catch (e: Exception) {
+                        result.success(null)
+                    }
+                }
+                "cameraFacings" -> {
+                    // Which lenses apps can open. Some phones (this SHARP) expose
+                    // only a front camera; the QR scanner asked for the back one
+                    // and failed with "No cameras available".
+                    val facings = mutableListOf<String>()
+                    try {
+                        val cm = getSystemService(android.content.Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+                        for (id in cm.cameraIdList) {
+                            when (cm.getCameraCharacteristics(id).get(android.hardware.camera2.CameraCharacteristics.LENS_FACING)) {
+                                android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK -> facings.add("back")
+                                android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT -> facings.add("front")
+                                android.hardware.camera2.CameraCharacteristics.LENS_FACING_EXTERNAL -> facings.add("external")
+                            }
+                        }
+                    } catch (_: Exception) {
+                    }
+                    result.success(facings.distinct())
+                }
                 "pickSendFolder" -> {
                     if (sendFolderResult != null) {
                         result.error("busy", "A folder picker is already open", null)
@@ -692,6 +837,7 @@ class MainActivity : FlutterFragmentActivity() {
     }
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
+        installLooperGuard()
         SessionBridge.activities++
         super.onCreate(savedInstanceState)
         captureShare(intent)
@@ -1004,7 +1150,7 @@ class MainActivity : FlutterFragmentActivity() {
             val dateCol = it.getColumnIndex(MediaStore.MediaColumns.DATE_ADDED)
             val dataCol = it.getColumnIndex(MediaStore.MediaColumns.DATA)
             val durCol = if (durationColumn == null) -1 else it.getColumnIndex(durationColumn)
-            while (it.moveToNext() && items.size < 400) {
+            while (it.moveToNext() && items.size < MAX_DEVICE_VIDEOS) {
                 val id = it.getLong(idCol)
                 val uri = ContentUris.withAppendedId(collection, id).toString()
                 val path = if (dataCol >= 0) it.getString(dataCol) else null

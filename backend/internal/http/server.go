@@ -391,7 +391,7 @@ func externalDownload(rawURL, requestHost string) bool {
 		return false
 	}
 	host := strings.ToLower(parsed.Hostname())
-	return host != strings.ToLower(requestHost) && !strings.Contains(host, "onrender.com")
+	return host != strings.ToLower(requestHost) && !isHostedAPIHost(host)
 }
 
 func (s *Server) file(w http.ResponseWriter, r *http.Request) {
@@ -479,7 +479,7 @@ func (s *Server) serveJob(w http.ResponseWriter, r *http.Request, claims tokens.
 }
 
 func (s *Server) prepare(jobID, rawURL, formatID, publicBase string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), prepareTimeout)
 	defer cancel()
 	work, err := s.Jobs.WorkDir(jobID)
 	if err != nil {
@@ -738,7 +738,7 @@ func publicBase(r *http.Request, cfg config.Config) string {
 	proto := firstHeader(r, "X-Forwarded-Proto", "X-Forwarded-Protocol")
 	proto = strings.TrimSpace(strings.Split(proto, ",")[0])
 	if proto == "" {
-		if strings.Contains(host, "workers.dev") || strings.Contains(host, "cloudflare") || strings.Contains(host, "koyeb.app") || strings.Contains(host, "onrender.com") {
+		if isHTTPSProxyHost(host) {
 			proto = "https"
 		} else if r.TLS != nil {
 			proto = "https"

@@ -33,7 +33,32 @@ func NewRunner() *Runner {
 	}
 }
 
+// localEngine is set for the desktop app's bundled engine (LOCAL_ENGINE=1).
+var localEngine bool
+
+// Configure applies process settings that the providers read globally.
+func Configure(cfg config.Config) {
+	localEngine = cfg.LocalEngine
+}
+
+// envFile returns an existing file named by an environment variable. The
+// desktop app passes its bundled tools this way so a different yt-dlp or
+// ffmpeg on PATH is never picked up by mistake.
+func envFile(name string) string {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return ""
+	}
+	if info, err := os.Stat(value); err == nil && !info.IsDir() {
+		return value
+	}
+	return ""
+}
+
 func findYTDLP() string {
+	if path := envFile("YTDLP_PATH"); path != "" {
+		return path
+	}
 	if path, err := exec.LookPath("yt-dlp"); err == nil {
 		return path
 	}
@@ -173,6 +198,7 @@ func (r *Runner) WritePlayable(ctx context.Context, pageURL string, dst io.Write
 		"pipe:1",
 	)
 	cmd := exec.CommandContext(ctx, ff, args...)
+	hideWindow(cmd)
 	cmd.Stdout = dst
 	var stderr bytes.Buffer
 	cmd.Stderr = &limitedWriter{buf: &stderr, max: 4000}
@@ -227,6 +253,13 @@ func (r *Runner) mediaURLs(ctx context.Context, pageURL string) ([]string, error
 }
 
 func ffmpegBin() string {
+	if dir := strings.TrimSpace(os.Getenv("FFMPEG_LOCATION")); dir != "" {
+		for _, name := range []string{"ffmpeg.exe", "ffmpeg"} {
+			if candidate := filepath.Join(dir, name); fileExists(candidate) {
+				return candidate
+			}
+		}
+	}
 	if path, err := exec.LookPath("ffmpeg"); err == nil {
 		return path
 	}
@@ -255,6 +288,7 @@ func (r *Runner) run(ctx context.Context, args []string, dir string) (string, st
 	}
 	defer r.release()
 	cmd := exec.CommandContext(ctx, r.bin, args...)
+	hideWindow(cmd)
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -271,6 +305,7 @@ func (r *Runner) runProgress(ctx context.Context, args []string, dir string, pro
 	}
 	defer r.release()
 	cmd := exec.CommandContext(ctx, r.bin, args...)
+	hideWindow(cmd)
 	cmd.Dir = dir
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
@@ -305,6 +340,18 @@ func (r *Runner) runProgress(ctx context.Context, args []string, dir string, pro
 	stdoutDone := make(chan struct{})
 	go func() {
 		defer close(stdoutDone)
+		// yt-dlp prints "[download]  42.1%" progress on stdout.
+		if progress == nil {
+			_, _ = io.Copy(io.Discard, stdoutPipe)
+			return
+		}
+		scanner := bufio.NewScanner(stdoutPipe)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			if value, ok := percentOf(scanner.Text()); ok {
+				progress(value)
+			}
+		}
 		_, _ = io.Copy(io.Discard, stdoutPipe)
 	}()
 	waitErr := cmd.Wait()
@@ -359,6 +406,13 @@ func headerArgs(rawURL string) []string {
 }
 
 func ffmpegDir() string {
+	if dir := strings.TrimSpace(os.Getenv("FFMPEG_LOCATION")); dir != "" {
+		for _, name := range []string{"ffmpeg.exe", "ffmpeg"} {
+			if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+				return dir
+			}
+		}
+	}
 	if path, err := exec.LookPath("ffmpeg"); err == nil {
 		return filepath.Dir(path)
 	}
@@ -371,7 +425,15 @@ func ffmpegDir() string {
 	return ""
 }
 
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
 func findDeno() string {
+	if path := envFile("DENO_PATH"); path != "" {
+		return path
+	}
 	if path, err := exec.LookPath("deno"); err == nil {
 		return path
 	}
@@ -435,7 +497,12 @@ func downloadArgs(rawURL string, cfg config.Config, selector, out, ffmpeg, forma
 	}
 	if ffmpeg != "" {
 		args = append(args, "--ffmpeg-location", ffmpeg)
-		if !strings.EqualFold(strings.TrimSpace(formatID), "audio") {
+		switch quality, _ := SplitWebFormat(formatID); quality {
+		case "audio":
+		case "audio-mp3":
+			// Desktop engine: a real MP3 (yt-dlp extracts, ffmpeg encodes).
+			args = append(args, "-x", "--audio-format", "mp3", "--audio-quality", "0")
+		default:
 			args = append(args, "--merge-output-format", "mp4", "--remux-video", "mp4")
 		}
 	}

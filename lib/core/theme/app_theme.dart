@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:social_save/core/theme/app_colors.dart';
@@ -41,6 +42,18 @@ class AppTheme {
     return base.copyWith(
       textTheme: text,
       visualDensity: VisualDensity.standard,
+      // Material 3 "fade forwards" for pushed pages (Preview, player,
+      // playlist, settings pages). Pages here have see-through backgrounds,
+      // so a cross-fade reads cleaner than the zoom default.
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.android: FadeForwardsPageTransitionsBuilder(),
+          TargetPlatform.windows: FadeForwardsPageTransitionsBuilder(),
+          TargetPlatform.linux: FadeForwardsPageTransitionsBuilder(),
+          TargetPlatform.macOS: FadeForwardsPageTransitionsBuilder(),
+          TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+        },
+      ),
       appBarTheme: AppBarTheme(
         centerTitle: false,
         scrolledUnderElevation: 0,

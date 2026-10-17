@@ -1,4 +1,7 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:social_save/core/engine/phone_engine.dart';
+import 'package:social_save/shared/widgets/skeleton.dart';
+import 'package:social_save/core/config/hosted_api.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -82,6 +85,16 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
         error: _error,
         loading: _lookup,
         onRetry: pending == null ? null : () => _lookupLink(pending),
+        onTryServer: pending == null || !PhoneEngine.isEngineMessage(_error)
+            ? null
+            : () {
+                PhoneEngine.useServerFor(pending);
+                setState(() {
+                  _error = null;
+                  _lookup = true;
+                });
+                _lookupLink(pending);
+              },
       );
     }
     return _PreviewBody(
@@ -455,12 +468,14 @@ class _LookupScaffold extends StatelessWidget {
     required this.loading,
     this.error,
     this.onRetry,
+    this.onTryServer,
   });
 
   final String url;
   final bool loading;
   final String? error;
   final VoidCallback? onRetry;
+  final VoidCallback? onTryServer;
 
   @override
   Widget build(BuildContext context) {
@@ -490,7 +505,12 @@ class _LookupScaffold extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 12),
-            VideoThumbnail(url: null, height: 180, borderRadius: 16),
+            if (loading)
+              // Shaped like the preview that is coming (1.0.37), instead of a
+              // grey box and a bar.
+              const SkeletonBox(height: 180, radius: 16)
+            else
+              VideoThumbnail(url: null, height: 180, borderRadius: 16),
             const SizedBox(height: 12),
             Text(
               url,
@@ -498,11 +518,33 @@ class _LookupScaffold extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(color: scheme.onSurfaceVariant),
             ),
-            const SizedBox(height: 16),
-            if (loading) const LinearProgressIndicator(),
+            if (loading) ...[
+              const SizedBox(height: 16),
+              const SkeletonBox(height: 20, width: 260, radius: 6),
+              const SizedBox(height: 8),
+              const SkeletonBox(height: 14, width: 160, radius: 6),
+              const SizedBox(height: 20),
+              Row(
+                children: const [
+                  Expanded(child: SkeletonBox(height: 44)),
+                  SizedBox(width: 8),
+                  Expanded(child: SkeletonBox(height: 44)),
+                  SizedBox(width: 8),
+                  Expanded(child: SkeletonBox(height: 44)),
+                ],
+              ),
+              const SizedBox(height: 16),
+              const SkeletonBox(height: 52, radius: 14),
+              const SizedBox(height: 12),
+              Text(
+                'Reading video details…',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13),
+              ),
+            ],
             if (error != null) ...[
               const SizedBox(height: 12),
-              ErrorBanner(message: error!, onRetry: onRetry),
+              ErrorBanner(message: error!, onRetry: onRetry, onTryServer: onTryServer),
             ],
           ],
         ),
@@ -531,7 +573,7 @@ extension on _PreviewScreenState {
       final directPlayable = !kIsWeb &&
           direct != null &&
           direct.isNotEmpty &&
-          !direct.contains('onrender.com');
+          !HostedApi.matches(direct);
       var url = directPlayable ? direct! : ticket.downloadUrl;
       if (url.isEmpty && ticket.jobId != null) {
         for (var i = 0; i < 45; i++) {

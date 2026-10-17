@@ -1,4 +1,5 @@
 import 'package:social_save/web/web_relay.dart';
+import 'package:social_save/core/config/build_flags.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:social_save/core/platform/plat.dart';
 import 'dart:async';
@@ -101,8 +102,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     final url = ref.read(homeControllerProvider.notifier).validatedUrl();
     if (url == null || !mounted) return false;
     HapticFeedback.lightImpact();
-    await context.push('/preview', extra: url);
+    await _openPreview(url);
     return true;
+  }
+
+  /// Opens Preview without the keyboard: the link field lost focus before,
+  /// and getting it back on return popped the keyboard over Home (1.0.36).
+  Future<void> _openPreview(Object extra) async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    await context.push('/preview', extra: extra);
+    if (mounted && !Plat.isWindows) FocusManager.instance.primaryFocus?.unfocus();
   }
 
   Future<void> _importClipboard() async {
@@ -115,7 +124,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         .importClipboardAndAnalyze(auto: true);
     if (result != null && mounted) {
       HapticFeedback.lightImpact();
-      await context.push('/preview', extra: result);
+      await _openPreview(result);
       return;
     }
     if (mounted) {
@@ -131,7 +140,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     HapticFeedback.lightImpact();
     if (kIsWeb && !await _confirmDownload(state.url)) return;
     if (!mounted) return;
-    await context.push('/preview', extra: state.url);
+    await _openPreview(state.url);
   }
 
   /// Centered "Download this video?" check before a pasted link is analyzed.
@@ -164,7 +173,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     final url = ref.read(homeControllerProvider.notifier).validatedUrl();
     if (url == null || !mounted) return;
     HapticFeedback.lightImpact();
-    await context.push('/preview', extra: url);
+    await _openPreview(url);
   }
 
   Future<void> _playlist() async {
@@ -340,7 +349,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      'Waking the SocialSave server… this can take up to a minute.',
+                      kLocalEngine
+                          ? 'Starting the download engine on this PC…'
+                          : 'Waking the SocialSave server… this can take up to a minute.',
                       style: TextStyle(
                         color: scheme.onSurfaceVariant,
                         height: 1.35,

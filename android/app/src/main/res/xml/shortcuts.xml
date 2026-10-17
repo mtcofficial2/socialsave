@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Long-press the SocialSave icon. Each opens the app with a quick action
+     (MainActivity.EXTRA_QUICK_ACTION), handled in listenForQuickActions(). -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="paste_link"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_paste"
+        android:shortcutShortLabel="@string/shortcut_paste_short"
+        android:shortcutLongLabel="@string/shortcut_paste_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.socialsave.social_save"
+            android:targetClass="com.socialsave.social_save.MainActivity">
+            <extra android:name="socialsave_quick_action" android:value="paste" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="hotspot_share"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_hotspot"
+        android:shortcutShortLabel="@string/shortcut_hotspot_short"
+        android:shortcutLongLabel="@string/shortcut_hotspot_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.socialsave.social_save"
+            android:targetClass="com.socialsave.social_save.MainActivity">
+            <extra android:name="socialsave_quick_action" android:value="hotspot_share" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="library"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_library"
+        android:shortcutShortLabel="@string/shortcut_library_short"
+        android:shortcutLongLabel="@string/shortcut_library_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.socialsave.social_save"
+            android:targetClass="com.socialsave.social_save.MainActivity">
+            <extra android:name="socialsave_quick_action" android:value="library" />
+        </intent>
+    </shortcut>
+</shortcuts>

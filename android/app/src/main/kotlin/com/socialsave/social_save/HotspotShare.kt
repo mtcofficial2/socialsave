@@ -309,8 +309,33 @@ class HotspotShare private constructor(private val context: Context, messenger: 
             "ip" to apAddress(),
             "custom" to (wantedPassword != null && password?.trim('"') == wantedPassword),
             "band" to bandOf(res),
-            "bandNote" to bandNote,
+            "bandNote" to listOf(bandNote, phoneStaNote()).filter { it.isNotEmpty() }.joinToString(" "),
+            "staFreq" to staFrequency(),
         )
+    }
+
+    /** MHz of the Wi-Fi network this phone is still joined to, or -1. */
+    private fun staFrequency(): Int = try {
+        @Suppress("DEPRECATION")
+        val info = wifi.connectionInfo
+        if (info == null || info.networkId == -1 && info.frequency <= 0) -1 else info.frequency
+    } catch (_: Throwable) {
+        -1
+    }
+
+    /**
+     * Measured on a SHARP AQUOS R7 joined to a 2.4 GHz router: the hotspot has
+     * to share the router's channel (one radio), and transfers ran at 1-1.5 MB/s
+     * whatever band was asked for. Say so instead of promising "5 GHz".
+     */
+    private fun phoneStaNote(): String {
+        val f = staFrequency()
+        return if (f in 2400..2500) {
+            "This phone is also on a 2.4 GHz Wi-Fi network, so the hotspot shares that channel and runs at about 1-2 MB/s. " +
+                "For a faster link, turn Wi-Fi off on this phone first (Fast share works without it), or use a USB cable."
+        } else {
+            ""
+        }
     }
 
     /** Band mask of the running hotspot (1 = 2.4, 2 = 5, 3 = either, 4 = 6 GHz), or null. */

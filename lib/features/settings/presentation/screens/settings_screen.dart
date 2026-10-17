@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:social_save/core/config/build_flags.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'dart:io';
 import 'dart:typed_data';
@@ -27,6 +28,9 @@ import 'package:social_save/features/settings/domain/entities/app_settings.dart'
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
 import 'package:social_save/features/settings/presentation/screens/font_picker_sheet.dart';
 import 'package:social_save/shared/widgets/glass.dart';
+import 'package:social_save/features/settings/presentation/widgets/engine_section.dart';
+import 'package:social_save/features/settings/presentation/widgets/phone_engine_section.dart';
+import 'package:social_save/features/settings/presentation/widgets/storage_section.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -180,7 +184,9 @@ class SettingsScreen extends ConsumerWidget {
                       context,
                       icon: Icons.folder_special_outlined,
                       title: 'Download Location',
-                      subtitle: settings.downloadLocation == DownloadLocation.publicDownloads
+                      subtitle: Plat.isWindows
+                          ? r'Documents\SocialSave'
+                          : settings.downloadLocation == DownloadLocation.publicDownloads
                           ? 'Downloads/SocialSave'
                           : 'App private storage',
                       onTap: () => _pickLocation(context, controller, settings),
@@ -308,6 +314,14 @@ class SettingsScreen extends ConsumerWidget {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+            if (!kLocalEngine && Plat.isAndroid)
+              PhoneEngineSection(
+                title: _groupTitle(context, Icons.memory_rounded, 'Download engine'),
+              ),
+            if (kLocalEngine)
+              EngineSection(
+                title: _groupTitle(context, Icons.memory_rounded, 'Download engine'),
+              ),
             _groupTitle(
               context,
               Icons.devices_outlined,
@@ -320,6 +334,9 @@ class SettingsScreen extends ConsumerWidget {
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
+                    // The titles code is read on the website, so the
+                    // desktop build (no hosted API) leaves it out.
+                    if (!kLocalEngine) ...[
                     _navRow(
                       context,
                       icon: Icons.qr_code_rounded,
@@ -332,6 +349,7 @@ class SettingsScreen extends ConsumerWidget {
                       onTap: () => _pairLibrary(context, ref),
                     ),
                     const SizedBox(height: 8),
+                    ],
                     _navRow(
                       context,
                       icon: Icons.lock_outline,
@@ -464,47 +482,8 @@ class SettingsScreen extends ConsumerWidget {
                       onTap: () => context.push('/legal/terms'),
                     ),
                     const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Icon(Icons.cleaning_services_outlined, color: scheme.onSurfaceVariant),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'Temporary Video Cache',
-                                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                'Thumbnails and temporary files',
-                                style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        FilledButton.tonal(
-                          style: FilledButton.styleFrom(
-                            minimumSize: const Size(72, 36),
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            visualDensity: VisualDensity.compact,
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          ),
-                          onPressed: () async {
-                            if (!kIsWeb) await ref.read(downloadPathServiceProvider).clearCache();
-                            await ref.read(thumbnailCacheManagerProvider).emptyCache();
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Cache cleared')),
-                              );
-                            }
-                          },
-                          child: const Text('Clear'),
-                        ),
-                      ],
-                    ),
+                    // 1.0.37: real usage numbers; Clear only touches SocialSave's files.
+                    if (!kIsWeb) const StorageSection(),
                   ],
                 ),
               ),

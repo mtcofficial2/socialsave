@@ -25,3 +25,10 @@ cloudflare/.wrangler/
 .DS_Store
 *.pyc
 .env
+
+# local junk
+/dist/
+*.hprof
+android/replay_pid*.log
+/.vscode/
+/Screenshot *.png

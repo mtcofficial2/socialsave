@@ -1,9 +1,12 @@
 ; SocialSave Windows setup.
-; Build the app first:
-;   flutter build windows --release --dart-define=API_BASE_URL=https://socialsave-api-p2tm.onrender.com
+; Build the app first (1.0.37+: local download engine, no hosted server):
+;   flutter build windows --release --dart-define=SOCIALSAVE_LOCAL_ENGINE=true
+;   powershell -ExecutionPolicy Bypass -File tool\fetch_engine.ps1
+; (fetch_engine.ps1 builds backend\ as socialsave-engine.exe and stages it with
+; yt-dlp, ffmpeg/ffprobe and deno in Release\engine\.)
 ; Then compile this script with Inno Setup (ISCC).
 
-#define AppVersion "1.0.36"
+#define AppVersion "1.0.37"
 #define SourceDir "..\build\windows\x64\runner\Release"
 
 [Setup]
@@ -41,6 +44,10 @@ VersionInfoDescription=SocialSave installer
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[UninstallDelete]
+; yt-dlp updates and the engine log (the bundled engine is under {app}).
+Type: filesandordirs; Name: "{localappdata}\SocialSave\engine"
 
 [Icons]
 Name: "{group}\SocialSave"; Filename: "{app}\SocialSave.exe"; WorkingDir: "{app}"

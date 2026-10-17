@@ -3,6 +3,8 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:social_save/core/config/build_flags.dart';
+import 'package:social_save/core/engine/phone_engine.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/theme/app_colors.dart';
@@ -254,6 +256,12 @@ class ActiveDownloadScreen extends ConsumerWidget {
                           _FailureCard(
                             message: task.errorMessage!,
                             onRetry: () => manager.retry(task.id),
+                            onTryServer: PhoneEngine.isEngineMessage(task.errorMessage)
+                                ? () {
+                                    PhoneEngine.useServerFor(task.sourceUrl);
+                                    manager.retry(task.id);
+                                  }
+                                : null,
                           ),
                         ],
                         if (task.status == DownloadStatus.completed) ...[
@@ -349,7 +357,14 @@ String _speedLine(DownloadTask task, Formatters formatters) {
   if (task.status == DownloadStatus.completed) {
     return kIsWeb ? 'Saved to your browser\'s Downloads' : 'Saved';
   }
+  final onPhone = task.jobId?.startsWith(PhoneEngine.jobPrefix) ?? false;
+  if (onPhone && (preparing || (task.status == DownloadStatus.running && task.bytesPerSecond <= 0))) {
+    return 'Downloading on this phone (no server)';
+  }
   if (preparing) return kIsWeb ? 'Preparing the video' : 'Preparing on your computer';
+  if (kLocalEngine && task.status == DownloadStatus.running && task.bytesPerSecond <= 0) {
+    return 'Downloading and merging on this PC';
+  }
   if (task.status == DownloadStatus.paused) return 'Paused';
   if (task.status == DownloadStatus.waitingWifi) return 'Waiting for Wi-Fi';
   if (task.status == DownloadStatus.waitingPower) {
@@ -388,10 +403,13 @@ String _failureTitle(String message) {
 }
 
 class _FailureCard extends StatelessWidget {
-  const _FailureCard({required this.message, required this.onRetry});
+  const _FailureCard({required this.message, required this.onRetry, this.onTryServer});
 
   final String message;
   final VoidCallback onRetry;
+
+  /// On-phone engine failed: run this save on the server instead (explicit).
+  final VoidCallback? onTryServer;
 
   @override
   Widget build(BuildContext context) {
@@ -436,6 +454,20 @@ class _FailureCard extends StatelessWidget {
               label: const Text('Retry'),
             ),
           ),
+          if (onTryServer != null) ...[
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              height: 44,
+              child: OutlinedButton.icon(
+                key: const ValueKey('try-with-server'),
+                style: OutlinedButton.styleFrom(foregroundColor: scheme.onErrorContainer),
+                onPressed: onTryServer,
+                icon: const Icon(Icons.cloud_outlined),
+                label: const Text('Try with server'),
+              ),
+            ),
+          ],
         ],
       ),
     );

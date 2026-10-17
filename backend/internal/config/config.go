@@ -53,6 +53,13 @@ type Config struct {
 	XAIAPIKey            string
 	Port                 string
 	WebRoot              string
+	// BindAddr is the listen host. Empty listens on every interface (server).
+	// The Windows app's bundled engine passes 127.0.0.1 so nothing is exposed.
+	BindAddr string
+	// LocalEngine is set by the desktop app's bundled engine. It turns on
+	// desktop-only extras (MP3 audio, M4A-first audio) and never changes the
+	// hosted API's behaviour.
+	LocalEngine bool
 }
 
 // Enabled reports whether a platform id is turned on.
@@ -101,6 +108,8 @@ func Load() Config {
 		XAIAPIKey:            strings.TrimSpace(os.Getenv("XAI_API_KEY")),
 		Port:                 getenv("PORT", "8080"),
 		WebRoot:              strings.TrimSpace(os.Getenv("WEB_ROOT")),
+		BindAddr:             strings.TrimSpace(os.Getenv("BIND_ADDR")),
+		LocalEngine:          parseBool(os.Getenv("LOCAL_ENGINE"), false),
 	}
 }
 

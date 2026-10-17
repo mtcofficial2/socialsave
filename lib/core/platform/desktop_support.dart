@@ -24,7 +24,7 @@ class DesktopSupport {
   static bool get isWindows =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
 
-  /// `Downloads\SocialSave` (created if missing).
+  /// `Documents\SocialSave` (created if missing).
   static Future<Directory> saveFolder() {
     return DownloadPathService().resolveDirectory(DownloadLocation.publicDownloads);
   }

@@ -22,7 +22,20 @@ class DownloadPathService {
       ];
       // Android: write straight to the public Download/SocialSave (one copy).
       // The app-private downloads folder is only used on other platforms.
-      final systemDownloads = Plat.isAndroid ? null : await getDownloadsDirectory();
+      if (Plat.isWindows) {
+        // 1.0.37: Windows saves to Documents\SocialSave, the same folder
+        // that received files use. Older saves in Downloads\SocialSave stay
+        // in the Library (both folders are scanned).
+        final home = Platform.environment['USERPROFILE'];
+        if (home != null && home.isNotEmpty) {
+          candidates.insert(
+            0,
+            Directory(p.join(home, 'Documents', AppConstants.defaultFolderName)),
+          );
+        }
+      }
+      final systemDownloads =
+          Plat.isAndroid || Plat.isWindows ? null : await getDownloadsDirectory();
       if (systemDownloads != null) {
         candidates.insert(
           0,
@@ -77,20 +90,56 @@ class DownloadPathService {
     return file;
   }
 
-  Future<int> cacheSizeBytes() async {
+  // On Windows the temporary directory is the user's whole %TEMP%, shared
+  // with every other program. Only SocialSave's own entries count as cache
+  // there (1.0.37: "Clear" used to try to empty all of %TEMP%).
+  static const _windowsCacheDirs = {'socialsave_thumbs', 'session_send'};
+  static final _windowsCacheFiles = RegExp(r'^(ss_shot_\d+\.png|ss_recycle_\d+\.txt)$');
+
+  /// Folders a live transfer reads from; kept while [keepTransfers] is set.
+  static const _transferDirs = {'send', 'session_send'};
+
+  Future<List<FileSystemEntity>> _cacheEntries({bool keepTransfers = false}) async {
     final temp = await getTemporaryDirectory();
-    return _directorySize(temp);
+    if (!await temp.exists()) return const [];
+    final out = <FileSystemEntity>[];
+    await for (final entity in temp.list(followLinks: false)) {
+      final name = p.basename(entity.path);
+      if (keepTransfers && _transferDirs.contains(name)) continue;
+      if (Plat.isWindows &&
+          !_windowsCacheDirs.contains(name) &&
+          !_windowsCacheFiles.hasMatch(name)) {
+        continue;
+      }
+      out.add(entity);
+    }
+    return out;
   }
 
-  Future<void> clearCache() async {
-    final temp = await getTemporaryDirectory();
-    if (await temp.exists()) {
-      await for (final entity in temp.list(followLinks: false)) {
-        try {
-          await entity.delete(recursive: true);
-        } on FileSystemException {
-          // Best-effort cache cleanup.
+  Future<int> cacheSizeBytes() async {
+    var total = 0;
+    for (final entity in await _cacheEntries()) {
+      try {
+        if (entity is File) {
+          total += await entity.length();
+        } else if (entity is Directory) {
+          total += await _directorySize(entity);
         }
+      } on FileSystemException {
+        // Files can vanish while we count.
+      }
+    }
+    return total;
+  }
+
+  /// Deletes SocialSave's temporary files. [keepTransfers] leaves the copies
+  /// a connected share session may still be sending.
+  Future<void> clearCache({bool keepTransfers = false}) async {
+    for (final entity in await _cacheEntries(keepTransfers: keepTransfers)) {
+      try {
+        await entity.delete(recursive: true);
+      } on FileSystemException {
+        // Best-effort cache cleanup.
       }
     }
   }

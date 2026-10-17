@@ -48,6 +48,68 @@ abstract class FileDownloader {
   });
 }
 
+/// The on-phone engine leaves the finished file in the app cache and reports
+/// a `file://` URL; move it into place instead of fetching it over HTTP.
+class LocalAwareFileDownloader implements FileDownloader {
+  LocalAwareFileDownloader(this._remote);
+
+  final FileDownloader _remote;
+
+  static bool isLocal(String url) => url.startsWith('file://');
+
+  @override
+  Future<RemoteFileProbe> probe(String url, {CancelToken? cancelToken, Map<String, String>? extraHeaders}) async {
+    if (!isLocal(url)) return _remote.probe(url, cancelToken: cancelToken, extraHeaders: extraHeaders);
+    final file = File(Uri.parse(url).toFilePath());
+    return RemoteFileProbe(supportsResume: false, contentLength: await file.length());
+  }
+
+  @override
+  Future<void> download({
+    required String url,
+    required String savePath,
+    required CancelToken cancelToken,
+    int startByte = 0,
+    Map<String, String>? extraHeaders,
+    void Function(DownloadProgress progress)? onProgress,
+  }) async {
+    if (!isLocal(url)) {
+      return _remote.download(url: url, savePath: savePath, cancelToken: cancelToken,
+          startByte: startByte, extraHeaders: extraHeaders, onProgress: onProgress);
+    }
+    final source = File(Uri.parse(url).toFilePath());
+    if (!await source.exists()) {
+      throw const AppException(code: AppErrorCode.downloadInterrupted, message: ErrorMessages.downloadInterrupted);
+    }
+    final total = await source.length();
+    final target = File(savePath);
+    await target.parent.create(recursive: true);
+    if (await target.exists()) await target.delete();
+    try {
+      await source.rename(savePath);
+      onProgress?.call(DownloadProgress(received: total, total: total));
+    } on FileSystemException {
+      // Different storage volume: copy with progress.
+      final sink = target.openWrite();
+      var done = 0;
+      try {
+        await for (final chunk in source.openRead()) {
+          if (cancelToken.isCancelled) throw DioException.requestCancelled(requestOptions: RequestOptions(path: url), reason: 'cancelled');
+          sink.add(chunk);
+          done += chunk.length;
+          onProgress?.call(DownloadProgress(received: done, total: total));
+        }
+      } finally {
+        await sink.close();
+      }
+      await source.delete();
+    }
+    try {
+      await source.parent.delete(recursive: true);
+    } catch (_) {}
+  }
+}
+
 class DioFileDownloader implements FileDownloader {
   DioFileDownloader({Dio? dio}) : _dio = dio ?? _createDio();
 

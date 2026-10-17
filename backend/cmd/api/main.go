@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/aviation256444-boop/socialsave/backend/internal/config"
 	"github.com/aviation256444-boop/socialsave/backend/internal/http"
+	"github.com/aviation256444-boop/socialsave/backend/internal/providers"
 )
 
 func main() {
@@ -21,7 +23,7 @@ func main() {
 	}
 	app := server.New(cfg, nil, nil)
 	httpServer := &http.Server{
-		Addr:              ":" + cfg.Port,
+		Addr:              cfg.BindAddr + ":" + cfg.Port,
 		Handler:           app.Router(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
@@ -29,6 +31,15 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if os.Getenv("EXIT_WITH_STDIN") == "1" {
+		// The desktop app holds our stdin open. When the app exits (or is
+		// killed) the pipe closes and the engine stops with it.
+		go func() {
+			_, _ = io.Copy(io.Discard, os.Stdin)
+			stop()
+		}()
+	}
+	providers.Configure(cfg)
 	go app.Jobs.Run(ctx)
 	go func() {
 		<-ctx.Done()

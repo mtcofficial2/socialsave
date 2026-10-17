@@ -1,6 +1,9 @@
 import 'package:social_save/core/platform/plat.dart';
 
 import 'package:flutter/foundation.dart';
+import 'package:social_save/core/config/build_flags.dart';
+import 'package:social_save/core/config/hosted_api.dart';
+import 'package:social_save/core/engine/local_engine.dart';
 
 /// Runtime configuration. Secrets never belong in source control.
 ///
@@ -37,14 +40,18 @@ class EnvConfig {
     defaultValue: 2147483648, // 2 GiB
   );
 
-  /// Live API used by release builds. A debug build still uses the local
-  /// computer unless API_BASE_URL is passed at compile time.
-  static const String productionApiBaseUrl =
-      'https://socialsave-api-p2tm.onrender.com';
+  /// Live API used by Android and web release builds. A debug build still
+  /// uses the local computer unless API_BASE_URL is passed at compile time.
+  /// The desktop build has no hosted API: it talks to its bundled engine.
+  static String get productionApiBaseUrl => HostedApi.origin;
 
   static String get apiBaseUrl {
-    // Web build served by the API itself (Render): talk to the same origin.
-    if (kIsWeb && Uri.base.host.endsWith('onrender.com')) {
+    if (kLocalEngine) {
+      // Windows: the bundled engine on this PC (yt-dlp + ffmpeg + deno).
+      return LocalEngine.baseUrl;
+    }
+    // Web build served by the API itself: talk to the same origin.
+    if (kIsWeb && HostedApi.matches(Uri.base.host)) {
       return Uri.base.origin;
     }
     if (_apiBaseUrlDefine.isNotEmpty) {

@@ -1,6 +1,8 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:social_save/core/config/build_flags.dart';
 import 'package:social_save/core/config/env_config.dart';
+import 'package:social_save/core/engine/local_engine.dart';
 import 'package:social_save/core/errors/error_mapper.dart';
 import 'package:social_save/core/errors/exceptions.dart';
 
@@ -30,6 +32,7 @@ class DioClient {
               ),
             ) {
     _dio.interceptors.addAll([
+      if (kLocalEngine) _LocalEngineInterceptor(),
       _AuthInterceptor(),
       if (kDebugMode && EnvConfig.enableLogging)
         LogInterceptor(
@@ -77,7 +80,8 @@ class DioClient {
     );
   }
 
-  /// True while we wait for the free Render server to wake up.
+  /// True while we wait for the API to answer: the hosted server waking up,
+  /// or (desktop) the bundled engine starting.
   static final ValueNotifier<bool> waking = ValueNotifier<bool>(false);
 
   static bool _isColdStart(DioException e) {
@@ -113,6 +117,20 @@ class DioClient {
     } finally {
       waking.value = false;
     }
+  }
+}
+
+/// Desktop: every request goes to the bundled engine on this PC. Waits for
+/// it to start and follows its port if it was restarted.
+class _LocalEngineInterceptor extends Interceptor {
+  @override
+  Future<void> onRequest(RequestOptions options, RequestInterceptorHandler handler) async {
+    if (!LocalEngine.status.value.ready) {
+      DioClient.waking.value = true;
+      await LocalEngine.waitReady();
+    }
+    options.baseUrl = LocalEngine.baseUrl;
+    handler.next(options);
   }
 }
 

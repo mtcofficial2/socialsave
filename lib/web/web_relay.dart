@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:social_save/core/config/env_config.dart';
+import 'package:social_save/core/config/hosted_api.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
 import 'package:social_save/features/downloads/presentation/providers/downloads_controller.dart';
 import 'package:social_save/shared/models/download_status.dart';
@@ -16,7 +17,6 @@ import 'package:social_save/web/web_library.dart';
 import 'package:social_save/web/web_pages.dart';
 import 'package:social_save/web/web_saver.dart';
 
-const _renderOrigin = 'https://socialsave-api-p2tm.onrender.com';
 const _maxBytes = 200 * 1024 * 1024;
 
 String get _api {
@@ -24,7 +24,8 @@ String get _api {
   return base.endsWith('/') ? base.substring(0, base.length - 1) : base;
 }
 
-String relayReceiveLink(String code) => '$_renderOrigin/?receive=$code';
+/// Web relay links always point at the hosted site (web build only).
+String relayReceiveLink(String code) => '${HostedApi.origin}/?receive=$code';
 
 String _size(int bytes) {
   if (bytes >= 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
@@ -290,7 +291,7 @@ class _UploadDialogState extends State<_UploadDialog> {
               ),
               const SizedBox(height: 10),
               Text(
-                'On the other device open socialsave-api-p2tm.onrender.com, tap Receive and enter the code, or scan the QR.',
+                'On the other device open ${HostedApi.displayHost}, tap Receive and enter the code, or scan the QR.',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
               ),

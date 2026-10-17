@@ -176,12 +176,15 @@ class HotspotShare {
       if (ssid == null || ssid.isEmpty) {
         throw const HotspotError('The hotspot started but the phone did not share its name.');
       }
+      // Still joined to a 2.4 GHz network: one radio, so the hotspot runs on
+      // that channel whatever band was asked for.
+      final staFreq = (m['staFreq'] as num?)?.toInt() ?? -1;
       final info = HotspotInfo(
         ssid: ssid,
         password: (m['password'] as String?) ?? '',
         ip: ip,
         custom: m['custom'] == true,
-        band: (m['band'] as num?)?.toInt(),
+        band: staFreq >= 2400 && staFreq <= 2500 ? 1 : (m['band'] as num?)?.toInt(),
         bandNote: (m['bandNote'] as String?) ?? '',
       );
       lastInfo = info;

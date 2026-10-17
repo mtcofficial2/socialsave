@@ -18,7 +18,8 @@ import 'package:social_save/features/library/transfer_boost.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart' show ProviderScope;
+import 'package:social_save/shared/widgets/qr_scanner.dart';
 import 'package:path/path.dart' as p;
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:social_save/core/platform/desktop_support.dart';
@@ -29,6 +30,7 @@ import 'package:social_save/features/library/nearby_ui.dart';
 import 'package:social_save/features/player/player_session.dart';
 import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/routing/app_router.dart';
+import 'package:social_save/features/home/presentation/providers/home_controller.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:social_save/web/web_pages.dart';
 
@@ -1528,12 +1530,11 @@ Future<bool> showReceiveFromPhone(BuildContext context) async {
                         child: FirewallPrompt(compact: true),
                       ),
                     if (!DesktopSupport.isWindows)
-                      SizedBox(
-                        height: 220,
-                        child: MobileScanner(
-                          onDetect: (capture) {
-                            final value = capture.barcodes.isEmpty ? null : capture.barcodes.first.rawValue;
-                            if (picked || value == null || !value.startsWith('http')) return;
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: QrScanner(
+                          onCode: (value) {
+                            if (picked || !value.startsWith('http')) return;
                             picked = true;
                             Navigator.pop(context, value);
                           },
@@ -1927,8 +1928,22 @@ Future<void> showSoundClip(BuildContext context, String path) async {
 }
 
 
+/// Android: the system picker for one video or audio file, returned as a
+/// readable path without loading it into memory (1.0.36's file_selector
+/// path read the whole file and a 500 MB video crashed the app).
+Future<({String path, String name})?> _pickVideoAndroid() async {
+  final m = await MediaEvents.channel.invokeMapMethod<String, dynamic>('pickVideo');
+  final path = m?['path'] as String?;
+  if (path == null || path.isEmpty) return null;
+  return (path: path, name: (m?['name'] as String?) ?? p.basename(path));
+}
+
 /// Opens the system file picker for one video.
 Future<File?> pickVideoFile() async {
+  if (Plat.isAndroid) {
+    final picked = await _pickVideoAndroid();
+    return picked == null ? null : File(picked.path);
+  }
   final picked = await openFile(acceptedTypeGroups: _videoTypes);
   return picked == null ? null : File(picked.path);
 }
@@ -1944,6 +1959,12 @@ const _videoTypes = [
 
 /// Lets the user pick any video file, then shows the send code.
 Future<void> pickAndSend(BuildContext context) async {
+  if (Plat.isAndroid) {
+    final picked = await _pickVideoAndroid();
+    if (picked == null || !context.mounted) return;
+    await showSendToPhone(context, File(picked.path), picked.name);
+    return;
+  }
   final picked = await openFile(acceptedTypeGroups: const [
     XTypeGroup(
       label: 'Videos',
@@ -2251,12 +2272,15 @@ class HotspotQuickButtons extends StatelessWidget {
   }
 }
 
-/// Android Quick Settings tile "SocialSave hotspot share" → Hotspot share.
+/// Android quick actions: the Quick Settings tile "SocialSave hotspot share"
+/// and the launcher shortcuts (long-press the icon): Paste link, Hotspot
+/// share, Library. Also opens links shared from other apps on any screen.
 void listenForQuickActions() {
   if (!Plat.isAndroid) return;
   var busy = false;
   Future<void> run(Object? action) async {
-    if (action != 'hotspot_share' || busy) return;
+    if (busy || action is! String) return;
+    if (action != 'hotspot_share' && action != 'paste' && action != 'library') return;
     busy = true;
     try {
       try {
@@ -2264,12 +2288,58 @@ void listenForQuickActions() {
       } catch (_) {}
       await Future<void>.delayed(const Duration(milliseconds: 400));
       final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
-      if (ctx != null && ctx.mounted) await showHotspotQuickShare(ctx);
+      if (ctx == null || !ctx.mounted) return;
+      switch (action) {
+        case 'hotspot_share':
+          await showHotspotQuickShare(ctx);
+        case 'library':
+          appRouter.go('/library');
+        case 'paste':
+          appRouter.go('/');
+          await Future<void>.delayed(const Duration(milliseconds: 250));
+          final home = ProviderScope.containerOf(ctx, listen: false);
+          await home.read(homeControllerProvider.notifier).pasteFromClipboard();
+          final state = home.read(homeControllerProvider);
+          if (state.error == null && state.url.isNotEmpty) {
+            HapticFeedback.lightImpact();
+            unawaited(appRouter.push('/preview', extra: state.url));
+          } else if (ctx.mounted) {
+            ScaffoldMessenger.maybeOf(ctx)?.showSnackBar(
+              const SnackBar(content: Text('Copy a video link first, then try again.')),
+            );
+          }
+      }
     } finally {
       busy = false;
     }
   }
 
+  // A link shared from TikTok, Instagram, YouTube… while SocialSave is open
+  // (1.0.37: one activity, so the link arrives here instead of a second copy).
+  var sharing = false;
+  Future<void> shared(Object? _) async {
+    if (sharing) return;
+    sharing = true;
+    try {
+      String? text;
+      try {
+        text = await MediaEvents.channel.invokeMethod<String>('consumeSharedText');
+      } catch (_) {}
+      if (text == null || text.trim().isEmpty) return;
+      final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
+      if (ctx == null || !ctx.mounted) return;
+      final home = ProviderScope.containerOf(ctx, listen: false);
+      final controller = home.read(homeControllerProvider.notifier)..setUrl(text);
+      final url = controller.validatedUrl();
+      if (url == null) return;
+      HapticFeedback.lightImpact();
+      unawaited(appRouter.push('/preview', extra: url));
+    } finally {
+      sharing = false;
+    }
+  }
+
+  MediaEvents.on('sharedText', shared);
   MediaEvents.on('quickAction', run);
   WidgetsBinding.instance.addPostFrameCallback((_) async {
     try {

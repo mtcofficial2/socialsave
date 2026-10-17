@@ -20,6 +20,11 @@ class FileUtils {
     if (AppConstants.allowedVideoExtensions.contains(normalized)) {
       return normalized;
     }
+    // Audio-only saves keep their real type (1.0.37: M4A and MP3 were
+    // written as .mp4).
+    if (const {'m4a', 'mp3', 'aac', 'opus', 'ogg', 'wav', 'flac'}.contains(normalized)) {
+      return normalized;
+    }
     return fallback;
   }
 

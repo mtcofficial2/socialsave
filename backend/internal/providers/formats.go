@@ -80,8 +80,12 @@ func browserSafe(quality string, hasFFmpeg bool) string {
 }
 
 func formatSelector(quality string, hasFFmpeg bool, maxHeight int) string {
-	if quality == "audio" {
+	if quality == "audio" || quality == "audio-mp3" {
 		if hasFFmpeg {
+			if localEngine && quality == "audio" {
+				// Desktop engine: M4A plays everywhere, so prefer it.
+				return "ba[ext=m4a]/ba/b"
+			}
 			return "ba/b"
 		}
 		return "bestaudio/best"
@@ -93,6 +97,20 @@ func formatSelector(quality string, hasFFmpeg bool, maxHeight int) string {
 		return "best[acodec!=none][vcodec!=none]/best"
 	}
 	if hasFFmpeg {
+		if localEngine {
+			// Desktop saves: H.264 + AAC near the asked height first, so the
+			// file plays in Windows' own players and on any phone it is sent
+			// to (AV1/VP9 in MP4 often does not). YouTube has no H.264 above
+			// 1080p, so 1440p/4K fall through to the normal choice.
+			if height := RequestedMaxHeight(quality, 0); height != nil && *height > 0 && *height <= 1080 {
+				h := *height
+				// Half the asked height: keeps letterboxed films (1920x804)
+				// and real 720p H.264 over an AI-upscaled AV1 "1080p".
+				lo := strconv.Itoa(h / 2)
+				hi := strconv.Itoa(h)
+				return "bv*[height<=" + hi + "][height>=" + lo + "][vcodec^=avc1]+ba[ext=m4a]/" + dashFirst(h)
+			}
+		}
 		// Many small pieces in parallel. One combined file is what YouTube throttles.
 		mapping := map[string]string{
 			"360p":     dashFirst(360),
@@ -287,8 +305,25 @@ func BuildFormats(info mediaInfo) []models.MediaFormat {
 		HasAudio: true,
 		HasVideo: true,
 	})
+	if localEngine && ffmpegDir() != "" {
+		// The desktop engine always merges/remuxes video into MP4
+		// (--merge-output-format mp4 --remux-video mp4): name it so.
+		for i := range formats {
+			if formats[i].HasVideo {
+				formats[i].Format = "mp4"
+			}
+		}
+	}
 	if audio, ok := audioChoice(info); ok {
 		formats = append(formats, audio)
+		// Offer MP3 next to M4A; skip when the audio choice already is MP3 (TikTok).
+		if localEngine && ffmpegDir() != "" && !strings.EqualFold(audio.Format, "mp3") {
+			mp3 := audio
+			mp3.ID = "audio-mp3"
+			mp3.Quality = "audio"
+			mp3.Format = "mp3"
+			formats = append(formats, mp3)
+		}
 	}
 	return formats
 }
@@ -300,6 +335,10 @@ func audioChoice(info mediaInfo) (models.MediaFormat, bool) {
 	}
 	ext := "m4a"
 	for _, item := range info.Formats {
+		if localEngine && hasM4AAudio(info) {
+			// Matches the desktop engine's M4A-first selector.
+			break
+		}
 		if hasAudio(item) && !hasVideo(item) {
 			candidate := strings.TrimPrefix(strings.ToLower(item.Ext), ".")
 			if candidate != "" {
@@ -558,4 +597,13 @@ func durationOf(info mediaInfo) *int {
 	}
 	value := int(*info.Duration.N)
 	return &value
+}
+
+func hasM4AAudio(info mediaInfo) bool {
+	for _, item := range info.Formats {
+		if hasAudio(item) && !hasVideo(item) && strings.EqualFold(strings.TrimPrefix(item.Ext, "."), "m4a") {
+			return true
+		}
+	}
+	return false
 }

@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:social_save/core/config/build_flags.dart';
+import 'package:social_save/core/engine/local_engine.dart';
 import 'package:dio/dio.dart';
 import 'package:social_save/core/config/env_config.dart';
 import 'package:social_save/core/errors/error_messages.dart';
@@ -54,6 +56,15 @@ class ErrorMapper {
   }
 
   String _reachabilityMessage(String fallback) {
+    if (kLocalEngine) {
+      final engine = LocalEngine.status.value;
+      if (engine.state == 'missing' || engine.state == 'failed') {
+        return engine.message.isNotEmpty
+            ? engine.message
+            : 'The download engine on this PC is not running. Restart SocialSave.';
+      }
+      return 'Could not reach the video site. Check this PC\'s internet connection.';
+    }
     final host = Uri.tryParse(EnvConfig.apiBaseUrl)?.host.toLowerCase() ?? '';
     final local = host == 'localhost' ||
         host == '127.0.0.1' ||
