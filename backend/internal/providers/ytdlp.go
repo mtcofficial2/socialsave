@@ -492,6 +492,11 @@ func downloadArgs(rawURL string, cfg config.Config, selector, out, ffmpeg, forma
 		"--fragment-retries", "3",
 		"--socket-timeout", "25",
 		"--concurrent-fragments", "16",
+		// Fixed 256 KB reads: yt-dlp doubles its read size as a download
+		// speeds up, so a small file reported 1, 2, 4 MB... and the bar jumped
+		// (TikTok went 58% -> 97% in one step). Steady pieces = steady bar.
+		"--buffer-size", "256K",
+		"--no-resize-buffer",
 		"--max-filesize", strconv.FormatInt(cfg.MaxDownloadBytes, 10),
 		"--user-agent", browserUA,
 		"-f", selector,

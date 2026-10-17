@@ -165,6 +165,10 @@ object PhoneEngine {
                     .addOption("--fragment-retries", 3)
                     .addOption("--socket-timeout", 25)
                     .addOption("--concurrent-fragments", 8)
+                    // Fixed 256 KB reads so progress arrives in steady steps
+                    // (yt-dlp otherwise doubles its read size: 1, 2, 4 MB...).
+                    .addOption("--buffer-size", "256K")
+                    .addOption("--no-resize-buffer")
                     .addOption("-f", selector(formatId))
                     .addOption("-o", File(dir, "media.%(ext)s").absolutePath)
                 when (formatId) {
