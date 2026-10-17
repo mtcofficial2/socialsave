@@ -938,9 +938,19 @@ class _SessionScreenState extends State<SessionScreen> with SingleTickerProvider
                     overflow: TextOverflow.ellipsis,
                   ),
                   if (shown != null)
-                    Text(
-                      '${shown.kind == 'pc' ? 'PC' : 'Phone'} · ${shown.linkLabel}',
-                      style: theme.textTheme.bodySmall,
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            '${shown.kind == 'pc' ? 'PC' : 'Phone'} · ${shown.linkLabel}',
+                            style: theme.textTheme.bodySmall,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        LiveBandBadge(link: shown.link),
+                      ],
                     ),
                 ],
               ),
@@ -1336,6 +1346,62 @@ class _HistoryTile extends StatelessWidget {
         ],
       ),
       trailing: exists ? TextButton(onPressed: onOpen, child: Text(isVideoName(record.path) ? 'Play' : 'Open')) : null,
+    );
+  }
+}
+
+
+/// 1.0.40: small "5 GHz" / "2.4 GHz" badge for the live connection,
+/// re-read every few seconds so it follows the real link.
+class LiveBandBadge extends StatefulWidget {
+  const LiveBandBadge({super.key, required this.link});
+  final String link;
+
+  @override
+  State<LiveBandBadge> createState() => _LiveBandBadgeState();
+}
+
+class _LiveBandBadgeState extends State<LiveBandBadge> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(HotspotShare.liveBand(link: widget.link));
+    _timer = Timer.periodic(const Duration(seconds: 5), (_) => unawaited(HotspotShare.liveBand(link: widget.link)));
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return ValueListenableBuilder<String?>(
+      valueListenable: HotspotShare.liveBandLabel,
+      builder: (context, band, _) {
+        if (band == null) return const SizedBox.shrink();
+        final fast = !band.startsWith('2.4');
+        return Container(
+          key: const ValueKey('live-band-badge'),
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+          decoration: BoxDecoration(
+            color: fast ? scheme.primaryContainer : scheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(
+            band,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: fast ? scheme.onPrimaryContainer : scheme.onSurfaceVariant,
+            ),
+          ),
+        );
+      },
     );
   }
 }

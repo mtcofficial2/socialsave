@@ -117,9 +117,11 @@ class HotspotShare private constructor(private val context: Context, messenger: 
             "hotspotRunning" to (reservation != null),
             "maker" to Build.MANUFACTURER,
             // 1.0.39 guided Hotspot share: the phone's own (system) hotspot.
-            "systemApOn" to systemApOn(),
+            // SocialSave's own hotspot also shows as "AP on": not the system one.
+            "systemApOn" to (if (reservation != null) false else systemApOn()),
             "apIp" to apAddress(),
             "staFreq" to staFrequency(),
+            "has5" to (try { @Suppress("DEPRECATION") wifi.is5GHzBandSupported } catch (_: Throwable) { false }),
         )
     }
 
@@ -293,7 +295,8 @@ class HotspotShare private constructor(private val context: Context, messenger: 
             band == "2.4" -> listOf(1, null)
             !has5 -> listOf(1, null)
             band == "5" -> listOf(2, 1, null)
-            else -> listOf(2, 3, null)
+            // Auto: 5 GHz first, then "either", then 2.4 GHz, then default.
+            else -> listOf(2, 3, 1, null)
         }
         bandNote = if (!has5 && band != "2.4") "Using 2.4 GHz (this phone doesn't support 5 GHz)." else ""
         val method = try {
@@ -392,7 +395,7 @@ class HotspotShare private constructor(private val context: Context, messenger: 
             "ip" to apAddress(),
             "custom" to (wantedPassword != null && password?.trim('"') == wantedPassword),
             "band" to bandOf(res),
-            "bandNote" to listOf(bandNote, phoneStaNote()).filter { it.isNotEmpty() }.joinToString(" "),
+            "bandNote" to listOf(bandNote, if (bandOf(res) == 2) "" else phoneStaNote()).filter { it.isNotEmpty() }.joinToString(" "),
             "staFreq" to staFrequency(),
         )
     }

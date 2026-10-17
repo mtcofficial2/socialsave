@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/features/library/hotspot_share.dart';
+import 'package:social_save/features/library/pc_hotspot.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 /// 1.0.39: guided Hotspot share. One blocker at a time, each with a clear
 /// step card and one button; the dialog moves on by itself when the blocker
@@ -438,4 +440,307 @@ class JoinProgressDialog extends StatelessWidget {
       ),
     );
   }
+}
+
+
+// ------------------------------------------------------------ 1.0.40 preflight
+
+/// One thing a transfer needs (permission, Location, Wi-Fi, Hotspot...).
+/// [fix] opens the right system screen or prompt and may return the
+/// one-line instruction to show (null keeps [instruction]).
+class PreflightItem {
+  const PreflightItem({
+    required this.label,
+    required this.instruction,
+    required this.check,
+    required this.fix,
+  });
+  final String label;
+  final String instruction;
+  final Future<bool> Function() check;
+  final Future<String?> Function() fix;
+}
+
+/// Xender-style pre-flight: checks each item in order and, for the first
+/// missing one, opens the right screen BY ITSELF with a one-line
+/// instruction. When the user comes back it re-checks and moves on.
+/// Returns true only when every item is satisfied.
+Future<bool> runPreflight(BuildContext context, {required String title, required List<PreflightItem> items}) async {
+  try {
+    var ok = true;
+    for (final i in items) {
+      if (!await i.check()) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) return true;
+  } catch (_) {}
+  if (!context.mounted) return false;
+  return await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        useRootNavigator: true,
+        builder: (_) => PreflightDialog(title: title, items: items),
+      ) ??
+      false;
+}
+
+class PreflightDialog extends StatefulWidget {
+  const PreflightDialog({super.key, required this.title, required this.items});
+  final String title;
+  final List<PreflightItem> items;
+
+  @override
+  State<PreflightDialog> createState() => _PreflightDialogState();
+}
+
+class _PreflightDialogState extends State<PreflightDialog> with WidgetsBindingObserver {
+  late final List<bool> _ok = List<bool>.filled(widget.items.length, false);
+  int _current = 0;
+  bool _done = false;
+  bool _busy = false;
+  String? _note;
+  final Set<int> _opened = {};
+  Timer? _poll;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(_advance());
+    _poll = Timer.periodic(const Duration(milliseconds: 1200), (_) => unawaited(_advance()));
+  }
+
+  @override
+  void dispose() {
+    _poll?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Back from Settings: re-check straight away.
+    if (state == AppLifecycleState.resumed) unawaited(_advance());
+  }
+
+  Future<void> _advance() async {
+    if (_busy || _done || !mounted) return;
+    _busy = true;
+    try {
+      for (var i = 0; i < widget.items.length; i++) {
+        bool ok;
+        try {
+          ok = await widget.items[i].check();
+        } catch (_) {
+          ok = false;
+        }
+        if (!mounted) return;
+        if (!ok) {
+          setState(() {
+            for (var j = 0; j < widget.items.length; j++) {
+              _ok[j] = j < i;
+            }
+            if (_current != i) _note = null;
+            _current = i;
+          });
+          // Open the screen for this item by itself, once.
+          if (_opened.add(i)) await _fix(i);
+          return;
+        }
+      }
+      setState(() {
+        for (var j = 0; j < _ok.length; j++) {
+          _ok[j] = true;
+        }
+        _done = true;
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      if (mounted) Navigator.of(context).pop(true);
+    } finally {
+      _busy = false;
+    }
+  }
+
+  Future<void> _fix(int i) async {
+    try {
+      final note = await widget.items[i].fix();
+      if (mounted && note != null) setState(() => _note = note);
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final items = widget.items;
+    return AlertDialog(
+      key: const ValueKey('preflight-dialog'),
+      title: Text(widget.title),
+      content: SizedBox(
+        width: 380,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (var i = 0; i < items.length; i++)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: _ok[i]
+                          ? Icon(Icons.check_circle_rounded, color: theme.colorScheme.primary, size: 22)
+                          : (i == _current && !_done)
+                              ? const Padding(padding: EdgeInsets.all(3), child: CircularProgressIndicator(strokeWidth: 2))
+                              : Icon(Icons.radio_button_unchecked_rounded, color: theme.colorScheme.outline, size: 22),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        items[i].label,
+                        style: TextStyle(fontWeight: i == _current && !_done ? FontWeight.w600 : FontWeight.normal),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            if (!_done) ...[
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  _note ?? items[_current].instruction,
+                  key: const ValueKey('preflight-instruction'),
+                  style: TextStyle(color: theme.colorScheme.onPrimaryContainer),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text('SocialSave carries on by itself when it\'s done.', style: theme.textTheme.bodySmall),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+        if (!_done)
+          FilledButton(
+            key: const ValueKey('preflight-open'),
+            onPressed: () => unawaited(_fix(_current)),
+            child: const Text('Open again'),
+          ),
+      ],
+    );
+  }
+}
+
+Future<String?> _askPermission(Permission p, String name) async {
+  final st = await p.request();
+  if (st.isGranted) return null;
+  if (st.isPermanentlyDenied || st.isRestricted) {
+    await HotspotShare.openSettings('app');
+    return 'Open Permissions › turn on "$name" for SocialSave, then come back.';
+  }
+  return 'Tap Allow when Android asks for "$name". Tap "Open again" to ask once more.';
+}
+
+Future<int> _sdk() async => ((await HotspotShare.status())['sdk'] as int?) ?? 0;
+
+PreflightItem _permItem(int sdk) => sdk >= 33
+    ? PreflightItem(
+        label: 'Allow "Nearby devices"',
+        instruction: 'Tap Allow so SocialSave can open and join Wi-Fi hotspots.',
+        check: () => Permission.nearbyWifiDevices.isGranted,
+        fix: () => _askPermission(Permission.nearbyWifiDevices, 'Nearby devices'),
+      )
+    : PreflightItem(
+        label: 'Allow Location permission',
+        instruction: 'Tap Allow. Android needs it for Wi-Fi hotspots on this version (SocialSave doesn\'t track you).',
+        check: () => Permission.locationWhenInUse.isGranted,
+        fix: () => _askPermission(Permission.locationWhenInUse, 'Location'),
+      );
+
+PreflightItem _locationItem() => PreflightItem(
+      label: 'Location turned on',
+      instruction: 'Turn on Location, then come back.',
+      check: () async => (await HotspotShare.status())['locationOn'] == true,
+      fix: () async {
+        await HotspotShare.openSettings('location');
+        return null;
+      },
+    );
+
+/// Readiness for the sending side of Hotspot share. The last item is only
+/// true when a hotspot is really on (SocialSave's own hotspot started, or
+/// the phone's Mobile Hotspot is enabled and has its address).
+Future<List<PreflightItem>> hotspotSenderItems() async {
+  if (Plat.isWindows) {
+    return [
+      PreflightItem(
+        label: 'Mobile hotspot available',
+        instruction: 'Turn on Mobile hotspot, then come back.',
+        check: () async {
+          final s = await PcHotspot.run('status');
+          return s['state'] == 'On' || PcHotspot.blockMessage(s) == null;
+        },
+        fix: () async {
+          final block = PcHotspot.blockMessage(await PcHotspot.run('status'));
+          await HotspotShare.openSettings(block != null && block.contains('online') ? 'wifi' : 'hotspot');
+          return block == null ? null : '$block\nThen come back: SocialSave carries on by itself.';
+        },
+      ),
+    ];
+  }
+  final sdk = await _sdk();
+  return [
+    _permItem(sdk),
+    if (sdk < 33) _locationItem(),
+    PreflightItem(
+      label: 'Hotspot on',
+      instruction: 'Starting the hotspot…',
+      check: HotspotShare.hotspotReady,
+      fix: () async {
+        try {
+          await HotspotShare.start();
+          return 'Hotspot is starting…';
+        } on HotspotError catch (e) {
+          if (await HotspotShare.hotspotReady()) return null;
+          await HotspotShare.openSettings('hotspot');
+          return 'Turn on Hotspot, then come back.\n(SocialSave couldn\'t open its own: ${e.message})';
+        }
+      },
+    ),
+  ];
+}
+
+/// Readiness for receiving (scan the sender's QR and join its hotspot).
+Future<List<PreflightItem>> receiverItems() async {
+  if (!HotspotShare.supported || Plat.isWindows) return const [];
+  final sdk = await _sdk();
+  return [
+    PreflightItem(
+      label: 'Wi-Fi turned on',
+      instruction: 'Turn on Wi-Fi, then come back.',
+      check: () async => (await HotspotShare.status())['wifiOn'] == true,
+      fix: () async {
+        await HotspotShare.openSettings('wifi');
+        return null;
+      },
+    ),
+    _permItem(sdk),
+    if (sdk < 33) _locationItem(),
+    PreflightItem(
+      label: 'Allow camera (to scan the QR)',
+      instruction: 'Tap Allow so SocialSave can scan the sender\'s QR.',
+      check: () => Permission.camera.isGranted,
+      fix: () => _askPermission(Permission.camera, 'Camera'),
+    ),
+  ];
 }

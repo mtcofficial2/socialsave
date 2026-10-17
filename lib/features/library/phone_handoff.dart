@@ -1122,6 +1122,18 @@ Future<void> showHotspotQuickShare(BuildContext context) async {
 }
 
 Future<void> showHotspotSend(BuildContext context, File? file, String title) async {
+  // 1.0.40 Xender-style pre-flight: open whatever is missing (permission,
+  // Location, Hotspot...) by itself, tick it off, and only then show the
+  // QR. Never a QR before the hotspot is really on.
+  if (HotspotShare.supported || Plat.isWindows) {
+    final ready = await runPreflight(context,
+        title: 'Getting ready to share', items: await hotspotSenderItems());
+    if (!ready) {
+      if (!ShareSession.active && !Plat.isWindows) await HotspotShare.stop();
+      return;
+    }
+    if (!context.mounted) return;
+  }
   final result = await showDialog<String>(
     context: context,
     barrierDismissible: false,
@@ -1264,6 +1276,25 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
     });
   }
 
+  final Set<String> _autoOpened = {};
+
+  /// The hotspot went off while the QR was up: hide it now, guide again,
+  /// and come back to a fresh QR once it is on.
+  Future<void> _lost() async {
+    // A live session reopens its own hotspot (ShareSession); leave it be.
+    if (!mounted || ShareSession.active) return;
+    _stopPoll();
+    ShareSession.pairLink = null;
+    setState(() {
+      _info = null;
+      _offer = null;
+      _link = null;
+      _step = 'The hotspot turned off. Getting it back…';
+    });
+    await PhoneHandoff.stop();
+    await _start();
+  }
+
   void _show(GuideStep step, {Widget? child}) {
     if (!mounted) return;
     setState(() {
@@ -1344,13 +1375,8 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
   void _onEvent() {
     final e = HotspotShare.event.value ?? '';
     if (e.startsWith('stopped') && mounted && _info != null && !_info!.system) {
-      _show(GuideStep(
-        icon: Icons.portable_wifi_off_rounded,
-        title: 'The hotspot stopped',
-        text: 'The phone turned SocialSave\'s hotspot off (this can happen when the screen locks or another app uses Wi-Fi).',
-        action: 'Start it again',
-        onAction: () => unawaited(_restart()),
-      ));
+      // The hotspot is gone: hide the QR at once and get it back.
+      unawaited(_lost());
     }
   }
 
@@ -1389,11 +1415,9 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
         _watch(() async => (await HotspotShare.status())['locationOn'] == true, _start);
         return;
       }
-      // 3. The phone's own hotspot is already on: use it.
-      if (s['systemApOn'] == true) {
-        await _useSystem();
-        return;
-      }
+      // 3. SocialSave's own hotspot first: it picks 5 GHz on Auto (1.0.40:
+      // the phone's Mobile Hotspot is only the fallback, since its band is
+      // whatever Settings says, often 2.4 GHz).
       if (!mounted) return;
       setState(() => _step = 'Starting hotspot…');
       final HotspotInfo info;
@@ -1447,6 +1471,8 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
       return;
     }
     final unknown = s['systemApOn'] == null;
+    // Xender-style: open the Hotspot screen for the user, once per dialog.
+    if (_autoOpened.add('hotspot')) unawaited(HotspotShare.openSettings('hotspot'));
     _show(GuideStep(
       icon: Icons.wifi_tethering_rounded,
       title: 'Turn on your phone\'s Hotspot',
@@ -1460,7 +1486,7 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
     ));
     _watch(() async {
       final st = await HotspotShare.status();
-      return st['systemApOn'] == true || (unknown && st['apIp'] != null);
+      return st['apIp'] != null && (st['systemApOn'] == true || unknown);
     }, _useSystem);
   }
 
@@ -1520,6 +1546,9 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
   }
 
   void _pcGuide(String reason) {
+    if (_autoOpened.add('pc-hotspot')) {
+      unawaited(HotspotShare.openSettings(reason.contains('online') ? 'wifi' : 'hotspot'));
+    }
     _show(GuideStep(
       icon: Icons.wifi_tethering_error_rounded,
       title: 'Turn on Mobile hotspot',
@@ -1553,6 +1582,18 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
         if (!info.system) await HotspotShare.stop();
         return;
       }
+      // 1.0.40: no QR until the hotspot is verified on and has its address.
+      if (info.ip == null || !await HotspotShare.hotspotReady()) {
+        debugPrint('[hotspot] not ready yet (ip=${info.ip}); no QR');
+        if (Plat.isWindows) {
+          _pcGuide('Mobile hotspot isn\'t on yet.');
+        } else if (info.system) {
+          await _appHotspotFailed(const HotspotError('your Hotspot is not on yet.'));
+        } else {
+          await _appHotspotFailed(const HotspotError('it did not get a network address.'));
+        }
+        return;
+      }
       _size = widget.file == null ? 0 : await widget.file!.length();
       final offer = await PhoneHandoff.offer(widget.file, title: widget.title, preferIp: info.ip);
       if (offer == null) throw const HotspotError('Could not start sharing on the hotspot.');
@@ -1570,21 +1611,9 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
         _link = '${HotspotShare.link(offer.url, info)}&sid=$pair&sp=${NearbyService.inboxBoundPort}&sf=1';
       });
       ShareSession.pairLink = _link;
-      if (info.system && !Plat.isWindows) {
-        // Watch the phone's own hotspot: if it goes off, guide again.
-        _watch(() async => (await HotspotShare.status())['systemApOn'] == false, () async {
-          _show(GuideStep(
-            icon: Icons.portable_wifi_off_rounded,
-            title: 'Your phone\'s Hotspot turned off',
-            text: 'Turn it on again in Settings. SocialSave carries on by itself with the same QR.',
-            action: 'Open Hotspot settings',
-            onAction: () => HotspotShare.openSettings('hotspot'),
-            waiting: 'Waiting for the hotspot to turn on…',
-          ));
-          _watch(() async => (await HotspotShare.status())['systemApOn'] == true, () async {
-            if (mounted) setState(() => _guide = null);
-          });
-        }, every: const Duration(seconds: 3));
+      // Watch the hotspot while the QR is up: if it goes off, hide the QR.
+      if (info.system || Plat.isWindows) {
+        _watch(() async => !await HotspotShare.hotspotReady(), _lost, every: const Duration(seconds: 3));
       }
     } catch (e) {
       debugPrint('[hotspot] ready failed: $e');
@@ -1754,6 +1783,14 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
 
 /// Returns true when a copy was saved (so the Library can refresh).
 Future<bool> showReceiveFromPhone(BuildContext context) async {
+  // 1.0.40: Wi-Fi, permission, Location and camera first, opened for the
+  // user one by one; the scanner shows once everything is ready.
+  final needs = await receiverItems();
+  if (needs.isNotEmpty) {
+    if (!context.mounted) return false;
+    if (!await runPreflight(context, title: 'Getting ready to receive', items: needs)) return false;
+  }
+  if (!context.mounted) return false;
   final controller = TextEditingController();
   var picked = false;
   final myCode = await PhoneHandoff.openDrop();
@@ -1991,8 +2028,23 @@ Future<bool> receiveHandoff(BuildContext context, String raw, {String? mode}) as
   final sendsInSession = q?.queryParameters['sf'] == '1';
   final code = (q != null && q.pathSegments.length >= 2 && q.pathSegments[0] == 'v') ? q.pathSegments[1] : null;
   var session = false;
+  // 1.0.40: a 5 GHz-only hotspot is invisible to phones without 5 GHz.
+  var has5 = true;
+  try {
+    has5 = (await HotspotShare.status())['has5'] != false;
+  } catch (_) {}
   while (true) {
     progress.step.value = 0;
+    if (join.on5 && !has5) {
+      progress.detail.value = null;
+      if (await progress.fail('The sender\'s hotspot is on 5 GHz and this phone can only see 2.4 GHz. '
+          'On the sending device tap "2.4 GHz" (the QR changes), then tap Retry and scan again.')) {
+        closeDialog();
+        return false;
+      }
+      closeDialog();
+      return false;
+    }
     progress.detail.value = 'Tap Connect if Android asks.';
     HotspotError? joinError;
     // Auto-retry a few times: a hotspot that just started can be missed by
@@ -2025,7 +2077,10 @@ Future<bool> receiveHandoff(BuildContext context, String raw, {String? mode}) as
       progress.detail.value = null;
       final why = joinError.code == 'permission'
           ? 'SocialSave needs the Nearby devices (or Location) permission to join. Allow it in Settings › Apps › SocialSave.'
-          : 'Couldn\'t join "${join.ssid}". Check that the sender still shows its QR, Wi-Fi is on here, and the phones are close. '
+          : join.on5
+              ? 'Couldn\'t join "${join.ssid}" on 5 GHz. ${has5 ? 'Move the phones closer, or on' : 'This phone can\'t see 5 GHz hotspots. On'} '
+                  'the sending device tap "2.4 GHz" (the QR changes), then tap Retry and scan again.'
+              : 'Couldn\'t join "${join.ssid}". Check that the sender still shows its QR, Wi-Fi is on here, and the phones are close. '
               'You can also join "${join.ssid}" in Wi-Fi settings (password ${join.password}) and type the code.';
       if (await progress.fail(why)) continue;
       closeDialog();

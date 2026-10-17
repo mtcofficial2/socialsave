@@ -94,6 +94,20 @@ class HotspotShare {
     }
   }
 
+  /// 1.0.40: a hotspot is really on and has its address: SocialSave's own
+  /// (started, reservation held) or the phone's Mobile Hotspot (enabled).
+  static Future<bool> hotspotReady() async {
+    if (_pc) return PcHotspot.isRunning();
+    if (!supported) return false;
+    try {
+      final s = await status();
+      if (s['apIp'] == null) return false;
+      return s['hotspotRunning'] == true || s['systemApOn'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   static Future<Map<String, dynamic>> status() async {
     _wire();
     final raw = await _channel.invokeMethod<Map<Object?, Object?>>('status');
@@ -163,6 +177,40 @@ class HotspotShare {
     } catch (_) {
       return null;
     }
+  }
+
+  /// 1.0.40: live band of the current connection ('5 GHz', '2.4 GHz'...),
+  /// read from the real link: the joined Wi-Fi's frequency on a joiner, the
+  /// hotspot's band on a host (a 2.4 GHz Wi-Fi link drags it there), the
+  /// WLAN band on a PC. Null for cables or when the phone doesn't say.
+  static final ValueNotifier<String?> liveBandLabel = ValueNotifier<String?>(null);
+
+  static Future<String?> liveBand({String link = 'wifi'}) async {
+    String? r;
+    if (link != 'usb' && link != 'cable') {
+      String? lbl(int? b) => switch (b) { 2 => '5 GHz', 1 => '2.4 GHz', 4 => '6 GHz', _ => null };
+      String? fromFreq(int f) => LinkInfo(freq: f, rssi: -127, level: -1).band;
+      try {
+        final last = lastInfo;
+        if (_pc) {
+          final sta = await _pcStationBand();
+          if (hostRunning.value && last != null) {
+            r = sta != null && sta.band.startsWith('2.4') ? '2.4 GHz' : (lbl(last.band) ?? (sta == null ? null : '${sta.band} GHz'));
+          } else if (sta != null) {
+            r = '${sta.band} GHz';
+          }
+        } else if (supported) {
+          if (hostRunning.value && last != null && !last.system) {
+            final sta = ((await status())['staFreq'] as num?)?.toInt() ?? -1;
+            r = last.band == 2 ? '5 GHz' : (fromFreq(sta) ?? lbl(last.band));
+          } else if (last == null || !last.system) {
+            r = (await linkInfo())?.band;
+          }
+        }
+      } catch (_) {}
+    }
+    liveBandLabel.value = r;
+    return r;
   }
 
   /// Band and signal right after the last join (null before).
@@ -261,12 +309,15 @@ class HotspotShare {
       // Still joined to a 2.4 GHz network: one radio, so the hotspot runs on
       // that channel whatever band was asked for.
       final staFreq = (m['staFreq'] as num?)?.toInt() ?? -1;
+      final asked = (m['band'] as num?)?.toInt();
       final info = HotspotInfo(
         ssid: ssid,
         password: (m['password'] as String?) ?? '',
         ip: ip,
         custom: m['custom'] == true,
-        band: staFreq >= 2400 && staFreq <= 2500 ? 1 : (m['band'] as num?)?.toInt(),
+        // A hotspot that started with the 5 GHz-only setting is on 5 GHz;
+        // otherwise a 2.4 GHz Wi-Fi link drags it onto that channel.
+        band: asked == 2 ? 2 : (staFreq >= 2400 && staFreq <= 2500 ? 1 : asked),
         bandNote: (m['bandNote'] as String?) ?? '',
       );
       lastInfo = info;
@@ -391,12 +442,14 @@ class HotspotShare {
     if (uri == null || uri.scheme != 'http') return null;
     final ssid = uri.queryParameters['hs'];
     if (ssid == null || ssid.isEmpty) return null;
-    return HotspotJoin(ssid: ssid, password: uri.queryParameters['hp'] ?? '');
+    return HotspotJoin(ssid: ssid, password: uri.queryParameters['hp'] ?? '', on5: uri.queryParameters['hb'] == '5');
   }
 
   /// Adds the hotspot to a handoff link.
   static String link(String baseUrl, HotspotInfo info) {
-    final q = 'hs=${Uri.encodeQueryComponent(info.ssid)}&hp=${Uri.encodeQueryComponent(info.password)}';
+    var q = 'hs=${Uri.encodeQueryComponent(info.ssid)}&hp=${Uri.encodeQueryComponent(info.password)}';
+    // 1.0.40: the band, so the joiner can tell when it can't see 5 GHz.
+    if (info.band == 2) q += '&hb=5';
     return '$baseUrl${baseUrl.contains('?') ? '&' : '?'}$q';
   }
 }
@@ -438,9 +491,12 @@ class HotspotInfo {
 }
 
 class HotspotJoin {
-  const HotspotJoin({required this.ssid, required this.password});
+  const HotspotJoin({required this.ssid, required this.password, this.on5 = false});
   final String ssid;
   final String password;
+
+  /// The sender's hotspot is on 5 GHz only.
+  final bool on5;
 }
 
 /// Band and signal of a Wi-Fi link.

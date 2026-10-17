@@ -1097,7 +1097,8 @@ class ShareSession {
       parts.add('Sending ${min(_batchDone + 1, max(_batchTotal, 1))} of ${max(_batchTotal, 1)}${_speed(sending.speed)}');
     }
     if (receiving != null) parts.add('Receiving ${receiving.name}${_speed(receiving.speed)}');
-    if (parts.isEmpty) return '${p.linkLabel} · Tap to send videos and files';
+    final band = HotspotShare.liveBandLabel.value;
+    if (parts.isEmpty) return '${p.linkLabel}${band == null ? '' : ' · $band'} · Tap to send videos and files';
     return parts.join(' · ');
   }
 

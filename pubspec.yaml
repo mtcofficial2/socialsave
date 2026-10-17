@@ -1,7 +1,7 @@
 name: social_save
 description: SocialSave - a compliant social media video downloader and manager.
 publish_to: "none"
-version: 1.0.39+45
+version: 1.0.40+46
 
 environment:
   sdk: ^3.12.2
