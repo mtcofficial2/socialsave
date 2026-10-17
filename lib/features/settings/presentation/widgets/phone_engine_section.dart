@@ -1,3 +1,4 @@
+import 'package:social_save/core/errors/exceptions.dart';
 import 'package:flutter/material.dart';
 import 'package:social_save/core/engine/phone_engine.dart';
 import 'package:social_save/shared/widgets/glass.dart';
@@ -178,7 +179,7 @@ class _SetupDialogState extends State<_SetupDialog> {
       await Future<void>.delayed(const Duration(milliseconds: 400));
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
-      if (mounted) setState(() => _error = '$e'.replaceFirst('On-phone engine: ', ''));
+      if (mounted) setState(() => _error = (e is AppException ? e.message : '$e').replaceFirst('On-phone engine: ', '').trim());
     }
   }
 
@@ -187,7 +188,7 @@ class _SetupDialogState extends State<_SetupDialog> {
     return AlertDialog(
       title: const Text('Download on this phone'),
       content: _error != null
-          ? Text('The engine could not be set up: $_error')
+          ? Text('SocialSave could not set up downloading on this phone, so the switch stays off and saves keep using the SocialSave server. Try again later, or update the app.\n\nDetails: $_error')
           : Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,

@@ -9,7 +9,8 @@
 -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
 -dontwarn com.fasterxml.jackson.**
 -dontwarn java.beans.**
--dontwarn org.tukaani.xz.**
+-keep class org.tukaani.xz.** { *; }
+-dontwarn org.tukaani.**
 -dontwarn org.brotli.dec.**
 -dontwarn com.github.luben.zstd.**
 -dontwarn org.objectweb.asm.**
