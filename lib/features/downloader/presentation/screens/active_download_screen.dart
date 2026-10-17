@@ -184,11 +184,17 @@ class ActiveDownloadScreen extends ConsumerWidget {
                         const SizedBox(height: 10),
                         ClipRRect(
                           borderRadius: BorderRadius.circular(99),
-                          child: LinearProgressIndicator(
-                            value: task.status == DownloadStatus.running ? task.progress : task.progress,
-                            minHeight: 10,
-                            backgroundColor: scheme.surfaceContainerHigh,
-                            color: scheme.primary,
+                          // Glides between updates instead of stepping.
+                          child: TweenAnimationBuilder<double>(
+                            tween: Tween<double>(end: task.progress),
+                            duration: const Duration(milliseconds: 450),
+                            curve: Curves.easeOut,
+                            builder: (context, value, _) => LinearProgressIndicator(
+                              value: value,
+                              minHeight: 10,
+                              backgroundColor: scheme.surfaceContainerHigh,
+                              color: scheme.primary,
+                            ),
                           ),
                         ),
                         const SizedBox(height: 8),

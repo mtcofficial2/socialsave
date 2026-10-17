@@ -275,11 +275,17 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                                           const SizedBox(height: 12),
                                           ClipRRect(
                                             borderRadius: BorderRadius.circular(99),
-                                            child: LinearProgressIndicator(
-                                              value: task.progress,
-                                              minHeight: 6,
-                                              color: scheme.primary,
-                                              backgroundColor: scheme.surfaceContainerHigh,
+                                            // Glides between updates instead of stepping.
+                                            child: TweenAnimationBuilder<double>(
+                                              tween: Tween<double>(end: task.progress),
+                                              duration: const Duration(milliseconds: 450),
+                                              curve: Curves.easeOut,
+                                              builder: (context, value, _) => LinearProgressIndicator(
+                                                value: value,
+                                                minHeight: 6,
+                                                color: scheme.primary,
+                                                backgroundColor: scheme.surfaceContainerHigh,
+                                              ),
                                             ),
                                           ),
                                         ],

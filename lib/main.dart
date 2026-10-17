@@ -397,8 +397,8 @@ Future<void> main(List<String> args) async {
               format: format,
             );
         print('debug enqueued ${task.id} -> ${task.localPath}');
-        for (var i = 0; i < 150; i++) {
-          await Future<void>.delayed(const Duration(seconds: 2));
+        for (var i = 0; i < 600; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 500));
           final t = c.read(downloadManagerProvider).byId(task.id);
           print('debug status ${t?.status} ${t?.receivedBytes}/${t?.totalBytes} ${t?.errorMessage ?? ''} ${t?.localPath} pct=${((t?.progress ?? 0) * 100).toStringAsFixed(1)} phase=${t?.phase} bps=${t?.bytesPerSecond.round()}');
           if (t == null || !t.status.isActive) break;
