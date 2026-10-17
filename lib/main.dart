@@ -400,7 +400,7 @@ Future<void> main(List<String> args) async {
         for (var i = 0; i < 150; i++) {
           await Future<void>.delayed(const Duration(seconds: 2));
           final t = c.read(downloadManagerProvider).byId(task.id);
-          print('debug status ${t?.status} ${t?.receivedBytes}/${t?.totalBytes} ${t?.errorMessage ?? ''} ${t?.localPath}');
+          print('debug status ${t?.status} ${t?.receivedBytes}/${t?.totalBytes} ${t?.errorMessage ?? ''} ${t?.localPath} pct=${((t?.progress ?? 0) * 100).toStringAsFixed(1)} phase=${t?.phase} bps=${t?.bytesPerSecond.round()}');
           if (t == null || !t.status.isActive) break;
         }
       } catch (error, stack) {
