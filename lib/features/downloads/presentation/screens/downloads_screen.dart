@@ -1,6 +1,9 @@
 import 'package:social_save/web/web_library.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:io' show Process;
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
+import 'package:social_save/core/platform/plat.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:social_save/core/di/providers.dart';
@@ -39,9 +42,9 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
     final formatters = ref.watch(formattersProvider);
 
     return Scaffold(
-      body: SafeArea(
+      body: SafeArea(bottom: false, 
         child: history.when(
-          loading: () => SafeArea(
+          loading: () => SafeArea(bottom: false, 
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -162,7 +165,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                                 ),
                         )
                       : ListView(
-                          padding: pagePadding(context, top: 8),
+                          padding: pagePadding(context, top: 8, bottom: 24 + MediaQuery.paddingOf(context).bottom),
                           children: [
                             if (showActive)
                               ...active.map((task) {
@@ -408,6 +411,75 @@ class _HistoryCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final card = _card(context, ref);
+    if (kIsWeb) return card;
+    final hasFile = record.localPath != null && record.localPath!.isNotEmpty;
+    return Semantics(
+      customSemanticsActions: {
+        const CustomSemanticsAction(label: 'Share'): () => _handle(context, ref, 'share'),
+        const CustomSemanticsAction(label: 'Delete'): () => _handle(context, ref, 'delete'),
+      },
+      child: GestureDetector(
+        behavior: HitTestBehavior.deferToChild,
+        onSecondaryTapUp: (d) async {
+          final v = await showMenu<String>(
+            context: context,
+            position: RelativeRect.fromLTRB(d.globalPosition.dx, d.globalPosition.dy, d.globalPosition.dx, d.globalPosition.dy),
+            items: [
+              const PopupMenuItem(value: 'open', child: Text('Open')),
+              if (hasFile && Plat.isWindows) const PopupMenuItem(value: 'folder', child: Text('Show in folder')),
+              const PopupMenuItem(value: 'share', child: Text('Share')),
+              const PopupMenuItem(value: 'delete', child: Text('Delete')),
+            ],
+          );
+          if (v == null || !context.mounted) return;
+          if (v == 'folder') {
+            await Process.run('explorer.exe', ['/select,', record.localPath!]);
+          } else {
+            await _handle(context, ref, v);
+          }
+        },
+        child: Dismissible(
+          key: ValueKey('swipe-${record.id}'),
+          background: _swipeBg(context, Icons.share_rounded, 'Share', Alignment.centerLeft),
+          secondaryBackground: _swipeBg(context, Icons.delete_outline_rounded, 'Delete', Alignment.centerRight),
+          confirmDismiss: (dir) async {
+            if (dir == DismissDirection.startToEnd) {
+              await _handle(context, ref, 'share');
+              return false;
+            }
+            final messenger = ScaffoldMessenger.of(context);
+            final controller = ref.read(downloadsControllerProvider.notifier);
+            messenger.clearSnackBars();
+            final closed = await messenger
+                .showSnackBar(SnackBar(
+                  content: Text('Deleting "${record.title}"'),
+                  duration: const Duration(seconds: 4),
+                  action: SnackBarAction(label: 'Undo', onPressed: () {}),
+                ))
+                .closed;
+            if (closed == SnackBarClosedReason.action) return false;
+            await controller.delete(record.id, deleteFile: true);
+            return false;
+          },
+          child: card,
+        ),
+      ),
+    );
+  }
+
+  Widget _swipeBg(BuildContext context, IconData icon, String label, Alignment align) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      decoration: BoxDecoration(color: scheme.secondaryContainer, borderRadius: BorderRadius.circular(20)),
+      alignment: align,
+      child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon), const SizedBox(width: 8), Text(label)]),
+    );
+  }
+
+  Widget _card(BuildContext context, WidgetRef ref) {
     final formatters = ref.watch(formattersProvider);
     final scheme = Theme.of(context).colorScheme;
     final brand = AppColors.readableBrand(AppColors.platformColor(record.platform), scheme);

@@ -1038,6 +1038,11 @@ class MainActivity : FlutterFragmentActivity() {
             MediaStore.MediaColumns.MIME_TYPE,
         )
         if (durationCol != null) cols.add(durationCol)
+        if (kind == "audio") {
+            cols.add(MediaStore.Audio.Media.TITLE)
+            cols.add(MediaStore.Audio.Media.ARTIST)
+            cols.add(MediaStore.Audio.Media.ALBUM)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             cols.add(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
             cols.add(MediaStore.MediaColumns.RELATIVE_PATH)
@@ -1062,6 +1067,9 @@ class MainActivity : FlutterFragmentActivity() {
             val mimeCol = c.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE)
             val durCol = if (durationCol == null) -1 else c.getColumnIndex(durationCol)
             val bucketCol = c.getColumnIndex("bucket_display_name")
+            val titleCol = if (kind == "audio") c.getColumnIndex("title") else -1
+            val artistCol = if (kind == "audio") c.getColumnIndex("artist") else -1
+            val albumCol = if (kind == "audio") c.getColumnIndex("album") else -1
             val relCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) c.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH) else -1
             if (offset < total && c.moveToPosition(offset)) {
                 do {
@@ -1079,6 +1087,9 @@ class MainActivity : FlutterFragmentActivity() {
                             "mime" to (if (mimeCol >= 0) c.getString(mimeCol) else null),
                             "bucket" to (if (bucketCol >= 0) c.getString(bucketCol) else null),
                             "relativePath" to (if (relCol >= 0) c.getString(relCol) else null),
+                            "title" to (if (titleCol >= 0) c.getString(titleCol) else null),
+                            "artist" to (if (artistCol >= 0) c.getString(artistCol) else null),
+                            "album" to (if (albumCol >= 0) c.getString(albumCol) else null),
                         ),
                     )
                 } while (items.size < limit && c.moveToNext())

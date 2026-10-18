@@ -499,7 +499,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     final look = LibraryPalette.of(context);
     return Scaffold(
       backgroundColor: look.bg,
-      body: SafeArea(
+      body: SafeArea(bottom: false, 
         child: Column(
           children: [
             Padding(
@@ -2087,7 +2087,7 @@ class _DeviceList extends StatelessWidget {
         _libraryGutter(context),
         4,
         _libraryGutter(context),
-        24,
+        24 + MediaQuery.paddingOf(context).bottom,
       ),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 220,
@@ -2654,7 +2654,7 @@ class _VaultGate extends ConsumerWidget {
         _libraryGutter(context),
         4,
         _libraryGutter(context),
-        24,
+        24 + MediaQuery.paddingOf(context).bottom,
       ),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 260,
@@ -2845,340 +2845,181 @@ class _VaultLockPaneState extends ConsumerState<VaultLockPane>
 
   @override
   Widget build(BuildContext context) {
-    final look = LibraryPalette.of(context);
+    final scheme = Theme.of(context).colorScheme;
+    final ink = scheme.onSurface;
+    final muted = scheme.onSurface.withValues(alpha: 0.5);
     final vault = ref.watch(vaultServiceProvider);
     final creating = !vault.hasPin;
     final title = creating
-        ? (_confirming ? 'Confirm Passcode' : 'Create Passcode')
-        : 'Enter Vault PIN';
-    final subtitle =
-        _error ??
-        (creating
-            ? (_confirming
-                  ? 'Enter the same 4 digits again'
-                  : 'Choose 4 digits to lock your vault')
-            : 'Enter your 4-digit security PIN to unlock');
+        ? (_confirming ? 'Confirm PIN' : 'Create PIN')
+        : 'Enter PIN';
+    Widget row(List<String> keys, double s) => Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [for (final k in keys) _PinKey(digit: k, h: 80 * s, onTap: () => _press(k))],
+    );
     return Focus(
       focusNode: _focus,
       autofocus: true,
       onKeyEvent: _onKey,
-      child: LayoutBuilder(
-        builder: (context, box) {
-          final dial = _dialMetrics(box.biggest);
-          return Padding(
-            padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _pinTopBar(look),
-                _pinIdentity(look, title, subtitle),
-                _pinDial(look, dial),
-                TextButton(
-                  onPressed: _cancel,
-                  style: TextButton.styleFrom(
-                    foregroundColor: look.muted,
-                    minimumSize: const Size(0, 36),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  child: const Text(
-                    'Cancel',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  /// Even key size and the same gap across and down, held near a phone dial.
-  ({double size, double gap}) _dialMetrics(Size box) {
-    const chrome = 284.0;
-    final dialH = math.max(1.0, box.height - chrome);
-    final dialW = math.max(1.0, box.width * 0.86);
-    var size = math.min(dialH / 4.84, dialW / 3.56);
-    if (!size.isFinite || size <= 0) size = 56;
-    if (size > 66) size = 66;
-    var gap = size * 0.28;
-    final fitH = (dialH - gap * 3) / 4;
-    final fitW = (dialW - gap * 2) / 3;
-    if (size > fitH) size = fitH;
-    if (size > fitW) size = fitW;
-    if (!size.isFinite || size < 36) size = 36;
-    gap = size * 0.28;
-    return (size: size, gap: gap);
-  }
-
-  Widget _pinTopBar(LibraryPalette look) {
-    final pill = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: look.accentDim,
-        borderRadius: BorderRadius.circular(99),
-        border: Border.all(color: look.accent.withValues(alpha: 0.35)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.lock_rounded, color: look.accent, size: 14),
-          const SizedBox(width: 4),
-          Text(
-            'AES-256',
-            style: TextStyle(
-              color: look.accent,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
-    return SizedBox(
-      height: 40,
-      child: Row(
-        children: [
-          const SizedBox(width: 40),
-          Expanded(child: Center(child: pill)),
-          const SizedBox(width: 40),
-        ],
-      ),
-    );
-  }
-
-  Widget _pinIdentity(LibraryPalette look, String title, String subtitle) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 56,
-          height: 56,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: look.accentDim,
-            border: Border.all(color: look.accent.withValues(alpha: 0.4)),
-          ),
-          child: Icon(Icons.lock_rounded, color: look.accent, size: 28),
-        ),
-        const SizedBox(height: 12),
-        Text(
-          title,
-          textAlign: TextAlign.center,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: look.ink,
-            fontSize: 20,
-            fontWeight: FontWeight.w700,
-            letterSpacing: -0.2,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          subtitle,
-          textAlign: TextAlign.center,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: _error != null ? look.danger : look.muted,
-            fontSize: 13,
-            height: 1.3,
-          ),
-        ),
-        const SizedBox(height: 16),
-        AnimatedBuilder(
-          animation: _shake,
-          builder: (context, child) {
-            final t = _shake.value;
-            final dx = t == 0 ? 0.0 : 14 * (1 - t) * math.sin(t * math.pi * 6);
-            return Transform.translate(offset: Offset(dx, 0), child: child);
-          },
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+      child: ColoredBox(
+        color: scheme.surface,
+        child: SafeArea(
+          child: LayoutBuilder(builder: (context, c) { final s = (c.maxHeight / 700).clamp(0.7, 1.0).toDouble(); return Stack(
             children: [
-              for (var i = 0; i < _length; i++)
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 120),
-                  width: 12,
-                  height: 12,
-                  margin: const EdgeInsets.symmetric(horizontal: 8),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: i < _pin.length ? look.accent : Colors.transparent,
-                    border: Border.all(
-                      color: i < _pin.length ? look.accent : look.muted,
-                      width: 1.4,
-                    ),
+              Center(
+                child: FittedBox(fit: BoxFit.scaleDown, child: Column(mainAxisSize: MainAxisSize.min, children: [ Icon(Icons.lock_outline_rounded, size: 26, color: muted),
+                      const SizedBox(height: 20),
+                      Text(
+                        title,
+                        style: TextStyle(
+                          color: ink,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w400,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                      const SizedBox(height: 30),
+                      AnimatedBuilder(
+                        animation: _shake,
+                        builder: (context, child) {
+                          final dx = math.sin(_shake.value * math.pi * 6) *
+                              8 *
+                              (1 - _shake.value);
+                          return Transform.translate(offset: Offset(dx, 0), child: child);
+                        },
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            for (var i = 0; i < _length; i++)
+                              Semantics(
+                                label: 'PIN digit ${i + 1}, ${i < _pin.length ? 'filled' : 'empty'}',
+                                excludeSemantics: true,
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 9),
+                                  child: AnimatedScale(
+                                    scale: i < _pin.length ? 1.0 : 0.88,
+                                    duration: const Duration(milliseconds: 160),
+                                    curve: Curves.easeOutBack,
+                                    child: AnimatedContainer(
+                                      duration: const Duration(milliseconds: 160),
+                                      width: 12,
+                                      height: 12,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: i < _pin.length ? ink : Colors.transparent,
+                                        border: Border.all(
+                                          color: i < _pin.length
+                                              ? ink
+                                              : ink.withValues(alpha: 0.4),
+                                          width: 1.2,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      SizedBox(
+                        height: 40,
+                        child: Center(
+                          child: Text(
+                            _error ?? '',
+                            style: TextStyle(color: muted, fontSize: 12.5),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      row(['1', '2', '3'], s),
+                      row(['4', '5', '6'], s),
+                      row(['7', '8', '9'], s),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          SizedBox(width: 88, height: 80 * s),
+                          _PinKey(digit: '0', h: 80 * s, onTap: () => _press('0')),
+                          Semantics(
+                            button: true,
+                            label: 'Delete',
+                            excludeSemantics: true,
+                            child: SizedBox(
+                              width: 88,
+                              height: 80,
+                              child: InkResponse(
+                                radius: 36,
+                                onTap: _backspace,
+                                child: Icon(
+                                  Icons.backspace_outlined,
+                                  size: 22,
+                                  color: _pin.isEmpty ? muted.withValues(alpha: 0.35) : muted,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _pinDial(LibraryPalette look, ({double size, double gap}) dial) {
-    const rows = [
-      [
-        ['1', ''],
-        ['2', 'ABC'],
-        ['3', 'DEF'],
-      ],
-      [
-        ['4', 'GHI'],
-        ['5', 'JKL'],
-        ['6', 'MNO'],
-      ],
-      [
-        ['7', 'PQRS'],
-        ['8', 'TUV'],
-        ['9', 'WXYZ'],
-      ],
-    ];
-    Widget gap() => SizedBox(width: dial.gap);
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (var r = 0; r < rows.length; r++) ...[
-          if (r > 0) SizedBox(height: dial.gap),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              for (var c = 0; c < 3; c++) ...[
-                if (c > 0) gap(),
-                _PinKey(
-                  digit: rows[r][c][0],
-                  letters: rows[r][c][1],
-                  size: dial.size,
-                  onTap: () => _press(rows[r][c][0]),
-                ),
-              ],
-            ],
-          ),
-        ],
-        SizedBox(height: dial.gap),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            SizedBox(width: dial.size, height: dial.size),
-            gap(),
-            _PinKey(
-              digit: '0',
-              letters: '',
-              size: dial.size,
-              onTap: () => _press('0'),
-            ),
-            gap(),
-            SizedBox(
-              width: dial.size,
-              height: dial.size,
-              child: IconButton(
-                tooltip: 'Delete',
-                padding: EdgeInsets.zero,
-                constraints: BoxConstraints.tight(Size(dial.size, dial.size)),
-                onPressed: _pin.isEmpty ? null : _backspace,
-                icon: Icon(
-                  Icons.backspace_outlined,
-                  size: dial.size * 0.36,
-                  color: _pin.isEmpty
-                      ? look.muted.withValues(alpha: 0.35)
-                      : look.ink,
                 ),
               ),
-            ),
-          ],
+            ],
+          ); }),
         ),
-      ],
+      ),
     );
   }
 }
 
-/// Round passcode key. Digit size follows the circle.
-class _PinKey extends StatefulWidget {
-  const _PinKey({
-    required this.digit,
-    required this.letters,
-    required this.onTap,
-    required this.size,
-  });
+/// Plain light-weight digit with a soft circular press highlight.
+class _PinKey extends StatelessWidget {
+  const _PinKey({required this.digit, required this.onTap, required this.h});
 
+  final double h;
   final String digit;
-  final String letters;
   final VoidCallback onTap;
-  final double size;
-
-  @override
-  State<_PinKey> createState() => _PinKeyState();
-}
-
-class _PinKeyState extends State<_PinKey> {
-  bool _down = false;
 
   @override
   Widget build(BuildContext context) {
-    final look = LibraryPalette.of(context);
-    final size = widget.size;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTapDown: (_) => setState(() => _down = true),
-      onTapCancel: () => setState(() => _down = false),
-      onTapUp: (_) {
-        setState(() => _down = false);
-        widget.onTap();
-      },
-      child: AnimatedContainer(
-        duration: Duration(milliseconds: _down ? 40 : 260),
-        curve: Curves.easeOut,
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: _down ? look.accentDim : look.raised,
-          border: Border.all(color: look.border),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              widget.digit,
+    final scheme = Theme.of(context).colorScheme;
+    return Semantics(
+      button: true,
+      label: 'Digit $digit',
+      excludeSemantics: true,
+      child: SizedBox(
+        width: 88,
+        height: h,
+        child: InkResponse(
+          onTap: onTap,
+          radius: 40,
+          highlightShape: BoxShape.circle,
+          containedInkWell: false,
+          highlightColor: scheme.onSurface.withValues(alpha: 0.08),
+          splashColor: scheme.onSurface.withValues(alpha: 0.10),
+          child: Center(
+            child: Text(
+              digit,
               style: TextStyle(
-                color: look.ink,
-                fontSize: size * 0.38,
-                fontWeight: FontWeight.w600,
+                color: scheme.onSurface,
+                fontSize: 30,
+                fontWeight: FontWeight.w300,
                 height: 1,
               ),
             ),
-            const SizedBox(height: 2),
-            SizedBox(
-              height: (size * 0.14).clamp(8.0, 12.0).toDouble(),
-              child: widget.letters.isEmpty
-                  ? null
-                  : Text(
-                      widget.letters,
-                      style: TextStyle(
-                        color: look.muted,
-                        fontSize: (size * 0.12).clamp(7.0, 10.0).toDouble(),
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 1.2,
-                        height: 1,
-                      ),
-                    ),
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
 }
-
 Future<bool> ensureVaultUnlocked(BuildContext context, WidgetRef ref) async {
   if (ref.read(vaultUnlockedProvider)) return true;
   final ok = await showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Theme.of(context).colorScheme.surface,
+    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(32))),
+    clipBehavior: Clip.antiAlias,
     showDragHandle: false,
     builder: (context) => Padding(
       padding: EdgeInsets.only(

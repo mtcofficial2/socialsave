@@ -8,6 +8,31 @@ class NotificationService {
   final FlutterLocalNotificationsPlugin _plugin;
   bool _initialized = false;
 
+  /// Set by the copied-link watcher: (actionId, payload) of a tapped toast.
+  static void Function(String? actionId, String? payload)? onResponse;
+
+  /// Windows toast with Download / Dismiss buttons for a copied video link.
+  Future<void> showLinkOffer({required String url, required String subtitle}) async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.windows) return;
+    if (!_initialized) await init();
+    try {
+      await _plugin.show(
+        url.hashCode & 0x7fffffff,
+        'Download copied video?',
+        subtitle,
+        NotificationDetails(
+          windows: WindowsNotificationDetails(
+            actions: [
+              WindowsAction(content: 'Download', arguments: 'download|$url'),
+              WindowsAction(content: 'Dismiss', arguments: 'dismiss|$url'),
+            ],
+          ),
+        ),
+        payload: url,
+      );
+    } catch (_) {}
+  }
+
   Future<void> init() async {
     if (kIsWeb) return; // The browser build shows no system notifications.
     if (_initialized) {
@@ -28,6 +53,7 @@ class NotificationService {
       await _plugin
           .initialize(
             const InitializationSettings(android: android, iOS: ios, windows: windows),
+            onDidReceiveNotificationResponse: (r) => onResponse?.call(r.actionId, r.payload),
           )
           .timeout(const Duration(seconds: 3));
     } catch (_) {

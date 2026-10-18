@@ -851,14 +851,14 @@ class _SessionScreenState extends State<SessionScreen> with SingleTickerProvider
       color: scheme.secondaryContainer,
       onColor: scheme.onSecondaryContainer,
       icon: Icons.link_rounded,
-      text: 'Limited connection · ${ShareSession.limitedReason ?? 'Could not open a full connection.'}',
+      text: 'Limited connection · ${ShareSession.limitedReason ?? 'Some features may be unavailable. Tap Reconnect to try again.'}',
       action: FilledButton.tonalIcon(
         key: const ValueKey('session-try-full'),
         onPressed: _upgrading ? null : _upgrade,
         icon: _upgrading
             ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
             : const Icon(Icons.refresh_rounded),
-        label: const Text('Try full connection'),
+        label: const Text('Reconnect'),
       ),
     );
   }
@@ -1234,7 +1234,10 @@ class _ItemTile extends StatelessWidget {
       SessionItemState.done => it.outgoing ? 'Sent' : 'Received',
       SessionItemState.failed => 'Failed',
     };
-    return Card(
+    return Semantics(
+      container: true,
+      label: '${it.outgoing ? 'Sending to' : 'Receiving from'} $peerName: ${it.name}, $status',
+      child: Card(
       margin: EdgeInsets.zero,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
@@ -1309,14 +1312,26 @@ class _ItemTile extends StatelessWidget {
                 onPressed: () => ShareSession.remove(it),
                 icon: const Icon(Icons.close_rounded),
               ),
-            ] else if (it.state == SessionItemState.queued || failed)
+            ] else if (it.state == SessionItemState.queued || failed) ...[
+              if (it.state == SessionItemState.queued)
+                ValueListenableBuilder<bool>(
+                  valueListenable: ShareSession.paused,
+                  builder: (context, p, _) => IconButton(
+                    key: ValueKey('session-pause-${it.key}'),
+                    tooltip: p ? 'Resume sending' : 'Pause sending',
+                    onPressed: () => ShareSession.setPaused(!p),
+                    icon: Icon(p ? Icons.play_arrow_rounded : Icons.pause_rounded),
+                  ),
+                ),
               IconButton(
-                tooltip: 'Remove',
+                tooltip: 'Cancel and remove',
                 onPressed: () => ShareSession.remove(it),
                 icon: const Icon(Icons.close_rounded),
               ),
+            ],
           ],
         ),
+      ),
       ),
     );
   }

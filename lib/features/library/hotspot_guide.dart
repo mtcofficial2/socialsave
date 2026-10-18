@@ -454,7 +454,11 @@ class PreflightItem {
     required this.instruction,
     required this.check,
     required this.fix,
+    this.altLabel,
+    this.alt,
   });
+  final String? altLabel;
+  final Future<String?> Function()? alt;
   final String label;
   final String instruction;
   final Future<bool> Function() check;
@@ -509,7 +513,7 @@ class _PreflightDialogState extends State<PreflightDialog> with WidgetsBindingOb
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     unawaited(_advance());
-    _poll = Timer.periodic(const Duration(milliseconds: 1200), (_) => unawaited(_advance()));
+    _poll = Timer.periodic(const Duration(seconds: 2), (_) => unawaited(_advance()));
   }
 
   @override
@@ -630,6 +634,22 @@ class _PreflightDialogState extends State<PreflightDialog> with WidgetsBindingOb
       ),
       actions: [
         TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+        if (!_done && items[_current].alt != null)
+          TextButton(
+            key: const ValueKey('preflight-alt'),
+            onPressed: () async {
+              final note = await items[_current].alt!();
+              if (mounted && note != null) setState(() => _note = note);
+              unawaited(_advance());
+            },
+            child: Text(items[_current].altLabel ?? 'Other way'),
+          ),
+        if (!_done)
+          TextButton(
+            key: const ValueKey('preflight-recheck'),
+            onPressed: () => unawaited(_advance()),
+            child: const Text('I turned it on'),
+          ),
         if (!_done)
           FilledButton(
             key: const ValueKey('preflight-open'),
@@ -685,7 +705,7 @@ Future<List<PreflightItem>> hotspotSenderItems() async {
     return [
       PreflightItem(
         label: 'Mobile hotspot available',
-        instruction: 'Turn on Mobile hotspot, then come back.',
+        instruction: 'Turn on your hotspot first. The other device joins your PC through it, and the QR code only appears once it is on. Switch on Mobile hotspot in the Settings window that opened, then come back.',
         check: () async {
           final s = await PcHotspot.run('status');
           return s['state'] == 'On' || PcHotspot.blockMessage(s) == null;
@@ -703,18 +723,33 @@ Future<List<PreflightItem>> hotspotSenderItems() async {
     _permItem(sdk),
     if (sdk < 33) _locationItem(),
     PreflightItem(
-      label: 'Hotspot on',
-      instruction: 'Starting the hotspot…',
-      check: HotspotShare.hotspotReady,
+      label: 'Hotspot ready',
+      instruction: 'Starting a private hotspot for sharing... This takes a few seconds. If your phone asks for permission, tap Allow.',
+      check: () async {
+        final ready = await HotspotShare.hotspotReady();
+        debugPrint('[hotspot-gate] hotspot ready=$ready');
+        return ready;
+      },
       fix: () async {
+        // 1. SocialSave's own local-only hotspot first (no need to touch the
+        // phone's regular hotspot). 2. Only if that fails: ask the user.
+        String why;
         try {
-          await HotspotShare.start();
-          return 'Hotspot is starting…';
+          debugPrint('[hotspot-gate] starting own local-only hotspot');
+          await HotspotShare.start().timeout(const Duration(seconds: 12));
+          debugPrint('[hotspot-gate] own hotspot started');
+          return 'Hotspot is starting...';
         } on HotspotError catch (e) {
-          if (await HotspotShare.hotspotReady()) return null;
-          await HotspotShare.openSettings('hotspot');
-          return 'Turn on Hotspot, then come back.\n(SocialSave couldn\'t open its own: ${e.message})';
+          why = e.message;
+        } on TimeoutException {
+          why = 'it took too long to start';
+        } catch (e) {
+          why = '$e';
         }
+        if (await HotspotShare.hotspotReady()) return null;
+        final opened = await HotspotShare.openSettings('hotspot');
+        debugPrint('[hotspot-gate] own hotspot failed ($why) -> opened tethering settings: $opened');
+        return 'Turn on your hotspot first. SocialSave could not start its own hotspot ($why), so please switch on your phone\'s hotspot in the Settings screen that just opened. The QR code appears by itself as soon as it is on. Use "I turned it on" to check again.';
       },
     ),
   ];

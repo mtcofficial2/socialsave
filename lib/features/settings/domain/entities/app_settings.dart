@@ -20,6 +20,9 @@ class AppSettings extends Equatable {
     this.lastChosenQuality,
     this.qualityByPlatform = const {},
     this.useDynamicColor = false,
+    this.classicHome = false,
+    this.classicLibrary = false,
+    this.offerCopiedLinks = true,
     this.onlyWhileCharging = false,
     this.pauseBelowBattery = true,
     this.pocketPause = true,
@@ -42,6 +45,9 @@ class AppSettings extends Equatable {
   final String? lastChosenQuality;
   final Map<String, String> qualityByPlatform;
   final bool useDynamicColor;
+  final bool classicHome;
+  final bool classicLibrary;
+  final bool offerCopiedLinks;
   final bool onlyWhileCharging;
   final bool pauseBelowBattery;
   final bool pocketPause;
@@ -66,6 +72,9 @@ class AppSettings extends Equatable {
     String? lastChosenQuality,
     Map<String, String>? qualityByPlatform,
     bool? useDynamicColor,
+    bool? classicHome,
+    bool? classicLibrary,
+    bool? offerCopiedLinks,
     bool? onlyWhileCharging,
     bool? pauseBelowBattery,
     bool? pocketPause,
@@ -89,6 +98,9 @@ class AppSettings extends Equatable {
       lastChosenQuality: lastChosenQuality ?? this.lastChosenQuality,
       qualityByPlatform: qualityByPlatform ?? this.qualityByPlatform,
       useDynamicColor: useDynamicColor ?? this.useDynamicColor,
+      classicHome: classicHome ?? this.classicHome,
+      classicLibrary: classicLibrary ?? this.classicLibrary,
+      offerCopiedLinks: offerCopiedLinks ?? this.offerCopiedLinks,
       onlyWhileCharging: onlyWhileCharging ?? this.onlyWhileCharging,
       pauseBelowBattery: pauseBelowBattery ?? this.pauseBelowBattery,
       pocketPause: pocketPause ?? this.pocketPause,
@@ -117,6 +129,9 @@ class AppSettings extends Equatable {
       if (lastChosenQuality != null) 'lastChosenQuality': lastChosenQuality!,
       'qualityByPlatform': qualityByPlatform,
       'useDynamicColor': useDynamicColor,
+      'classicHome': classicHome,
+      'classicLibrary': classicLibrary,
+      'offerCopiedLinks': offerCopiedLinks,
       'onlyWhileCharging': onlyWhileCharging,
       'pauseBelowBattery': pauseBelowBattery,
       'pocketPause': pocketPause,
@@ -156,6 +171,9 @@ class AppSettings extends Equatable {
       lastChosenQuality: map['lastChosenQuality'] as String?,
       qualityByPlatform: _stringMap(map['qualityByPlatform']),
       useDynamicColor: map['useDynamicColor'] as bool? ?? true,
+      classicHome: map['classicHome'] as bool? ?? false,
+      classicLibrary: map['classicLibrary'] as bool? ?? false,
+      offerCopiedLinks: map['offerCopiedLinks'] as bool? ?? true,
       onlyWhileCharging: map['onlyWhileCharging'] as bool? ?? false,
       pauseBelowBattery: map['pauseBelowBattery'] as bool? ?? true,
       pocketPause: map['pocketPause'] as bool? ?? true,
@@ -183,6 +201,9 @@ class AppSettings extends Equatable {
         lastChosenQuality,
         qualityByPlatform,
         useDynamicColor,
+        classicHome,
+        classicLibrary,
+      offerCopiedLinks,
         onlyWhileCharging,
         pauseBelowBattery,
         pocketPause,

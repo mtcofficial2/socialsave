@@ -7,6 +7,7 @@ import 'dart:math';
 import 'package:social_save/features/library/bundle_transfer.dart';
 import 'package:social_save/features/library/transfer_boost.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
+import 'package:crypto/crypto.dart' show sha256;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
@@ -351,10 +352,119 @@ class NearbyService {
     }());
   }
 
+  // ---- stage 2: text sharing, trusted devices list, wrong-token lockout ----
+  static const _textsKey = 'socialsave_received_texts';
+  static const _trustedNamesKey = 'socialsave_nearby_trusted_names';
+  static const int _hashLimit = 300 * 1024 * 1024;
+  static final ValueNotifier<bool> lastVerified = ValueNotifier(false);
+  static final ValueNotifier<String?> incomingText = ValueNotifier(null);
+  static final ValueNotifier<String> incomingTextFrom = ValueNotifier('');
+  static final Map<String, (int, DateTime)> _strikes = {};
+
+  static bool _locked(String ip) {
+    final s = _strikes[ip];
+    if (s == null) return false;
+    if (DateTime.now().isAfter(s.$2)) {
+      _strikes.remove(ip);
+      return false;
+    }
+    return s.$1 >= 5;
+  }
+
+  static void _strike(String ip) {
+    final s = _strikes[ip];
+    final n = (s?.$1 ?? 0) + 1;
+    _strikes[ip] = (n, DateTime.now().add(const Duration(seconds: 60)));
+  }
+
+  /// Remembered devices as (id, name).
+  static Future<List<(String, String)>> trustedDevices() async {
+    final prefs = await SharedPreferences.getInstance();
+    final ids = prefs.getStringList(_trustedKey) ?? const <String>[];
+    Map<String, dynamic> names = {};
+    try {
+      names = jsonDecode(prefs.getString(_trustedNamesKey) ?? '{}') as Map<String, dynamic>;
+    } catch (_) {}
+    return [for (final i in ids) (i, '${names[i] ?? 'Device ${i.substring(0, i.length < 6 ? i.length : 6)}'}')];
+  }
+
+  static Future<void> untrust(String deviceId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList(_trustedKey) ?? <String>[];
+    list.remove(deviceId);
+    await prefs.setStringList(_trustedKey, list);
+  }
+
+  static Future<List<(String, String)>> receivedTexts() async {
+    final prefs = await SharedPreferences.getInstance();
+    try {
+      final l = jsonDecode(prefs.getString(_textsKey) ?? '[]') as List;
+      return [for (final e in l) ('${(e as Map)['from']}', '${e['text']}')];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  static Future<void> _saveText(String from, String text) async {
+    final prefs = await SharedPreferences.getInstance();
+    List<dynamic> l = [];
+    try {
+      l = jsonDecode(prefs.getString(_textsKey) ?? '[]') as List;
+    } catch (_) {}
+    l.insert(0, {'from': from, 'text': text});
+    if (l.length > 30) l = l.sublist(0, 30);
+    await prefs.setString(_textsKey, jsonEncode(l));
+  }
+
+  /// Sends text or a link to [device]. Returns null on success.
+  static Future<String?> sendText(NearbyDevice device, String text) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
+    try {
+      final r = await client.postUrl(Uri.http('${device.host}:${device.port}', '/text'));
+      r.headers.contentType = ContentType.json;
+      r.write(jsonEncode({'id': id, 'name': name, 'text': text}));
+      final res = await r.close().timeout(const Duration(seconds: 15));
+      await res.drain<void>();
+      if (res.statusCode == HttpStatus.ok) return null;
+      if (res.statusCode == HttpStatus.notFound) {
+        return '${device.name} runs an older SocialSave that cannot receive text yet. Update the app there.';
+      }
+      return '${device.name} could not take the text. Try again in a minute.';
+    } on SocketException {
+      return 'Could not connect to ${device.name}. Stay on the same Wi-Fi.';
+    } catch (_) {
+      return '${device.name} did not answer. Try again.';
+    } finally {
+      client.close(force: true);
+    }
+  }
+
   static Future<void> _handle(HttpRequest req) async {
     final res = req.response;
     try {
       final parts = req.uri.pathSegments;
+      final peerIp = req.connectionInfo?.remoteAddress.address ?? '';
+      if (_locked(peerIp)) {
+        res.statusCode = HttpStatus.tooManyRequests;
+        await res.close();
+        return;
+      }
+      if (req.method == 'POST' && parts.length == 1 && parts[0] == 'text') {
+        final body = jsonDecode(await utf8.decoder.bind(req).join()) as Map<String, dynamic>;
+        final text = '${body['text'] ?? ''}'.trim();
+        if (text.isEmpty || text.length > 20000) {
+          res.statusCode = HttpStatus.badRequest;
+          await res.close();
+          return;
+        }
+        final from = '${body['name'] ?? 'Another device'}';
+        await _saveText(from, text);
+        incomingTextFrom.value = from;
+        incomingText.value = text;
+        res.statusCode = HttpStatus.ok;
+        await res.close();
+        return;
+      }
       if (req.method == 'POST' && parts.length == 1 && parts[0] == 'ask') {
         final body = jsonDecode(await utf8.decoder.bind(req).join()) as Map<String, dynamic>;
         final offer = IncomingOffer(
@@ -373,13 +483,13 @@ class NearbyService {
           final ask = onOffer;
           ok = ask == null
               ? false
-              : await ask(offer).timeout(const Duration(seconds: 90), onTimeout: () => false);
+              : await ask(offer).timeout(const Duration(minutes: 3), onTimeout: () => false);
         }
         res.headers.contentType = ContentType.json;
         if (ok) {
           final token = PhoneHandoff.newCode() + PhoneHandoff.newCode();
           _tokens[token] = offer;
-          Timer(const Duration(minutes: 2), () => _tokens.remove(token));
+          Timer(const Duration(minutes: 5), () => _tokens.remove(token));
           res.write(jsonEncode({'ok': true, 'token': token}));
         } else {
           res.write(jsonEncode({'ok': false, 'busy': _busy}));
@@ -389,6 +499,7 @@ class NearbyService {
       }
       if (req.method == 'POST' && parts.length == 2 && parts[0] == 'upload') {
         final offer = _tokens.remove(parts[1]);
+        if (offer == null) _strike(peerIp);
         if (offer == null || _busy) {
           res.statusCode = HttpStatus.forbidden;
           await res.close();
@@ -429,7 +540,7 @@ class NearbyService {
           ok = true;
         } else {
           final ask = onOffer;
-          ok = ask != null && await ask(offer).timeout(const Duration(seconds: 90), onTimeout: () => false);
+          ok = ask != null && await ask(offer).timeout(const Duration(minutes: 3), onTimeout: () => false);
         }
         res.headers.contentType = ContentType.json;
         if (ok) {
@@ -533,6 +644,18 @@ class NearbyService {
       reason = 'the connection dropped ($e)';
     }
     if (reason == null && total >= 0 && got != total) reason = 'got $got of $total bytes';
+    var verified = false;
+    final want = req.headers.value('x-sha256');
+    if (reason == null && want != null && want.length == 64 && got > 0 && got <= _hashLimit) {
+      try {
+        final have = (await sha256.bind(dest.openRead()).first).toString();
+        if (have.toLowerCase() == want.toLowerCase()) {
+          verified = true;
+        } else {
+          reason = 'the file arrived damaged (checksum mismatch)';
+        }
+      } catch (_) {}
+    }
     final ok = reason == null && (total >= 0 ? got == total : got > 32);
     if (!ok) {
       try {
@@ -548,7 +671,7 @@ class NearbyService {
     // Acknowledge first: the sender sits at 100% until it hears back, and
     // registering a big video with the gallery can take a while.
     res.headers.contentType = ContentType.json;
-    res.write(jsonEncode({'ok': true}));
+    res.write(jsonEncode({'ok': true, 'verified': verified}));
     await res.close();
     unawaited(PhoneHandoff.publish(dest));
     incoming.value = IncomingProgress(
@@ -558,7 +681,7 @@ class NearbyService {
       total: total,
       done: true,
       file: dest,
-      detail: meter.doneLabel,
+      detail: verified ? '${meter.doneLabel} · Verified ✓' : meter.doneLabel,
     );
   }
 
@@ -651,6 +774,15 @@ class NearbyService {
       list.add(deviceId);
       await prefs.setStringList(_trustedKey, list);
     }
+    final known = _seen[deviceId]?.name;
+    if (known != null && known.isNotEmpty) {
+      Map<String, dynamic> names = {};
+      try {
+        names = jsonDecode(prefs.getString(_trustedNamesKey) ?? '{}') as Map<String, dynamic>;
+      } catch (_) {}
+      names[deviceId] = known;
+      await prefs.setString(_trustedNamesKey, jsonEncode(names));
+    }
   }
 
   // ---------------- sending ----------------
@@ -678,15 +810,21 @@ class NearbyService {
         'file': p.basename(file.path),
         'size': total,
       }));
-      final askRes = await ask.close().timeout(const Duration(seconds: 100));
+      final askRes = await ask.close().timeout(const Duration(seconds: 200));
       final answer = jsonDecode(await utf8.decoder.bind(askRes).join()) as Map<String, dynamic>;
       if (answer['ok'] != true) {
-        return answer['busy'] == true ? '${device.name} is busy receiving.' : '${device.name} declined.';
+        return answer['busy'] == true ? '${device.name} is already receiving something else. Wait for it to finish, then try again.' : '${device.name} said no. Ask them to tap Accept when the request pops up.';
       }
       onStatus?.call('Sending…');
       final up = await client.postUrl(Uri.http('${device.host}:${device.port}', '/upload/${answer['token']}'));
       up.headers.contentType = ContentType.binary;
       up.contentLength = total;
+      lastVerified.value = false;
+      if (total > 0 && total <= _hashLimit) {
+        try {
+          up.headers.set('x-sha256', (await sha256.bind(file.openRead()).first).toString());
+        } catch (_) {}
+      }
       var sent = 0;
       await up.addStream(TransferBoost.read(file).map((chunk) {
         sent += chunk.length;
@@ -696,12 +834,18 @@ class NearbyService {
       onStatus?.call('Finishing…');
       final upRes = await up.close().timeout(const Duration(minutes: 5));
       final body = await utf8.decoder.bind(upRes).join().timeout(const Duration(minutes: 1));
-      if (upRes.statusCode == 200) return null;
+      if (upRes.statusCode == 200) {
+        try {
+          lastVerified.value = (jsonDecode(body) as Map)['verified'] == true;
+        } catch (_) {}
+        return null;
+      }
       var why = 'HTTP ${upRes.statusCode}';
       try {
         why = '${(jsonDecode(body) as Map)['reason'] ?? why}';
       } catch (_) {}
-      return '${device.name} could not save it: $why.';
+      if (why.contains('damaged')) return 'The file arrived damaged on ${device.name}. Tap send again to retry.';
+      return '${device.name} could not save the file ($why). Check that it has free storage space and try again.';
     } on SocketException {
       return Plat.isWindows || device.isPc
           ? 'Could not connect to ${device.name}. If it is a PC, allow SocialSave in its Windows firewall prompt.'
@@ -745,18 +889,18 @@ class NearbyService {
         'folder': bundle.isFolder,
         'files': [for (final it in bundle.items) {'path': it.rel, 'size': it.size}],
       }));
-      final askRes = await ask.close().timeout(const Duration(seconds: 100));
+      final askRes = await ask.close().timeout(const Duration(seconds: 200));
       if (askRes.statusCode == HttpStatus.notFound) {
         await askRes.drain<void>();
         if (bundle.count == 1) {
           return await sendTo(device, bundle.items.first.file,
               onStatus: onStatus, onProgress: (s, t) => onProgress?.call(s, t, 0, bundle.items.first.rel));
         }
-        return 'Update SocialSave on ${device.name} to 1.0.10 or newer to receive several files or folders.';
+        return '${device.name} is running an older SocialSave that can only receive one file at a time. Update the app on that device, or send the files one by one.';
       }
       final answer = jsonDecode(await utf8.decoder.bind(askRes).join()) as Map<String, dynamic>;
       if (answer['ok'] != true) {
-        return answer['busy'] == true ? '${device.name} is busy receiving.' : '${device.name} declined.';
+        return answer['busy'] == true ? '${device.name} is already receiving something else. Wait for it to finish, then try again.' : '${device.name} said no. Ask them to tap Accept when the request pops up.';
       }
       token = '${answer['token']}';
       var done = 0;

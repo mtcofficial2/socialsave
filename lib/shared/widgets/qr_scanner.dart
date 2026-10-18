@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/platform/media_events.dart';
 
-/// QR scanner that opens a lens the phone really has.
-///
-/// mobile_scanner always asks for the back camera. Phones that expose only a
-/// front camera to apps (the SHARP AQUOS R7 here) then failed with
-/// "No cameras available" even with the permission granted.
+const _facingPref = 'socialsave_qr_camera_facing';
+
+/// QR scanner that opens a lens the phone really has, with a Front / Rear
+/// choice (remembered) when the phone has both.
 class QrScanner extends StatefulWidget {
   const QrScanner({super.key, required this.onCode, this.height = 220});
 
@@ -21,6 +21,7 @@ class QrScanner extends StatefulWidget {
 class _QrScannerState extends State<QrScanner> {
   MobileScannerController? _controller;
   List<String> _facings = const [];
+  CameraFacing _facing = CameraFacing.back;
 
   @override
   void initState() {
@@ -28,27 +29,53 @@ class _QrScannerState extends State<QrScanner> {
     _init();
   }
 
-  Future<void> _init() async {
-    var facings = const <String>[];
-    try {
-      facings = await MediaEvents.channel.invokeListMethod<String>('cameraFacings') ?? const [];
-    } catch (_) {}
-    if (!mounted) return;
-    if (facings.isEmpty) {
-      // Unknown (older build) → let the plugin try its default.
-      facings = const ['back'];
-    }
-    final facing = facings.contains('back')
+  CameraFacing _pick(String? saved, List<String> facings) {
+    if (saved == 'front' && facings.contains('front')) return CameraFacing.front;
+    if (saved == 'back' && facings.contains('back')) return CameraFacing.back;
+    return facings.contains('back')
         ? CameraFacing.back
         : facings.contains('front')
             ? CameraFacing.front
             : facings.contains('external')
                 ? CameraFacing.external
                 : CameraFacing.back;
+  }
+
+  Future<void> _init() async {
+    var facings = const <String>[];
+    try {
+      facings = await MediaEvents.channel.invokeListMethod<String>('cameraFacings') ?? const [];
+    } catch (_) {}
+    String? saved;
+    try {
+      saved = (await SharedPreferences.getInstance()).getString(_facingPref);
+    } catch (_) {}
+    if (!mounted) return;
+    if (facings.isEmpty) {
+      // Unknown (older build): let the plugin try its default.
+      facings = const ['back'];
+    }
+    final facing = _pick(saved, facings);
     setState(() {
       _facings = facings;
+      _facing = facing;
       _controller = MobileScannerController(facing: facing, formats: const [BarcodeFormat.qrCode]);
     });
+  }
+
+  Future<void> _choose(CameraFacing facing) async {
+    if (facing == _facing || !mounted) return;
+    final old = _controller;
+    setState(() {
+      _facing = facing;
+      _controller = null;
+    });
+    await old?.dispose();
+    try {
+      await (await SharedPreferences.getInstance()).setString(_facingPref, facing == CameraFacing.front ? 'front' : 'back');
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() => _controller = MobileScannerController(facing: facing, formats: const [BarcodeFormat.qrCode]));
   }
 
   @override
@@ -61,6 +88,7 @@ class _QrScannerState extends State<QrScanner> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final controller = _controller;
+    final both = _facings.contains('back') && _facings.contains('front');
     Widget child;
     if (controller == null) {
       child = const Center(child: CircularProgressIndicator());
@@ -86,16 +114,6 @@ class _QrScannerState extends State<QrScanner> {
                   : 'The camera could not start (${error.errorCode.name}). Type the code below instead.',
             ),
           ),
-          if (_facings.contains('back') && _facings.contains('front'))
-            Positioned(
-              right: 8,
-              bottom: 8,
-              child: IconButton.filledTonal(
-                tooltip: 'Switch camera',
-                onPressed: () => controller.switchCamera(),
-                icon: const Icon(Icons.cameraswitch_rounded),
-              ),
-            ),
           if (!_facings.contains('back') && _facings.contains('front'))
             Positioned(
               left: 8,
@@ -110,9 +128,45 @@ class _QrScannerState extends State<QrScanner> {
         ],
       );
     }
-    return SizedBox(
+    final box = SizedBox(
       height: widget.height,
       child: ClipRRect(borderRadius: BorderRadius.circular(16), child: child),
+    );
+    if (!both) return box;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        box,
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: Semantics(
+                label: 'Choose camera: front or rear',
+                container: true,
+                child: SegmentedButton<CameraFacing>(
+                  key: const ValueKey('qr-camera-choice'),
+                  showSelectedIcon: false,
+                  segments: const [
+                    ButtonSegment(value: CameraFacing.back, icon: Icon(Icons.photo_camera_back_rounded), label: Text('Rear')),
+                    ButtonSegment(value: CameraFacing.front, icon: Icon(Icons.photo_camera_front_rounded), label: Text('Front')),
+                  ],
+                  selected: {_facing},
+                  onSelectionChanged: (s) => _choose(s.first),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton.filledTonal(
+              key: const ValueKey('qr-camera-flip'),
+              tooltip: 'Flip camera',
+              onPressed: () => _choose(_facing == CameraFacing.back ? CameraFacing.front : CameraFacing.back),
+              icon: const Icon(Icons.cameraswitch_rounded),
+            ),
+          ],
+        ),
+      ],
     );
   }
 

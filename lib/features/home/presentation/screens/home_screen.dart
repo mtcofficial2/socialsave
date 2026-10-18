@@ -119,14 +119,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     // Only when Home is on screen: never push a preview over the player or
     // another page (that stole the player's keyboard on PC).
     if (!(ModalRoute.of(context)?.isCurrent ?? true)) return;
-    final result = await ref
-        .read(homeControllerProvider.notifier)
-        .importClipboardAndAnalyze(auto: true);
-    if (result != null && mounted) {
-      HapticFeedback.lightImpact();
-      await _openPreview(result);
-      return;
-    }
+    // A copied link is offered by LinkOfferWatcher (quiet sheet), not auto-opened.
     if (mounted) {
       await ref.read(homeControllerProvider.notifier).refreshClipboardOffer();
     }
@@ -199,7 +192,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   Widget _scaffold(BuildContext context) {
     return Scaffold(
-      body: SafeArea(
+      body: SafeArea(bottom: false, 
         child: LayoutBuilder(
           builder: (context, constraints) {
             if (!Plat.isWeb && constraints.maxWidth >= kDesktopSplitWidth) {
@@ -218,7 +211,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 860),
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+          padding: EdgeInsets.fromLTRB(16, 0, 16, 24 + MediaQuery.paddingOf(context).bottom),
           children: [
             const BrandHeader(),
             _tagline(context),

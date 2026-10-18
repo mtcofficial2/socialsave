@@ -108,6 +108,16 @@
             </intent-filter>
         </service>
         <service
+            android:name=".DownloadLinkTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_shortcut_paste"
+            android:label="Download copied link"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+        <service
             android:name=".SessionKeepAliveService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice|dataSync" />

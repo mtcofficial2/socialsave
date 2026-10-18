@@ -28,6 +28,7 @@ import 'package:social_save/features/settings/domain/entities/app_settings.dart'
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
 import 'package:social_save/features/settings/presentation/screens/font_picker_sheet.dart';
 import 'package:social_save/shared/widgets/glass.dart';
+import 'package:social_save/features/library/share_hub.dart';
 import 'package:social_save/features/settings/presentation/widgets/engine_section.dart';
 import 'package:social_save/features/settings/presentation/widgets/phone_engine_section.dart';
 import 'package:social_save/features/settings/presentation/widgets/storage_section.dart';
@@ -42,9 +43,9 @@ class SettingsScreen extends ConsumerWidget {
     final scheme = Theme.of(context).colorScheme;
 
     return Scaffold(
-      body: SafeArea(
+      body: SafeArea(bottom: false, 
         child: ListView(
-          padding: pagePadding(context, top: 12, bottom: 32),
+          padding: pagePadding(context, top: 12, bottom: 32 + MediaQuery.paddingOf(context).bottom),
           children: [
             Text('Settings', style: pageTitleStyle(context)),
             const SizedBox(height: 4),
@@ -53,9 +54,21 @@ class SettingsScreen extends ConsumerWidget {
               style: TextStyle(fontSize: 13, height: 1.35, color: scheme.onSurfaceVariant),
             ),
             const SizedBox(height: 20),
+            const _SettingsSearch(),
+            if (!kIsWeb)
+              ListTile(
+                key: const ValueKey('settings-trusted'),
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.verified_user_rounded),
+                title: const Text('Trusted devices'),
+                subtitle: const Text('See and revoke devices that can send without asking'),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const TrustedDevicesScreen())),
+              ),
+            const SizedBox(height: 12),
             DesktopColumns(
               sections: [
-                Column(
+                _Sec(title: 'Appearance & Theme', keys: 'appearance theme dark light font typeface wallpaper color', child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
             _groupTitle(context, Icons.palette_outlined, 'Appearance & Theme'),
@@ -130,13 +143,38 @@ class SettingsScreen extends ConsumerWidget {
                         ),
                       ],
                     ),
+                    const SizedBox(height: 4),
+                    SwitchListTile(
+                      key: const ValueKey('classic-home-switch'),
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Classic home screen', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                      subtitle: Text('Turn on to bring back the previous Home layout', style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant)),
+                      value: settings.classicHome,
+                      onChanged: controller.setClassicHome,
+                    ),
+                    SwitchListTile(
+                      key: const ValueKey('classic-library-switch'),
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Classic library', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                      subtitle: Text('Turn on to bring back the previous Library layout', style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant)),
+                      value: settings.classicLibrary,
+                      onChanged: controller.setClassicLibrary,
+                    ),
+                    SwitchListTile(
+                      key: const ValueKey('offer-copied-links-switch'),
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Offer to download copied links', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                      subtitle: Text(Plat.isAndroid ? 'Ask when you copy a video link and open SocialSave' : 'Ask when you copy a video link, even from the tray', style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant)),
+                      value: settings.offerCopiedLinks,
+                      onChanged: controller.setOfferCopiedLinks,
+                    ),
                   ],
                 ),
               ),
             ),
                   ],
-                ),
-                Column(
+                )),
+                _Sec(title: 'Download Preferences', keys: 'download wifi location quality resolution', child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
             _groupTitle(context, Icons.download_for_offline_outlined, 'Download Preferences'),
@@ -196,8 +234,8 @@ class SettingsScreen extends ConsumerWidget {
               ),
             ),
                   ],
-                ),
-                Column(
+                )),
+                _Sec(title: 'Player', keys: 'player play next library', child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
             _groupTitle(context, Icons.play_circle_outline, 'Player'),
@@ -218,9 +256,9 @@ class SettingsScreen extends ConsumerWidget {
               ),
             ),
                   ],
-                ),
+                )),
                 if (!DesktopSupport.isWindows && !kIsWeb)
-                  Column(
+                  _Sec(title: 'Phone', keys: 'phone battery charging pocket headset earphone volume vibrate save folder background play', child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
             _groupTitle(context, Icons.phone_android_rounded, 'Phone'),
@@ -309,9 +347,9 @@ class SettingsScreen extends ConsumerWidget {
               ),
             ),
                     ],
-                  ),
+                  )),
                 if (!kIsWeb)
-                Column(
+                _Sec(title: 'Library & engine', keys: 'engine library backup restore index computer', child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
             if (!kLocalEngine && Plat.isAndroid)
@@ -370,9 +408,9 @@ class SettingsScreen extends ConsumerWidget {
               ),
             ),
                   ],
-                ),
+                )),
                 if (!kIsWeb)
-                Column(
+                _Sec(title: 'Notifications & System', keys: 'notifications alerts thumbnail system', child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
             _groupTitle(context, Icons.notifications_active_outlined, 'Notifications & System'),
@@ -412,8 +450,8 @@ class SettingsScreen extends ConsumerWidget {
               ),
             ),
                   ],
-                ),
-                Column(
+                )),
+                _Sec(title: 'Legal, Compliance & Privacy', keys: 'legal privacy terms policy compliance', child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
             _groupTitle(context, Icons.gavel, 'Legal, Compliance & Privacy'),
@@ -489,7 +527,7 @@ class SettingsScreen extends ConsumerWidget {
               ),
             ),
                   ],
-                ),
+                )),
               ],
             ),
             const SizedBox(height: 20),
@@ -909,4 +947,75 @@ Future<String?> _askPassphrase(BuildContext context, String title) async {
   );
   controller.dispose();
   return value?.trim().isEmpty == true ? null : value?.trim();
+}
+
+final ValueNotifier<String> _settingsQuery = ValueNotifier<String>('');
+
+class _SettingsSearch extends StatelessWidget {
+  const _SettingsSearch();
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      key: const ValueKey('settings-search'),
+      onChanged: (v) => _settingsQuery.value = v.trim().toLowerCase(),
+      textInputAction: TextInputAction.search,
+      decoration: InputDecoration(
+        prefixIcon: const Icon(Icons.search_rounded),
+        hintText: 'Search settings',
+        isDense: true,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+    );
+  }
+}
+
+/// A settings group that can be collapsed and is hidden when it does not
+/// match the search box.
+class _Sec extends StatefulWidget {
+  const _Sec({required this.title, required this.keys, required this.child});
+  final String title;
+  final String keys;
+  final Widget child;
+
+  @override
+  State<_Sec> createState() => _SecState();
+}
+
+class _SecState extends State<_Sec> {
+  bool _open = true;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<String>(
+      valueListenable: _settingsQuery,
+      builder: (context, q, _) {
+        final hay = '${widget.title} ${widget.keys}'.toLowerCase();
+        if (q.isNotEmpty && !hay.contains(q)) return const SizedBox.shrink();
+        final open = _open || q.isNotEmpty;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Semantics(
+              button: true,
+              label: '${widget.title}, ${open ? 'expanded' : 'collapsed'}',
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: q.isNotEmpty ? null : () => setState(() => _open = !_open),
+                  icon: Icon(open ? Icons.expand_less_rounded : Icons.expand_more_rounded, size: 18),
+                  label: Text(open ? 'Collapse' : 'Show ${widget.title}'),
+                ),
+              ),
+            ),
+            AnimatedSize(
+              duration: const Duration(milliseconds: 200),
+              alignment: Alignment.topCenter,
+              child: open ? widget.child : const SizedBox(width: double.infinity),
+            ),
+          ],
+        );
+      },
+    );
+  }
 }

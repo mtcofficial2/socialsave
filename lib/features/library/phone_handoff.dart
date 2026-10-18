@@ -11,6 +11,7 @@ import 'package:social_save/features/library/bundle_transfer.dart';
 import 'package:social_save/features/library/bundle_ui.dart';
 import 'package:social_save/features/library/firewall_check.dart';
 import 'package:social_save/features/library/hotspot_guide.dart';
+import 'package:social_save/features/home/presentation/widgets/link_offer.dart';
 import 'package:social_save/features/library/hotspot_share.dart';
 import 'package:social_save/features/library/pc_hotspot.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -57,6 +58,9 @@ class PhoneHandoff {
   static RawDatagramSocket? _udp;
   static Timer? _timer;
   static HandoffOffer? current;
+
+  /// When the current offer's code stops working (shown as a countdown).
+  static DateTime? expiresAt;
 
   /// Bytes the sender has served for the current offer (all requests).
   static final ValueNotifier<int> served = ValueNotifier<int>(0);
@@ -176,6 +180,7 @@ class PhoneHandoff {
 
   static void _armTimer() {
     _timer?.cancel();
+    expiresAt = DateTime.now().add(lifetime);
     _timer = Timer(lifetime, () {
       if (keepAlive?.call() == true) {
         _armTimer();
@@ -220,13 +225,24 @@ class PhoneHandoff {
     await res.close();
   }
 
+  static final Map<String, (int, DateTime)> _codeStrikes = {};
+
   static Future<void> _handle(HttpRequest request, File? file, HandoffOffer offer) async {
     final res = request.response;
     try {
       res.headers.set('Access-Control-Allow-Origin', '*');
       final parts = request.uri.pathSegments;
       final okCode = parts.length >= 2 && parts[1].toUpperCase() == offer.code;
+      final peerIp = request.connectionInfo?.remoteAddress.address ?? '';
+      final lock = _codeStrikes[peerIp];
+      if (lock != null && lock.$1 >= 5 && DateTime.now().isBefore(lock.$2)) {
+        res.statusCode = HttpStatus.tooManyRequests;
+        await res.close();
+        return;
+      }
       if (!okCode) {
+        // 5 wrong codes from one device: locked out for 60 seconds.
+        _codeStrikes[peerIp] = ((lock != null && DateTime.now().isBefore(lock.$2) ? lock.$1 : 0) + 1, DateTime.now().add(const Duration(seconds: 60)));
         res.statusCode = HttpStatus.notFound;
         await res.close();
         return;
@@ -731,8 +747,8 @@ class PhoneHandoff {
       }));
       final res = await req.close().timeout(const Duration(minutes: 5));
       await res.drain<void>().timeout(const Duration(minutes: 1));
-      if (res.statusCode == HttpStatus.conflict) return 'The other device is busy receiving.';
-      return res.statusCode == 200 ? null : 'The other device could not save it.';
+      if (res.statusCode == HttpStatus.conflict) return 'The other device is already receiving something else. Wait for it to finish, then try again.';
+      return res.statusCode == 200 ? null : 'The other device could not save the file. Check that it has free storage space and try again.';
     } catch (_) {
       return 'The copy stopped. Stay on the same Wi-Fi and try again.';
     } finally {
@@ -780,8 +796,8 @@ class PhoneHandoff {
         }));
         final res = await req.close().timeout(const Duration(minutes: 5));
         await res.drain<void>().timeout(const Duration(minutes: 1));
-        if (res.statusCode == HttpStatus.conflict) return 'The other device is busy receiving.';
-        if (res.statusCode != 200) return 'The other device could not save ${it.rel}.';
+        if (res.statusCode == HttpStatus.conflict) return 'The other device is already receiving something else. Wait for it to finish, then try again.';
+        if (res.statusCode != 200) return 'The other device could not save ${it.rel}. Check that it has free storage space and try again.';
         done += it.size;
       }
       return null;
@@ -838,8 +854,48 @@ class PhoneHandoff {
   }
 }
 
-class DropState {
-  const DropState({
+/// Live "this code works for mm:ss" line under the pairing code.
+class OfferCountdown extends StatefulWidget {
+  const OfferCountdown({super.key});
+
+  @override
+  State<OfferCountdown> createState() => _OfferCountdownState();
+}
+
+class _OfferCountdownState extends State<OfferCountdown> {
+  Timer? _tick;
+
+  @override
+  void initState() {
+    super.initState();
+    _tick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final end = PhoneHandoff.expiresAt;
+    if (end == null) return const SizedBox.shrink();
+    final left = end.difference(DateTime.now());
+    final expired = left.inSeconds <= 0;
+    final mm = left.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final ss = left.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return Text(
+      expired ? 'This code has expired. Tap Make a new code.' : 'This code works for $mm:$ss more.',
+      textAlign: TextAlign.center,
+      style: Theme.of(context).textTheme.bodySmall,
+    );
+  }
+}
+
+class DropState {  const DropState({
     required this.title,
     required this.received,
     required this.total,
@@ -938,7 +994,7 @@ Future<void> showSendToPhone(BuildContext context, File file, String title) asyn
       return;
     }
   }
-  final offer = await PhoneHandoff.offer(file, title: title);
+  var offer = await PhoneHandoff.offer(file, title: title);
   if (!context.mounted) return;
   final codeCtrl = TextEditingController();
   String? status;
@@ -983,7 +1039,8 @@ Future<void> showSendToPhone(BuildContext context, File file, String title) asyn
           });
         }
 
-        final spaced = offer == null ? '' : '${offer.code.substring(0, 3)} ${offer.code.substring(3)}';
+        final cur = offer;
+        final spaced = cur == null ? '' : '${cur.code.substring(0, 3)} ${cur.code.substring(3)}';
         final small = Theme.of(context).textTheme.bodySmall;
         return AlertDialog(
           title: const Text('Send to another device'),
@@ -1047,7 +1104,7 @@ Future<void> showSendToPhone(BuildContext context, File file, String title) asyn
                 const Divider(height: 28),
                 Text('2. Or let the other device scan / type this', style: Theme.of(context).textTheme.titleSmall),
                 const SizedBox(height: 8),
-                if (offer == null)
+                if (cur == null)
                   Text('Connect to Wi-Fi to show a code here.', style: small)
                 else ...[
                   Center(
@@ -1055,7 +1112,7 @@ Future<void> showSendToPhone(BuildContext context, File file, String title) asyn
                       color: Colors.white,
                       child: Padding(
                         padding: const EdgeInsets.all(8),
-                        child: QrImageView(data: offer.url, size: 168),
+                        child: QrImageView(data: cur.url, size: 168),
                       ),
                     ),
                   ),
@@ -1072,8 +1129,25 @@ Future<void> showSendToPhone(BuildContext context, File file, String title) asyn
                   ),
                   Text(
                     'On the other device: Receive › scan or type this code › Watch or Save. '
-                    'Same Wi-Fi (${offer.ips.first}). Works for 15 minutes while this is open.',
+                    'Same Wi-Fi (${cur.ips.first}). Works while this is open.',
                     style: small,
+                  ),
+                  const SizedBox(height: 6),
+                  OfferCountdown(key: ValueKey(cur.code)),
+                  Align(
+                    child: TextButton.icon(
+                      key: const ValueKey('new-code'),
+                      onPressed: pushing
+                          ? null
+                          : () async {
+                              final fresh = await PhoneHandoff.offer(file, title: title);
+                              if (!context.mounted) return;
+                              ShareSession.pairLink = fresh?.url;
+                              setState(() => offer = fresh);
+                            },
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: const Text('Make a new code'),
+                    ),
                   ),
                   if (DesktopSupport.isWindows)
                     Text(
@@ -2732,7 +2806,7 @@ void listenForQuickActions() {
           final state = home.read(homeControllerProvider);
           if (state.error == null && state.url.isNotEmpty) {
             HapticFeedback.lightImpact();
-            unawaited(appRouter.push('/preview', extra: state.url));
+            unawaited(offerLink(state.url));
           } else if (ctx.mounted) {
             ScaffoldMessenger.maybeOf(ctx)?.showSnackBar(
               const SnackBar(content: Text('Copy a video link first, then try again.')),
@@ -2763,7 +2837,7 @@ void listenForQuickActions() {
       final url = controller.validatedUrl();
       if (url == null) return;
       HapticFeedback.lightImpact();
-      unawaited(appRouter.push('/preview', extra: url));
+      unawaited(offerLink(url));
     } finally {
       sharing = false;
     }

@@ -7,6 +7,7 @@ import 'package:social_save/features/library/transfer_meter.dart';
 import 'package:flutter/material.dart';
 import 'package:social_save/features/library/nearby_service.dart';
 import 'package:social_save/features/library/session_ui.dart';
+import 'package:social_save/features/library/share_hub.dart';
 import 'package:social_save/features/library/share_session.dart';
 import 'package:social_save/features/library/presentation/library_look.dart';
 import 'package:social_save/features/library/usb_link.dart';
@@ -24,6 +25,13 @@ String _size(int bytes) {
 /// Hooks the receiving side to the UI. Call once after runApp.
 void installNearbyUi() {
   installSessionUi();
+  NearbyService.incomingText.addListener(() {
+    final text = NearbyService.incomingText.value;
+    final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
+    if (text == null || ctx == null || !ctx.mounted) return;
+    NearbyService.incomingText.value = null;
+    unawaited(showIncomingText(ctx, NearbyService.incomingTextFrom.value, text));
+  });
   NearbyService.onOffer = (offer) async {
     final context = appRouter.routerDelegate.navigatorKey.currentContext;
     if (context == null || !context.mounted) return false;
@@ -384,7 +392,10 @@ Future<void> sendToNearby(
           const SizedBox(height: 8),
           ValueListenableBuilder<String>(
             valueListenable: status,
-            builder: (context, s, _) => Text(s),
+            builder: (context, s, _) => AnimatedSwitcher(
+              duration: const Duration(milliseconds: 200),
+              child: Semantics(liveRegion: true, child: Text(s, key: ValueKey(s.split(' ').first))),
+            ),
           ),
         ],
       ),
@@ -414,7 +425,7 @@ Future<void> sendToNearby(
   );
   finished = true;
   progress.value = error == null ? 1 : 0;
-  status.value = error ?? 'Sent ✓ Saved on ${device.name}. ${meter.doneLabel}';
+  status.value = error ?? 'Sent ✓ Saved on ${device.name}. ${meter.doneLabel}${NearbyService.lastVerified.value ? " Verified ✓" : ""}';
   if (error == null) {
     // Close by itself shortly after success.
     Future<void>.delayed(const Duration(seconds: 2), () {

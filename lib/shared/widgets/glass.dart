@@ -112,13 +112,13 @@ class Glass extends StatelessWidget {
           colors: tint,
         ),
         border: Border.all(
-          color: Colors.white.withValues(alpha: dark ? 0.16 : 0.72),
+          color: Colors.white.withValues(alpha: dark ? 0.05 : 0.35),
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: dark ? 0.28 : 0.06),
-            blurRadius: 24,
-            offset: const Offset(0, 10),
+            color: Colors.black.withValues(alpha: dark ? 0.10 : 0.03),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
           ),
         ],
       ),

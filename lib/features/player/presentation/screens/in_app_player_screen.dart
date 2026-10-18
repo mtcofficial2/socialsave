@@ -26,6 +26,9 @@ import 'package:social_save/core/theme/app_colors.dart';
 import 'package:social_save/features/library/device_media.dart';
 import 'package:social_save/features/player/pip.dart';
 import 'package:social_save/features/player/presentation/widgets/phone_player_chrome.dart';
+import 'package:social_save/features/player/presentation/widgets/subtitle_tools.dart';
+import 'package:social_save/features/player/presentation/widgets/premium_player_chrome.dart';
+import 'package:social_save/features/player/presentation/widgets/player_overlays.dart';
 import 'package:social_save/features/player/video_stage_layout.dart';
 import 'package:social_save/features/player/playback_bridge.dart';
 import 'package:social_save/features/player/player_session.dart';
@@ -78,7 +81,7 @@ class InAppPlayerScreen extends ConsumerStatefulWidget {
 
 class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     with WidgetsBindingObserver {
-  static const _rates = <double>[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+  static const _rates = <double>[0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 
   late final Player _player;
   late final VideoController _video;
@@ -86,6 +89,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
 
   String? _error;
   bool _ready = false;
+  bool _hintOpen = false;
   bool _chrome = true;
   bool _inPip = false;
   Timer? _chromeTimer;
@@ -189,6 +193,16 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         title: thisPlayerName,
       ),
     );
+    unawaited(SubtitlePrefs.load());
+    if (!DesktopSupport.isWindows) {
+      unawaited(PlayerFirstHint.shouldShow().then((v) {
+        if (mounted && v) setState(() => _hintOpen = true);
+      }));
+    }
+    unawaited(_restoreFit());
+    unawaited(PlayerChromePrefs.load().then((_) {
+      if (mounted) setState(() {});
+    }));
     _video = VideoController(
       _player,
       configuration: VideoControllerConfiguration(
@@ -366,12 +380,6 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     _subs.add(
       _player.stream.playing.listen((playing) {
         _pushSession();
-        if (_ready && mounted && !_completed) {
-          _flash(
-            playing ? 'Play' : 'Pause',
-            icon: playing ? Icons.play_arrow_rounded : Icons.pause_rounded,
-          );
-        }
       }),
     );
     _subs.add(_player.stream.duration.listen((_) => _pushSession()));
@@ -399,6 +407,24 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   // PC: pointer is over the top bar or the controls band; keep them up.
   bool _overControls = false;
 
+  /// Phone: controls toggle only on a plain single tap.
+  void _toggleChromeTap() {
+    if (_locked || !mounted) return;
+    if (_chrome) {
+      _chromeTimer?.cancel();
+      setState(() => _chrome = false);
+    } else {
+      _showChrome();
+    }
+  }
+
+  /// Phone: any gesture (swipe, pinch, hold, double-tap) hides the controls and
+  /// never reveals them; the HUD pills stay.
+  void _hideChromeForGesture() {
+    _chromeTimer?.cancel();
+    if (mounted && _chrome) setState(() => _chrome = false);
+  }
+
   void _showChrome() {
     _chromeTimer?.cancel();
     if (mounted && !_chrome) {
@@ -409,7 +435,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     // PC full screen: 5 s after the last mouse move or key press.
     final idle = DesktopSupport.isWindows && _fs
         ? const Duration(seconds: 5)
-        : const Duration(seconds: 3);
+        : const Duration(milliseconds: 3500);
     _chromeTimer = Timer(idle, () {
       if (!mounted || _showEndCard) return;
       if (_overControls) {
@@ -1059,10 +1085,27 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     }
   }
 
+  static const _fitPrefKey = 'player.fill.v1';
+
   void _cycleFit() {
     setState(() {
       _fit = _fit == BoxFit.contain ? BoxFit.cover : BoxFit.contain;
     });
+    unawaited(() async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool(_fitPrefKey, _fit == BoxFit.cover);
+      } catch (_) {}
+    }());
+  }
+
+  Future<void> _restoreFit() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if ((prefs.getBool(_fitPrefKey) ?? false) && mounted) {
+        setState(() => _fit = BoxFit.cover);
+      }
+    } catch (_) {}
   }
 
   void _toggleAB() {
@@ -1250,32 +1293,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         child: AnimatedOpacity(
           opacity: _osdVisible && _osd != null ? 1 : 0,
           duration: Duration(milliseconds: _osdVisible ? 90 : 350),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.62),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (_osdIcon != null) ...[
-                    Icon(_osdIcon, color: Colors.white, size: 26),
-                    const SizedBox(width: 10),
-                  ],
-                  Text(
-                    _osd ?? '',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+          child: PlayerHudPill(text: _osd ?? '', icon: _osdIcon),
         ),
       ),
     );
@@ -1447,7 +1465,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   // Pointer bookkeeping shared by phone (pinch) and PC (focus, double-click,
   // right-click menu, wheel feedback).
   void _onPointerDown(PointerDownEvent e) {
-    _showChrome();
+    // Touch: controls are revealed only by a plain tap (PlayerGestureLayer).
+    if (DesktopSupport.isWindows) _showChrome();
     if (DesktopSupport.isWindows) {
       _keyFocus.requestFocus();
       if (e.kind == PointerDeviceKind.mouse &&
@@ -1866,19 +1885,13 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   Future<void> _showTools() async {
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: DesktopSupport.isWindows
-          ? const Color(0xFF111827)
-          : const Color(0xFF16161D),
-      shape: DesktopSupport.isWindows
-          ? null
-          : const RoundedRectangleBorder(
-              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-            ),
-      showDragHandle: true,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      constraints: const BoxConstraints(maxWidth: 640),
       builder: (context) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+        return PlayerGlassSheet(child: SafeArea(
+          child: SingleChildScrollView(child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
             child: StatefulBuilder(
               builder: (context, setSheet) {
                 return Column(
@@ -1899,10 +1912,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                       style: TextStyle(color: Colors.white70, fontSize: 12),
                     ),
                     const SizedBox(height: 16),
-                    const Text(
-                      'Sleep timer',
-                      style: TextStyle(color: Colors.white70, fontSize: 12),
-                    ),
+                    const PlayerSectionHeader('Sleep timer', Icons.bedtime_rounded),
                     const SizedBox(height: 4),
                     const Text(
                       'The screen dims when the timer ends.',
@@ -1942,10 +1952,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                       ],
                     ),
                     const SizedBox(height: 16),
-                    const Text(
-                      'Speed',
-                      style: TextStyle(color: Colors.white70, fontSize: 12),
-                    ),
+                    const PlayerSectionHeader('Speed', Icons.speed_rounded),
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
@@ -1962,6 +1969,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                           ),
                       ],
                     ),
+                    const PlayerSectionHeader('Playback', Icons.play_circle_outline_rounded),
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       value: _loop,
@@ -2119,6 +2127,20 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                         ],
                       ),
                     ],
+                    const PlayerSectionHeader('Interface', Icons.tune_rounded),
+                    ClassicControlsSwitch(
+                      onChanged: () {
+                        setSheet(() {});
+                        if (mounted) setState(() {});
+                      },
+                    ),
+                    SubtitleToolsRow(
+                      player: _player,
+                      onChanged: () {
+                        setSheet(() {});
+                        if (mounted) setState(() {});
+                      },
+                    ),
                     Row(
                       children: [
                         Icon(
@@ -2146,8 +2168,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                 );
               },
             ),
-          ),
-        );
+          ))));
       },
     );
   }
@@ -2205,6 +2226,63 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
 
   Widget _phoneChrome() {
     final canShare = _session.filePath != null && !_session.isVault;
+    if (!PlayerChromePrefs.classic.value) {
+      return PremiumPlayerChrome(
+        player: _player,
+        title: _session.title,
+        subtitle: _phoneSubtitle(),
+        rate: _rate,
+        rates: _rates,
+        loop: _loop,
+        muted: _muted,
+        filling: _fit == BoxFit.cover,
+        fullscreen: _fs,
+        hasNext: _hasNext,
+        landscape: MediaQuery.orientationOf(context) == Orientation.landscape,
+        showPip: !_session.isVault,
+        onBack: () {
+          if (widget.embedded) {
+            widget.onClose?.call();
+          } else if (_fs) {
+            unawaited(_setFs(false));
+          } else {
+            Navigator.maybePop(context);
+          }
+        },
+        onLock: () => setState(() {
+          _locked = true;
+          _chrome = false;
+          _lockHint = true;
+        }),
+        onTools: () => unawaited(_showTools()),
+        onPip: () => unawaited(_playOverApps()),
+        onSkip: (seconds) => unawaited(_skip(seconds)),
+        onPrevious: () => unawaited(_playPrevious()),
+        onNext: () => unawaited(_playNext()),
+        onSetRate: (r) => unawaited(_setRate(r)),
+        onLoop: () => unawaited(_toggleLoop()),
+        onMute: () => unawaited(_toggleMute()),
+        onFit: _cycleFit,
+        onFullscreen: () => unawaited(_toggleFs()),
+        onRotate: () => unawaited(_rotate()),
+        onAB: _toggleAB,
+        abLabel: _markA == null ? null : (_markB == null ? 'A' : 'A-B'),
+        onSleep: (m) {
+          if (m == 0) {
+            _clearSleep();
+          } else if (m < 0) {
+            _setSleepAtEnd();
+          } else {
+            _setSleep(m);
+          }
+        },
+        sleepActive: _sleepMinutes != null || _sleepAtEnd,
+        onSend: canShare
+            ? () => showSendToPhone(context, File(_session.filePath!), _session.title)
+            : null,
+        moreMenu: _phoneMoreButton(),
+      );
+    }
     return PhonePlayerChrome(
       player: _player,
       title: _session.title,
@@ -2274,15 +2352,35 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       fit: StackFit.expand,
       children: [
         const ColoredBox(color: Colors.black),
-        _videoHero(video),
+        PlayerGestureLayer(
+          onBoost: (on) => unawaited(_player.setRate(on ? 2.0 : _rate)),
+          onTap: _toggleChromeTap,
+          onGesture: _hideChromeForGesture,
+          child: _videoHero(video),
+        ),
         IgnorePointer(
           ignoring: _locked || (!_chrome && !_showEndCard),
           child: AnimatedOpacity(
             opacity: !_locked && (_chrome || _showEndCard) ? 1 : 0,
-            duration: const Duration(milliseconds: 180),
-            child: _phoneChrome(),
+            duration: const Duration(milliseconds: 260),
+            curve: Curves.easeOutCubic,
+            child: AnimatedSlide(
+              offset: !_locked && (_chrome || _showEndCard)
+                  ? Offset.zero
+                  : const Offset(0, 0.025),
+              duration: const Duration(milliseconds: 260),
+              curve: Curves.easeOutCubic,
+              child: _phoneChrome(),
+            ),
           ),
         ),
+        if (_ready && _hintOpen && !_locked)
+          PlayerFirstHint(
+            onDismiss: () {
+              setState(() => _hintOpen = false);
+              unawaited(PlayerFirstHint.markSeen());
+            },
+          ),
       ],
     );
   }
@@ -2761,7 +2859,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       seekGesture: true,
       volumeGesture: true,
       brightnessGesture: true,
-      speedUpOnLongPress: true,
+      speedUpOnLongPress: false,
       speedUpFactor: 2,
       visibleOnMount: false,
       backdropColor: Color(0x00000000),
@@ -2832,6 +2930,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
               controller: _video,
               fill: Colors.black,
               fit: _fit,
+              subtitleViewConfiguration: SubtitlePrefs.config(),
               controls: _locked || _inPip
                   ? _hiddenControls
                   : MaterialVideoControls,

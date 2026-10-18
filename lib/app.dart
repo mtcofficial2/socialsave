@@ -48,7 +48,13 @@ class SocialSaveApp extends ConsumerWidget {
             if (!kIsWeb) const SessionPill(),
           ],
         );
-        return kIsWeb ? _WebPhoneFrame(child: app) : app;
+        final scaled = MediaQuery(
+          data: MediaQuery.of(context).copyWith(
+            textScaler: MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.3),
+          ),
+          child: app,
+        );
+        return kIsWeb ? _WebPhoneFrame(child: scaled) : scaled;
       },
       routerConfig: appRouter,
     );

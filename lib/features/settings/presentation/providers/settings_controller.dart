@@ -66,6 +66,18 @@ class SettingsController extends Notifier<AppSettings> {
     return _commit(state.copyWith(useDynamicColor: value));
   }
 
+  Future<void> setClassicHome(bool value) {
+    return _commit(state.copyWith(classicHome: value));
+  }
+
+  Future<void> setOfferCopiedLinks(bool value) {
+    return _commit(state.copyWith(offerCopiedLinks: value));
+  }
+
+  Future<void> setClassicLibrary(bool value) {
+    return _commit(state.copyWith(classicLibrary: value));
+  }
+
   Future<void> setOnlyWhileCharging(bool value) {
     return _commit(state.copyWith(onlyWhileCharging: value));
   }

@@ -216,6 +216,14 @@ class ShareSession {
   static DateTime _lastRecover = DateTime.fromMillisecondsSinceEpoch(0);
   static Duration _giveUp = const Duration(minutes: 10);
   static bool _pumping = false;
+
+  /// Stage 2: pause the send queue between files (the current file finishes).
+  static final ValueNotifier<bool> paused = ValueNotifier<bool>(false);
+  static void setPaused(bool value) {
+    paused.value = value;
+    if (!value) unawaited(_pump());
+  }
+
   static bool _installed = false;
   static final Map<String, DateTime> _closedIds = {};
 
@@ -530,7 +538,7 @@ class ShareSession {
       _batchDone++;
     } else {
       next.state = SessionItemState.failed;
-      next.detail = 'Not sent: $error Tap "Try full connection" above, then Retry.';
+      next.detail = 'Not sent: $error Tap "Reconnect" above, then tap Retry.';
     }
     _changed();
   }
@@ -1268,7 +1276,7 @@ class ShareSession {
         }
         final p = peer.value;
         if (p == null) return;
-        final next = items.where((i) => i.outgoing && i.state == SessionItemState.queued).firstOrNull;
+        final next = paused.value ? null : items.where((i) => i.outgoing && i.state == SessionItemState.queued).firstOrNull;
         if (next == null) return;
         if (p.limited) {
           await _sendLimited(p, next);

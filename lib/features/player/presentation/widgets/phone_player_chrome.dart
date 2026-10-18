@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:social_save/shared/models/social_platform.dart';
 
@@ -382,8 +383,15 @@ class PhonePlayerChrome extends StatelessWidget {
           shape: const CircleBorder(),
           child: InkWell(
             customBorder: const CircleBorder(),
-            onTap: () => onSkip(back ? -10 : 10),
-            child: SizedBox(
+            onTap: () {
+              HapticFeedback.selectionClick();
+              onSkip(back ? -10 : 10);
+            },
+            child: Semantics(
+              button: true,
+              label: back ? 'Rewind 10 seconds' : 'Forward 10 seconds',
+              excludeSemantics: true,
+              child: SizedBox(
               width: size,
               height: size,
               child: Column(
@@ -404,6 +412,7 @@ class PhonePlayerChrome extends StatelessWidget {
                     ),
                   ),
                 ],
+              ),
               ),
             ),
           ),
@@ -462,8 +471,15 @@ class PhonePlayerChrome extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
         child: InkWell(
           borderRadius: BorderRadius.circular(999),
-          onTap: onRate,
-          child: Padding(
+          onTap: () {
+            HapticFeedback.selectionClick();
+            onRate();
+          },
+          child: Semantics(
+            button: true,
+            label: 'Playback speed ${phoneRateLabel(rate)}. Tap to change.',
+            excludeSemantics: true,
+            child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             child: Text(
               phoneRateLabel(rate),
@@ -472,6 +488,7 @@ class PhonePlayerChrome extends StatelessWidget {
                 fontWeight: FontWeight.w800,
                 fontSize: 12,
               ),
+            ),
             ),
           ),
         ),
@@ -552,14 +569,29 @@ class _PlayOrbState extends State<_PlayOrb> {
         shape: const CircleBorder(),
         child: InkWell(
           customBorder: const CircleBorder(),
-          onTap: () => unawaited(widget.player.playOrPause()),
-          child: SizedBox(
-            width: size,
-            height: size,
-            child: Icon(
-              _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-              color: Colors.black,
-              size: widget.compact ? 28 : 38,
+          onTap: () {
+            HapticFeedback.mediumImpact();
+            unawaited(widget.player.playOrPause());
+          },
+          child: Semantics(
+            button: true,
+            label: _playing ? 'Pause' : 'Play',
+            child: SizedBox(
+              width: size,
+              height: size,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                transitionBuilder: (child, anim) => ScaleTransition(
+                  scale: anim,
+                  child: RotationTransition(turns: Tween(begin: 0.85, end: 1.0).animate(anim), child: child),
+                ),
+                child: Icon(
+                  _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                  key: ValueKey(_playing),
+                  color: Colors.black,
+                  size: widget.compact ? 28 : 38,
+                ),
+              ),
             ),
           ),
         ),
