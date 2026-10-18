@@ -452,6 +452,7 @@ class _QuickActions extends StatelessWidget {
     final items = <_QuickItem>[
       if (HotspotShare.hostSupported)
         _QuickItem(Icons.wifi_tethering_rounded, 'Hotspot', 'Hotspot share', () => showHotspotQuickShare(context)),
+      _QuickItem(Icons.public_rounded, 'Browse', 'Browse sites and download videos', () => context.push('/browse')),
       _QuickItem(Icons.library_music_rounded, 'Music', 'Open music player', () => context.push('/music')),
       _QuickItem(Icons.video_library_rounded, 'Library', 'Open library', onLibrary),
       _QuickItem(Icons.qr_code_scanner_rounded, scan, 'Scan a QR code to join', () async {

@@ -168,6 +168,15 @@ class SettingsScreen extends ConsumerWidget {
                       value: settings.offerCopiedLinks,
                       onChanged: controller.setOfferCopiedLinks,
                     ),
+                    if (Plat.isAndroid)
+                      ListTile(
+                        key: const ValueKey('background-detect-tile'),
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Detect links in the background', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                        subtitle: Text('Offer to download a copied link even when SocialSave is closed', style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant)),
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                        onTap: () => context.push('/background-detect'),
+                      ),
                   ],
                 ),
               ),

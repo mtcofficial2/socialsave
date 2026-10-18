@@ -15,6 +15,8 @@ class PermissionService {
       return photos.isGranted || photos.isLimited;
     }
     if (Plat.isAndroid) {
+      // Already granted (or limited): never open a request, which can hang with no visible activity.
+      if (await Permission.videos.isGranted || await Permission.storage.isGranted) return true;
       final videos = await Permission.videos.request();
       final storage = await Permission.storage.request();
       if (videos.isGranted || videos.isLimited || storage.isGranted) {

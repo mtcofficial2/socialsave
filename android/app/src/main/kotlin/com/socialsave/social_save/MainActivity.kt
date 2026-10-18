@@ -4,6 +4,7 @@ import android.app.PictureInPictureParams
 import android.content.ClipData
 import android.content.ContentUris
 import android.content.ContentValues
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -373,6 +374,7 @@ class MainActivity : FlutterFragmentActivity() {
             if (SessionBridge.activityAlive || SessionBridge.active) return
             val engine = FlutterEngineCache.getInstance().get(ENGINE_ID) ?: return
             FlutterEngineCache.getInstance().remove(ENGINE_ID)
+            DownloadEvents.channel = null
             HotspotShare.disposeAll()
             SessionBridge.detach()
             try {
@@ -420,6 +422,7 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        HeadlessEngine.yieldToApp()
         phoneBody?.stop()
         hotspotShare = HotspotShare.attach(this, flutterEngine.dartExecutor.binaryMessenger)
         SessionBridge.attach(this, flutterEngine.dartExecutor.binaryMessenger)
@@ -607,6 +610,65 @@ class MainActivity : FlutterFragmentActivity() {
                             result.success(null)
                         }
                     }
+                }
+                "overlayMeta" -> {
+                    val a = call.arguments as? Map<*, *>
+                    if (a != null) {
+                        LinkPrompt.meta(
+                            (a["url"] as? String) ?: "",
+                            (a["title"] as? String) ?: "",
+                            (a["heights"] as? List<*>)?.mapNotNull { (it as? Number)?.toInt() } ?: emptyList(),
+                            (a["audio"] as? Boolean) ?: false,
+                        )
+                    }
+                    result.success(true)
+                }
+                "overlayProgress" -> {
+                    val a = call.arguments as? Map<*, *>
+                    if (a != null) {
+                        ProgressCard.update(
+                            (a["id"] as? String) ?: "",
+                            a["title"] as? String,
+                            (a["percent"] as? Number)?.toDouble() ?: -1.0,
+                            a["speed"] as? String,
+                            (a["state"] as? String) ?: "running",
+                        )
+                    }
+                    result.success(true)
+                }
+                "moveToBack" -> {
+                    moveTaskToBack(true)
+                    result.success(true)
+                }
+                "bgStatus" -> {
+                    val enabled = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
+                    val me = ComponentName(this, LinkWatcherService::class.java).flattenToString()
+                    val short = ComponentName(this, LinkWatcherService::class.java).flattenToShortString()
+                    result.success(mapOf(
+                        "accessibility" to (enabled.contains(me) || enabled.contains(short)),
+                        "overlay" to Settings.canDrawOverlays(this),
+                        "bubble" to (BubbleService.instance != null),
+                        "sdk" to Build.VERSION.SDK_INT,
+                    ))
+                }
+                "openAccessibilitySettings" -> {
+                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    result.success(true)
+                }
+                "openOverlaySettings" -> {
+                    startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + packageName)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    result.success(true)
+                }
+                "openAppInfo" -> {
+                    startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + packageName)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    result.success(true)
+                }
+                "bubbleStart" -> {
+                    if (BubbleService.canDraw(this)) { BubbleService.start(this); result.success(true) } else result.success(false)
+                }
+                "bubbleStop" -> {
+                    BubbleService.stop(this)
+                    result.success(true)
                 }
                 "consumeSharedText" -> {
                     val text = pendingShare
@@ -840,6 +902,7 @@ class MainActivity : FlutterFragmentActivity() {
         installLooperGuard()
         SessionBridge.activities++
         super.onCreate(savedInstanceState)
+        BubbleService.autostart(this)
         captureShare(intent)
         captureOpenedVideo(intent)
         captureOpenSession(intent)

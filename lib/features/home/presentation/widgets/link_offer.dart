@@ -12,6 +12,8 @@ import 'package:social_save/core/utils/platform_detector.dart';
 import 'package:social_save/core/utils/url_validator.dart';
 import 'package:social_save/features/downloader/presentation/providers/download_manager.dart';
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
+import 'package:social_save/features/home/presentation/widgets/quality_pick.dart';
+import 'package:social_save/shared/models/media_format.dart';
 import 'package:social_save/shared/models/media_info.dart';
 import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/routing/app_router.dart';
@@ -19,6 +21,11 @@ import 'package:window_manager/window_manager.dart';
 
 final _urlInText = RegExp(r'https?://[^\s<>"]+', caseSensitive: false);
 const _lastKey = 'linkoffer.last';
+
+/// Links the background overlay already handed to the download pipeline, so the
+/// resume check does not offer them a second time.
+final Set<String> bgHandledLinks = <String>{};
+DateTime bgActiveAt = DateTime.fromMillisecondsSinceEpoch(0);
 
 /// A public video link found in [raw], or null for anything else.
 String? videoLinkIn(String? raw) {
@@ -83,6 +90,7 @@ class _OfferSheet extends ConsumerStatefulWidget {
 
 class _OfferSheetState extends ConsumerState<_OfferSheet> {
   MediaInfo? _media;
+  MediaFormat? _fmt;
   String? _error;
   bool _starting = false;
 
@@ -96,7 +104,10 @@ class _OfferSheetState extends ConsumerState<_OfferSheet> {
     try {
       final m = await ref.read(mediaRepositoryProvider).analyze(widget.url);
       if (!mounted) return;
-      setState(() => _media = m);
+      setState(() {
+        _media = m;
+        _fmt = m.defaultFormat;
+      });
     } on AppException catch (e) {
       _fail(e.message);
     } catch (_) {
@@ -115,7 +126,7 @@ class _OfferSheetState extends ConsumerState<_OfferSheet> {
 
   Future<void> _download() async {
     final media = _media;
-    final format = media?.defaultFormat;
+    final format = _fmt ?? media?.defaultFormat;
     if (media == null || format == null || _starting) return;
     HapticFeedback.lightImpact();
     setState(() => _starting = true);
@@ -173,7 +184,7 @@ class _OfferSheetState extends ConsumerState<_OfferSheet> {
       final meta = [
         media.platform.displayName,
         if (dur != null && dur > 0) _clock(dur),
-        if (media.defaultFormat != null) media.defaultFormat!.quality,
+        if ((_fmt ?? media.defaultFormat) != null) (_fmt ?? media.defaultFormat)!.displayQuality,
       ].join('  ·  ');
       body = Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
         if (media.thumbnailUrl != null && media.thumbnailUrl!.isNotEmpty)
@@ -197,6 +208,22 @@ class _OfferSheetState extends ConsumerState<_OfferSheet> {
         ),
         const SizedBox(height: 4),
         Text(meta, style: TextStyle(fontSize: 13, color: muted)),
+        if (canDownload && qualityChoices(media).length > 1) ...[
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final f in qualityChoices(media))
+                ChoiceChip(
+                  key: ValueKey('quality-${f.displayQuality}'),
+                  label: Text(f.displayQuality),
+                  selected: (_fmt ?? media.defaultFormat) == f,
+                  onSelected: _starting ? null : (_) => setState(() => _fmt = f),
+                ),
+            ],
+          ),
+        ],
         if (!canDownload && media.downloadRestrictedReason != null) ...[
           const SizedBox(height: 8),
           Text(media.downloadRestrictedReason!, style: TextStyle(fontSize: 12.5, color: muted)),
@@ -311,6 +338,13 @@ class _LinkOfferWatcherState extends ConsumerState<LinkOfferWatcher> with Widget
       }
       final url = videoLinkIn(text);
       if (url == null || url == _seen) return;
+      if (Plat.isAndroid) {
+        await Future<void>.delayed(const Duration(milliseconds: 900));
+        if (bgHandledLinks.contains(url) || DateTime.now().difference(bgActiveAt).inSeconds < 20) {
+          _seen = url;
+          return;
+        }
+      }
       final prefs = await SharedPreferences.getInstance();
       if (prefs.getString(_lastKey) == url) {
         _seen = url;

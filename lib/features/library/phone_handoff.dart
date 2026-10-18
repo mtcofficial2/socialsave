@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'package:social_save/shared/models/download_task.dart';
+import 'package:social_save/core/di/providers.dart';
+import 'package:social_save/features/downloader/presentation/providers/download_manager.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/core/platform/media_events.dart';
 import 'dart:convert';
@@ -22,7 +25,10 @@ import 'package:social_save/features/library/transfer_boost.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart' show ProviderScope;
+import 'package:flutter_riverpod/flutter_riverpod.dart' show ProviderContainer, ProviderScope;
+import 'package:social_save/shared/models/download_status.dart';
+import 'package:social_save/shared/models/media_info.dart';
+import 'package:social_save/features/home/presentation/widgets/quality_pick.dart';
 import 'package:social_save/shared/widgets/qr_scanner.dart';
 import 'package:path/path.dart' as p;
 import 'package:qr_flutter/qr_flutter.dart';
@@ -2779,12 +2785,169 @@ class HotspotQuickButtons extends StatelessWidget {
 /// Android quick actions: the Quick Settings tile "SocialSave hotspot share"
 /// and the launcher shortcuts (long-press the icon): Paste link, Hotspot
 /// share, Library. Also opens links shared from other apps on any screen.
+String? _overlayTaskId;
+final Map<String, MediaInfo> _bgMedia = {};
+Timer? _overlayTimer;
+
+String _speedText(DownloadTask t) {
+  final bps = t.bytesPerSecond;
+  if (bps <= 0) return '';
+  final s = bps >= 1048576 ? '${(bps / 1048576).toStringAsFixed(1)} MB/s' : '${(bps / 1024).round()} KB/s';
+  final total = t.totalBytes ?? 0;
+  final got = t.receivedBytes;
+  if (total > got && got > 0) {
+    final sec = ((total - got) / bps).round();
+    final left = sec >= 60 ? '${sec ~/ 60}:${(sec % 60).toString().padLeft(2, '0')}' : '${sec}s';
+    return '$s · $left left';
+  }
+  return s;
+}
+/// Streams the download's progress to the floating card (Android overlay).
+void _pumpOverlay(ProviderContainer c, String id) {
+  _overlayTaskId = id;
+  _overlayTimer?.cancel();
+  Future<void> push() async {
+    final t = c.read(downloadManagerProvider).byId(id);
+    if (t == null) return;
+    final st = t.status;
+    final state = st == DownloadStatus.completed
+        ? 'done'
+        : st == DownloadStatus.failed
+            ? 'failed'
+            : st == DownloadStatus.cancelled
+                ? 'cancelled'
+                : 'running';
+    try {
+      await MediaEvents.channel.invokeMethod<void>('overlayProgress', {
+        'id': id,
+        'title': t.title,
+        'percent': t.progress,
+        'speed': _speedText(t),
+        'state': state,
+      });
+    } catch (_) {}
+    if (state != 'running') {
+      _overlayTimer?.cancel();
+      _overlayTimer = null;
+    }
+  }
+
+  unawaited(push());
+  _overlayTimer = Timer.periodic(const Duration(milliseconds: 200), (_) => unawaited(push()));
+}
+
+/// The floating card's callbacks (details, cancel, background download). Used by
+/// the app's own engine and by the headless engine (lib/bg_main.dart).
+void installOverlayHandlers(ProviderContainer? Function() container) {
+  MediaEvents.on('overlayAnalyze', (args) async {
+    final u = args is String ? videoLinkIn(args) : null;
+    final c = container();
+    if (u == null || c == null) return;
+    try {
+      final m = await c.read(mediaRepositoryProvider).analyze(u);
+      _bgMedia[u] = m;
+      final q = qualitySummary(m);
+      await MediaEvents.channel.invokeMethod<void>('overlayMeta', {'url': args, 'title': m.title, 'heights': q.heights, 'audio': q.audio});
+    } catch (_) {}
+  });
+  MediaEvents.on('overlayCancel', (args) async {
+    final id = (args is String && args.isNotEmpty) ? args : _overlayTaskId;
+    final c = container();
+    if (id == null || c == null) return;
+    await c.read(downloadManagerProvider.notifier).cancel(id);
+  });
+  MediaEvents.on('bgDownload', (args) async {
+    final c = container();
+    if (c == null || args is! Map) return;
+    final url = videoLinkIn('${args['url']}');
+    if (url == null) return;
+    await runBgDownload(c, '${args['pref'] ?? 'best'}', url);
+  });
+}
+
+/// Analyse (or reuse the card's analysis), enqueue and stream progress to the card.
+/// [foreground]: the app UI exists, so a failure may open the sheet and the app is sent back.
+Future<void> runBgDownload(ProviderContainer c, String pref, String url, {bool foreground = false}) async {
+  bgHandledLinks.add(url);
+  bgActiveAt = DateTime.now();
+  try {
+    // ignore: avoid_print
+    print('[bg] analyzing $url');
+    MediaInfo? media = _bgMedia.remove(url);
+    for (var attempt = 0; attempt < 3 && media == null; attempt++) {
+      try {
+        media = await c.read(mediaRepositoryProvider).analyze(url);
+      } catch (e) {
+        // ignore: avoid_print
+        print('[bg] analyze attempt $attempt failed: $e');
+        await Future<void>.delayed(const Duration(milliseconds: 800));
+      }
+    }
+    final format = media == null ? null : pickFormat(media, pref);
+    if (media != null && format != null && media.canDownload) {
+      final task = await c.read(downloadManagerProvider.notifier).enqueue(media: media, format: format);
+      // ignore: avoid_print
+      print('[bg] enqueued ${task.id}');
+      _pumpOverlay(c, task.id);
+      if (foreground) {
+        await Future<void>.delayed(const Duration(milliseconds: 600));
+        try {
+          await MediaEvents.channel.invokeMethod<void>('moveToBack');
+        } catch (_) {}
+      }
+      return;
+    }
+  } catch (e) {
+    // ignore: avoid_print
+    print('[bg] failed: $e');
+    if (e.toString().contains('Already saved')) {
+      try {
+        await MediaEvents.channel.invokeMethod<void>('overlayProgress', {'id': '', 'title': 'Already saved on this phone', 'percent': 1.0, 'speed': '', 'state': 'done'});
+        if (foreground) await MediaEvents.channel.invokeMethod<void>('moveToBack');
+      } catch (_) {}
+      return;
+    }
+  }
+  try {
+    await MediaEvents.channel.invokeMethod<void>('overlayProgress', {'id': '', 'title': '', 'percent': 0.0, 'speed': '', 'state': 'failed'});
+  } catch (_) {}
+  if (foreground) unawaited(offerLink(url));
+}
+
+ProviderContainer? _appContainer() {
+  final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
+  if (ctx == null || !ctx.mounted) return null;
+  return ProviderScope.containerOf(ctx, listen: false);
+}
+
 void listenForQuickActions() {
-  if (!Plat.isAndroid) return;
+  installOverlayHandlers(_appContainer);  if (!Plat.isAndroid) return;
   var busy = false;
   Future<void> run(Object? action) async {
     if (busy || action is! String) return;
-    if (action != 'hotspot_share' && action != 'paste' && action != 'library') return;
+    if (action.startsWith('bg_download|')) {
+      var rest = action.substring(12);
+      var pref = 'best';
+      final bar = rest.indexOf('|');
+      if (bar > 0 && {'best', '1080', '720', '480', 'audio'}.contains(rest.substring(0, bar))) {
+        pref = rest.substring(0, bar);
+        rest = rest.substring(bar + 1);
+      }
+      final url = videoLinkIn(rest);
+      if (url == null) return;
+      busy = true;
+      try {
+        try {
+          await MediaEvents.channel.invokeMethod<void>('consumeQuickAction');
+        } catch (_) {}
+        final c = _appContainer();
+        if (c == null) return;
+        await runBgDownload(c, pref, url, foreground: true);
+      } finally {
+        busy = false;
+      }
+      return;
+    }    if (action != 'hotspot_share' && action != 'paste' && action != 'library') return;
     busy = true;
     try {
       try {

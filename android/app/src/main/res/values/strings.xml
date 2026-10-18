@@ -7,4 +7,6 @@
     <string name="shortcut_hotspot_long">Share with a phone or PC</string>
     <string name="shortcut_library_short">Library</string>
     <string name="shortcut_library_long">Open your Library</string>
+    <string name="linkwatch_label">SocialSave link detection</string>
+    <string name="linkwatch_description">Notices when you copy a public video link (TikTok, Instagram, YouTube, Facebook, X, Reddit, Pinterest) and offers to download it. Only the copied link is checked, on this phone. It does not read your screen, and nothing is stored or sent until you tap Download.</string>
 </resources>

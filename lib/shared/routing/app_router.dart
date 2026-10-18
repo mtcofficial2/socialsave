@@ -1,6 +1,7 @@
 import 'package:animations/animations.dart';
 import 'package:social_save/features/audio/music_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:social_save/features/home/presentation/screens/browse_screen.dart';
 import 'package:social_save/features/library/share_hub.dart';
 import 'package:social_save/shared/routing/onboarding.dart';
 import 'package:go_router/go_router.dart';
@@ -21,6 +22,7 @@ import 'package:social_save/shared/models/media_info.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/shared/routing/app_shell.dart';
 import 'package:social_save/features/home/presentation/widgets/link_offer.dart';
+import 'package:social_save/features/settings/presentation/screens/background_detect_screen.dart';
 import 'package:social_save/shared/widgets/glass.dart';
 import 'package:social_save/shared/widgets/windows_drop_zone.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -140,6 +142,14 @@ final appRouter = GoRouter(
           ],
         ),
       ],
+    ),
+    GoRoute(
+      path: '/browse',
+      pageBuilder: (context, state) => _page(state, const BrowseScreen()),
+    ),
+    GoRoute(
+      path: '/background-detect',
+      pageBuilder: (context, state) => _page(state, const BackgroundDetectScreen()),
     ),
     GoRoute(
       path: '/music',

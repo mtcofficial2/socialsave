@@ -1,7 +1,7 @@
 name: social_save
 description: SocialSave - a compliant social media video downloader and manager.
 publish_to: "none"
-version: 1.0.41+47
+version: 1.0.42+48
 
 environment:
   sdk: ^3.12.2
@@ -40,6 +40,7 @@ dependencies:
   crypto: ^3.0.6
   animations: ^2.0.11
   url_launcher: ^6.3.1
+  webview_flutter: ^4.10.0
   dynamic_color: ^1.8.1
   cryptography: ^2.7.0
   qr_flutter: ^4.1.0

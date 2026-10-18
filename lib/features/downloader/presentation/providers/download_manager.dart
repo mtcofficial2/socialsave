@@ -739,7 +739,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     var lastChange = DateTime.now();
     while (DateTime.now().difference(started) < const Duration(hours: 12)) {
       // The engine is on this device: poll often so the bar moves in small steps.
-      await Future<void>.delayed(const Duration(milliseconds: 400));
+      await Future<void>.delayed(const Duration(milliseconds: 250));
       if (taskId != null) {
         final task = state.byId(taskId);
         if (task == null || !task.status.isActive || task.status == DownloadStatus.paused) {

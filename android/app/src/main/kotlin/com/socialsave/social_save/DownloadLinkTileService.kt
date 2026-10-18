@@ -3,11 +3,12 @@ package com.socialsave.social_save
 import android.app.PendingIntent
 import android.content.Intent
 import android.os.Build
+import android.os.SystemClock
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 
-/** Quick Settings tile "SocialSave hotspot share": opens the app straight
- *  into Hotspot share (hotspot + QR, no file needed). */
+/** Quick Settings tile "Download copied link": one tap reads the clipboard through
+ *  the invisible [ClipboardPeekActivity] and shows the Download card. */
 class DownloadLinkTileService : TileService() {
     override fun onStartListening() {
         super.onStartListening()
@@ -20,9 +21,9 @@ class DownloadLinkTileService : TileService() {
 
     override fun onClick() {
         super.onClick()
-        val intent = Intent(this, MainActivity::class.java).apply {
-            putExtra(MainActivity.EXTRA_QUICK_ACTION, "paste")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        val intent = Intent(this, ClipboardPeekActivity::class.java).apply {
+            putExtra("t0", SystemClock.uptimeMillis())
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
         }
         if (Build.VERSION.SDK_INT >= 34) {
             val pi = PendingIntent.getActivity(
