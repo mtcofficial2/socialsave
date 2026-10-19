@@ -30,7 +30,7 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
   static const _dynamicColor =
       '${AppConstants.settingsPrefsPrefix}useDynamicColor';
   static const _classicHome = '${AppConstants.settingsPrefsPrefix}classicHome';
-  static const _minimalShortcuts = '${AppConstants.settingsPrefsPrefix}minimalShortcuts';
+  static const _minimalShortcuts = '${AppConstants.settingsPrefsPrefix}minimalShortcutsV2'; // 1.0.45: on by default (new key so an earlier saved 'off' doesn't stick)
   static const _classicLibrary = '${AppConstants.settingsPrefsPrefix}classicLibrary';
   static const _offerCopiedLinks = '${AppConstants.settingsPrefsPrefix}offerCopiedLinks';
   static const _onlyWhileCharging =
