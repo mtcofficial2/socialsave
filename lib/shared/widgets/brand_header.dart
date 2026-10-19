@@ -173,11 +173,29 @@ class StitchNavBar extends StatelessWidget {
   final ValueChanged<int> onSelect;
   final int downloadBadge;
 
+  /// 1.0.47: fill of the active-tab oval (Telegram style): a soft, slightly
+  /// lighter translucent stadium, tinted with the accent.
+  static Color ovalColor(ColorScheme scheme) {
+    final dark = scheme.brightness == Brightness.dark;
+    return Color.alphaBlend(
+      scheme.primary.withValues(alpha: dark ? 0.16 : 0.13),
+      dark ? Colors.white.withValues(alpha: 0.07) : scheme.onSurface.withValues(alpha: 0.03),
+    );
+  }
+
+  static const _tabs = <(IconData, IconData, String)>[
+    (Icons.home_outlined, Icons.home_rounded, 'Home'),
+    (Icons.video_library_outlined, Icons.video_library_rounded, 'Library'),
+    (Icons.download_outlined, Icons.download_rounded, 'Downloads'),
+    (Icons.tune_outlined, Icons.tune_rounded, 'Settings'),
+  ];
+
   @override
   Widget build(BuildContext context) {
     // 1.0.45: a detached pill, 16 px in from the sides and a little above the
     // system inset, instead of reaching down into the gesture area.
     final inset = MediaQuery.paddingOf(context).bottom;
+    final scheme = Theme.of(context).colorScheme;
     return Padding(
       padding: EdgeInsets.fromLTRB(16, 0, 16, 10 + inset),
       child: FloatingGlass(
@@ -188,26 +206,40 @@ class StitchNavBar extends StatelessWidget {
           removeBottom: true,
           child: SizedBox(
             height: 64,
-            child: Row(
-              children: [
-                _item(context, 0, Icons.home_outlined, Icons.home_rounded, 'Home'),
-                _item(
-                  context,
-                  1,
-                  Icons.video_library_outlined,
-                  Icons.video_library_rounded,
-                  'Library',
-                ),
-                _item(
-                  context,
-                  2,
-                  Icons.download_outlined,
-                  Icons.download_rounded,
-                  'Downloads',
-                  badge: downloadBadge,
-                ),
-                _item(context, 3, Icons.tune_outlined, Icons.tune_rounded, 'Settings'),
-              ],
+            child: LayoutBuilder(
+              builder: (context, box) {
+                final w = box.maxWidth / _tabs.length;
+                const pad = 5.0;
+                return Stack(
+                  children: [
+                    // One oval behind the active tab's icon AND label; it
+                    // slides to the tapped tab.
+                    AnimatedPositioned(
+                      duration: const Duration(milliseconds: 320),
+                      curve: Curves.easeOutCubic,
+                      left: w * index.clamp(0, _tabs.length - 1) + pad,
+                      top: pad,
+                      bottom: pad,
+                      width: w - pad * 2,
+                      child: IgnorePointer(
+                        child: DecoratedBox(
+                          key: const ValueKey('nav-active-oval'),
+                          decoration: ShapeDecoration(
+                            color: ovalColor(scheme),
+                            shape: const StadiumBorder(),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Row(
+                      children: [
+                        for (var i = 0; i < _tabs.length; i++)
+                          _item(context, i, _tabs[i].$1, _tabs[i].$2, _tabs[i].$3, badge: i == 2 ? downloadBadge : 0),
+                      ],
+                    ),
+                  ],
+                );
+              },
             ),
           ),
         ),
@@ -225,74 +257,79 @@ class StitchNavBar extends StatelessWidget {
   }) {
     final selected = index == i;
     final scheme = Theme.of(context).colorScheme;
-    final color = selected ? scheme.primary : scheme.onSurface.withValues(alpha: 0.82);
+    final color = selected ? scheme.primary : scheme.onSurface.withValues(alpha: 0.86);
     return Expanded(
       child: Semantics(
         button: true,
         selected: selected,
         label: label,
-        child: InkWell(
-          onTap: () => onSelect(i),
-          customBorder: const StadiumBorder(),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 260),
-                curve: Curves.easeOutCubic,
-                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 5),
-                decoration: BoxDecoration(
-                  color: selected ? scheme.primary.withValues(alpha: 0.20) : Colors.transparent,
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: AnimatedScale(
-                  scale: selected ? 1.1 : 1.0,
-                  duration: const Duration(milliseconds: 260),
-                  curve: Curves.easeOutBack,
-                  child: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    Icon(selected ? selectedIcon : icon, color: color, size: 24),
-                    if (badge > 0)
-                      Positioned(
-                        top: -6,
-                        right: -10,
-                        child: Container(
-                          constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
-                          padding: const EdgeInsets.symmetric(horizontal: 4),
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: scheme.primary,
-                            borderRadius: BorderRadius.circular(999),
-                            border: Border.all(color: scheme.surface, width: 2),
-                          ),
-                          child: Text(
-                            badge > 9 ? '9+' : '$badge',
-                            style: TextStyle(
-                              color: scheme.onPrimary,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w800,
-                              height: 1,
+        child: Padding(
+          padding: const EdgeInsets.all(5),
+          child: Material(
+            type: MaterialType.transparency,
+            shape: const StadiumBorder(),
+            child: InkWell(
+              onTap: () => onSelect(i),
+              customBorder: const StadiumBorder(),
+              // Stadium-shaped feedback only: no square highlight flash.
+              highlightColor: Colors.transparent,
+              hoverColor: scheme.onSurface.withValues(alpha: 0.04),
+              splashColor: scheme.primary.withValues(alpha: 0.10),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  AnimatedScale(
+                    scale: selected ? 1.06 : 1.0,
+                    duration: const Duration(milliseconds: 260),
+                    curve: Curves.easeOutBack,
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 200),
+                          child: Icon(selected ? selectedIcon : icon, key: ValueKey(selected), color: color, size: 24),
+                        ),
+                        if (badge > 0)
+                          Positioned(
+                            top: -6,
+                            right: -10,
+                            child: Container(
+                              constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+                              padding: const EdgeInsets.symmetric(horizontal: 4),
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: scheme.primary,
+                                borderRadius: BorderRadius.circular(999),
+                                border: Border.all(color: scheme.surface, width: 2),
+                              ),
+                              child: Text(
+                                badge > 9 ? '9+' : '$badge',
+                                style: TextStyle(
+                                  color: scheme.onPrimary,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                  height: 1,
+                                ),
+                              ),
                             ),
                           ),
-                        ),
-                      ),
-                  ],
-                ),
-                ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  AnimatedDefaultTextStyle(
+                    duration: const Duration(milliseconds: 220),
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                      color: color,
+                      height: 1.1,
+                    ),
+                    child: FittedBox(fit: BoxFit.scaleDown, child: Text(label, maxLines: 1, softWrap: false)),
+                  ),
+                ],
               ),
-              const SizedBox(height: 2),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                  color: color,
-                  height: 1.1,
-                  shadows: [Shadow(color: scheme.surface.withValues(alpha: 0.7), blurRadius: 6)],
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       ),

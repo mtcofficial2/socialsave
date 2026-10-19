@@ -1,3 +1,4 @@
+import 'package:social_save/shared/widgets/brand_header.dart';
 import 'package:flutter/material.dart';
 import 'package:social_save/core/constants/app_constants.dart';
 import 'package:social_save/shared/widgets/app_logo.dart';
@@ -154,11 +155,11 @@ class _SideDestinationState extends State<_SideDestination> {
             constraints: const BoxConstraints(minHeight: 46),
             decoration: BoxDecoration(
               color: selected
-                  ? scheme.primary.withValues(alpha: 0.20)
+                  ? StitchNavBar.ovalColor(scheme)
                   : _hover
                       ? scheme.onSurface.withValues(alpha: 0.06)
                       : Colors.transparent,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(999),
             ),
             padding: const EdgeInsets.symmetric(horizontal: 14),
             child: Row(
@@ -171,7 +172,7 @@ class _SideDestinationState extends State<_SideDestination> {
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-                      color: selected ? scheme.onSurface : scheme.onSurfaceVariant,
+                      color: selected ? scheme.primary : scheme.onSurfaceVariant,
                     ),
                   ),
                 ),
