@@ -25,8 +25,35 @@ func MapExtractorError(text, pageURL string) *errs.Error {
 		}
 	}
 	if extractor == "youtube" || isYouTubeHost(hostOf(pageURL)) {
-		if containsAny(lower, "sign in to confirm", "age-restricted", "members-only", "join this channel", "private video") {
-			return errs.PrivateVideo("This YouTube video is private, age-restricted, or members-only.")
+		// "Sign in to confirm you're not a bot" is YouTube rate-limiting the
+		// network (the hosted server's data-centre IP gets it all the time),
+		// not a private video. Each case now gets its own message.
+		if containsAny(lower, "not a bot", "not a robot", "bot check") {
+			return errs.PlatformUnavailable("YouTube is asking this network for a bot check, so it refused the request. The video itself is fine. Wait a minute and retry, or try another network.")
+		}
+		if containsAny(lower, "private video", "this video is private") {
+			return errs.PrivateVideo("This YouTube video is private.")
+		}
+		if containsAny(lower, "members-only", "members only", "join this channel") {
+			return errs.PrivateVideo("This YouTube video is for channel members only.")
+		}
+		if containsAny(lower, "age-restricted", "confirm your age", "inappropriate for some users") {
+			return errs.PrivateVideo("This YouTube video is age-restricted, so YouTube only shows it to signed-in adults.")
+		}
+		if containsAny(lower, "not made this video available in your country", "not available in your country") {
+			return errs.PlatformUnavailable("This YouTube video is not available in your country.")
+		}
+		if containsAny(lower, "video unavailable", "this video is not available", "account associated with this video has been terminated") {
+			return errs.RemovedVideo()
+		}
+		if containsAny(lower, "live event will begin", "premieres in", "this live event") {
+			return errs.PlatformUnavailable("This YouTube video has not started yet. Try again after it goes live.")
+		}
+		if containsAny(lower, "requested format is not available", "only images are available") {
+			return errs.PlatformUnavailable("YouTube did not offer a downloadable stream for this video. Update the engine in Settings, then retry.")
+		}
+		if strings.Contains(lower, "sign in to confirm") {
+			return errs.PlatformUnavailable("YouTube asked for a sign-in check on this request. Wait a minute and retry.")
 		}
 		if strings.Contains(lower, "unable to download video data") || strings.Contains(lower, "http error 403") {
 			return errs.PlatformUnavailable("YouTube refused the file download. Try another quality, or try again in a moment.")

@@ -406,10 +406,19 @@ String _failureTitle(String message) {
   if (lower.contains('no longer available') || lower.contains('removed')) {
     return 'This video was removed';
   }
-  if (lower.contains('private') ||
-      lower.contains('login') ||
-      lower.contains('not allow') ||
-      lower.contains('members-only')) {
+  // 1.0.44: not every refusal is "private" (YouTube's bot check said that).
+  if (lower.contains('bot check') || lower.contains('not a bot')) {
+    return 'YouTube wants a bot check';
+  }
+  if (lower.contains('members only') || lower.contains('members-only')) {
+    return 'Members-only video';
+  }
+  if (lower.contains('age-restricted')) return 'Age-restricted video';
+  if (lower.contains('not available in your country')) {
+    return 'Not available in your country';
+  }
+  if (lower.contains('not allow')) return 'Download not allowed';
+  if (lower.contains('private') || lower.contains('login')) {
     return 'This video is private';
   }
   if (lower.contains('offline')) return 'No connection';

@@ -1478,6 +1478,12 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         final now = DateTime.now();
         final last = _lastClick;
         final pos = _lastClickPos;
+        // A double-click on a control (play, skip, seek) is two presses of
+        // that control, not a full-screen toggle.
+        if (_overControls) {
+          _lastClick = null;
+          return;
+        }
         if (last != null &&
             pos != null &&
             now.difference(last) < const Duration(milliseconds: 350) &&
@@ -2192,7 +2198,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   String _phoneSubtitle() {
     if (_session.isPreview) return 'Preview · not saved yet';
     if (_session.isVault) return 'Vault · PIN protected';
-    return 'SocialSave player · Double-tap sides to skip';
+    // 1.0.44: no hint line under the title; the player stays quiet.
+    return '';
   }
 
   Widget _phoneMoreButton() {
@@ -2238,6 +2245,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         filling: _fit == BoxFit.cover,
         fullscreen: _fs,
         hasNext: _hasNext,
+        hasPrevious: _queueIndex > 0,
         landscape: MediaQuery.orientationOf(context) == Orientation.landscape,
         showPip: !_session.isVault,
         onBack: () {
@@ -2473,6 +2481,103 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
           ),
         ),
       ],
+    );
+  }
+
+  /// PC (1.0.44): the minimal controls float over the picture, like on the
+  /// phone. Hover shows them, they fade after the idle time, Space / arrows /
+  /// F / double-click keep working.
+  bool get _deskMinimal => DesktopSupport.isWindows && !PlayerChromePrefs.classic.value;
+
+  Widget _desktopMoreMenu() {
+    final file = _session.filePath;
+    final share = file != null && !_session.isVault;
+    return PopupMenuButton<String>(
+      tooltip: 'Share',
+      padding: EdgeInsets.zero,
+      color: const Color(0xF2161619),
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      icon: Icon(Icons.ios_share_rounded, color: Colors.white.withValues(alpha: 0.88), size: 20),
+      onSelected: (v) {
+        if (v == 'send') unawaited(showSendToPhone(context, File(file!), _session.title));
+        if (v == 'tv') unawaited(_playOnTv());
+        if (v == 'open') unawaited(_openExternal());
+        if (v == 'session') sendToSessionPeer(context, File(file!));
+        if (v == 'keys') unawaited(_showShortcuts());
+      },
+      itemBuilder: (_) {
+        const t = TextStyle(color: Colors.white, fontSize: 13.5);
+        return [
+          if (share && ShareSession.active)
+            PopupMenuItem(value: 'session', child: Text('Send to ${ShareSession.peer.value!.name}', style: t)),
+          if (share) ...const [
+            PopupMenuItem(value: 'send', child: Text('Send to another device', style: t)),
+            PopupMenuItem(value: 'tv', child: Text('Play on TV', style: t)),
+            PopupMenuItem(value: 'open', child: Text('Open in another app', style: t)),
+          ],
+          const PopupMenuItem(value: 'keys', child: Text('Keyboard shortcuts', style: t)),
+        ];
+      },
+    );
+  }
+
+  Widget _desktopChrome() {
+    return PremiumPlayerChrome(
+      player: _player,
+      title: _session.title,
+      subtitle: _phoneSubtitle(),
+      rate: _rate,
+      rates: _rates,
+      loop: _loop,
+      muted: _muted,
+      filling: _fit == BoxFit.cover,
+      fullscreen: _fs,
+      hasNext: _hasNext,
+      hasPrevious: _queueIndex > 0,
+      landscape: true,
+      desktop: true,
+      region: _holdControls,
+      onBack: () {
+        if (_fs) {
+          unawaited(_setFs(false));
+        } else if (widget.embedded) {
+          widget.onClose?.call();
+        } else {
+          Navigator.maybePop(context);
+        }
+      },
+      onLock: () => setState(() {
+        _locked = true;
+        _chrome = false;
+        _lockHint = true;
+      }),
+      onTools: () => unawaited(_showTools()),
+      onSkip: (seconds) => unawaited(_skip(seconds)),
+      onPrevious: () => unawaited(_playPrevious()),
+      onNext: () => unawaited(_playNext()),
+      onSetRate: (r) => unawaited(_setRate(r)),
+      onLoop: () => unawaited(_toggleLoop()),
+      onMute: () => unawaited(_toggleMute()),
+      onFit: _cycleFit,
+      onFullscreen: () => unawaited(_toggleFs()),
+      onRotate: null,
+      onAB: _toggleAB,
+      abLabel: _markA == null ? null : (_markB == null ? 'A' : 'A-B'),
+      onSleep: (m) {
+        if (m == 0) {
+          _clearSleep();
+        } else if (m < 0) {
+          _setSleepAtEnd();
+        } else {
+          _setSleep(m);
+        }
+      },
+      sleepActive: _sleepMinutes != null || _sleepAtEnd,
+      moreMenu: _desktopMoreMenu(),
     );
   }
 
@@ -2988,7 +3093,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                 // Always laid out (only faded) so showing it never shifts the video:
                 // the shift moved the seek bar under the mouse mid-click and the
                 // click then seeked to 0:00.
-                if (!phone && !_fs)
+                if (!phone && !_fs && !_deskMinimal)
                   Visibility(
                     visible: _chrome || _showEndCard,
                     maintainSize: true,
@@ -3030,6 +3135,22 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                         )
                       else if (phone)
                         _phoneStage(video)
+                      else if (_deskMinimal)
+                        Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            _videoHero(video),
+                            IgnorePointer(
+                              ignoring: _locked || (!_chrome && !_showEndCard),
+                              child: AnimatedOpacity(
+                                opacity: !_locked && (_chrome || _showEndCard) ? 1 : 0,
+                                duration: const Duration(milliseconds: 220),
+                                curve: Curves.easeOutCubic,
+                                child: _desktopChrome(),
+                              ),
+                            ),
+                          ],
+                        )
                       else
                         _VideoStage(
                           width: _frameWidth,
@@ -3048,7 +3169,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                         ),
                       // PC full screen: the same top bar floats over the picture
                       // and hides with the other controls.
-                      if (!phone && _fs && !_locked && _error == null)
+                      if (!phone && _fs && !_locked && _error == null && !_deskMinimal)
                         Positioned(
                           left: 0,
                           right: 0,
@@ -3092,11 +3213,11 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                   ),
                 ),
                 if (!_ready && _error == null)
-                  LinearProgressIndicator(
-                    color: phone
-                        ? PhonePlayerChrome.violet
-                        : AppColors.secondaryContainer,
-                    backgroundColor: Colors.white10,
+                  // Quiet hairline while the file opens.
+                  const LinearProgressIndicator(
+                    minHeight: 2,
+                    color: Color(0xB3FFFFFF),
+                    backgroundColor: Color(0x14FFFFFF),
                   ),
               ],
             ),
