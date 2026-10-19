@@ -34,6 +34,9 @@ type Handle struct {
 	Proxy bool
 	// Stream asks the API to build one playable MP4 and send it to the player.
 	Stream bool
+	// AudioURL (Preview only) is a separate audio stream the player adds to
+	// UpstreamURL, so split video+audio starts at once with no merge.
+	AudioURL string
 }
 
 // Provider resolves one platform.

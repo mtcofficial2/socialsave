@@ -45,6 +45,11 @@ import 'package:social_save/features/settings/data/datasources/settings_store.da
 import 'package:social_save/features/player/player_session.dart';
 import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/routing/app_router.dart';
+import 'package:social_save/features/audio/audio_service.dart' as test_audio;
+import 'package:social_save/features/audio/music_screen.dart' as test_music;
+import 'package:social_save/features/player/preview_timing.dart';
+import 'package:social_save/features/downloader/presentation/screens/preview_screen.dart' show resolvePreviewStream;
+import 'package:social_save/features/downloader/presentation/providers/preview_controller.dart';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -319,6 +324,15 @@ Future<void> main(List<String> args) async {
   // Screenshot hook: `--open /library` starts on that tab.
   final op = args.indexOf('--open');
   if (op >= 0 && op + 1 < args.length) debugInitialLocation = args[op + 1];
+  // Screenshot hooks (test data only, never saved): theme and home shortcuts.
+  if (args.contains('--test-data')) {
+    final th = args.indexOf('--theme');
+    if (th >= 0 && th + 1 < args.length) {
+      settings = settings.copyWith(themeMode: args[th + 1] == 'light' ? ThemeMode.light : ThemeMode.dark);
+    }
+    if (args.contains('--minimal-shortcuts')) settings = settings.copyWith(minimalShortcuts: true);
+    if (args.contains('--card-shortcuts')) settings = settings.copyWith(minimalShortcuts: false);
+  }
   if (args.contains('--open-vault')) debugOpenVault = true;
   if (args.contains('--open-menu')) debugOpenMenu = true;
   if (args.contains('--dock-first')) debugDockFirst = true;
@@ -359,6 +373,74 @@ Future<void> main(List<String> args) async {
   unawaited(DesktopTray.install());
   installNearbyUi();
   if (args.contains('--picker-test')) unawaited(_pickerTest());
+  // Timing hook: `--test-data --preview-test <url> [--preview-legacy]` runs
+  // Analyze, then the Preview button's path, and logs each step to
+  // <temp>/socialsave_preview.log (time-to-first-frame).
+  final pv = args.indexOf('--preview-test');
+  if (pv >= 0 && pv + 1 < args.length && args.contains('--test-data')) {
+    PreviewTiming.legacy = args.contains('--preview-legacy');
+    final url = args[pv + 1];
+    unawaited(Future<void>.delayed(const Duration(seconds: 3), () async {
+      final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
+      if (ctx == null || !ctx.mounted) return;
+      final c = ProviderScope.containerOf(ctx, listen: false);
+      try {
+        final sw = Stopwatch()..start();
+        final repo = c.read(mediaRepositoryProvider);
+        final media = await repo.analyze(url);
+        PreviewTiming.log('preview analyze ms=${sw.elapsedMilliseconds} $url');
+        final format = c.read(previewControllerProvider(media)).selectedFormat ?? media.formats.first;
+        PreviewTiming.log('preview chosen-format ${format.id}');
+        final (stream, ticket) = await resolvePreviewStream(repo, media, format);
+        await appRouter.push(
+          '/player',
+          extra: PlayerSession(
+            title: media.title,
+            platform: media.platform,
+            networkUrl: stream,
+            thumbnailUrl: media.thumbnailUrl,
+            author: media.author,
+            referer: media.sourceUrl,
+            httpHeaders: ticket.requestHeaders,
+            audioUrl: ticket.audioUrl,
+            isPreview: true,
+          ),
+        );
+      } catch (error) {
+        PreviewTiming.log('preview ERROR $error');
+      }
+    }));
+  }
+  // Screenshot hook: `--test-data --play-audio a.mp3 b.mp3 [--now-playing]`.
+  final pa = args.indexOf('--play-audio');
+  if (pa >= 0 && args.contains('--test-data')) {
+    final files = <String>[];
+    for (final f in args.sublist(pa + 1)) {
+      if (f.startsWith('--')) break;
+      if (File(f).existsSync()) files.add(f);
+    }
+    if (files.isNotEmpty) {
+      unawaited(Future<void>.delayed(const Duration(seconds: 4), () async {
+        final songs = [
+          for (final f in files)
+            test_audio.Song(
+              key: 'w:$f',
+              path: f,
+              title: File(f).uri.pathSegments.last.replaceAll(RegExp(r'\.[^.]+$'), ''),
+              artist: 'SocialSave',
+              album: 'Test',
+              folder: 'Test',
+              durationMs: 0,
+            ),
+        ];
+        await test_audio.AudioController.instance.playQueue(songs, 0);
+        if (args.contains('--now-playing')) {
+          final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
+          if (ctx != null && ctx.mounted) test_music.openNowPlaying(ctx);
+        }
+      }));
+    }
+  }
   final su = args.indexOf('--session-ui-test');
   if (su >= 0 && su + 2 < args.length) unawaited(_sessionUiTest(args[su + 1], args[su + 2]));
   final pt = args.indexOf('--pair-test');

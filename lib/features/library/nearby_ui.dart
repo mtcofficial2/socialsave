@@ -12,6 +12,7 @@ import 'package:social_save/features/library/share_session.dart';
 import 'package:social_save/features/library/presentation/library_look.dart';
 import 'package:social_save/features/library/usb_link.dart';
 import 'package:social_save/features/player/player_session.dart';
+import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
 import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/routing/app_router.dart';
 
@@ -242,6 +243,25 @@ class _NearbyDeviceChipsState extends State<NearbyDeviceChips> {
   Future<void> _tap(NearbyDevice device) async {
     final file = widget.file ?? await widget.pickFile?.call();
     if (file == null || !mounted) return;
+    if (device.isCable) {
+      // 1.0.45: cable / USB devices use the shared session (same screen,
+      // progress and received list as the hotspot share).
+      final messenger = ScaffoldMessenger.of(context);
+      final err = await ShareSession.openOverCable(
+        id: device.id,
+        host: device.host,
+        port: device.port,
+        link: device.link,
+        first: file,
+      );
+      if (!mounted) return;
+      if (err != null) {
+        messenger.showSnackBar(SnackBar(content: Text(err)));
+      } else if (!ShareSession.screenOpen && InAppPlayerScreen.openCount == 0) {
+        await openSessionScreen(context);
+      }
+      return;
+    }
     await sendToNearby(context, device, file);
   }
 

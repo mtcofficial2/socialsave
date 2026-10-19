@@ -453,6 +453,28 @@ class SongTile extends StatelessWidget {
 }
 
 /// Slim player docked above the navigation bar.
+const _tabularFigures = [FontFeature.tabularFigures()];
+
+/// Opens the full player with a soft fade and rise.
+void openNowPlaying(BuildContext context) {
+  Navigator.of(context, rootNavigator: true).push(PageRouteBuilder<void>(
+    transitionDuration: const Duration(milliseconds: 380),
+    reverseTransitionDuration: const Duration(milliseconds: 280),
+    pageBuilder: (_, a, __) => const NowPlayingScreen(),
+    transitionsBuilder: (_, a, __, child) {
+      final curved = CurvedAnimation(parent: a, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic);
+      return FadeTransition(
+        opacity: curved,
+        child: SlideTransition(
+          position: Tween(begin: const Offset(0, 0.08), end: Offset.zero).animate(curved),
+          child: child,
+        ),
+      );
+    },
+  ));
+}
+
+/// 1.0.45: floating, theme-aware mini player (light and dark).
 class MiniAudioBar extends StatefulWidget {
   const MiniAudioBar({super.key});
 
@@ -471,12 +493,15 @@ class _MiniAudioBarState extends State<MiniAudioBar> {
   @override
   Widget build(BuildContext context) {
     final ctl = AudioController.instance;
+    final scheme = Theme.of(context).colorScheme;
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return ListenableBuilder(
       listenable: ctl,
       builder: (context, _) {
         final s = ctl.current;
         return AnimatedSize(
-          duration: const Duration(milliseconds: 220),
+          duration: const Duration(milliseconds: 260),
+          curve: Curves.easeOutCubic,
           child: s == null
               ? const SizedBox(width: double.infinity)
               : Padding(
@@ -486,67 +511,126 @@ class _MiniAudioBarState extends State<MiniAudioBar> {
                     direction: DismissDirection.horizontal,
                     onDismissed: (_) => ctl.close(),
                     child: GestureDetector(
-                    onVerticalDragEnd: (d) {
-                      if ((d.primaryVelocity ?? 0) > 300) ctl.close();
-                    },
-                    child: Material(
-                    color: Theme.of(context).colorScheme.secondaryContainer,
-                    borderRadius: BorderRadius.circular(22),
-                    clipBehavior: Clip.antiAlias,
-                    child: Semantics(
-                      label: 'Now playing ${s.title} by ${s.artist}. Tap to open the player.',
-                      button: true,
-                      child: InkWell(
-                        onTap: () => Navigator.of(context, rootNavigator: true).push(PageRouteBuilder<void>(
-                          pageBuilder: (_, a, __) => const NowPlayingScreen(),
-                          transitionsBuilder: (_, a, __, child) => SlideTransition(
-                            position: Tween(begin: const Offset(0, 1), end: Offset.zero).chain(CurveTween(curve: Curves.easeOutCubic)).animate(a),
-                            child: child,
-                          ),
-                        )),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(8, 6, 4, 4),
-                              child: Row(
-                                children: [
-                                  AlbumArt(song: s, size: 44, radius: 12),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(s.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
-                                        Text(s.artist, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall),
-                                      ],
-                                    ),
-                                  ),
-                                  IconButton(tooltip: ctl.playing ? 'Pause' : 'Play', icon: Icon(ctl.playing ? Icons.pause_rounded : Icons.play_arrow_rounded), onPressed: () {
-                                    HapticFeedback.lightImpact();
-                                    ctl.toggle();
-                                  }),
-                                  IconButton(tooltip: 'Next song', icon: const Icon(Icons.skip_next_rounded), onPressed: ctl.next),
-                                  IconButton(tooltip: 'Close player', icon: const Icon(Icons.close_rounded), onPressed: () {
-                                    HapticFeedback.selectionClick();
-                                    ctl.close();
-                                  }),
-                                ],
-                              ),
-                            ),
-                            ValueListenableBuilder<Duration>(
-                              valueListenable: ctl.position,
-                              builder: (_, pos, __) {
-                                final total = ctl.duration.inMilliseconds > 0 ? ctl.duration.inMilliseconds : s.durationMs;
-                                return LinearProgressIndicator(minHeight: 2, value: total > 0 ? (pos.inMilliseconds / total).clamp(0.0, 1.0) : 0);
-                              },
+                      onVerticalDragEnd: (d) {
+                        final v = d.primaryVelocity ?? 0;
+                        if (v > 300) ctl.close();
+                        if (v < -300) openNowPlaying(context);
+                      },
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: dark ? 0.35 : 0.10),
+                              blurRadius: 24,
+                              offset: const Offset(0, 8),
                             ),
                           ],
                         ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(20),
+                          child: BackdropFilter(
+                            filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                            child: Material(
+                              color: scheme.surfaceContainerHigh.withValues(alpha: dark ? 0.82 : 0.90),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20),
+                                side: BorderSide(color: scheme.outlineVariant.withValues(alpha: dark ? 0.25 : 0.5)),
+                              ),
+                              clipBehavior: Clip.antiAlias,
+                              child: Semantics(
+                                label: 'Now playing ${s.title} by ${s.artist}. Tap to open the player.',
+                                button: true,
+                                child: InkWell(
+                                  onTap: () => openNowPlaying(context),
+                                  child: Stack(
+                                    children: [
+                                      Padding(
+                                        padding: const EdgeInsets.fromLTRB(8, 8, 6, 8),
+                                        child: Row(
+                                          children: [
+                                            AnimatedSwitcher(
+                                              duration: const Duration(milliseconds: 250),
+                                              child: AlbumArt(key: ValueKey(s.key), song: s, size: 42, radius: 11),
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Text(
+                                                    s.title,
+                                                    maxLines: 1,
+                                                    overflow: TextOverflow.ellipsis,
+                                                    style: TextStyle(color: scheme.onSurface, fontSize: 14, fontWeight: FontWeight.w600, letterSpacing: -0.1),
+                                                  ),
+                                                  const SizedBox(height: 1),
+                                                  Text(
+                                                    s.artist,
+                                                    maxLines: 1,
+                                                    overflow: TextOverflow.ellipsis,
+                                                    style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                            _QuietIcon(
+                                              icon: ctl.playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                                              label: ctl.playing ? 'Pause' : 'Play',
+                                              size: 26,
+                                              onTap: () {
+                                                HapticFeedback.lightImpact();
+                                                ctl.toggle();
+                                              },
+                                            ),
+                                            _QuietIcon(icon: Icons.skip_next_rounded, label: 'Next song', size: 24, onTap: ctl.next),
+                                            _QuietIcon(
+                                              icon: Icons.close_rounded,
+                                              label: 'Close player',
+                                              size: 18,
+                                              dim: true,
+                                              onTap: () {
+                                                HapticFeedback.selectionClick();
+                                                ctl.close();
+                                              },
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      Positioned(
+                                        left: 14,
+                                        right: 14,
+                                        bottom: 0,
+                                        child: ValueListenableBuilder<Duration>(
+                                          valueListenable: ctl.position,
+                                          builder: (_, pos, __) {
+                                            final total = ctl.duration.inMilliseconds > 0 ? ctl.duration.inMilliseconds : s.durationMs;
+                                            final f = total > 0 ? (pos.inMilliseconds / total).clamp(0.0, 1.0) : 0.0;
+                                            return ClipRRect(
+                                              borderRadius: BorderRadius.circular(2),
+                                              child: SizedBox(
+                                                height: 2,
+                                                child: Stack(
+                                                  children: [
+                                                    Positioned.fill(child: ColoredBox(color: scheme.onSurface.withValues(alpha: 0.08))),
+                                                    FractionallySizedBox(widthFactor: f, child: ColoredBox(color: scheme.primary)),
+                                                  ],
+                                                ),
+                                              ),
+                                            );
+                                          },
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                  ),
                   ),
                 ),
         );
@@ -555,6 +639,72 @@ class _MiniAudioBarState extends State<MiniAudioBar> {
   }
 }
 
+/// Icon without a plate; a soft theme-tinted circle on hover or press.
+class _QuietIcon extends StatefulWidget {
+  const _QuietIcon({required this.icon, required this.label, required this.onTap, this.size = 24, this.box = 40, this.dim = false, this.color});
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final double size;
+  final double box;
+  final bool dim;
+  final Color? color;
+
+  @override
+  State<_QuietIcon> createState() => _QuietIconState();
+}
+
+class _QuietIconState extends State<_QuietIcon> {
+  bool _hover = false;
+  bool _down = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final lit = _hover || _down;
+    final base = widget.color ?? (widget.dim ? scheme.onSurfaceVariant : scheme.onSurface);
+    return Tooltip(
+      message: widget.label,
+      waitDuration: const Duration(milliseconds: 600),
+      child: Semantics(
+        button: true,
+        label: widget.label,
+        excludeSemantics: true,
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          onEnter: (_) => setState(() => _hover = true),
+          onExit: (_) => setState(() => _hover = false),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown: (_) => setState(() => _down = true),
+            onTapCancel: () => setState(() => _down = false),
+            onTapUp: (_) => setState(() => _down = false),
+            onTap: widget.onTap,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              curve: Curves.easeOut,
+              width: widget.box,
+              height: widget.box,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: scheme.onSurface.withValues(alpha: lit ? 0.08 : 0),
+              ),
+              child: AnimatedScale(
+                scale: _down ? 0.9 : 1,
+                duration: const Duration(milliseconds: 120),
+                child: Icon(widget.icon, size: widget.size, color: base),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 1.0.45 now-playing screen: large soft art, ambient background that
+/// follows the app theme (lighter in light mode), thin seek bar, centred
+/// see-through play/pause, quiet shuffle / repeat and one "⋯" menu.
 class NowPlayingScreen extends StatefulWidget {
   const NowPlayingScreen({super.key});
 
@@ -564,26 +714,70 @@ class NowPlayingScreen extends StatefulWidget {
 
 class _NowPlayingScreenState extends State<NowPlayingScreen> {
   final ctl = AudioController.instance;
+  final _focus = FocusNode(debugLabel: 'now-playing');
   String? _schemeKey;
   ColorScheme? _scheme;
   String? _artPath;
 
-  Future<void> _theme(Song s) async {
-    if (_schemeKey == s.key) return;
-    _schemeKey = s.key;
+  @override
+  void dispose() {
+    _focus.dispose();
+    super.dispose();
+  }
+
+  Future<void> _theme(Song s, Brightness brightness) async {
+    final key = '${s.key}|${brightness.name}';
+    if (_schemeKey == key) return;
+    _schemeKey = key;
     final path = await AudioLibrary.instance.artFor(s);
     ColorScheme? scheme;
     if (path != null && mounted) {
       try {
-        scheme = await ColorScheme.fromImageProvider(provider: FileImage(File(path)), brightness: Brightness.dark);
+        scheme = await ColorScheme.fromImageProvider(provider: FileImage(File(path)), brightness: brightness);
       } catch (_) {}
     }
-    if (mounted && _schemeKey == s.key) {
+    if (mounted && _schemeKey == key) {
       setState(() {
         _scheme = scheme;
         _artPath = path;
       });
     }
+  }
+
+  KeyEventResult _onKey(FocusNode node, KeyEvent e) {
+    if (e is KeyUpEvent) return KeyEventResult.ignored;
+    final k = e.logicalKey;
+    final shift = HardwareKeyboard.instance.isShiftPressed || HardwareKeyboard.instance.isControlPressed;
+    if (k == LogicalKeyboardKey.space || k == LogicalKeyboardKey.mediaPlayPause || k == LogicalKeyboardKey.keyK) {
+      if (e is KeyDownEvent) ctl.toggle();
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowRight || k == LogicalKeyboardKey.arrowLeft) {
+      final forward = k == LogicalKeyboardKey.arrowRight;
+      if (shift) {
+        if (e is KeyDownEvent) forward ? ctl.next() : ctl.previous();
+      } else {
+        final total = ctl.duration;
+        var t = ctl.position.value + Duration(seconds: forward ? 5 : -5);
+        if (t < Duration.zero) t = Duration.zero;
+        if (total > Duration.zero && t > total) t = total;
+        ctl.seek(t);
+      }
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.mediaTrackNext || k == LogicalKeyboardKey.keyN) {
+      if (e is KeyDownEvent) ctl.next();
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.mediaTrackPrevious || k == LogicalKeyboardKey.keyP) {
+      if (e is KeyDownEvent) ctl.previous();
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.escape) {
+      Navigator.maybePop(context);
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
   }
 
   @override
@@ -593,90 +787,80 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
       builder: (context, _) {
         final s = ctl.current;
         if (s == null) return const Scaffold(body: Center(child: Text('Nothing playing')));
-        _theme(s);
         final base = Theme.of(context);
-        final scheme = _scheme ?? ColorScheme.fromSeed(seedColor: base.colorScheme.primary, brightness: Brightness.dark);
+        final brightness = base.brightness;
+        _theme(s, brightness);
+        final light = brightness == Brightness.light;
+        final scheme = _scheme ?? ColorScheme.fromSeed(seedColor: base.colorScheme.primary, brightness: brightness);
         return Theme(
-          data: base.copyWith(colorScheme: scheme),
-          child: Scaffold(
-            backgroundColor: scheme.surface,
-            body: Stack(
-              fit: StackFit.expand,
-              children: [
-                if (_artPath != null)
-                  ImageFiltered(
-                    imageFilter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
-                    child: Image.file(File(_artPath!), fit: BoxFit.cover),
-                  ),
-                ColoredBox(color: scheme.surface.withValues(alpha: _artPath != null ? 0.72 : 1)),
-                SafeArea(
-                  child: Column(
-                    children: [
-                      Row(
-                        children: [
-                          IconButton(tooltip: 'Close player', icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 32), onPressed: () => Navigator.pop(context)),
-                          const Expanded(child: Center(child: Text('Now playing', style: TextStyle(fontWeight: FontWeight.w700)))),
-                          IconButton(tooltip: 'Send this song', icon: const Icon(Icons.send_rounded), onPressed: () => sendSong(context, s)),
-                          IconButton(tooltip: 'Close player', icon: const Icon(Icons.close_rounded), onPressed: () {
-                            ctl.close();
-                            Navigator.pop(context);
-                          }),
-                        ],
-                      ),
-                      Expanded(
-                        child: LayoutBuilder(
-                          builder: (context, c) {
-                            final art = (c.maxHeight * 0.55).clamp(160.0, 340.0);
-                            return SingleChildScrollView(
-                              child: ConstrainedBox(
-                                constraints: BoxConstraints(minHeight: c.maxHeight),
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    AnimatedSwitcher(
-                                      duration: const Duration(milliseconds: 300),
-                                      child: Container(
-                                        key: ValueKey(s.key),
-                                        decoration: BoxDecoration(boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.35), blurRadius: 30, offset: const Offset(0, 14))], borderRadius: BorderRadius.circular(24)),
-                                        child: AlbumArt(song: s, size: art, radius: 24),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 24),
-                                    Padding(
-                                      padding: const EdgeInsets.symmetric(horizontal: 28),
-                                      child: Row(
-                                        children: [
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment: CrossAxisAlignment.start,
-                                              children: [
-                                                Text(s.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
-                                                Text(s.artist, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: scheme.onSurfaceVariant)),
-                                              ],
-                                            ),
-                                          ),
-                                          IconButton(
-                                            tooltip: ctl.isFavorite(s) ? 'Remove from favorites' : 'Add to favorites',
-                                            icon: Icon(ctl.isFavorite(s) ? Icons.favorite_rounded : Icons.favorite_border_rounded, color: ctl.isFavorite(s) ? Colors.redAccent : null),
-                                            onPressed: () => ctl.toggleFavorite(s),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    _seek(s),
-                                    _controls(context),
-                                    _extras(context),
-                                  ],
-                                ),
-                              ),
-                            );
-                          },
+          data: base.copyWith(
+            colorScheme: scheme,
+            popupMenuTheme: PopupMenuThemeData(
+              color: scheme.surfaceContainerHigh,
+              surfaceTintColor: Colors.transparent,
+              elevation: 10,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.4)),
+              ),
+              textStyle: TextStyle(color: scheme.onSurface, fontSize: 14),
+            ),
+          ),
+          child: Builder(
+            builder: (context) => Focus(
+              focusNode: _focus,
+              autofocus: true,
+              onKeyEvent: _onKey,
+              child: Scaffold(
+                backgroundColor: scheme.surface,
+                body: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    // Ambient background: blurred art, washed with the
+                    // surface colour (stronger wash in light mode).
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 600),
+                      child: _artPath == null
+                          ? const SizedBox.expand()
+                          : ImageFiltered(
+                              key: ValueKey(_artPath),
+                              imageFilter: ImageFilter.blur(sigmaX: 60, sigmaY: 60, tileMode: TileMode.mirror),
+                              child: Image.file(File(_artPath!), fit: BoxFit.cover, width: double.infinity, height: double.infinity),
+                            ),
+                    ),
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            scheme.surface.withValues(alpha: _artPath != null ? (light ? 0.55 : 0.50) : 0.0),
+                            scheme.surface.withValues(alpha: _artPath != null ? (light ? 0.80 : 0.78) : 0.0),
+                            scheme.surface.withValues(alpha: light ? 0.96 : 0.94),
+                          ],
+                          stops: const [0, 0.5, 1],
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                    // Soft colour glow behind the art.
+                    IgnorePointer(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: RadialGradient(
+                            center: const Alignment(0, -0.35),
+                            radius: 0.9,
+                            colors: [
+                              scheme.primaryContainer.withValues(alpha: light ? 0.55 : 0.30),
+                              scheme.primaryContainer.withValues(alpha: 0),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    SafeArea(child: _body(context, s, scheme, light)),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         );
@@ -684,145 +868,539 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
     );
   }
 
-  Widget _seek(Song s) {
-    return ValueListenableBuilder<Duration>(
-      valueListenable: ctl.position,
-      builder: (context, pos, _) {
-        final total = ctl.duration.inMilliseconds > 0 ? ctl.duration : Duration(milliseconds: s.durationMs);
-        final max = total.inMilliseconds.toDouble();
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Column(
+  Widget _body(BuildContext context, Song s, ColorScheme scheme, bool light) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+          child: Row(
             children: [
-              Semantics(
-                label: 'Seek bar, ${_fmt(pos)} of ${_fmt(total)}',
-                child: Slider(
-                  value: max > 0 ? pos.inMilliseconds.clamp(0, total.inMilliseconds).toDouble() : 0,
-                  max: max > 0 ? max : 1,
-                  onChanged: max > 0 ? (v) => ctl.seek(Duration(milliseconds: v.round())) : null,
+              _QuietIcon(icon: Icons.keyboard_arrow_down_rounded, label: 'Hide player', size: 28, onTap: () => Navigator.pop(context)),
+              Expanded(
+                child: Center(
+                  child: Text(
+                    'NOW PLAYING',
+                    style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 1.6),
+                  ),
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(_fmt(pos)), Text(_fmt(total))]),
-              ),
+              _menu(context, s, scheme),
             ],
           ),
-        );
-      },
+        ),
+        Expanded(
+          child: LayoutBuilder(
+            builder: (context, c) {
+              final wide = c.maxWidth > 820 && c.maxHeight < 720;
+              final art = wide
+                  ? (c.maxHeight * 0.62).clamp(200.0, 420.0)
+                  : (c.maxHeight * 0.48).clamp(180.0, 380.0).clamp(0.0, c.maxWidth - 56);
+              final artWidget = _art(s, art, scheme, light);
+              final info = ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _titleRow(s, scheme),
+                    const SizedBox(height: 18),
+                    _AudioSeek(ctl: ctl, song: s),
+                    const SizedBox(height: 10),
+                    _controls(context, scheme),
+                    const SizedBox(height: 14),
+                    _upNext(context, scheme),
+                  ],
+                ),
+              );
+              return SingleChildScrollView(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: c.maxHeight),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 28),
+                    child: wide
+                        ? Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [artWidget, const SizedBox(width: 56), Flexible(child: info)],
+                          )
+                        : Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [artWidget, const SizedBox(height: 32), info],
+                          ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 
-  Widget _controls(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        IconButton(tooltip: ctl.shuffle ? 'Shuffle on' : 'Shuffle off', icon: Icon(Icons.shuffle_rounded, color: ctl.shuffle ? scheme.primary : null), onPressed: () {
-          HapticFeedback.selectionClick();
-          ctl.toggleShuffle();
-        }),
-        IconButton(iconSize: 38, tooltip: 'Previous song', icon: const Icon(Icons.skip_previous_rounded), onPressed: () {
-          HapticFeedback.lightImpact();
-          ctl.previous();
-        }),
-        const SizedBox(width: 6),
-        IconButton.filled(
-          iconSize: 42,
-          tooltip: ctl.playing ? 'Pause' : 'Play',
-          icon: AnimatedSwitcher(duration: const Duration(milliseconds: 180), child: Icon(ctl.playing ? Icons.pause_rounded : Icons.play_arrow_rounded, key: ValueKey(ctl.playing))),
-          onPressed: () {
-            HapticFeedback.mediumImpact();
-            ctl.toggle();
-          },
+  Widget _art(Song s, double size, ColorScheme scheme, bool light) {
+    return AnimatedScale(
+      scale: ctl.playing ? 1 : 0.94,
+      duration: const Duration(milliseconds: 420),
+      curve: Curves.easeOutCubic,
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 380),
+        switchInCurve: Curves.easeOutCubic,
+        transitionBuilder: (c, a) => FadeTransition(
+          opacity: a,
+          child: ScaleTransition(scale: Tween(begin: 0.96, end: 1.0).animate(a), child: c),
         ),
-        const SizedBox(width: 6),
-        IconButton(iconSize: 38, tooltip: 'Next song', icon: const Icon(Icons.skip_next_rounded), onPressed: () {
-          HapticFeedback.lightImpact();
-          ctl.next();
-        }),
-        IconButton(
-          tooltip: 'Repeat: ${ctl.repeat.name}',
-          icon: Icon(ctl.repeat == AudioRepeat.one ? Icons.repeat_one_rounded : Icons.repeat_rounded, color: ctl.repeat != AudioRepeat.off ? scheme.primary : null),
-          onPressed: () {
+        child: Container(
+          key: ValueKey(s.key),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(28),
+            boxShadow: [
+              BoxShadow(
+                color: (light ? scheme.shadow : Colors.black).withValues(alpha: light ? 0.18 : 0.45),
+                blurRadius: light ? 36 : 44,
+                offset: const Offset(0, 18),
+              ),
+            ],
+          ),
+          child: AlbumArt(song: s, size: size, radius: 28),
+        ),
+      ),
+    );
+  }
+
+  Widget _titleRow(Song s, ColorScheme scheme) {
+    final fav = ctl.isFavorite(s);
+    return Row(
+      children: [
+        Expanded(
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 300),
+            child: Column(
+              key: ValueKey(s.key),
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  s.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: scheme.onSurface, fontSize: 22, fontWeight: FontWeight.w600, letterSpacing: -0.4, height: 1.2),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  s.artist,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 15, letterSpacing: 0.1),
+                ),
+              ],
+            ),
+          ),
+        ),
+        _QuietIcon(
+          icon: fav ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+          label: fav ? 'Remove from favorites' : 'Add to favorites',
+          size: 22,
+          dim: !fav,
+          color: fav ? scheme.primary : null,
+          onTap: () {
             HapticFeedback.selectionClick();
-            ctl.cycleRepeat();
+            ctl.toggleFavorite(s);
           },
         ),
       ],
     );
   }
 
-  Widget _extras(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
+  Widget _controls(BuildContext context, ColorScheme scheme) {
+    Widget toggle(IconData icon, String label, bool on, VoidCallback onTap) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          PopupMenuButton<double>(
-            tooltip: 'Playback speed',
-            onSelected: ctl.setSpeed,
-            itemBuilder: (_) => [for (final v in const [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]) PopupMenuItem(value: v, child: Text('${v}x'))],
-            child: Padding(padding: const EdgeInsets.all(12), child: Row(children: [const Icon(Icons.speed_rounded), const SizedBox(width: 4), Text('${ctl.speed}x')])),
+          _QuietIcon(
+            icon: icon,
+            label: label,
+            size: 20,
+            dim: !on,
+            color: on ? scheme.primary : null,
+            onTap: () {
+              HapticFeedback.selectionClick();
+              onTap();
+            },
           ),
-          PopupMenuButton<int>(
-            tooltip: 'Sleep timer',
-            onSelected: (m) => ctl.setSleep(m == 0 ? null : Duration(minutes: m)),
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 0, child: Text('Off')),
-              PopupMenuItem(value: 15, child: Text('15 minutes')),
-              PopupMenuItem(value: 30, child: Text('30 minutes')),
-              PopupMenuItem(value: 45, child: Text('45 minutes')),
-              PopupMenuItem(value: 60, child: Text('1 hour')),
-            ],
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Row(children: [
-                Icon(ctl.sleepAt != null ? Icons.bedtime_rounded : Icons.bedtime_outlined),
-                const SizedBox(width: 4),
-                Text(ctl.sleepAt != null ? 'On' : 'Sleep'),
-              ]),
-            ),
-          ),
-          TextButton.icon(
-            onPressed: () => _queue(context),
-            icon: const Icon(Icons.queue_music_rounded),
-            label: const Text('Queue'),
+          AnimatedOpacity(
+            opacity: on ? 1 : 0,
+            duration: const Duration(milliseconds: 200),
+            child: Container(width: 4, height: 4, decoration: BoxDecoration(color: scheme.primary, shape: BoxShape.circle)),
           ),
         ],
+      );
+    }
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        toggle(Icons.shuffle_rounded, ctl.shuffle ? 'Shuffle on' : 'Shuffle off', ctl.shuffle, ctl.toggleShuffle),
+        _QuietIcon(icon: Icons.skip_previous_rounded, label: 'Previous song', size: 34, box: 56, onTap: () {
+          HapticFeedback.lightImpact();
+          ctl.previous();
+        }),
+        _AudioPlayButton(playing: ctl.playing, onTap: () {
+          HapticFeedback.mediumImpact();
+          ctl.toggle();
+        }),
+        _QuietIcon(icon: Icons.skip_next_rounded, label: 'Next song', size: 34, box: 56, onTap: () {
+          HapticFeedback.lightImpact();
+          ctl.next();
+        }),
+        toggle(
+          ctl.repeat == AudioRepeat.one ? Icons.repeat_one_rounded : Icons.repeat_rounded,
+          'Repeat: ${ctl.repeat.name}',
+          ctl.repeat != AudioRepeat.off,
+          ctl.cycleRepeat,
+        ),
+      ],
+    );
+  }
+
+  /// Quiet "Up next" line; opens the queue.
+  Widget _upNext(BuildContext context, ColorScheme scheme) {
+    final i = ctl.index + 1;
+    final next = i >= 0 && i < ctl.queue.length ? ctl.queue[i] : null;
+    return TextButton.icon(
+      style: TextButton.styleFrom(
+        foregroundColor: scheme.onSurfaceVariant,
+        shape: const StadiumBorder(),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      ),
+      onPressed: () => _queue(context),
+      icon: const Icon(Icons.queue_music_rounded, size: 18),
+      label: Text(
+        next == null ? 'Queue' : 'Up next · ${next.title}',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
       ),
     );
   }
 
+  Widget _menu(BuildContext context, Song s, ColorScheme scheme) {
+    final itemStyle = TextStyle(color: scheme.onSurface, fontSize: 14);
+    PopupMenuItem<String> item(String value, String label, IconData icon, {bool checked = false}) => PopupMenuItem<String>(
+          value: value,
+          height: 42,
+          child: Row(
+            children: [
+              Icon(icon, size: 19, color: scheme.onSurfaceVariant),
+              const SizedBox(width: 14),
+              Expanded(child: Text(label, style: itemStyle)),
+              if (checked) Icon(Icons.check_rounded, size: 17, color: scheme.primary),
+            ],
+          ),
+        );
+    PopupMenuItem<String> header(String t) => PopupMenuItem<String>(
+          enabled: false,
+          height: 30,
+          child: Text(t.toUpperCase(), style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 10.5, fontWeight: FontWeight.w600, letterSpacing: 0.9)),
+        );
+    String rate(double v) => v == v.roundToDouble() ? '${v.toStringAsFixed(0)}×' : '$v×';
+    return PopupMenuButton<String>(
+      tooltip: 'More',
+      position: PopupMenuPosition.under,
+      constraints: const BoxConstraints(minWidth: 220, maxWidth: 280),
+      icon: Icon(Icons.more_horiz_rounded, color: scheme.onSurface),
+      onSelected: (v) {
+        if (v == 'queue') _queue(context);
+        if (v == 'send') sendSong(context, s);
+        if (v == 'stop') {
+          ctl.close();
+          Navigator.pop(context);
+        }
+        if (v.startsWith('speed:')) ctl.setSpeed(double.parse(v.substring(6)));
+        if (v.startsWith('sleep:')) {
+          final m = int.parse(v.substring(6));
+          ctl.setSleep(m == 0 ? null : Duration(minutes: m));
+        }
+      },
+      itemBuilder: (_) => [
+        item('queue', 'Queue', Icons.queue_music_rounded),
+        item('send', 'Send this song', Icons.send_outlined),
+        const PopupMenuDivider(height: 9),
+        header('Speed · ${rate(ctl.speed)}'),
+        for (final v in const [0.75, 1.0, 1.25, 1.5, 2.0])
+          item('speed:$v', rate(v), Icons.speed_rounded, checked: (ctl.speed - v).abs() < 0.01),
+        const PopupMenuDivider(height: 9),
+        header(ctl.sleepAt != null ? 'Sleep timer · on' : 'Sleep timer'),
+        for (final m in const [15, 30, 45, 60])
+          item('sleep:$m', m == 60 ? '1 hour' : '$m minutes', Icons.bedtime_outlined),
+        if (ctl.sleepAt != null) item('sleep:0', 'Turn off timer', Icons.timer_off_outlined),
+        const PopupMenuDivider(height: 9),
+        item('stop', 'Stop and close', Icons.stop_circle_outlined),
+      ],
+    );
+  }
+
   void _queue(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (ctx) => DraggableScrollableSheet(
-        expand: false,
-        initialChildSize: 0.7,
-        builder: (ctx, scroll) => ListenableBuilder(
-          listenable: ctl,
-          builder: (ctx, _) => ReorderableListView.builder(
-            scrollController: scroll,
-            itemCount: ctl.queue.length,
-            onReorder: ctl.move,
-            itemBuilder: (ctx, i) {
-              final s = ctl.queue[i];
-              final cur = i == ctl.index;
-              return ListTile(
-                key: ValueKey('q-${i}-${s.key}'),
-                leading: AlbumArt(song: s, size: 40),
-                title: Text(s.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: cur ? FontWeight.w800 : null)),
-                subtitle: Text(s.artist, maxLines: 1, overflow: TextOverflow.ellipsis),
-                onTap: () => ctl.playQueue(ctl.queue, i),
-                trailing: cur ? const Icon(Icons.equalizer_rounded) : IconButton(tooltip: 'Remove from queue', icon: const Icon(Icons.close_rounded), onPressed: () => ctl.removeAt(i)),
-              );
-            },
+      backgroundColor: scheme.surfaceContainerLow,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
+      builder: (ctx) => Theme(
+        data: Theme.of(context),
+        child: DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.7,
+          builder: (ctx, scroll) => ListenableBuilder(
+            listenable: ctl,
+            builder: (ctx, _) => Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 0, 16, 8),
+                  child: Row(
+                    children: [
+                      Text('Up next', style: TextStyle(color: scheme.onSurface, fontSize: 18, fontWeight: FontWeight.w600, letterSpacing: -0.2)),
+                      const SizedBox(width: 8),
+                      Text('${ctl.queue.length} songs', style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13)),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: ReorderableListView.builder(
+                    scrollController: scroll,
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+                    itemCount: ctl.queue.length,
+                    onReorder: ctl.move,
+                    itemBuilder: (ctx, i) {
+                      final s = ctl.queue[i];
+                      final cur = i == ctl.index;
+                      return Padding(
+                        key: ValueKey('q-$i-${s.key}'),
+                        padding: const EdgeInsets.symmetric(vertical: 2),
+                        child: Material(
+                          color: cur ? scheme.primaryContainer.withValues(alpha: 0.55) : Colors.transparent,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          clipBehavior: Clip.antiAlias,
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.fromLTRB(10, 0, 4, 0),
+                            leading: AlbumArt(song: s, size: 42, radius: 10),
+                            title: Text(
+                              s.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: cur ? scheme.onPrimaryContainer : scheme.onSurface,
+                                fontWeight: cur ? FontWeight.w600 : FontWeight.w500,
+                                fontSize: 14.5,
+                              ),
+                            ),
+                            subtitle: Text(
+                              s.artist,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(color: cur ? scheme.onPrimaryContainer.withValues(alpha: 0.75) : scheme.onSurfaceVariant, fontSize: 12.5),
+                            ),
+                            onTap: () => ctl.playQueue(ctl.queue, i),
+                            trailing: cur
+                                ? Padding(
+                                    padding: const EdgeInsets.only(right: 12),
+                                    child: Icon(Icons.graphic_eq_rounded, color: scheme.primary, size: 20),
+                                  )
+                                : Padding(
+                                    padding: const EdgeInsets.only(right: 28),
+                                    child: _QuietIcon(icon: Icons.close_rounded, label: 'Remove from queue', size: 18, dim: true, onTap: () => ctl.removeAt(i)),
+                                  ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
+}
+
+/// Centred see-through play/pause that follows the theme.
+class _AudioPlayButton extends StatefulWidget {
+  const _AudioPlayButton({required this.playing, required this.onTap});
+  final bool playing;
+  final VoidCallback onTap;
+
+  @override
+  State<_AudioPlayButton> createState() => _AudioPlayButtonState();
+}
+
+class _AudioPlayButtonState extends State<_AudioPlayButton> {
+  bool _hover = false;
+  bool _down = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    const s = 76.0;
+    return Semantics(
+      button: true,
+      label: widget.playing ? 'Pause' : 'Play',
+      excludeSemantics: true,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: GestureDetector(
+          onTapDown: (_) => setState(() => _down = true),
+          onTapCancel: () => setState(() => _down = false),
+          onTapUp: (_) => setState(() => _down = false),
+          onTap: widget.onTap,
+          child: AnimatedScale(
+            scale: _down ? 0.92 : (_hover ? 1.04 : 1.0),
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            child: ClipOval(
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  width: s,
+                  height: s,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: scheme.onSurface.withValues(alpha: _hover ? 0.14 : 0.09),
+                    border: Border.all(color: scheme.onSurface.withValues(alpha: 0.14), width: 0.8),
+                  ),
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    transitionBuilder: (c, a) => FadeTransition(
+                      opacity: a,
+                      child: ScaleTransition(scale: Tween(begin: 0.8, end: 1.0).animate(a), child: c),
+                    ),
+                    child: Icon(
+                      widget.playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                      key: ValueKey(widget.playing),
+                      size: 38,
+                      color: scheme.onSurface,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Thin, theme-aware seek bar with times; thickens on hover or drag.
+class _AudioSeek extends StatefulWidget {
+  const _AudioSeek({required this.ctl, required this.song});
+  final AudioController ctl;
+  final Song song;
+
+  @override
+  State<_AudioSeek> createState() => _AudioSeekState();
+}
+
+class _AudioSeekState extends State<_AudioSeek> {
+  double? _drag;
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return ValueListenableBuilder<Duration>(
+      valueListenable: widget.ctl.position,
+      builder: (context, pos, _) {
+        final total = widget.ctl.duration.inMilliseconds > 0 ? widget.ctl.duration : Duration(milliseconds: widget.song.durationMs);
+        final ms = total.inMilliseconds;
+        final f = _drag ?? (ms > 0 ? (pos.inMilliseconds / ms).clamp(0.0, 1.0) : 0.0);
+        final shown = _drag == null ? pos : Duration(milliseconds: (ms * f).round());
+        final active = _drag != null || _hover;
+        final timeStyle = TextStyle(color: scheme.onSurfaceVariant, fontSize: 12, fontWeight: FontWeight.w500, fontFeatures: _tabularFigures);
+        return Semantics(
+          slider: true,
+          label: 'Seek bar, ${_fmt(shown)} of ${_fmt(total)}',
+          child: Column(
+            children: [
+              LayoutBuilder(
+                builder: (context, c) {
+                  final w = c.maxWidth;
+                  double x(double dx) => (dx / w).clamp(0.0, 1.0);
+                  void seekTo(double fx) {
+                    if (ms > 0) widget.ctl.seek(Duration(milliseconds: (ms * fx).round()));
+                  }
+
+                  return MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    onEnter: (_) => setState(() => _hover = true),
+                    onExit: (_) => setState(() => _hover = false),
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTapUp: (d) => seekTo(x(d.localPosition.dx)),
+                      onHorizontalDragStart: (d) => setState(() => _drag = x(d.localPosition.dx)),
+                      onHorizontalDragUpdate: (d) => setState(() => _drag = x(d.localPosition.dx)),
+                      onHorizontalDragEnd: (_) {
+                        final fx = _drag ?? 0;
+                        setState(() => _drag = null);
+                        seekTo(fx);
+                      },
+                      onHorizontalDragCancel: () => setState(() => _drag = null),
+                      child: SizedBox(
+                        height: 28,
+                        child: TweenAnimationBuilder<double>(
+                          tween: Tween(end: active ? 1 : 0),
+                          duration: const Duration(milliseconds: 160),
+                          builder: (context, t, _) => CustomPaint(
+                            size: Size(w, 28),
+                            painter: _AudioSeekPainter(
+                              played: f,
+                              t: t,
+                              track: scheme.onSurface.withValues(alpha: 0.14),
+                              fill: scheme.onSurface,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(_fmt(shown), style: timeStyle),
+                  Text(_fmt(total), style: timeStyle),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _AudioSeekPainter extends CustomPainter {
+  _AudioSeekPainter({required this.played, required this.t, required this.track, required this.fill});
+  final double played;
+  final double t;
+  final Color track;
+  final Color fill;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final h = 3.0 + 2.0 * t;
+    final y = size.height / 2;
+    final r = Radius.circular(h);
+    canvas.drawRRect(RRect.fromLTRBR(0, y - h / 2, size.width, y + h / 2, r), Paint()..color = track);
+    final pw = size.width * played.clamp(0.0, 1.0);
+    canvas.drawRRect(RRect.fromLTRBR(0, y - h / 2, pw, y + h / 2, r), Paint()..color = fill);
+    final thumb = 3.0 + 4.0 * t;
+    canvas.drawCircle(Offset(pw, y), thumb, Paint()..color = fill);
+  }
+
+  @override
+  bool shouldRepaint(_AudioSeekPainter o) => o.played != played || o.t != t || o.track != track || o.fill != fill;
 }

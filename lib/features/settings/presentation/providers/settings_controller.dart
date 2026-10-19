@@ -70,6 +70,10 @@ class SettingsController extends Notifier<AppSettings> {
     return _commit(state.copyWith(classicHome: value));
   }
 
+  Future<void> setMinimalShortcuts(bool value) {
+    return _commit(state.copyWith(minimalShortcuts: value));
+  }
+
   Future<void> setOfferCopiedLinks(bool value) {
     return _commit(state.copyWith(offerCopiedLinks: value));
   }

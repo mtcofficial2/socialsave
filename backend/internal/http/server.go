@@ -305,6 +305,10 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 		RequestHeaders: handle.Headers,
 		DirectURL:      &direct,
 	}
+	if handle.AudioURL != "" {
+		audio := handle.AudioURL
+		response.AudioURL = &audio
+	}
 	writeJSON(w, http.StatusOK, response)
 }
 

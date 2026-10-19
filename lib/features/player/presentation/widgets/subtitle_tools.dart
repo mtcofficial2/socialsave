@@ -65,13 +65,14 @@ class SubtitleToolsRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const SizedBox(height: 8),
         Row(
           children: [
-            const Text('Captions', style: TextStyle(color: Colors.white70, fontSize: 12)),
+            Text('Captions', style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12)),
             const Spacer(),
             TextButton.icon(
               onPressed: () => _load(context),
@@ -84,7 +85,7 @@ class SubtitleToolsRow extends StatelessWidget {
           valueListenable: SubtitlePrefs.size,
           builder: (context, v, _) => Row(
             children: [
-              const Icon(Icons.format_size_rounded, color: Colors.white),
+              Icon(Icons.format_size_rounded, color: cs.onSurfaceVariant),
               Expanded(
                 child: Semantics(
                   label: 'Subtitle size',
@@ -108,7 +109,7 @@ class SubtitleToolsRow extends StatelessWidget {
           builder: (context, v, _) => SwitchListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
-            title: const Text('Dark box behind captions', style: TextStyle(color: Colors.white)),
+            title: Text('Dark box behind captions', style: TextStyle(color: cs.onSurface)),
             value: v,
             onChanged: (x) {
               SubtitlePrefs.background.value = x;

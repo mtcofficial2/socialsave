@@ -741,6 +741,38 @@ class ShareSession {
     }));
   }
 
+  /// True for a device the user disconnected on purpose a short while ago.
+  static bool closedRecently(String id) {
+    final at = _closedIds[id];
+    return at != null && DateTime.now().difference(at) < const Duration(minutes: 30);
+  }
+
+  /// 1.0.45: a USB (adb tunnel) or cable route opens the same session as the
+  /// hotspot share: same Connected screen, same transport and received list.
+  /// [first] is sent as the first transfer. Null on success.
+  static Future<String?> openOverCable({
+    required String id,
+    required String host,
+    required int port,
+    required String link,
+    File? first,
+  }) async {
+    final cur = peer.value;
+    if (cur != null) {
+      if (cur.id == id) {
+        if (first != null) enqueue([first]);
+        return null;
+      }
+      return 'Already connected to ${cur.name}. Disconnect first.';
+    }
+    if (state.value == 'connecting') return 'Already connecting…';
+    pendingFirst = first;
+    final err = await connect(host: host, port: port, link: link);
+    if (err != null && identical(pendingFirst, first)) pendingFirst = null;
+    debugPrint('[session] cable open $host:$port via $link -> ${err ?? 'ok'}');
+    return err;
+  }
+
   /// Set by the hotspot dialog while its QR is showing.
   static bool hostsHotspotPending = false;
 

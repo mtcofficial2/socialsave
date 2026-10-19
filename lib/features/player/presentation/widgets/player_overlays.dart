@@ -14,20 +14,24 @@ class PlayerGlassSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final accent = theme.colorScheme.primary;
+    final cs = theme.colorScheme;
+    final accent = cs.primary;
+    final dark = theme.brightness == Brightness.dark;
     final maxH = MediaQuery.sizeOf(context).height * 0.88;
     return Theme(
       data: theme.copyWith(
         chipTheme: ChipThemeData(
-          backgroundColor: Colors.white.withValues(alpha: 0.08),
-          selectedColor: accent.withValues(alpha: 0.35),
-          side: BorderSide.none,
+          backgroundColor: cs.onSurface.withValues(alpha: dark ? 0.08 : 0.06),
+          selectedColor: accent.withValues(alpha: dark ? 0.35 : 0.18),
+          disabledColor: cs.onSurface.withValues(alpha: 0.04),
+          side: dark ? BorderSide.none : BorderSide(color: cs.outlineVariant.withValues(alpha: 0.9)),
           shape: const StadiumBorder(),
-          labelStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-          secondaryLabelStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
-          checkmarkColor: Colors.white,
+          labelStyle: TextStyle(color: cs.onSurface, fontWeight: FontWeight.w600),
+          secondaryLabelStyle: TextStyle(color: cs.onSurface, fontWeight: FontWeight.w700),
+          checkmarkColor: cs.onSurface,
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
         ),
+        listTileTheme: ListTileThemeData(textColor: cs.onSurface, iconColor: cs.onSurfaceVariant),
       ),
       child: ClipRRect(
         borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
@@ -36,8 +40,9 @@ class PlayerGlassSheet extends StatelessWidget {
           child: Container(
             constraints: BoxConstraints(maxHeight: maxH),
             decoration: BoxDecoration(
-              color: const Color(0xE60F1014),
-              border: Border(top: BorderSide(color: Colors.white.withValues(alpha: 0.14))),
+              // 1.0.45: follows the theme (was always dark glass).
+              color: dark ? const Color(0xE60F1014) : cs.surfaceContainerLow.withValues(alpha: 0.97),
+              border: Border(top: BorderSide(color: dark ? Colors.white.withValues(alpha: 0.14) : cs.outlineVariant.withValues(alpha: 0.7))),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -46,7 +51,7 @@ class PlayerGlassSheet extends StatelessWidget {
                 Container(
                   width: 40,
                   height: 4,
-                  decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.3), borderRadius: BorderRadius.circular(4)),
+                  decoration: BoxDecoration(color: cs.onSurfaceVariant.withValues(alpha: 0.4), borderRadius: BorderRadius.circular(4)),
                 ),
                 const SizedBox(height: 6),
                 Flexible(child: child),
@@ -66,17 +71,18 @@ class PlayerSectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
     return Padding(
       padding: const EdgeInsets.only(top: 6, bottom: 8),
       child: Semantics(
         header: true,
         child: Row(
           children: [
-            Icon(icon, size: 16, color: Colors.white54),
+            Icon(icon, size: 16, color: muted),
             const SizedBox(width: 8),
             Text(
               title.toUpperCase(),
-              style: const TextStyle(color: Colors.white54, fontSize: 11.5, fontWeight: FontWeight.w800, letterSpacing: 1.1),
+              style: TextStyle(color: muted, fontSize: 11.5, fontWeight: FontWeight.w800, letterSpacing: 1.1),
             ),
           ],
         ),
@@ -338,7 +344,7 @@ class PlayerFirstHint extends StatelessWidget {
     } catch (_) {}
   }
 
-  Widget _row(IconData icon, String title, String body) {
+  Widget _row(ColorScheme cs, IconData icon, String title, String body) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
@@ -346,16 +352,16 @@ class PlayerFirstHint extends StatelessWidget {
           Container(
             width: 44,
             height: 44,
-            decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.12), shape: BoxShape.circle),
-            child: Icon(icon, color: Colors.white, size: 22),
+            decoration: BoxDecoration(color: cs.primary.withValues(alpha: 0.12), shape: BoxShape.circle),
+            child: Icon(icon, color: cs.primary, size: 22),
           ),
           const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
-                Text(body, style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 13, height: 1.3)),
+                Text(title, style: TextStyle(color: cs.onSurface, fontWeight: FontWeight.w700, fontSize: 15)),
+                Text(body, style: TextStyle(color: cs.onSurfaceVariant, fontSize: 13, height: 1.3)),
               ],
             ),
           ),
@@ -366,6 +372,8 @@ class PlayerFirstHint extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return Positioned.fill(
       child: Semantics(
         label: 'Player gesture tips. Tap to dismiss.',
@@ -385,20 +393,20 @@ class PlayerFirstHint extends StatelessWidget {
                   child: Container(
                     padding: const EdgeInsets.fromLTRB(22, 22, 22, 16),
                     decoration: BoxDecoration(
-                      color: const Color(0xCC15161C),
+                      color: dark ? const Color(0xCC15161C) : cs.surfaceContainerHigh.withValues(alpha: 0.96),
                       borderRadius: BorderRadius.circular(28),
-                      border: Border.all(color: Colors.white.withValues(alpha: 0.16)),
+                      border: Border.all(color: dark ? Colors.white.withValues(alpha: 0.16) : cs.outlineVariant.withValues(alpha: 0.7)),
                     ),
                     child: SingleChildScrollView(
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('Quick gestures', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)),
+                          Text('Quick gestures', style: TextStyle(color: cs.onSurface, fontSize: 20, fontWeight: FontWeight.w800)),
                           const SizedBox(height: 8),
-                          _row(Icons.touch_app_rounded, 'Double-tap', 'Left or right side skips 10 seconds.'),
-                          _row(Icons.swap_vert_rounded, 'Swipe up or down', 'Left side is brightness, right side is volume.'),
-                          _row(Icons.fast_forward_rounded, 'Press and hold', 'Plays at 2x until you let go.'),
+                          _row(cs, Icons.touch_app_rounded, 'Double-tap', 'Left or right side skips 10 seconds.'),
+                          _row(cs, Icons.swap_vert_rounded, 'Swipe up or down', 'Left side is brightness, right side is volume.'),
+                          _row(cs, Icons.fast_forward_rounded, 'Press and hold', 'Plays at 2x until you let go.'),
                           const SizedBox(height: 8),
                           Align(
                             alignment: Alignment.centerRight,

@@ -68,7 +68,7 @@ class SettingsScreen extends ConsumerWidget {
             const SizedBox(height: 12),
             DesktopColumns(
               sections: [
-                _Sec(title: 'Appearance & Theme', keys: 'appearance theme dark light font typeface wallpaper color', child: Column(
+                _Sec(title: 'Appearance & Theme', keys: 'appearance theme dark light font typeface wallpaper color home shortcuts minimal', child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
             _groupTitle(context, Icons.palette_outlined, 'Appearance & Theme'),
@@ -151,6 +151,14 @@ class SettingsScreen extends ConsumerWidget {
                       subtitle: Text('Turn on to bring back the previous Home layout', style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant)),
                       value: settings.classicHome,
                       onChanged: controller.setClassicHome,
+                    ),
+                    SwitchListTile(
+                      key: const ValueKey('minimal-shortcuts-switch'),
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Minimal home shortcuts', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                      subtitle: Text('Show Home shortcuts as icons and labels, without the card behind them', style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant)),
+                      value: settings.minimalShortcuts,
+                      onChanged: controller.setMinimalShortcuts,
                     ),
                     SwitchListTile(
                       key: const ValueKey('classic-library-switch'),

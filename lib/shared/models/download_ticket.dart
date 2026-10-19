@@ -13,6 +13,7 @@ class DownloadTicket extends Equatable {
     this.fileName,
     this.directUrl,
     this.requestHeaders,
+    this.audioUrl,
   });
 
   final String downloadUrl;
@@ -24,6 +25,9 @@ class DownloadTicket extends Equatable {
   final String? fileName;
   final String? directUrl;
   final Map<String, String>? requestHeaders;
+
+  /// Preview only: a separate audio stream to play with [directUrl].
+  final String? audioUrl;
 
   bool get isReady =>
       state == DownloadJobState.ready && downloadUrl.isNotEmpty;
@@ -43,6 +47,7 @@ class DownloadTicket extends Equatable {
       fileName: json['file_name'] as String?,
       directUrl: json['direct_url'] as String?,
       requestHeaders: _stringMap(json['request_headers'] ?? json['headers']),
+      audioUrl: json['audio_url'] as String?,
     );
   }
 

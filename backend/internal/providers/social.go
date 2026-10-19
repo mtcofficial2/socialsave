@@ -71,6 +71,12 @@ func (s *Social) CreateDownload(ctx context.Context, rawURL, formatID string) (H
 		info, err := s.runner.Extract(ctx, rawURL, s.cfg)
 		if err == nil {
 			title := safeTitle(firstNonEmpty(info.Title, "video"))
+			// 1.0.45: Preview starts from one muxed progressive file at a
+			// moderate size (up to 720p), even when a sharper split
+			// video+audio exists, so playback starts at once with no merge.
+			if handle, ok := previewDirect(info, rawURL, title); ok {
+				return handle, nil
+			}
 			if handle, ok, directErr := directFromInfo(info, rawURL, "auto", title, s.cfg); directErr != nil || ok {
 				return handle, directErr
 			}
@@ -163,4 +169,87 @@ func messageOf(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+// previewDirect picks a single progressive (video+audio) stream of at most
+// 720p for Preview. ok is false when there is none that plays without a
+// session cookie.
+func previewDirect(info mediaInfo, rawURL, title string) (Handle, bool) {
+	limit := 720
+	stream := PickProgressive(info, &limit)
+	if stream == nil || !strings.HasPrefix(stream.URL, "http") || needsSession(stream.URL, stream.Headers) {
+		return previewSplit(info, rawURL, title, limit)
+	}
+	ext := strings.TrimPrefix(stream.Ext, ".")
+	if ext == "" {
+		ext = "mp4"
+	}
+	return Handle{
+		SourceURL:   rawURL,
+		FormatID:    "preview",
+		MimeType:    mimeForExt(ext),
+		Filesize:    stream.Filesize,
+		FileName:    title + "." + ext,
+		UpstreamURL: stream.URL,
+		Headers:     publicHeaders(baseHeaders(rawURL), stream.Headers),
+	}, true
+}
+
+// previewSplit (YouTube has no muxed files any more): one plain-HTTPS
+// video-only stream of at most limit p (H.264 first, it starts fastest) plus
+// the best M4A audio. The player adds the audio as an external track, so
+// nothing is merged before the first frame.
+func previewSplit(info mediaInfo, rawURL, title string, limit int) (Handle, bool) {
+	plain := func(item mediaInfo) bool {
+		return strings.HasPrefix(item.URL, "http") &&
+			!strings.HasPrefix(item.Protocol, "m3u8") &&
+			!strings.HasPrefix(item.Protocol, "http_dash") &&
+			!strings.Contains(item.URL, ".m3u8")
+	}
+	score := func(item mediaInfo) int {
+		h := heightOf(item)
+		v := h * 10
+		if strings.HasPrefix(item.VCodec, "avc1") {
+			v += 5
+		}
+		return v
+	}
+	var video, audio *mediaInfo
+	for i := range info.Formats {
+		item := info.Formats[i]
+		if !plain(item) {
+			continue
+		}
+		if hasVideo(item) && !hasAudio(item) {
+			h := heightOf(item)
+			if h <= 0 || h > limit {
+				continue
+			}
+			if video == nil || score(item) > score(*video) {
+				video = &info.Formats[i]
+			}
+		}
+		if hasAudio(item) && !hasVideo(item) && strings.EqualFold(strings.TrimPrefix(item.Ext, "."), "m4a") {
+			if audio == nil || item.TBR > audio.TBR {
+				audio = &info.Formats[i]
+			}
+		}
+	}
+	if video == nil || audio == nil {
+		return Handle{}, false
+	}
+	vh, ah := stringMap(video.HTTPHeaders), stringMap(audio.HTTPHeaders)
+	if needsSession(video.URL, vh) || needsSession(audio.URL, ah) {
+		return Handle{}, false
+	}
+	return Handle{
+		SourceURL:   rawURL,
+		FormatID:    "preview",
+		MimeType:    "video/mp4",
+		Filesize:    video.size(),
+		FileName:    title + ".mp4",
+		UpstreamURL: video.URL,
+		AudioURL:    audio.URL,
+		Headers:     publicHeaders(baseHeaders(rawURL), vh),
+	}, true
 }

@@ -14,6 +14,7 @@ import 'package:social_save/core/theme/app_theme.dart';
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
 import 'package:social_save/shared/routing/app_router.dart';
 import 'package:social_save/shared/widgets/glass.dart';
+import 'package:window_manager/window_manager.dart';
 
 class SocialSaveApp extends ConsumerWidget {
   const SocialSaveApp({super.key});
@@ -54,6 +55,7 @@ class SocialSaveApp extends ConsumerWidget {
           ),
           child: app,
         );
+        if (Plat.isWindows) return _TitleBarSync(brightness: Theme.of(context).brightness, child: scaled);
         return kIsWeb ? _WebPhoneFrame(child: scaled) : scaled;
       },
       routerConfig: appRouter,
@@ -63,6 +65,42 @@ class SocialSaveApp extends ConsumerWidget {
   }
 }
 
+/// Windows (1.0.45): the native title bar follows the app's light / dark
+/// theme instead of the system setting, so the window chrome around the
+/// player and every page matches.
+class _TitleBarSync extends StatefulWidget {
+  const _TitleBarSync({required this.brightness, required this.child});
+  final Brightness brightness;
+  final Widget child;
+
+  @override
+  State<_TitleBarSync> createState() => _TitleBarSyncState();
+}
+
+class _TitleBarSyncState extends State<_TitleBarSync> {
+  Brightness? _applied;
+
+  void _apply() {
+    if (_applied == widget.brightness) return;
+    _applied = widget.brightness;
+    windowManager.setBrightness(widget.brightness).catchError((_) {});
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _apply());
+  }
+
+  @override
+  void didUpdateWidget(_TitleBarSync old) {
+    super.didUpdateWidget(old);
+    if (old.brightness != widget.brightness) _apply();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
 /// Windows: Esc and the mouse "back" button go back a screen.
 Widget _desktopKeys(Widget child) {
   if (!Plat.isWindows) return child;

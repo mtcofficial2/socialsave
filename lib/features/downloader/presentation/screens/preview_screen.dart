@@ -15,6 +15,8 @@ import 'package:social_save/features/downloader/presentation/providers/download_
 import 'package:social_save/features/downloader/presentation/providers/preview_controller.dart';
 import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/features/player/player_session.dart';
+import 'package:social_save/features/player/preview_timing.dart';
+import 'package:social_save/features/downloader/domain/repositories/media_repository.dart';
 import 'package:social_save/shared/models/download_ticket.dart';
 import 'package:social_save/shared/models/media_format.dart';
 import 'package:social_save/shared/models/media_info.dart';
@@ -564,36 +566,7 @@ extension on _PreviewScreenState {
       _error = null;
     });
     try {
-      final playFormat = format.id;
-      final ticket = await ref.read(mediaRepositoryProvider).requestDownload(
-            url: media.sourceUrl,
-            formatId: playFormat,
-          );
-      final direct = ticket.directUrl;
-      final directPlayable = !kIsWeb &&
-          direct != null &&
-          direct.isNotEmpty &&
-          !HostedApi.matches(direct);
-      var url = directPlayable ? direct! : ticket.downloadUrl;
-      if (url.isEmpty && ticket.jobId != null) {
-        for (var i = 0; i < 45; i++) {
-          await Future<void>.delayed(const Duration(seconds: 2));
-          final status = await ref.read(mediaRepositoryProvider).getJobStatus(ticket.jobId!);
-          if ((status.downloadUrl ?? '').isNotEmpty) {
-            url = status.downloadUrl!;
-            break;
-          }
-          if (status.state == DownloadJobState.failed) {
-            break;
-          }
-        }
-      }
-      if (url.isEmpty) {
-        throw const AppException(
-          code: AppErrorCode.platformUnavailable,
-          message: 'No preview stream yet. Download the file, then play it.',
-        );
-      }
+      final (url, ticket) = await resolvePreviewStream(ref.read(mediaRepositoryProvider), media, format);
       if (!mounted) return;
       await openPreviewPlayer(
         context,
@@ -605,6 +578,7 @@ extension on _PreviewScreenState {
           author: media.author,
           referer: media.sourceUrl,
           httpHeaders: ticket.requestHeaders,
+          audioUrl: ticket.audioUrl,
           isPreview: true,
         ),
       );
@@ -638,4 +612,53 @@ extension on _PreviewScreenState {
       if (mounted) setState(() => _starting = false);
     }
   }
+}
+
+/// Preview stream for [media]: the URL to play and the ticket it came from.
+/// Shared by the Preview button and the `--preview-test` hook.
+Future<(String, DownloadTicket)> resolvePreviewStream(MediaRepository repo, MediaInfo media, MediaFormat format) async {
+  PreviewTiming.start(media.sourceUrl);
+  // 1.0.45: ask for the engine's "preview" stream (one muxed file, up to
+  // 720p, straight from the site) instead of the chosen download format,
+  // which for split video+audio waited for the whole file to be merged.
+  DownloadTicket ticket;
+  if (PreviewTiming.legacy) {
+    ticket = await repo.requestDownload(url: media.sourceUrl, formatId: format.id);
+  } else {
+    try {
+      ticket = await repo.requestDownload(url: media.sourceUrl, formatId: 'preview');
+    } on AppException {
+      ticket = await repo.requestDownload(url: media.sourceUrl, formatId: format.id);
+    }
+  }
+  PreviewTiming.mark('ticket');
+  final direct = ticket.directUrl;
+  final directPlayable = !kIsWeb &&
+      direct != null &&
+      direct.isNotEmpty &&
+      !HostedApi.matches(direct);
+  var url = directPlayable ? direct! : ticket.downloadUrl;
+  if (url.isEmpty && ticket.jobId != null) {
+    // Check often: a short clip is ready in a second or two.
+    for (var i = 0; i < 180; i++) {
+      await Future<void>.delayed(Duration(milliseconds: PreviewTiming.legacy ? 2000 : 500));
+      final status = await repo.getJobStatus(ticket.jobId!);
+      if ((status.downloadUrl ?? '').isNotEmpty) {
+        url = status.downloadUrl!;
+        break;
+      }
+      if (status.state == DownloadJobState.failed) {
+        break;
+      }
+    }
+  }
+  if (url.isEmpty) {
+    PreviewTiming.stop('no-stream');
+    throw const AppException(
+      code: AppErrorCode.platformUnavailable,
+      message: 'No preview stream yet. Download the file, then play it.',
+    );
+  }
+  PreviewTiming.mark('url');
+  return (url, ticket);
 }

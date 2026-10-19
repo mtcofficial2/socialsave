@@ -30,6 +30,7 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
   static const _dynamicColor =
       '${AppConstants.settingsPrefsPrefix}useDynamicColor';
   static const _classicHome = '${AppConstants.settingsPrefsPrefix}classicHome';
+  static const _minimalShortcuts = '${AppConstants.settingsPrefsPrefix}minimalShortcuts';
   static const _classicLibrary = '${AppConstants.settingsPrefsPrefix}classicLibrary';
   static const _offerCopiedLinks = '${AppConstants.settingsPrefsPrefix}offerCopiedLinks';
   static const _onlyWhileCharging =
@@ -63,6 +64,7 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
       'qualityByPlatform': _decodePlatforms(_prefs.getString(_qualityByPlatform)),
       'useDynamicColor': _prefs.getBool(_dynamicColor),
       'classicHome': _prefs.getBool(_classicHome),
+      'minimalShortcuts': _prefs.getBool(_minimalShortcuts),
       'classicLibrary': _prefs.getBool(_classicLibrary),
       'offerCopiedLinks': _prefs.getBool(_offerCopiedLinks),
       'onlyWhileCharging': _prefs.getBool(_onlyWhileCharging),
@@ -102,6 +104,7 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
     );
     await _prefs.setBool(_dynamicColor, settings.useDynamicColor);
     await _prefs.setBool(_classicHome, settings.classicHome);
+    await _prefs.setBool(_minimalShortcuts, settings.minimalShortcuts);
     await _prefs.setBool(_classicLibrary, settings.classicLibrary);
     await _prefs.setBool(_offerCopiedLinks, settings.offerCopiedLinks);
     await _prefs.setBool(_onlyWhileCharging, settings.onlyWhileCharging);

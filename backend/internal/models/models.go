@@ -43,6 +43,7 @@ type DownloadResponse struct {
 	Success        bool              `json:"success"`
 	DownloadURL    string            `json:"download_url"`
 	DirectURL      *string           `json:"direct_url"`
+	AudioURL       *string           `json:"audio_url,omitempty"`
 	ID             *string           `json:"id"`
 	State          string            `json:"state"`
 	ExpiresAt      *string           `json:"expires_at"`

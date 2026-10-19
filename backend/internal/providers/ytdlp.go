@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aviation256444-boop/socialsave/backend/internal/config"
@@ -79,7 +80,37 @@ func findYTDLP() string {
 }
 
 // Extract reads metadata and format URLs without downloading the file.
+// extractCache keeps a successful extraction for a short while, so the
+// Preview / Download request right after Analyze does not run yt-dlp a second
+// time (that was most of Preview's start-up time). Stream URLs stay valid for
+// hours; three minutes is well inside that.
+var extractCache sync.Map // rawURL -> cachedInfo
+
+type cachedInfo struct {
+	info mediaInfo
+	at   time.Time
+}
+
+const extractCacheTTL = 3 * time.Minute
+
 func (r *Runner) Extract(ctx context.Context, rawURL string, cfg config.Config) (mediaInfo, error) {
+	if os.Getenv("SOCIALSAVE_NO_EXTRACT_CACHE") == "1" {
+		return r.extract(ctx, rawURL, cfg)
+	}
+	if v, ok := extractCache.Load(rawURL); ok {
+		if c := v.(cachedInfo); time.Since(c.at) < extractCacheTTL {
+			return c.info, nil
+		}
+		extractCache.Delete(rawURL)
+	}
+	info, err := r.extract(ctx, rawURL, cfg)
+	if err == nil {
+		extractCache.Store(rawURL, cachedInfo{info: info, at: time.Now()})
+	}
+	return info, err
+}
+
+func (r *Runner) extract(ctx context.Context, rawURL string, cfg config.Config) (mediaInfo, error) {
 	if err := r.available(); err != nil {
 		return mediaInfo{}, err
 	}

@@ -55,8 +55,10 @@ class FloatingGlass extends StatelessWidget {
   final double radius;
   final bool bare;
 
-  /// Nav-bar style: almost no fill, true backdrop blur + a little saturation,
-  /// no border, only a very soft ambient shadow.
+  /// Nav-bar style (1.0.45): a frosted floating pill. Backdrop blur with a
+  /// little saturation, a translucent fill, a hairline border and a soft drop
+  /// shadow, so it reads as floating in light and dark while content still
+  /// shows through.
   final bool ghost;
   final Widget child;
 
@@ -79,9 +81,14 @@ class FloatingGlass extends StatelessWidget {
           borderRadius: shape,
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: dark ? 0.16 : 0.07),
-              blurRadius: 30,
-              offset: const Offset(0, 8),
+              color: Colors.black.withValues(alpha: dark ? 0.42 : 0.12),
+              blurRadius: 28,
+              offset: const Offset(0, 10),
+            ),
+            BoxShadow(
+              color: Colors.black.withValues(alpha: dark ? 0.20 : 0.05),
+              blurRadius: 4,
+              offset: const Offset(0, 1),
             ),
           ],
         ),
@@ -92,8 +99,15 @@ class FloatingGlass extends StatelessWidget {
               outer: ColorFilter.matrix(matrix),
               inner: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
             ),
-            child: ColoredBox(
-              color: scheme.surface.withValues(alpha: dark ? 0.10 : 0.12),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: (dark ? scheme.surfaceContainerHigh : scheme.surface).withValues(alpha: dark ? 0.50 : 0.58),
+                borderRadius: shape,
+                border: Border.all(
+                  width: 0.8,
+                  color: dark ? Colors.white.withValues(alpha: 0.12) : scheme.onSurface.withValues(alpha: 0.10),
+                ),
+              ),
               child: Material(type: MaterialType.transparency, child: child),
             ),
           ),
@@ -161,13 +175,17 @@ class StitchNavBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 1.0.45: a detached pill, 16 px in from the sides and a little above the
+    // system inset, instead of reaching down into the gesture area.
+    final inset = MediaQuery.paddingOf(context).bottom;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 0, 20, 14),
+      padding: EdgeInsets.fromLTRB(16, 0, 16, 10 + inset),
       child: FloatingGlass(
-        radius: 32,
+        radius: 999,
         ghost: true,
-        child: SafeArea(
-          top: false,
+        child: MediaQuery.removePadding(
+          context: context,
+          removeBottom: true,
           child: SizedBox(
             height: 64,
             child: Row(
@@ -215,6 +233,7 @@ class StitchNavBar extends StatelessWidget {
         label: label,
         child: InkWell(
           onTap: () => onSelect(i),
+          customBorder: const StadiumBorder(),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [

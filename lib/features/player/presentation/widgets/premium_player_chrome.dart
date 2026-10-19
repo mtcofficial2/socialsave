@@ -36,8 +36,8 @@ class ClassicControlsSwitch extends StatelessWidget {
         key: const ValueKey('classic-controls-switch'),
         dense: true,
         contentPadding: EdgeInsets.zero,
-        title: const Text('Classic player controls', style: TextStyle(color: Colors.white)),
-        subtitle: const Text('Turn on to bring back the old look', style: TextStyle(color: Colors.white54, fontSize: 12)),
+        title: Text('Classic player controls', style: TextStyle(color: Theme.of(context).colorScheme.onSurface)),
+        subtitle: Text('Turn on to bring back the old look', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12)),
         value: v,
         onChanged: (x) async {
           await PlayerChromePrefs.set(x);
@@ -461,7 +461,8 @@ class _MenuEntry<T> {
   final int kind;
 }
 
-/// Dark, rounded popup used by the speed and overflow buttons.
+/// Rounded popup used by the speed and overflow buttons. Follows the theme
+/// (1.0.45); only the trigger buttons on the picture stay light-on-dark.
 class _MinimalMenu<T> extends StatelessWidget {
   const _MinimalMenu({required this.items, required this.onSelected, required this.child, required this.tooltip});
   final List<_MenuEntry<dynamic>> items;
@@ -471,19 +472,21 @@ class _MinimalMenu<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const text = TextStyle(color: Colors.white, fontSize: 13.5, fontWeight: FontWeight.w500);
+    final cs = Theme.of(context).colorScheme;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final text = TextStyle(color: cs.onSurface, fontSize: 13.5, fontWeight: FontWeight.w500);
     return PopupMenuButton<T>(
       tooltip: tooltip,
       padding: EdgeInsets.zero,
-      color: const Color(0xF2161619),
+      color: dark ? const Color(0xF2161619) : cs.surfaceContainerHigh,
       elevation: 12,
-      shadowColor: Colors.black,
+      shadowColor: Colors.black.withValues(alpha: dark ? 1 : 0.35),
       surfaceTintColor: Colors.transparent,
       position: PopupMenuPosition.over,
       constraints: const BoxConstraints(minWidth: 200, maxWidth: 260),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
-        side: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+        side: BorderSide(color: dark ? Colors.white.withValues(alpha: 0.08) : cs.outlineVariant.withValues(alpha: 0.7)),
       ),
       onSelected: onSelected,
       itemBuilder: (_) => [
@@ -496,7 +499,7 @@ class _MinimalMenu<T> extends StatelessWidget {
               height: 30,
               child: Text(
                 e.label.toUpperCase(),
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 10.5, fontWeight: FontWeight.w600, letterSpacing: 0.8),
+                style: TextStyle(color: cs.onSurfaceVariant.withValues(alpha: dark ? 0.7 : 0.85), fontSize: 10.5, fontWeight: FontWeight.w600, letterSpacing: 0.8),
               ),
             )
           else
@@ -506,12 +509,12 @@ class _MinimalMenu<T> extends StatelessWidget {
               child: Row(
                 children: [
                   if (e.icon != null) ...[
-                    Icon(e.icon, size: 18, color: Colors.white.withValues(alpha: 0.75)),
+                    Icon(e.icon, size: 18, color: cs.onSurfaceVariant),
                     const SizedBox(width: 12),
                   ] else if (e.indent)
                     const SizedBox(width: 2),
                   Expanded(child: Text(e.label, style: text)),
-                  if (e.checked) const Icon(Icons.check_rounded, size: 16, color: Colors.white),
+                  if (e.checked) Icon(Icons.check_rounded, size: 16, color: cs.primary),
                 ],
               ),
             ),

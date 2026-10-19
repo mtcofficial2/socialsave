@@ -21,6 +21,7 @@ class AppSettings extends Equatable {
     this.qualityByPlatform = const {},
     this.useDynamicColor = false,
     this.classicHome = false,
+    this.minimalShortcuts = false,
     this.classicLibrary = false,
     this.offerCopiedLinks = true,
     this.onlyWhileCharging = false,
@@ -46,6 +47,9 @@ class AppSettings extends Equatable {
   final Map<String, String> qualityByPlatform;
   final bool useDynamicColor;
   final bool classicHome;
+
+  /// Home quick shortcuts without the card background (icon + label).
+  final bool minimalShortcuts;
   final bool classicLibrary;
   final bool offerCopiedLinks;
   final bool onlyWhileCharging;
@@ -73,6 +77,7 @@ class AppSettings extends Equatable {
     Map<String, String>? qualityByPlatform,
     bool? useDynamicColor,
     bool? classicHome,
+    bool? minimalShortcuts,
     bool? classicLibrary,
     bool? offerCopiedLinks,
     bool? onlyWhileCharging,
@@ -99,6 +104,7 @@ class AppSettings extends Equatable {
       qualityByPlatform: qualityByPlatform ?? this.qualityByPlatform,
       useDynamicColor: useDynamicColor ?? this.useDynamicColor,
       classicHome: classicHome ?? this.classicHome,
+      minimalShortcuts: minimalShortcuts ?? this.minimalShortcuts,
       classicLibrary: classicLibrary ?? this.classicLibrary,
       offerCopiedLinks: offerCopiedLinks ?? this.offerCopiedLinks,
       onlyWhileCharging: onlyWhileCharging ?? this.onlyWhileCharging,
@@ -130,6 +136,7 @@ class AppSettings extends Equatable {
       'qualityByPlatform': qualityByPlatform,
       'useDynamicColor': useDynamicColor,
       'classicHome': classicHome,
+      'minimalShortcuts': minimalShortcuts,
       'classicLibrary': classicLibrary,
       'offerCopiedLinks': offerCopiedLinks,
       'onlyWhileCharging': onlyWhileCharging,
@@ -172,6 +179,7 @@ class AppSettings extends Equatable {
       qualityByPlatform: _stringMap(map['qualityByPlatform']),
       useDynamicColor: map['useDynamicColor'] as bool? ?? true,
       classicHome: map['classicHome'] as bool? ?? false,
+      minimalShortcuts: map['minimalShortcuts'] as bool? ?? false,
       classicLibrary: map['classicLibrary'] as bool? ?? false,
       offerCopiedLinks: map['offerCopiedLinks'] as bool? ?? true,
       onlyWhileCharging: map['onlyWhileCharging'] as bool? ?? false,
@@ -202,6 +210,7 @@ class AppSettings extends Equatable {
         qualityByPlatform,
         useDynamicColor,
         classicHome,
+        minimalShortcuts,
         classicLibrary,
       offerCopiedLinks,
         onlyWhileCharging,

@@ -13,6 +13,8 @@ class PlayerQueueItem {
     this.referer,
     this.platform = SocialPlatform.direct,
     this.isVault = false,
+    this.isPreview = false,
+    this.audioUrl,
   });
 
   final String title;
@@ -26,6 +28,11 @@ class PlayerQueueItem {
   final SocialPlatform platform;
   final bool isVault;
 
+  /// A stream played before download (1.0.45: kept through the queue, so
+  /// the player knows it is a preview).
+  final bool isPreview;
+  final String? audioUrl;
+
   PlayerQueueItem copyWith({String? filePath}) {
     return PlayerQueueItem(
       title: title,
@@ -38,6 +45,8 @@ class PlayerQueueItem {
       referer: referer,
       platform: platform,
       isVault: isVault,
+      isPreview: isPreview,
+      audioUrl: audioUrl,
     );
   }
 
@@ -50,6 +59,8 @@ class PlayerQueueItem {
       httpHeaders: httpHeaders,
       referer: referer,
       isVault: isVault,
+      isPreview: isPreview,
+      audioUrl: audioUrl,
     );
   }
 }
@@ -66,6 +77,7 @@ class PlayerSession {
     this.httpHeaders,
     this.isPreview = false,
     this.isVault = false,
+    this.audioUrl,
     this.queue = const [],
     this.queueIndex = 0,
     this.heroTag,
@@ -81,6 +93,9 @@ class PlayerSession {
   final Map<String, String>? httpHeaders;
   final bool isPreview;
   final bool isVault;
+
+  /// Preview: separate audio stream added as an external track.
+  final String? audioUrl;
   final List<PlayerQueueItem> queue;
   final int queueIndex;
   final String? heroTag;

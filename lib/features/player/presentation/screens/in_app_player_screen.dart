@@ -31,6 +31,7 @@ import 'package:social_save/features/player/presentation/widgets/premium_player_
 import 'package:social_save/features/player/presentation/widgets/player_overlays.dart';
 import 'package:social_save/features/player/video_stage_layout.dart';
 import 'package:social_save/features/player/playback_bridge.dart';
+import 'package:social_save/features/player/preview_timing.dart';
 import 'package:social_save/features/player/player_session.dart';
 import 'package:social_save/features/player/resume_position.dart';
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
@@ -179,6 +180,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
           referer: widget.session.referer,
           platform: widget.session.platform,
           isVault: widget.session.isVault,
+          isPreview: widget.session.isPreview,
+          audioUrl: widget.session.audioUrl,
         ),
       ];
       _queueIndex = 0;
@@ -691,12 +694,25 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     }
     try {
       if (DesktopSupport.isWindows) await _tuneDesktopPlayer();
+      final network = session.networkUrl != null && uri == session.networkUrl;
+      if (network) await _tuneNetworkStart();
+      if (session.isPreview) {
+        PreviewTiming.mark('open');
+        unawaited(_video.waitUntilFirstFrameRendered.then((_) {
+          PreviewTiming.stop('first-frame');
+        }).catchError((_) {}));
+      }
       final startAt = widget.startAt;
       final start = startAt == null ? await _savedStart() : null;
       await _player.open(
         Media(uri, httpHeaders: headers, start: startAt),
         play: widget.autoPlay,
       );
+      final audio = session.audioUrl;
+      if (network && audio != null && audio.isNotEmpty) {
+        // Preview of a split video+audio stream: add the audio as a track.
+        await _player.setAudioTrack(AudioTrack.uri(audio));
+      }
       if (Plat.isWeb) {
         // A browser can refuse autoplay (no recent tap); the play button
         // still works, so keep the player open instead of failing.
@@ -732,6 +748,29 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         });
       }
     }
+  }
+
+  /// 1.0.45: quick start for network streams (Preview). mpv starts as soon as
+  /// it can decode, keeps a small cache going in the background and gives up
+  /// on a dead host instead of hanging. Local files are not touched (and
+  /// neither is hwdec).
+  Future<void> _tuneNetworkStart() async {
+    if (PreviewTiming.legacy) return;
+    try {
+      final dynamic native = _player.platform;
+      const props = {
+        'cache': 'yes',
+        'cache-pause-initial': 'no',
+        'cache-pause-wait': '1',
+        'demuxer-readahead-secs': '20',
+        'demuxer-max-bytes': '${48 * 1024 * 1024}',
+        'demuxer-lavf-analyzeduration': '1',
+        'network-timeout': '20',
+      };
+      for (final e in props.entries) {
+        await native.setProperty(e.key, e.value);
+      }
+    } catch (_) {}
   }
 
   /// libmpv settings for smooth seeking on PC.
@@ -1900,29 +1939,31 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
             padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
             child: StatefulBuilder(
               builder: (context, setSheet) {
+                // 1.0.45: the sheet follows the theme (light and dark).
+                final cs = Theme.of(context).colorScheme;
                 return Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
+                    Text(
                       'Playback',
                       style: TextStyle(
-                        color: Colors.white,
+                        color: cs.onSurface,
                         fontWeight: FontWeight.w700,
                         fontSize: 18,
                       ),
                     ),
                     const SizedBox(height: 6),
-                    const Text(
+                    Text(
                       'Double-tap sides to skip 10s. Hold to play at 2x. Drag right for volume, left for brightness.',
-                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                      style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
                     ),
                     const SizedBox(height: 16),
                     const PlayerSectionHeader('Sleep timer', Icons.bedtime_rounded),
                     const SizedBox(height: 4),
-                    const Text(
+                    Text(
                       'The screen dims when the timer ends.',
-                      style: TextStyle(color: Colors.white54, fontSize: 12),
+                      style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
                     ),
                     const SizedBox(height: 8),
                     Wrap(
@@ -1939,7 +1980,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                             },
                           ),
                         ChoiceChip(
-                          label: const Text('End of this video'),
+                          label: Text('End of this video'),
                           selected: _sleepAtEnd,
                           onSelected: (_) {
                             _setSleepAtEnd();
@@ -1948,7 +1989,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                         ),
                         if (_sleepMinutes != null || _sleepAtEnd)
                           ChoiceChip(
-                            label: const Text('Off'),
+                            label: Text('Off'),
                             selected: false,
                             onSelected: (_) {
                               _clearSleep();
@@ -1979,9 +2020,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       value: _loop,
-                      title: const Text(
+                      title: Text(
                         'Loop this video',
-                        style: TextStyle(color: Colors.white),
+                        style: TextStyle(color: cs.onSurface),
                       ),
                       onChanged: (_) async {
                         await _toggleLoop();
@@ -1991,13 +2032,13 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       value: _pinchZoom,
-                      title: const Text(
+                      title: Text(
                         'Pinch to zoom',
-                        style: TextStyle(color: Colors.white),
+                        style: TextStyle(color: cs.onSurface),
                       ),
-                      subtitle: const Text(
+                      subtitle: Text(
                         'Turn off to keep skip, seek, and volume gestures.',
-                        style: TextStyle(color: Colors.white54, fontSize: 12),
+                        style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
                       ),
                       onChanged: (value) {
                         setState(() => _pinchZoom = value);
@@ -2007,13 +2048,13 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       value: _fit == BoxFit.cover,
-                      title: const Text(
+                      title: Text(
                         'Fill the screen',
-                        style: TextStyle(color: Colors.white),
+                        style: TextStyle(color: cs.onSurface),
                       ),
-                      subtitle: const Text(
+                      subtitle: Text(
                         'Off keeps the real video shape. On fills the window.',
-                        style: TextStyle(color: Colors.white54, fontSize: 12),
+                        style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
                       ),
                       onChanged: (_) {
                         _cycleFit();
@@ -2022,13 +2063,13 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                     ),
                     ListTile(
                       contentPadding: EdgeInsets.zero,
-                      leading: const Icon(
+                      leading: Icon(
                         Icons.timelapse_rounded,
-                        color: Colors.white70,
+                        color: cs.onSurfaceVariant,
                       ),
-                      title: const Text(
+                      title: Text(
                         'Jump to time',
-                        style: TextStyle(color: Colors.white),
+                        style: TextStyle(color: cs.onSurface),
                       ),
                       onTap: () {
                         Navigator.pop(context);
@@ -2037,13 +2078,13 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                     ),
                     ListTile(
                       contentPadding: EdgeInsets.zero,
-                      leading: const Icon(
+                      leading: Icon(
                         Icons.camera_alt_outlined,
-                        color: Colors.white70,
+                        color: cs.onSurfaceVariant,
                       ),
-                      title: const Text(
+                      title: Text(
                         'Save a still frame',
-                        style: TextStyle(color: Colors.white),
+                        style: TextStyle(color: cs.onSurface),
                       ),
                       onTap: () {
                         Navigator.pop(context);
@@ -2052,20 +2093,20 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                     ),
                     ListTile(
                       contentPadding: EdgeInsets.zero,
-                      leading: const Icon(
+                      leading: Icon(
                         Icons.repeat_on_rounded,
-                        color: Colors.white70,
+                        color: cs.onSurfaceVariant,
                       ),
                       title: Text(
                         _loopAB ? 'A–B loop on' : 'Set A–B loop',
-                        style: const TextStyle(color: Colors.white),
+                        style: TextStyle(color: cs.onSurface),
                       ),
                       subtitle: Text(
                         _loopAB
                             ? 'Playing between the two marks'
                             : 'Mark this moment as A, then again as B',
-                        style: const TextStyle(
-                          color: Colors.white54,
+                        style: TextStyle(
+                          color: cs.onSurfaceVariant,
                           fontSize: 12,
                         ),
                       ),
@@ -2075,9 +2116,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                       },
                     ),
                     if (_player.state.tracks.audio.length > 1) ...[
-                      const Text(
+                      Text(
                         'Audio',
-                        style: TextStyle(color: Colors.white70, fontSize: 12),
+                        style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
                       ),
                       const SizedBox(height: 4),
                       Wrap(
@@ -2100,16 +2141,16 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                       const SizedBox(height: 12),
                     ],
                     if (_player.state.tracks.subtitle.isNotEmpty) ...[
-                      const Text(
+                      Text(
                         'Captions',
-                        style: TextStyle(color: Colors.white70, fontSize: 12),
+                        style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
                       ),
                       const SizedBox(height: 4),
                       Wrap(
                         spacing: 8,
                         children: [
                           ChoiceChip(
-                            label: const Text('Off'),
+                            label: Text('Off'),
                             selected: _player.state.track.subtitle.id == 'no',
                             onSelected: (_) {
                               unawaited(
@@ -2153,7 +2194,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                           _muted
                               ? Icons.volume_off_rounded
                               : Icons.volume_up_rounded,
-                          color: Colors.white,
+                          color: cs.onSurface,
                         ),
                         Expanded(
                           child: Slider(
@@ -2492,14 +2533,17 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   Widget _desktopMoreMenu() {
     final file = _session.filePath;
     final share = file != null && !_session.isVault;
+    final cs = Theme.of(context).colorScheme;
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return PopupMenuButton<String>(
       tooltip: 'Share',
       padding: EdgeInsets.zero,
-      color: const Color(0xF2161619),
+      // 1.0.45: the menu follows the theme; the button on the picture stays light.
+      color: dark ? const Color(0xF2161619) : cs.surfaceContainerHigh,
       surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
-        side: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+        side: BorderSide(color: dark ? Colors.white.withValues(alpha: 0.08) : cs.outlineVariant.withValues(alpha: 0.7)),
       ),
       icon: Icon(Icons.ios_share_rounded, color: Colors.white.withValues(alpha: 0.88), size: 20),
       onSelected: (v) {
@@ -2510,16 +2554,16 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         if (v == 'keys') unawaited(_showShortcuts());
       },
       itemBuilder: (_) {
-        const t = TextStyle(color: Colors.white, fontSize: 13.5);
+        final t = TextStyle(color: cs.onSurface, fontSize: 13.5);
         return [
           if (share && ShareSession.active)
             PopupMenuItem(value: 'session', child: Text('Send to ${ShareSession.peer.value!.name}', style: t)),
-          if (share) ...const [
+          if (share) ...[
             PopupMenuItem(value: 'send', child: Text('Send to another device', style: t)),
             PopupMenuItem(value: 'tv', child: Text('Play on TV', style: t)),
             PopupMenuItem(value: 'open', child: Text('Open in another app', style: t)),
           ],
-          const PopupMenuItem(value: 'keys', child: Text('Keyboard shortcuts', style: t)),
+          PopupMenuItem(value: 'keys', child: Text('Keyboard shortcuts', style: t)),
         ];
       },
     );
@@ -2587,13 +2631,20 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       onPressed: onPressed,
       icon: Icon(icon),
       style: IconButton.styleFrom(
-        foregroundColor: Colors.white,
+        foregroundColor: _chromeFg,
         padding: EdgeInsets.zero,
         minimumSize: const Size(40, 40),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
     );
   }
+
+  /// Classic PC layout, not full screen: the bars sit around the picture, so
+  /// they follow the theme. Over the picture (full screen) they stay light.
+  bool get _themedChrome =>
+      Theme.of(context).brightness == Brightness.light && !_fs && DesktopSupport.isWindows && !_deskMinimal;
+  Color get _chromeFg => _themedChrome ? Theme.of(context).colorScheme.onSurface : Colors.white;
+  Color get _chromeMuted => _themedChrome ? Theme.of(context).colorScheme.onSurfaceVariant : Colors.white70;
 
   /// PC top bar: back, title, lock, options, send, TV, open elsewhere.
   Widget _desktopTopBar(bool narrow) {
@@ -2611,9 +2662,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                 Navigator.maybePop(context);
               }
             },
-            icon: const Icon(
+            icon: Icon(
               Icons.arrow_back_rounded,
-              color: Colors.white,
+              color: _chromeFg,
             ),
           ),
           PlatformLogo(platform: _session.platform, size: 22),
@@ -2626,8 +2677,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                   _session.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _chromeFg,
                     fontWeight: FontWeight.w700,
                     fontSize: 15,
                   ),
@@ -2643,8 +2694,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                       : DesktopSupport.isWindows
                       ? '$thisPlayerName · Space play · ←/→ seek · ↑/↓ volume · F full screen'
                       : '$thisPlayerName · Double-tap sides to skip · pinch to fill',
-                  style: const TextStyle(
-                    color: Colors.white70,
+                  style: TextStyle(
+                    color: _chromeMuted,
                     fontSize: 12,
                     height: 1.2,
                   ),
@@ -2659,25 +2710,25 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
               _chrome = false;
               _lockHint = true;
             }),
-            icon: const Icon(
+            icon: Icon(
               Icons.lock_outline_rounded,
-              color: Colors.white,
+              color: _chromeFg,
             ),
           ),
           IconButton(
             tooltip: 'Playback options',
             onPressed: _showTools,
-            icon: const Icon(
+            icon: Icon(
               Icons.tune_rounded,
-              color: Colors.white,
+              color: _chromeFg,
             ),
           ),
           if (narrow)
             PopupMenuButton<String>(
               tooltip: 'More',
-              icon: const Icon(
+              icon: Icon(
                 Icons.more_vert_rounded,
-                color: Colors.white,
+                color: _chromeFg,
               ),
               onSelected: (v) {
                 if (v == 'pip') unawaited(_playOverApps());
@@ -2706,7 +2757,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                     child: Text('Play over other apps'),
                   ),
                 if (_session.filePath != null &&
-                    !_session.isVault) ...const [
+                    !_session.isVault) ...[
                   PopupMenuItem(
                     value: 'send',
                     child: Text('Send to another device'),
@@ -2728,9 +2779,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
             IconButton(
               tooltip: 'Play over other apps',
               onPressed: _playOverApps,
-              icon: const Icon(
+              icon: Icon(
                 Icons.picture_in_picture_alt_rounded,
-                color: Colors.white,
+                color: _chromeFg,
               ),
             ),
           if (!narrow &&
@@ -2745,9 +2796,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                   _session.title,
                 ),
               ),
-              icon: const Icon(
+              icon: Icon(
                 Icons.send_to_mobile_rounded,
-                color: Colors.white,
+                color: _chromeFg,
               ),
             ),
           if (!narrow &&
@@ -2756,9 +2807,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
             IconButton(
               tooltip: 'Play on TV',
               onPressed: () => unawaited(_playOnTv()),
-              icon: const Icon(
+              icon: Icon(
                 Icons.tv_rounded,
-                color: Colors.white,
+                color: _chromeFg,
               ),
             ),
           if (!narrow &&
@@ -2767,9 +2818,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
             IconButton(
               tooltip: 'Open in another app',
               onPressed: _openExternal,
-              icon: const Icon(
+              icon: Icon(
                 Icons.open_in_new_rounded,
-                color: Colors.white,
+                color: _chromeFg,
               ),
             ),
         ],
@@ -2780,13 +2831,13 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   /// Progress bar and buttons in the black band under the picture.
   Widget _controlDock() {
     return ColoredBox(
-      color: Colors.black,
+      color: _themedChrome ? Theme.of(context).colorScheme.surface : Colors.black,
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: _DockSeek(player: _player),
+            child: _DockSeek(player: _player, themed: _themedChrome),
           ),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -2796,7 +2847,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                 () => unawaited(_skip(-10)),
                 'Back 10 seconds',
               ),
-              _DockPlay(player: _player),
+              _DockPlay(player: _player, themed: _themedChrome),
               _dockIcon(
                 Icons.forward_10_rounded,
                 () => unawaited(_skip(10)),
@@ -2828,15 +2879,15 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                                 )
                               : unawaited(_showTools()),
                           style: IconButton.styleFrom(
-                            foregroundColor: Colors.white,
+                            foregroundColor: _chromeFg,
                             padding: EdgeInsets.zero,
                             minimumSize: const Size(40, 40),
                             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                           ),
                           icon: Text(
                             _rateLabel(_rate),
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: _chromeFg,
                               fontWeight: FontWeight.w800,
                               fontSize: 12,
                             ),
@@ -3060,6 +3111,13 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
 
     final phone = !DesktopSupport.isWindows;
     final narrow = MediaQuery.sizeOf(context).width < 560;
+    // 1.0.45: when nothing is drawn yet (error) or the classic PC bars sit
+    // around the picture, the page follows the theme. The picture itself
+    // (and full screen) stays black.
+    final cs = Theme.of(context).colorScheme;
+    final themedPage = Theme.of(context).brightness == Brightness.light &&
+        !_fs &&
+        (_error != null || _themedChrome);
     return PopScope(
       // Back leaves full screen first.
       canPop: !_fs,
@@ -3067,7 +3125,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         if (!didPop && _fs) unawaited(_setFs(false));
       },
       child: Scaffold(
-        backgroundColor: Colors.black,
+        backgroundColor: themedPage ? cs.surface : Colors.black,
         body: MouseRegion(
           // PC full screen: the cursor hides with the controls.
           cursor: DesktopSupport.isWindows && _fs && !_chrome && !_overControls
@@ -3115,8 +3173,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                                 Text(
                                   _error!,
                                   textAlign: TextAlign.center,
-                                  style: const TextStyle(
-                                    color: Colors.white70,
+                                  style: TextStyle(
+                                    color: themedPage ? cs.onSurfaceVariant : Colors.white70,
                                     fontSize: 16,
                                     height: 1.4,
                                   ),
@@ -3214,10 +3272,10 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                 ),
                 if (!_ready && _error == null)
                   // Quiet hairline while the file opens.
-                  const LinearProgressIndicator(
+                  LinearProgressIndicator(
                     minHeight: 2,
-                    color: Color(0xB3FFFFFF),
-                    backgroundColor: Color(0x14FFFFFF),
+                    color: themedPage ? cs.primary : const Color(0xB3FFFFFF),
+                    backgroundColor: themedPage ? cs.primary.withValues(alpha: 0.12) : const Color(0x14FFFFFF),
                   ),
               ],
             ),
@@ -3278,9 +3336,10 @@ class _VideoStage extends StatelessWidget {
 }
 
 class _DockPlay extends StatefulWidget {
-  const _DockPlay({required this.player});
+  const _DockPlay({required this.player, this.themed = false});
 
   final Player player;
+  final bool themed;
 
   @override
   State<_DockPlay> createState() => _DockPlayState();
@@ -3311,16 +3370,17 @@ class _DockPlayState extends State<_DockPlay> {
       tooltip: _playing ? 'Pause' : 'Play',
       onPressed: () => unawaited(widget.player.playOrPause()),
       iconSize: 36,
-      color: Colors.white,
+      color: widget.themed ? Theme.of(context).colorScheme.onSurface : Colors.white,
       icon: Icon(_playing ? Icons.pause_rounded : Icons.play_arrow_rounded),
     );
   }
 }
 
 class _DockSeek extends StatefulWidget {
-  const _DockSeek({required this.player});
+  const _DockSeek({required this.player, this.themed = false});
 
   final Player player;
+  final bool themed;
 
   @override
   State<_DockSeek> createState() => _DockSeekState();
@@ -3453,6 +3513,9 @@ class _DockSeekState extends State<_DockSeek> {
     final buffered = total <= 0
         ? 0.0
         : (_buffer.inMilliseconds / total).clamp(0.0, 1.0);
+    final cs = Theme.of(context).colorScheme;
+    final fg = widget.themed ? cs.onSurface : Colors.white;
+    final muted = widget.themed ? cs.onSurfaceVariant : Colors.white70;
     return Row(
       children: [
         SizedBox(
@@ -3460,7 +3523,7 @@ class _DockSeekState extends State<_DockSeek> {
           child: Text(
             _clock(_position),
             textAlign: TextAlign.right,
-            style: const TextStyle(color: Colors.white, fontSize: 12),
+            style: TextStyle(color: fg, fontSize: 12),
           ),
         ),
         const SizedBox(width: 8),
@@ -3490,7 +3553,8 @@ class _DockSeekState extends State<_DockSeek> {
                     painter: _SeekPainter(
                       fraction: _dragging ? _drag : fraction,
                       buffer: buffered,
-                      color: AppColors.secondaryContainer,
+                      color: widget.themed ? cs.primary : AppColors.secondaryContainer,
+                      base: fg,
                     ),
                   ),
                 ),
@@ -3503,7 +3567,7 @@ class _DockSeekState extends State<_DockSeek> {
           width: 56,
           child: Text(
             _clock(_duration),
-            style: const TextStyle(color: Colors.white70, fontSize: 12),
+            style: TextStyle(color: muted, fontSize: 12),
           ),
         ),
       ],
@@ -3516,21 +3580,23 @@ class _SeekPainter extends CustomPainter {
     required this.fraction,
     required this.buffer,
     required this.color,
+    this.base = Colors.white,
   });
 
   final double fraction;
   final double buffer;
   final Color color;
+  final Color base;
 
   @override
   void paint(Canvas canvas, Size size) {
     final y = size.height / 2;
     final track = Paint()
-      ..color = const Color(0x3DFFFFFF)
+      ..color = base.withValues(alpha: 0.24)
       ..strokeWidth = 3
       ..strokeCap = StrokeCap.round;
     final buffered = Paint()
-      ..color = const Color(0x66FFFFFF)
+      ..color = base.withValues(alpha: 0.4)
       ..strokeWidth = 3
       ..strokeCap = StrokeCap.round;
     final played = Paint()
@@ -3551,7 +3617,8 @@ class _SeekPainter extends CustomPainter {
   bool shouldRepaint(covariant _SeekPainter oldDelegate) {
     return oldDelegate.fraction != fraction ||
         oldDelegate.buffer != buffer ||
-        oldDelegate.color != color;
+        oldDelegate.color != color ||
+        oldDelegate.base != base;
   }
 }
 

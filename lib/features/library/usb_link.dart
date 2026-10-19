@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:social_save/core/platform/player_identity.dart';
 import 'package:social_save/features/library/nearby_service.dart';
+import 'package:social_save/features/library/share_session.dart';
 
 /// USB cable mode (Windows): finds phones plugged in with USB debugging on,
 /// tunnels the phone's Nearby inbox over adb (`adb forward`) and gives the
@@ -26,6 +27,10 @@ class UsbLink {
   static String? _adb;
   static final Map<String, int> _forwards = {};
   static final Map<String, String> _models = {};
+
+  /// Phones already offered a session for this plug-in (cleared on unplug),
+  /// so a Decline or Disconnect isn't asked again every scan.
+  static final Set<String> _sessionTried = {};
 
   static void start() {
     if (_started || !Plat.isWindows) return;
@@ -85,6 +90,7 @@ class UsbLink {
         if (cols[1] == 'unauthorized') unauthorized = true;
       }
       _forwards.removeWhere((serial, _) => !ready.contains(serial));
+      _sessionTried.removeWhere((serial) => !ready.contains(serial));
       var linked = 0;
       for (final serial in ready) {
         if (await _link(serial)) linked++;
@@ -159,11 +165,25 @@ class UsbLink {
 
   static void _add(String serial, int port, Map<String, dynamic> j) {
     final model = _models[serial] ?? '';
+    final id = '${j['id'] ?? ''}';
     NearbyService.addUsbRoute(
-      id: '${j['id'] ?? ''}',
+      id: id,
       name: model.isNotEmpty ? model : '${j['name'] ?? 'Phone'}',
       kind: '${j['kind'] ?? 'phone'}',
       port: port,
     );
+    // 1.0.45: a working cable link goes straight into the shared session
+    // (the same Connected screen and transport as the hotspot share).
+    if (id.isNotEmpty && id != NearbyService.id && _sessionTried.add(serial)) {
+      unawaited(_openSession(id, port));
+    }
+  }
+
+  static Future<void> _openSession(String id, int port) async {
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    if (ShareSession.active || ShareSession.closedRecently(id)) return;
+    if (Platform.environment['SOCIALSAVE_NO_USB_SESSION'] == '1') return;
+    final err = await ShareSession.openOverCable(id: id, host: '127.0.0.1', port: port, link: 'usb');
+    debugPrint('usb session: ${err ?? 'connected'}');
   }
 }

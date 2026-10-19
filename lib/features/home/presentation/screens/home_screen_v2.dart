@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:async';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -250,7 +251,8 @@ class _HomeScreenV2State extends ConsumerState<HomeScreenV2> with WidgetsBinding
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 720),
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 120),
+          // Clears the floating nav pill plus the system inset.
+          padding: EdgeInsets.fromLTRB(20, 0, 20, math.max(120, 32 + MediaQuery.paddingOf(context).bottom)),
           children: [
             _Reveal(index: 0, child: _header(context)),
             const UpdateCard(),
@@ -442,12 +444,13 @@ class _SendReceiveCard extends StatelessWidget {
   }
 }
 
-class _QuickActions extends StatelessWidget {
+class _QuickActions extends ConsumerWidget {
   const _QuickActions({required this.onLibrary});
   final VoidCallback onLibrary;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final minimal = ref.watch(settingsControllerProvider.select((s) => s.minimalShortcuts));
     final scan = HotspotShare.supported ? 'Scan QR' : 'Receive';
     final items = <_QuickItem>[
       if (HotspotShare.hostSupported)
@@ -459,13 +462,17 @@ class _QuickActions extends StatelessWidget {
         await showReceiveFromPhone(context);
       }),
     ];
-    return Row(
-      children: [
-        for (var i = 0; i < items.length; i++) ...[
-          if (i > 0) const SizedBox(width: 10),
-          Expanded(child: _QuickTile(item: items[i])),
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 220),
+      child: Row(
+        key: ValueKey(minimal),
+        children: [
+          for (var i = 0; i < items.length; i++) ...[
+            if (i > 0) SizedBox(width: minimal ? 4 : 10),
+            Expanded(child: minimal ? _MinimalQuickTile(item: items[i]) : _QuickTile(item: items[i])),
+          ],
         ],
-      ],
+      ),
     );
   }
 }
@@ -518,6 +525,60 @@ class _QuickTile extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Minimal shortcut: no card, just icon + label. The press feedback is a soft
+/// pill-shaped ripple clipped to a stadium, so there is never a square flash.
+class _MinimalQuickTile extends StatelessWidget {
+  const _MinimalQuickTile({required this.item});
+  final _QuickItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    const shape = StadiumBorder();
+    return Semantics(
+      button: true,
+      label: item.semantics,
+      excludeSemantics: true,
+      child: Material(
+        type: MaterialType.transparency,
+        shape: shape,
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          customBorder: shape,
+          splashColor: scheme.primary.withValues(alpha: 0.10),
+          highlightColor: scheme.primary.withValues(alpha: 0.06),
+          hoverColor: scheme.onSurface.withValues(alpha: 0.04),
+          focusColor: scheme.primary.withValues(alpha: 0.10),
+          onTap: () {
+            HapticFeedback.selectionClick();
+            item.onTap();
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  height: 32,
+                  child: Center(child: Icon(item.icon, size: 26, color: scheme.primary)),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  item.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: scheme.onSurface.withValues(alpha: 0.86), letterSpacing: -0.1),
                 ),
               ],
             ),
