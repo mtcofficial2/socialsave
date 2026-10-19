@@ -11,6 +11,7 @@ import android.os.Looper
 import android.provider.MediaStore
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.dart.DartExecutor
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugins.GeneratedPluginRegistrant
 import java.io.File
@@ -73,6 +74,14 @@ object HeadlessEngine {
             PhoneEngine.register(app, e.dartExecutor.binaryMessenger)
             val media = MethodChannel(e.dartExecutor.binaryMessenger, "socialsave/media")
             media.setMethodCallHandler { call, result -> handle(app, call.method, call.arguments, result) }
+            // Dart listens to the phone body stream on start; with no handler that was a
+            // MissingPluginException on every headless start. No events here.
+            EventChannel(e.dartExecutor.binaryMessenger, "socialsave/phone").setStreamHandler(
+                object : EventChannel.StreamHandler {
+                    override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {}
+                    override fun onCancel(arguments: Any?) {}
+                },
+            )
             ch = media
             DownloadEvents.channel = media
             engine = e

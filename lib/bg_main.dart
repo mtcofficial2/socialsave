@@ -47,7 +47,5 @@ Future<void> bgMain() async {
     ],
   );
   installOverlayHandlers(() => container);
-  // ignore: avoid_print
-  print('[bg] headless engine ready');
   await MediaEvents.channel.invokeMethod<void>('bgReady');
 }

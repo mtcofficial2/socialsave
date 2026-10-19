@@ -173,7 +173,6 @@ object ProgressCard {
                     handler.postDelayed(close, 4000)
                 }
                 else -> {
-                    android.util.Log.i("LinkWatch", "progress pct=" + (percent * 100).toInt() + " speed=" + (speed ?: ""))
                     subV?.text = if (percent < 0.01 && (speed ?: "").isEmpty()) "Preparing\u2026"
                     else ((speed ?: "").let { if (it.isEmpty()) "" else it + "  \u00B7  " }) + "${(percent * 100).toInt()}%"
                 }
@@ -193,9 +192,10 @@ object ProgressCard {
         val v = root ?: return
         root = null
         try {
-            v.animate().alpha(0f).translationY(-48f).setDuration(160).withEndAction {
-                try { wm?.removeView(v) } catch (_: Exception) {}
-            }.start()
+            val m = wm
+            v.animate().alpha(0f).translationY(-48f).setDuration(160).start()
+            // Always remove the window, even if the animation is cancelled.
+            handler.postDelayed({ try { m?.removeViewImmediate(v) } catch (_: Exception) {} }, 180)
         } catch (_: Exception) {
             try { wm?.removeView(v) } catch (_: Exception) {}
         }

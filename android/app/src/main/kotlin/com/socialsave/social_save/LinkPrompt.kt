@@ -183,13 +183,15 @@ object LinkPrompt {
             try {
                 wm.addView(root, lp)
                 view = root
-                val now = android.os.SystemClock.uptimeMillis(); android.util.Log.i("LinkWatch", "overlay shown latency_ms=" + (if (t0 > 0) now - t0 else -1))
                 manager = wm
                 root.animate().alpha(1f).translationY(0f).setDuration(240).start()
                 handler.postDelayed(autoClose, 12000)
-                HeadlessEngine.send(context, "overlayAnalyze", url)
+                // Analyse only if the card is still up after a moment: a passing tap on a
+                // link should not wake the headless engine and yt-dlp.
+                handler.postDelayed({
+                    if (view === root && curUrl == url) HeadlessEngine.send(context, "overlayAnalyze", url)
+                }, 900)
             } catch (e: Exception) {
-                android.util.Log.w("LinkWatch", "overlay failed: $e")
                 // No overlay permission / window not allowed: nothing to show.
             }
         }
@@ -201,9 +203,10 @@ object LinkPrompt {
         val v = view ?: return
         view = null
         try {
-            v.animate().alpha(0f).translationY(-48f).setDuration(160).withEndAction {
-                try { manager?.removeView(v) } catch (_: Exception) {}
-            }.start()
+            val m = manager
+            v.animate().alpha(0f).translationY(-48f).setDuration(160).start()
+            // Always remove the window, even if the animation is cancelled.
+            handler.postDelayed({ try { m?.removeViewImmediate(v) } catch (_: Exception) {} }, 180)
         } catch (_: Exception) {
             try { manager?.removeView(v) } catch (_: Exception) {}
         }

@@ -2806,9 +2806,19 @@ String _speedText(DownloadTask t) {
 void _pumpOverlay(ProviderContainer c, String id) {
   _overlayTaskId = id;
   _overlayTimer?.cancel();
+  final started = DateTime.now();
+  void stop() {
+    _overlayTimer?.cancel();
+    _overlayTimer = null;
+  }
+
   Future<void> push() async {
     final t = c.read(downloadManagerProvider).byId(id);
-    if (t == null) return;
+    // Task gone, or a safety cap: never leave this timer running.
+    if (t == null || DateTime.now().difference(started) > const Duration(hours: 3)) {
+      stop();
+      return;
+    }
     final st = t.status;
     final state = st == DownloadStatus.completed
         ? 'done'
@@ -2826,14 +2836,11 @@ void _pumpOverlay(ProviderContainer c, String id) {
         'state': state,
       });
     } catch (_) {}
-    if (state != 'running') {
-      _overlayTimer?.cancel();
-      _overlayTimer = null;
-    }
+    if (state != 'running') stop();
   }
 
+  _overlayTimer = Timer.periodic(const Duration(milliseconds: 400), (_) => unawaited(push()));
   unawaited(push());
-  _overlayTimer = Timer.periodic(const Duration(milliseconds: 200), (_) => unawaited(push()));
 }
 
 /// The floating card's callbacks (details, cancel, background download). Used by
@@ -2844,7 +2851,7 @@ void installOverlayHandlers(ProviderContainer? Function() container) {
     final c = container();
     if (u == null || c == null) return;
     try {
-      final m = await c.read(mediaRepositoryProvider).analyze(u);
+      final m = await _bgAnalyze(c, u);
       _bgMedia[u] = m;
       final q = qualitySummary(m);
       await MediaEvents.channel.invokeMethod<void>('overlayMeta', {'url': args, 'title': m.title, 'heights': q.heights, 'audio': q.audio});
@@ -2865,29 +2872,36 @@ void installOverlayHandlers(ProviderContainer? Function() container) {
   });
 }
 
+/// One yt-dlp analysis per link at a time: the card's prefetch and a Download
+/// tap share it instead of running two Python processes.
+final Map<String, Future<MediaInfo>> _bgAnalyzing = {};
+Future<MediaInfo> _bgAnalyze(ProviderContainer c, String url) {
+  return _bgAnalyzing.putIfAbsent(url, () async {
+    try {
+      return await c.read(mediaRepositoryProvider).analyze(url);
+    } finally {
+      _bgAnalyzing.remove(url);
+    }
+  });
+}
+
 /// Analyse (or reuse the card's analysis), enqueue and stream progress to the card.
 /// [foreground]: the app UI exists, so a failure may open the sheet and the app is sent back.
 Future<void> runBgDownload(ProviderContainer c, String pref, String url, {bool foreground = false}) async {
   bgHandledLinks.add(url);
   bgActiveAt = DateTime.now();
   try {
-    // ignore: avoid_print
-    print('[bg] analyzing $url');
     MediaInfo? media = _bgMedia.remove(url);
     for (var attempt = 0; attempt < 3 && media == null; attempt++) {
       try {
-        media = await c.read(mediaRepositoryProvider).analyze(url);
-      } catch (e) {
-        // ignore: avoid_print
-        print('[bg] analyze attempt $attempt failed: $e');
+        media = await _bgAnalyze(c, url);
+      } catch (_) {
         await Future<void>.delayed(const Duration(milliseconds: 800));
       }
     }
     final format = media == null ? null : pickFormat(media, pref);
     if (media != null && format != null && media.canDownload) {
       final task = await c.read(downloadManagerProvider.notifier).enqueue(media: media, format: format);
-      // ignore: avoid_print
-      print('[bg] enqueued ${task.id}');
       _pumpOverlay(c, task.id);
       if (foreground) {
         await Future<void>.delayed(const Duration(milliseconds: 600));
@@ -2898,8 +2912,6 @@ Future<void> runBgDownload(ProviderContainer c, String pref, String url, {bool f
       return;
     }
   } catch (e) {
-    // ignore: avoid_print
-    print('[bg] failed: $e');
     if (e.toString().contains('Already saved')) {
       try {
         await MediaEvents.channel.invokeMethod<void>('overlayProgress', {'id': '', 'title': 'Already saved on this phone', 'percent': 1.0, 'speed': '', 'state': 'done'});
