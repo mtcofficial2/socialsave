@@ -57,6 +57,7 @@ class BubbleService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        UsbQuick.register(this)
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= 26) {
             nm.createNotificationChannel(NotificationChannel(CHANNEL, "Link bubble", NotificationManager.IMPORTANCE_MIN))

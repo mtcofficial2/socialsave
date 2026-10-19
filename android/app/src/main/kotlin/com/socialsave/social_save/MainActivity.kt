@@ -903,6 +903,7 @@ class MainActivity : FlutterFragmentActivity() {
         SessionBridge.activities++
         super.onCreate(savedInstanceState)
         BubbleService.autostart(this)
+        UsbQuick.register(this)
         captureShare(intent)
         captureOpenedVideo(intent)
         captureOpenSession(intent)
@@ -912,6 +913,7 @@ class MainActivity : FlutterFragmentActivity() {
     /** The Quick Settings tile: open Hotspot share. */
     private fun captureQuickAction(intent: Intent?) {
         val action = intent?.getStringExtra(EXTRA_QUICK_ACTION) ?: return
+        if (action == "usb_share") UsbQuick.cancel(this)
         intent.removeExtra(EXTRA_QUICK_ACTION)
         pendingQuickAction = action
         channel?.invokeMethod("quickAction", action)

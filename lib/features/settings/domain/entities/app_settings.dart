@@ -22,6 +22,7 @@ class AppSettings extends Equatable {
     this.useDynamicColor = false,
     this.classicHome = false,
     this.minimalShortcuts = true,
+    this.usbQuickAction = true,
     this.classicLibrary = false,
     this.offerCopiedLinks = true,
     this.onlyWhileCharging = false,
@@ -50,6 +51,9 @@ class AppSettings extends Equatable {
 
   /// Home quick shortcuts without the card background (icon + label).
   final bool minimalShortcuts;
+
+  /// 1.0.46: "Share files" prompt when a USB cable links phone and PC.
+  final bool usbQuickAction;
   final bool classicLibrary;
   final bool offerCopiedLinks;
   final bool onlyWhileCharging;
@@ -78,6 +82,7 @@ class AppSettings extends Equatable {
     bool? useDynamicColor,
     bool? classicHome,
     bool? minimalShortcuts,
+    bool? usbQuickAction,
     bool? classicLibrary,
     bool? offerCopiedLinks,
     bool? onlyWhileCharging,
@@ -105,6 +110,7 @@ class AppSettings extends Equatable {
       useDynamicColor: useDynamicColor ?? this.useDynamicColor,
       classicHome: classicHome ?? this.classicHome,
       minimalShortcuts: minimalShortcuts ?? this.minimalShortcuts,
+      usbQuickAction: usbQuickAction ?? this.usbQuickAction,
       classicLibrary: classicLibrary ?? this.classicLibrary,
       offerCopiedLinks: offerCopiedLinks ?? this.offerCopiedLinks,
       onlyWhileCharging: onlyWhileCharging ?? this.onlyWhileCharging,
@@ -137,6 +143,7 @@ class AppSettings extends Equatable {
       'useDynamicColor': useDynamicColor,
       'classicHome': classicHome,
       'minimalShortcuts': minimalShortcuts,
+      'usbQuickAction': usbQuickAction,
       'classicLibrary': classicLibrary,
       'offerCopiedLinks': offerCopiedLinks,
       'onlyWhileCharging': onlyWhileCharging,
@@ -180,6 +187,7 @@ class AppSettings extends Equatable {
       useDynamicColor: map['useDynamicColor'] as bool? ?? true,
       classicHome: map['classicHome'] as bool? ?? false,
       minimalShortcuts: map['minimalShortcuts'] as bool? ?? true,
+      usbQuickAction: map['usbQuickAction'] as bool? ?? true,
       classicLibrary: map['classicLibrary'] as bool? ?? false,
       offerCopiedLinks: map['offerCopiedLinks'] as bool? ?? true,
       onlyWhileCharging: map['onlyWhileCharging'] as bool? ?? false,
@@ -211,6 +219,7 @@ class AppSettings extends Equatable {
         useDynamicColor,
         classicHome,
         minimalShortcuts,
+        usbQuickAction,
         classicLibrary,
       offerCopiedLinks,
         onlyWhileCharging,

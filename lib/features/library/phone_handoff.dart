@@ -2959,7 +2959,7 @@ void listenForQuickActions() {
         busy = false;
       }
       return;
-    }    if (action != 'hotspot_share' && action != 'paste' && action != 'library') return;
+    }    if (action != 'hotspot_share' && action != 'paste' && action != 'library' && action != 'usb_share') return;
     busy = true;
     try {
       try {
@@ -2971,6 +2971,8 @@ void listenForQuickActions() {
       switch (action) {
         case 'hotspot_share':
           await showHotspotQuickShare(ctx);
+        case 'usb_share':
+          await openUsbShare();
         case 'library':
           appRouter.go('/library');
         case 'paste':

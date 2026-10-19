@@ -161,6 +161,14 @@ class SettingsScreen extends ConsumerWidget {
                       onChanged: controller.setMinimalShortcuts,
                     ),
                     SwitchListTile(
+                      key: const ValueKey('usb-quick-switch'),
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('USB cable: offer Share files', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                      subtitle: Text('When a USB cable connects this device to a phone or PC, offer a quick action that opens the share screen', style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant)),
+                      value: settings.usbQuickAction,
+                      onChanged: controller.setUsbQuickAction,
+                    ),
+                    SwitchListTile(
                       key: const ValueKey('classic-library-switch'),
                       contentPadding: EdgeInsets.zero,
                       title: const Text('Classic library', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),

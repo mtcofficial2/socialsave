@@ -22,10 +22,17 @@ import 'package:social_save/features/library/transfer_meter.dart';
 import 'package:social_save/features/player/player_session.dart';
 import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/routing/app_router.dart';
+import 'package:social_save/core/notifications/notification_service.dart';
+import 'package:social_save/features/library/usb_link.dart';
+import 'package:window_manager/window_manager.dart';
 
 /// Hooks [ShareSession] to the UI. Called from installNearbyUi().
 void installSessionUi() {
   ShareSession.install();
+  if (Plat.isWindows) {
+    NotificationService.onUsbShare = () => unawaited(openUsbShare());
+    UsbLink.onPlugged = (name) => unawaited(_offerUsbShare(name));
+  }
   ShareSession.onRequest = (name, kind) async {
     final context = appRouter.routerDelegate.navigatorKey.currentContext;
     if (context == null || !context.mounted) return false;
@@ -59,6 +66,93 @@ void installSessionUi() {
 }
 
 const _batteryAskedKey = 'session_battery_asked';
+
+/// 1.0.46: the "USB cable: offer Share files" setting (default on).
+Future<bool> usbQuickActionEnabled() async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('${AppConstants.settingsPrefsPrefix}usbQuickAction') ?? true;
+  } catch (_) {
+    return true;
+  }
+}
+
+/// Windows: a phone was just plugged in by USB (once per plug-in). Shows an
+/// in-app banner with "Share files", plus a toast when the window isn't in
+/// front.
+Future<void> _offerUsbShare(String name) async {
+  if (!await usbQuickActionEnabled()) return;
+  debugPrint('[usb] quick action offered for $name');
+  var front = true;
+  try {
+    front = await windowManager.isVisible() && !await windowManager.isMinimized() && await windowManager.isFocused();
+  } catch (_) {}
+  if (!front) unawaited(NotificationService().showUsbShare(name));
+  final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
+  if (ctx == null || !ctx.mounted) return;
+  ScaffoldMessenger.maybeOf(ctx)?.showSnackBar(SnackBar(
+    key: const ValueKey('usb-quick-snack'),
+    duration: const Duration(seconds: 12),
+    behavior: SnackBarBehavior.floating,
+    content: Row(children: [
+      const Icon(Icons.cable_rounded, size: 20),
+      const SizedBox(width: 10),
+      Expanded(child: Text('Connected to $name by USB')),
+    ]),
+    action: SnackBarAction(label: 'Share files', onPressed: () => unawaited(openUsbShare())),
+  ));
+}
+
+/// 1.0.46 quick action (USB notification on Android, toast/banner on PC):
+/// opens the share session screen with the device on the other end of the
+/// USB cable (the same session 1.0.45 USB uses).
+Future<void> openUsbShare() async {
+  if (Plat.isWindows) {
+    try {
+      await windowManager.show();
+      if (await windowManager.isMinimized()) await windowManager.restore();
+      await windowManager.focus();
+    } catch (_) {}
+  }
+  NearbyService.ping();
+  NearbyDevice? usb;
+  for (var i = 0; i < 16; i++) {
+    if (ShareSession.active) {
+      await openSessionScreen();
+      return;
+    }
+    for (final d in NearbyService.devices.value) {
+      if (d.link == 'usb' || d.link == 'cable') {
+        usb = d;
+        break;
+      }
+    }
+    if (usb != null) break;
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+  }
+  final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
+  if (usb == null) {
+    // No SocialSave answered over the cable yet: the picker keeps looking.
+    if (ctx != null && ctx.mounted) await showConnectPicker(ctx);
+    return;
+  }
+  if (ShareSession.state.value == 'connecting') {
+    // The cable link is already opening a session (waiting for the other
+    // side to accept): land there once it's up.
+    for (var i = 0; i < 160 && ShareSession.state.value == 'connecting'; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+    if (ShareSession.active && !ShareSession.screenOpen) await openSessionScreen();
+    return;
+  }
+  final err = await ShareSession.openOverCable(id: usb.id, host: usb.host, port: usb.port, link: usb.link);
+  if (err != null) {
+    final c = appRouter.routerDelegate.navigatorKey.currentContext;
+    if (c != null && c.mounted) ScaffoldMessenger.maybeOf(c)?.showSnackBar(SnackBar(content: Text(err)));
+    return;
+  }
+  if (!ShareSession.screenOpen) await openSessionScreen();
+}
 
 /// First connection on Android: notifications (for the "Connected" and
 /// "File received" notices) and, once, the battery exemption so the link

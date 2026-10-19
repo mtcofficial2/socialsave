@@ -11,6 +11,28 @@ class NotificationService {
   /// Set by the copied-link watcher: (actionId, payload) of a tapped toast.
   static void Function(String? actionId, String? payload)? onResponse;
 
+  /// 1.0.46: the "Phone connected by USB" toast was tapped.
+  static void Function()? onUsbShare;
+
+  /// Windows toast: a phone was plugged in by USB; "Share files" opens the session screen.
+  Future<void> showUsbShare(String name) async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.windows) return;
+    if (!_initialized) await init();
+    try {
+      await _plugin.show(
+        0x5553b,
+        'Connected to $name by USB',
+        'Share files both ways over the cable.',
+        const NotificationDetails(
+          windows: WindowsNotificationDetails(
+            actions: [WindowsAction(content: 'Share files', arguments: 'usbshare|open')],
+          ),
+        ),
+        payload: 'usbshare|open',
+      );
+    } catch (_) {}
+  }
+
   /// Windows toast with Download / Dismiss buttons for a copied video link.
   Future<void> showLinkOffer({required String url, required String subtitle}) async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.windows) return;
@@ -53,7 +75,13 @@ class NotificationService {
       await _plugin
           .initialize(
             const InitializationSettings(android: android, iOS: ios, windows: windows),
-            onDidReceiveNotificationResponse: (r) => onResponse?.call(r.actionId, r.payload),
+            onDidReceiveNotificationResponse: (r) {
+              if ((r.actionId ?? r.payload ?? '').startsWith('usbshare')) {
+                onUsbShare?.call();
+                return;
+              }
+              onResponse?.call(r.actionId, r.payload);
+            },
           )
           .timeout(const Duration(seconds: 3));
     } catch (_) {

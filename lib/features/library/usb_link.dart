@@ -32,6 +32,9 @@ class UsbLink {
   /// so a Decline or Disconnect isn't asked again every scan.
   static final Set<String> _sessionTried = {};
 
+  /// 1.0.46: called once per plug-in with the phone's name (quick action).
+  static void Function(String name)? onPlugged;
+
   static void start() {
     if (_started || !Plat.isWindows) return;
     _started = true;
@@ -175,6 +178,7 @@ class UsbLink {
     // 1.0.45: a working cable link goes straight into the shared session
     // (the same Connected screen and transport as the hotspot share).
     if (id.isNotEmpty && id != NearbyService.id && _sessionTried.add(serial)) {
+      onPlugged?.call(model.isNotEmpty ? model : '${j['name'] ?? 'Phone'}');
       unawaited(_openSession(id, port));
     }
   }
