@@ -47,8 +47,11 @@ enum AudioRepeat { off, all, one }
 
 const _audioExt = {'mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'opus', 'wma', 'amr', 'mka'};
 
-/// Every audio file on the device: Android MediaStore, or the Music folder
-/// (plus chosen folders) on Windows.
+/// Every audio file on the device. Android: every MediaStore audio volume
+/// (internal and SD), plus a bounded walk of the usual music folders for
+/// files the scanner has not indexed yet; a MediaStore observer refreshes the
+/// list when songs are added or removed. Windows: Music, Downloads, the
+/// SocialSave folders and chosen folders, watched for changes.
 class AudioLibrary extends ChangeNotifier {
   AudioLibrary._();
   static final AudioLibrary instance = AudioLibrary._();
@@ -58,6 +61,36 @@ class AudioLibrary extends ChangeNotifier {
   bool denied = false;
   bool loaded = false;
   String error = '';
+  bool _again = false;
+  bool _watching = false;
+  final List<StreamSubscription<FileSystemEvent>> _winWatch = [];
+  Timer? _debounce;
+
+  /// Hide ringtones, notification and alarm sounds.
+  bool hideSystemSounds = true;
+
+  /// Hide clips shorter than [minSeconds] (voice notes, clicks).
+  bool hideShortClips = true;
+  static const minSeconds = 30;
+
+  Future<void> _readPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    hideSystemSounds = prefs.getBool('socialsave_audio_hide_system') ?? true;
+    hideShortClips = prefs.getBool('socialsave_audio_hide_short') ?? true;
+  }
+
+  Future<void> setFilters({bool? system, bool? short}) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (system != null) {
+      hideSystemSounds = system;
+      await prefs.setBool('socialsave_audio_hide_system', system);
+    }
+    if (short != null) {
+      hideShortClips = short;
+      await prefs.setBool('socialsave_audio_hide_short', short);
+    }
+    await load(force: true);
+  }
 
   Future<List<String>> extraFolders() async {
     final prefs = await SharedPreferences.getInstance();
@@ -69,6 +102,7 @@ class AudioLibrary extends ChangeNotifier {
     final l = prefs.getStringList('socialsave_audio_folders') ?? <String>[];
     if (!l.contains(path)) l.add(path);
     await prefs.setStringList('socialsave_audio_folders', l);
+    _stopWindowsWatch();
     await load(force: true);
   }
 
@@ -81,16 +115,25 @@ class AudioLibrary extends ChangeNotifier {
     return false;
   }
 
+  /// Pull-to-refresh / "Rescan": re-query and re-walk now.
+  Future<void> rescan() => load(force: true);
+
   Future<void> load({bool force = false}) async {
-    if (loading || (loaded && !force)) return;
+    if (loading) {
+      if (force) _again = true;
+      return;
+    }
+    if (loaded && !force) return;
     loading = true;
     error = '';
     notifyListeners();
     try {
+      await _readPrefs();
       if (Plat.isAndroid) {
         final ok = await askPermission();
         denied = !ok;
         songs = ok ? await _loadAndroid() : const [];
+        if (ok) _watchAndroid();
       } else if (Plat.isWindows) {
         denied = false;
         songs = await _loadWindows();
@@ -103,6 +146,22 @@ class AudioLibrary extends ChangeNotifier {
     }
     loading = false;
     notifyListeners();
+    if (_again) {
+      _again = false;
+      unawaited(load(force: true));
+    }
+  }
+
+  void _changed() {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 1200), () => unawaited(load(force: true)));
+  }
+
+  void _watchAndroid() {
+    if (_watching) return;
+    _watching = true;
+    MediaEvents.on('audioChanged', (_) async => _changed());
+    unawaited(MediaEvents.channel.invokeMethod<void>('audioWatch').catchError((_) {}));
   }
 
   String _clean(String? v, String fallback) {
@@ -111,72 +170,111 @@ class AudioLibrary extends ChangeNotifier {
     return s;
   }
 
+  bool _skipPath(String path) =>
+      path.contains('/vault/') ||
+      path.contains('/files/vault') ||
+      (hideSystemSounds && RegExp(r'/(Ringtones|Notifications|Alarms|UI)/').hasMatch(path));
+
   Future<List<Song>> _loadAndroid() async {
+    final raw = await MediaEvents.channel.invokeMethod<Map<Object?, Object?>>('audioLibrary');
+    final items = (raw?['items'] as List?) ?? const [];
     final out = <Song>[];
-    var offset = 0;
-    while (true) {
-      final raw = await MediaEvents.channel.invokeMethod<Map<Object?, Object?>>('queryMedia', {
-        'kind': 'audio',
-        'offset': offset,
-        'limit': 500,
-      });
-      final items = (raw?['items'] as List?) ?? const [];
-      final total = (raw?['total'] as num?)?.toInt() ?? 0;
-      for (final it in items.whereType<Map<Object?, Object?>>()) {
-        final path = it['path'] as String?;
-        final name = (it['name'] as String?) ?? p.basename(path ?? 'audio');
-        final dur = (it['durationMs'] as num?)?.toInt() ?? 0;
-        final mime = '${it['mime'] ?? ''}';
-        if (mime.isNotEmpty && !mime.startsWith('audio') && mime != 'application/ogg') continue;
-        if (dur > 0 && dur < 5000) continue; // skip ringtones and clicks
-        if (path != null && (path.contains('/vault/') || path.contains('/files/vault'))) continue;
-        final folder = path != null ? p.basename(p.dirname(path)) : _clean(it['bucket'] as String?, 'Music');
-        out.add(Song(
-          key: 'a:${it['id']}',
-          id: '${it['id']}',
-          uri: it['uri'] as String?,
-          path: path,
-          title: _clean(it['title'] as String?, p.basenameWithoutExtension(name)),
-          artist: _clean(it['artist'] as String?, 'Unknown artist'),
-          album: _clean(it['album'] as String?, folder),
-          folder: folder,
-          durationMs: dur,
-          addedAt: (it['addedAt'] as num?)?.toInt() ?? 0,
-        ));
-      }
-      offset += items.length;
-      if (items.isEmpty || offset >= total) break;
+    final known = <String>[];
+    for (final it in items.whereType<Map<Object?, Object?>>()) {
+      final path = it['path'] as String?;
+      if (path != null) known.add(path);
+      final name = (it['name'] as String?) ?? p.basename(path ?? 'audio');
+      final dur = (it['durationMs'] as num?)?.toInt() ?? 0;
+      final mime = '${it['mime'] ?? ''}';
+      if (mime.isNotEmpty && !mime.startsWith('audio') && mime != 'application/ogg') continue;
+      if (hideSystemSounds && it['system'] == true) continue;
+      if (dur > 0 && dur < (hideShortClips ? minSeconds * 1000 : 1500)) continue;
+      if (path != null && (path.contains('/vault/') || path.contains('/files/vault'))) continue;
+      if (hideSystemSounds && path != null && RegExp(r'/(Ringtones|Notifications|Alarms|UI)/').hasMatch(path)) continue;
+      final folder = path != null ? p.basename(p.dirname(path)) : _clean(it['bucket'] as String?, 'Music');
+      out.add(Song(
+        key: 'a:${it['id']}',
+        id: '${it['id']}',
+        uri: it['uri'] as String?,
+        path: path,
+        title: _clean(it['title'] as String?, p.basenameWithoutExtension(name)),
+        artist: _clean(it['artist'] as String?, 'Unknown artist'),
+        album: _clean(it['album'] as String?, folder),
+        folder: folder,
+        durationMs: dur,
+        addedAt: (it['addedAt'] as num?)?.toInt() ?? 0,
+      ));
     }
+    // Files MediaStore has not indexed yet: shown now, and handed to the
+    // scanner, whose insert then fires the observer and replaces them.
+    try {
+      final extra = await MediaEvents.channel.invokeMethod<List<Object?>>('audioWalk', {'known': known});
+      for (final f in (extra ?? const []).whereType<String>()) {
+        if (_skipPath(f)) continue;
+        out.add(_fileSong(f, 'f:'));
+      }
+    } catch (_) {}
     return out;
   }
 
-  Future<List<Song>> _loadWindows() async {
+  Song _fileSong(String path, String prefix) {
+    final base = p.basenameWithoutExtension(path);
+    var artist = 'Unknown artist';
+    var title = base;
+    final dash = base.indexOf(' - ');
+    if (dash > 0) {
+      artist = base.substring(0, dash).trim();
+      title = base.substring(dash + 3).trim();
+    }
+    final folder = p.basename(p.dirname(path));
+    int added = 0;
+    try {
+      added = File(path).statSync().modified.millisecondsSinceEpoch ~/ 1000;
+    } catch (_) {}
+    return Song(key: '$prefix$path', path: path, title: title, artist: artist, album: folder, folder: folder, durationMs: 0, addedAt: added);
+  }
+
+  Future<List<String>> windowsRoots() async {
     final home = Platform.environment['USERPROFILE'] ?? '';
-    final roots = <String>[if (home.isNotEmpty) p.join(home, 'Music'), ...await extraFolders()];
+    return <String>{
+      if (home.isNotEmpty) ...[
+        p.join(home, 'Music'),
+        p.join(home, 'Downloads'),
+        p.join(home, 'Documents', 'SocialSave'),
+      ],
+      ...await extraFolders(),
+    }.toList();
+  }
+
+  void _stopWindowsWatch() {
+    for (final s in _winWatch) {
+      unawaited(s.cancel());
+    }
+    _winWatch.clear();
+  }
+
+  Future<List<Song>> _loadWindows() async {
+    final roots = await windowsRoots();
     final out = <Song>[];
     final seen = <String>{};
+    final watch = _winWatch.isEmpty;
     for (final root in roots) {
       final dir = Directory(root);
       if (!await dir.exists()) continue;
+      if (watch) {
+        try {
+          _winWatch.add(dir.watch(recursive: true).listen((e) {
+            final ext = p.extension(e.path).replaceFirst('.', '').toLowerCase();
+            if (_audioExt.contains(ext) || e.isDirectory) _changed();
+          }, onError: (_) {}));
+        } catch (_) {}
+      }
       try {
-        await for (final e in dir.list(recursive: true, followLinks: false)) {
+        await for (final e in dir.list(recursive: true, followLinks: false).handleError((_) {})) {
           if (e is! File) continue;
           final ext = p.extension(e.path).replaceFirst('.', '').toLowerCase();
-          if (!_audioExt.contains(ext) || !seen.add(e.path)) continue;
-          final base = p.basenameWithoutExtension(e.path);
-          var artist = 'Unknown artist';
-          var title = base;
-          final dash = base.indexOf(' - ');
-          if (dash > 0) {
-            artist = base.substring(0, dash).trim();
-            title = base.substring(dash + 3).trim();
-          }
-          final folder = p.basename(p.dirname(e.path));
-          int added = 0;
-          try {
-            added = e.statSync().modified.millisecondsSinceEpoch ~/ 1000;
-          } catch (_) {}
-          out.add(Song(key: 'w:${e.path}', path: e.path, title: title, artist: artist, album: folder, folder: folder, durationMs: 0, addedAt: added));
+          if (!_audioExt.contains(ext) || !seen.add(e.path.toLowerCase())) continue;
+          out.add(_fileSong(e.path, 'w:'));
           if (out.length > 30000) break;
         }
       } catch (_) {}

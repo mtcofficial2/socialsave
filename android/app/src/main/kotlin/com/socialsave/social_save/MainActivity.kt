@@ -572,6 +572,21 @@ class MainActivity : FlutterFragmentActivity() {
                         runOnUiThread { result.success(out) }
                     }
                 }
+                "audioLibrary" -> io.execute {
+                    val out = try { AudioIndex.query(this) } catch (e: Exception) { mapOf("items" to emptyList<Any>(), "error" to (e.message ?: "query failed")) }
+                    runOnUiThread { result.success(out) }
+                }
+                "audioWalk" -> {
+                    val known = (call.argument<List<String>>("known") ?: emptyList()).toHashSet()
+                    io.execute {
+                        val out = try { AudioIndex.walk(this, known) } catch (_: Exception) { emptyList<String>() }
+                        runOnUiThread { result.success(out) }
+                    }
+                }
+                "audioWatch" -> {
+                    AudioIndex.watch(this) { channel?.invokeMethod("audioChanged", null) }
+                    result.success(null)
+                }
                 "listVideos" -> {
                     try {
                         result.success(listVideos())
@@ -665,6 +680,10 @@ class MainActivity : FlutterFragmentActivity() {
                 }
                 "bubbleStart" -> {
                     if (BubbleService.canDraw(this)) { BubbleService.start(this); result.success(true) } else result.success(false)
+                }
+                "bubbleStyle" -> {
+                    BubbleService.instance?.restyle()
+                    result.success(null)
                 }
                 "bubbleStop" -> {
                     BubbleService.stop(this)
@@ -921,6 +940,7 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun onDestroy() {
         SessionBridge.activities = maxOf(0, SessionBridge.activities - 1)
+        AudioIndex.unwatch(this)
         hotspotShare = null
         phoneBody?.stop()
         phoneBody = null

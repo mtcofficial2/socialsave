@@ -9,6 +9,7 @@ import 'package:social_save/features/settings/presentation/providers/settings_co
 
 const _kEnabled = 'bgdetect.enabled';
 const _kBubble = 'bgdetect.bubble';
+const _kBubbleOpacity = 'bgdetect.bubbleOpacity';
 
 /// One-time setup and on/off switch for detecting copied links while the app is
 /// closed (Android accessibility service + optional floating bubble).
@@ -22,6 +23,7 @@ class BackgroundDetectScreen extends ConsumerStatefulWidget {
 class _BackgroundDetectScreenState extends ConsumerState<BackgroundDetectScreen> with WidgetsBindingObserver {
   bool _enabled = true;
   bool _bubble = false;
+  int _opacity = 45;
   bool _accessibility = false;
   bool _overlay = false;
   bool _bubbleRunning = false;
@@ -52,6 +54,7 @@ class _BackgroundDetectScreenState extends ConsumerState<BackgroundDetectScreen>
     if (!p.containsKey(_kEnabled)) await p.setBool(_kEnabled, true);
     _enabled = p.getBool(_kEnabled) ?? true;
     _bubble = p.getBool(_kBubble) ?? false;
+    _opacity = (p.getInt(_kBubbleOpacity) ?? 45).clamp(20, 80);
     await _refresh();
   }
 
@@ -215,6 +218,28 @@ class _BackgroundDetectScreenState extends ConsumerState<BackgroundDetectScreen>
               button: _overlay ? (_bubbleRunning ? 'Turn bubble off' : 'Turn bubble on') : 'Allow display over other apps',
               onTap: () => _overlay ? _setBubble(!_bubbleRunning) : _call('openOverlaySettings'),
             ),
+            if (_overlay && _bubbleRunning)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(4, 0, 4, 12),
+                child: Row(children: [
+                  const Text('Bubble opacity', style: TextStyle(fontSize: 13.5)),
+                  Expanded(
+                    child: Slider(
+                      value: _opacity.toDouble(),
+                      min: 20,
+                      max: 80,
+                      divisions: 12,
+                      label: '$_opacity%',
+                      onChanged: (v) => setState(() => _opacity = v.round()),
+                      onChangeEnd: (v) async {
+                        await _prefs?.setInt(_kBubbleOpacity, v.round());
+                        await _call('bubbleStyle');
+                      },
+                    ),
+                  ),
+                  Text('$_opacity%', style: TextStyle(fontSize: 12.5, color: muted)),
+                ]),
+              ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4),
               child: Text(

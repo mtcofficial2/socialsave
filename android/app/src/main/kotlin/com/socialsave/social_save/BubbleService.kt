@@ -82,21 +82,81 @@ class BubbleService : Service() {
         if (canDraw(this)) addBubble() else stopSelf()
     }
 
+    private val ui = android.os.Handler(android.os.Looper.getMainLooper())
+    private val idleFade = Runnable { bubble?.animate()?.alpha(0.5f)?.setDuration(450)?.start() }
+
+    /** Background opacity in percent (Settings slider), 20..80, default 45. */
+    private fun fillPercent(): Int = try {
+        getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+            .getLong("flutter.bgdetect.bubbleOpacity", 45L).toInt().coerceIn(20, 80)
+    } catch (_: Exception) { 45 }
+
+    /**
+     * Frosted glass look in one drawable: a soft shadow halo, a translucent
+     * accent fill lighter at the top, and a two-tone hairline (light outside,
+     * dark inside) so the edge reads over both light and dark apps.
+     */
+    private fun glass(d: Float): android.graphics.drawable.Drawable {
+        val a = fillPercent() * 255 / 100
+        val shadow = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            gradientType = GradientDrawable.RADIAL_GRADIENT
+            gradientRadius = 30 * d
+            colors = intArrayOf(Color.argb(70, 0, 0, 0), Color.argb(40, 0, 0, 0), Color.argb(0, 0, 0, 0))
+        }
+        val fill = GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(Color.argb(a, 120, 168, 255), Color.argb(a, 60, 120, 240)),
+        ).apply {
+            shape = GradientDrawable.OVAL
+            setStroke(maxOf(1, (1 * d).toInt()), Color.argb(150, 255, 255, 255))
+        }
+        val inner = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(Color.TRANSPARENT)
+            setStroke(maxOf(1, (0.7f * d).toInt()), Color.argb(60, 0, 0, 0))
+        }
+        val pad = (4 * d).toInt()
+        return android.graphics.drawable.LayerDrawable(arrayOf(shadow, fill, inner)).apply {
+            setLayerInset(1, pad, pad, pad, pad)
+            setLayerInset(2, pad + (1 * d).toInt(), pad + (1 * d).toInt(), pad + (1 * d).toInt(), pad + (1 * d).toInt())
+        }
+    }
+
+    private fun wake() {
+        val v = bubble ?: return
+        ui.removeCallbacks(idleFade)
+        v.animate().alpha(1f).setDuration(120).start()
+    }
+
+    private fun sleepSoon() {
+        ui.removeCallbacks(idleFade)
+        ui.postDelayed(idleFade, 3000)
+    }
+
+    /** Re-reads the opacity setting (called after the Settings slider moves). */
+    fun restyle() {
+        val v = bubble ?: return
+        v.post {
+            v.background = glass(resources.displayMetrics.density)
+            wake(); sleepSoon()
+        }
+    }
+
     private fun addBubble() {
         val m = getSystemService(WINDOW_SERVICE) as WindowManager
         wm = m
         val d = resources.displayMetrics.density
-        val size = (52 * d).toInt()
+        val size = (60 * d).toInt() // 52 dp bubble + 4 dp shadow halo each side
         val v = TextView(this).apply {
             text = "\u2193"
             textSize = 24f
             setTextColor(Color.WHITE)
+            // Dark glow keeps the white arrow readable over white pages.
+            setShadowLayer(3 * d, 0f, 0.5f * d, Color.argb(170, 0, 0, 0))
+            paint.isFakeBoldText = true
             gravity = Gravity.CENTER
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(Color.parseColor("#E64C8DFF"))
-            }
-            elevation = 8 * d
+            background = glass(d)
             contentDescription = "Download copied link"
         }
         val lp = WindowManager.LayoutParams(
@@ -113,7 +173,7 @@ class BubbleService : Service() {
         var sx = 0f; var sy = 0f; var ox = 0; var oy = 0; var moved = false
         v.setOnTouchListener { _, e ->
             when (e.action) {
-                MotionEvent.ACTION_DOWN -> { sx = e.rawX; sy = e.rawY; ox = lp.x; oy = lp.y; moved = false; true }
+                MotionEvent.ACTION_DOWN -> { wake(); sx = e.rawX; sy = e.rawY; ox = lp.x; oy = lp.y; moved = false; true }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = (e.rawX - sx).toInt(); val dy = (e.rawY - sy).toInt()
                     if (kotlin.math.abs(dx) > 8 || kotlin.math.abs(dy) > 8) moved = true
@@ -121,14 +181,20 @@ class BubbleService : Service() {
                     try { m.updateViewLayout(v, lp) } catch (_: Exception) {}
                     true
                 }
-                MotionEvent.ACTION_UP -> {
-                    if (!moved) peek()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (moved) {
+                        // Snap to the nearer side edge.
+                        val w = resources.displayMetrics.widthPixels
+                        lp.x = if (lp.x + size / 2 < w / 2) 0 else w - size
+                        try { m.updateViewLayout(v, lp) } catch (_: Exception) {}
+                    } else if (e.action == MotionEvent.ACTION_UP) peek()
+                    sleepSoon()
                     true
                 }
                 else -> false
             }
         }
-        try { m.addView(v, lp); bubble = v } catch (_: Exception) { stopSelf() }
+        try { m.addView(v, lp); bubble = v; sleepSoon() } catch (_: Exception) { stopSelf() }
     }
 
     private fun peek() {
@@ -143,11 +209,13 @@ class BubbleService : Service() {
         val v = bubble ?: return
         v.post {
             v.animate().cancel()
+            ui.removeCallbacks(idleFade)
+            v.alpha = 1f
             v.scaleX = 1f; v.scaleY = 1f
             v.animate().scaleX(1.35f).scaleY(1.35f).setDuration(220).withEndAction {
                 v.animate().scaleX(1f).scaleY(1f).setDuration(220).withEndAction {
                     v.animate().scaleX(1.35f).scaleY(1.35f).setDuration(220).withEndAction {
-                        v.animate().scaleX(1f).scaleY(1f).setDuration(220).start()
+                        v.animate().scaleX(1f).scaleY(1f).setDuration(220).withEndAction { sleepSoon() }.start()
                     }.start()
                 }.start()
             }.start()
@@ -160,6 +228,7 @@ class BubbleService : Service() {
     }
 
     override fun onDestroy() {
+        ui.removeCallbacks(idleFade)
         try { bubble?.let { wm?.removeView(it) } } catch (_: Exception) {}
         bubble = null
         LinkPrompt.dismiss()

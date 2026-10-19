@@ -159,8 +159,22 @@ class _MusicScreenState extends State<MusicScreen> {
             ),
             PopupMenuButton<String>(
               tooltip: 'Music settings',
-              onSelected: (_) => _ctl.setRestoreSession(!_ctl.restoreSession),
+              onSelected: (v) {
+                switch (v) {
+                  case 'restore':
+                    _ctl.setRestoreSession(!_ctl.restoreSession);
+                  case 'rescan':
+                    _lib.rescan();
+                  case 'system':
+                    _lib.setFilters(system: !_lib.hideSystemSounds);
+                  case 'short':
+                    _lib.setFilters(short: !_lib.hideShortClips);
+                }
+              },
               itemBuilder: (_) => [
+                const PopupMenuItem(value: 'rescan', child: ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: Icon(Icons.refresh_rounded), title: Text('Rescan music'))),
+                CheckedPopupMenuItem(value: 'system', checked: _lib.hideSystemSounds, child: const Text('Hide ringtones & notification sounds')),
+                CheckedPopupMenuItem(value: 'short', checked: _lib.hideShortClips, child: Text('Hide clips under ${AudioLibrary.minSeconds} s')),
                 CheckedPopupMenuItem(value: 'restore', checked: _ctl.restoreSession, child: const Text('Restore last session')),
               ],
             ),
@@ -193,11 +207,15 @@ class _MusicScreenState extends State<MusicScreen> {
             if (_lib.loading && !_lib.loaded) return const Center(child: CircularProgressIndicator());
             if (_lib.denied) return _permission(context);
             if (_lib.songs.isEmpty) {
-              return Center(
-                child: Padding(
+              return RefreshIndicator(
+                onRefresh: _lib.rescan,
+                child: ListView(physics: const AlwaysScrollableScrollPhysics(), children: [
+                  const SizedBox(height: 160),
+                  Padding(
                   padding: const EdgeInsets.all(24),
-                  child: Text(_lib.error.isNotEmpty ? _lib.error : (Plat.isWindows ? 'No music found in your Music folder. Use the folder button to add more.' : 'No music found on this phone.'), textAlign: TextAlign.center),
-                ),
+                  child: Text(_lib.error.isNotEmpty ? _lib.error : (Plat.isWindows ? 'No music found in your Music folder. Use the folder button to add more.' : 'No music found on this phone. Pull down to rescan.'), textAlign: TextAlign.center),
+                  ),
+                ]),
               );
             }
             final songs = _songs;
@@ -247,7 +265,15 @@ class _MusicScreenState extends State<MusicScreen> {
 
   Widget _songList(List<Song> songs, {String empty = 'Nothing here.'}) {
     if (songs.isEmpty) return Center(child: Text(empty));
+    return RefreshIndicator(
+      onRefresh: _lib.rescan,
+      child: _songListView(songs),
+    );
+  }
+
+  Widget _songListView(List<Song> songs) {
     return ListView.builder(
+      physics: const AlwaysScrollableScrollPhysics(),
       itemCount: songs.length + 1,
       itemBuilder: (context, i) {
         if (i == 0) {
