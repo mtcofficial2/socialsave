@@ -5,6 +5,8 @@ import android.opengl.EGL14
 import android.opengl.EGLExt
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.SystemClock
 import android.util.Log
 import android.view.Surface
@@ -38,6 +40,7 @@ internal class FitSurface {
     private var outW = 0
     private var outH = 0
     private val texMatrix = FloatArray(16)
+    private var callbackThread: HandlerThread? = null
 
     fun decoderInput(): Surface? = decoderSurface
 
@@ -95,12 +98,16 @@ internal class FitSurface {
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
         val texture = SurfaceTexture(textureId)
         texture.setDefaultBufferSize(codedW.coerceAtLeast(2), codedH.coerceAtLeast(2))
-        texture.setOnFrameAvailableListener {
+        // Deliver "frame ready" on our own thread. Without a handler it goes
+        // to the main looper, so every frame waited behind Flutter's UI work.
+        val thread = HandlerThread("fit-surface").apply { start() }
+        callbackThread = thread
+        texture.setOnFrameAvailableListener({
             synchronized(lock) {
                 available = true
                 lock.notifyAll()
             }
-        }
+        }, Handler(thread.looper))
         surfaceTexture = texture
         decoderSurface = Surface(texture)
         positions = buffer(fittedQuad(dispW, dispH, targetW, targetH))
@@ -140,6 +147,8 @@ internal class FitSurface {
         decoderSurface = null
         try { surfaceTexture?.release() } catch (_: Exception) {}
         surfaceTexture = null
+        callbackThread?.quitSafely()
+        callbackThread = null
         if (program != 0) {
             GLES20.glDeleteProgram(program)
             program = 0

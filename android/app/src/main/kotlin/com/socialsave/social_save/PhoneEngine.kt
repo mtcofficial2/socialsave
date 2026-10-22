@@ -117,24 +117,32 @@ object PhoneEngine {
     private fun prepare() {
         if (ready) return
         if (!supported()) throw IllegalStateException("This phone can't run the on-phone engine (needs a 64-bit ARM phone).")
-        val t0 = SystemClock.elapsedRealtime()
         YoutubeDL.init(app)
         FFmpeg.init(app)
         ready = true
-        Log.i(TAG, "timing prepare ${SystemClock.elapsedRealtime() - t0}ms")
     }
 
     @Volatile private var warmed = false
     /** First yt-dlp run loads Python modules from flash; do it before the user pastes. */
     private fun warmPython() {
         if (warmed) return
-        val t0 = SystemClock.elapsedRealtime()
         try { YoutubeDL.execute(YoutubeDLRequest(emptyList()).addOption("--version")) } catch (_: Throwable) {}
         warmed = true
-        Log.i(TAG, "timing warm ${SystemClock.elapsedRealtime() - t0}ms")
     }
 
-    private fun cacheKey(url: String) = url.trim()
+    private val ytId = Regex("""(?:youtu\.be/|[?&]v=|/(?:shorts|embed|live|v)/)([A-Za-z0-9_-]{11})""")
+    private val trackingParam = Regex("""^(si|feature|pp|utm_[a-z]+|igsh|igshid|is_from_webapp|sender_device|_r|_t)=""")
+
+    /** One key per video: shorts, youtu.be, watch and embed links (with or without si=) match. */
+    private fun cacheKey(url: String): String {
+        val u = url.trim()
+        if (isYouTube(u)) ytId.find(u)?.let { return "yt:" + it.groupValues[1] }
+        val q = u.indexOf('?')
+        if (q < 0) return u.removeSuffix("/")
+        val kept = u.substring(q + 1).split('&').filter { it.isNotEmpty() && !trackingParam.containsMatchIn(it) }
+        val base = u.substring(0, q).removeSuffix("/")
+        return if (kept.isEmpty()) base else base + "?" + kept.joinToString("&")
+    }
 
     private fun cachedInfo(url: String): File? {
         val hit = infoCache[cacheKey(url)] ?: return null
@@ -164,11 +172,10 @@ object PhoneEngine {
                 .addOption("--no-playlist")
                 .addOption("--ignore-config")
                 .addOption("--no-warnings")
-                .addOption("--socket-timeout", 25)
+                .addOption("--socket-timeout", if (clients != null) 8 else 25)
             youtubeOptions(request, clients)
-            val t0 = SystemClock.elapsedRealtime()
             val out = YoutubeDL.execute(request).out
-            Log.i(TAG, "timing info ${SystemClock.elapsedRealtime() - t0}ms clients=$clients")
+            if (clients != null && !hasVideo(out)) throw IllegalStateException("requested format is not available ($clients: no video formats)")
             remember(url, out)
             out
         }
@@ -205,16 +212,32 @@ object PhoneEngine {
      */
     private fun clientSets(): List<String> {
         val sets = mutableListOf<String>()
-        if (YouTubeLogin.signedIn(app)) sets += "default,web_safari,mweb"
-        sets += "web_embedded,mweb,android"
-        sets += "default,tv_simply,web_safari"
-        sets += "android_vr,ios,tv"
-        return sets
+        prefs().getString(LAST_CLIENT, null)?.let { sets += it }
+        if (YouTubeLogin.signedIn(app)) sets += "default,web_safari"
+        // One client per attempt: a combined set makes yt-dlp query each in
+        // turn, which took 34 s on the phone even when the first one worked.
+        sets += listOf("web_embedded", "android_vr", "tv_simply", "default", "mweb", "android")
+        val now = System.currentTimeMillis()
+        val all = sets.distinct()
+        return all.filter { prefs().getLong(SLOW_PREFIX + it, 0L) < now }.ifEmpty { all }
     }
+
+    private const val LAST_CLIENT = "yt_last_client"
+    private const val SLOW_PREFIX = "yt_slow_"
+    private const val SLOW_MS = 15_000L
+    private fun prefs() = app.getSharedPreferences("phone_engine", Context.MODE_PRIVATE)
+
+    /** At least one format with a picture (an all-audio or empty list is a refusal). */
+    private fun hasVideo(json: String): Boolean =
+        Regex(""""vcodec":\s*"(?!none")[^"]+"""").containsMatchIn(json)
 
     private fun youtubeOptions(request: YoutubeDLRequest, clients: String?) {
         if (clients != null) request.addOption("--extractor-args", "youtube:player_client=$clients")
         YouTubeLogin.cookieFile(app)?.let { request.addOption("--cookies", it.absolutePath) }
+        // Keep yt-dlp's cache (player JS and solved n/sig challenges) between
+        // runs; without it every YouTube run re-downloads and re-solves the
+        // player in QuickJS (about 35 s on this phone).
+        request.addOption("--cache-dir", File(app.filesDir, "yt-dlp-cache").absolutePath)
     }
 
     /** Runs [work] with each client set until one gets past the bot check. */
@@ -222,9 +245,22 @@ object PhoneEngine {
         if (!isYouTube(url)) return work(null)
         var last: Throwable? = null
         for (clients in clientSets()) {
-            try { return work(clients) }
-            catch (e: YoutubeDL.CanceledException) { throw e }
-            catch (e: Throwable) { if (!isBotCheck(e.message)) throw e; last = e }
+            val t0 = SystemClock.elapsedRealtime()
+            try {
+                val value = work(clients)
+                prefs().edit().putString(LAST_CLIENT, clients).apply()
+                return value
+            } catch (e: YoutubeDL.CanceledException) { throw e }
+            catch (e: Throwable) {
+                val ms = SystemClock.elapsedRealtime() - t0
+                val timedOut = (e.message ?: "").contains("timed out", true)
+                Log.w(TAG, "youtube client $clients failed after ${ms}ms: ${(e.message ?: e.javaClass.simpleName).lines().lastOrNull { it.isNotBlank() }?.take(160)}")
+                if (prefs().getString(LAST_CLIENT, null) == clients) prefs().edit().remove(LAST_CLIENT).apply()
+                // A client that fails slowly is skipped for a day.
+                if (ms > SLOW_MS || timedOut) prefs().edit().putLong(SLOW_PREFIX + clients, System.currentTimeMillis() + 86_400_000L).apply()
+                if (!isBotCheck(e.message) && !timedOut) throw e
+                last = e
+            }
         }
         throw last ?: IllegalStateException("YouTube refused every client")
     }
@@ -279,7 +315,6 @@ object PhoneEngine {
         pool.execute {
             try {
                 prepare()
-                val t0 = SystemClock.elapsedRealtime()
                 val cached = cachedInfo(url)
                 var done = false
                 if (cached != null) {
@@ -290,12 +325,11 @@ object PhoneEngine {
                     } catch (e: YoutubeDL.CanceledException) { throw e }
                     catch (e: Throwable) {
                         if (job.state == "cancelled") throw e
-                        Log.w(TAG, "load-info-json failed, extracting again: ${e.message?.take(200)}")
+                        Log.w(TAG, "load-info-json failed, extracting again: ${(e.message ?: e.javaClass.simpleName).lines().lastOrNull { it.isNotBlank() }?.take(200)}")
                         infoCache.remove(cacheKey(url))
                     }
                 }
                 if (!done) withClients(url) { clients -> fetch(job, dir, url, formatId, clients, null) }
-                Log.i(TAG, "timing download ${SystemClock.elapsedRealtime() - t0}ms cached=${cached != null && done}")
                 if (job.state == "cancelled") return@execute
                 val file = dir.listFiles()
                     ?.filter { it.isFile && !it.name.endsWith(".part") && !it.name.endsWith(".ytdl") }
@@ -337,6 +371,8 @@ object PhoneEngine {
                     .addOption("-o", File(dir, "media.%(ext)s").absolutePath)
                 if (infoJson != null) request.addOption("--load-info-json", infoJson.absolutePath)
                 if (formatId == "auto") request.addOption("-S", "res:1080,fps:30,vcodec:h264,acodec:aac")
+            // Same height in H.264 beats AV1/VP9: the phone has no AV1 chip, so an AV1 pick makes "TikTok-ready" a slow software decode.
+            else if (formatId != "original" && !formatId.startsWith("audio")) request.addOption("-S", "res,fps,vcodec:h264,acodec:aac")
                 youtubeOptions(request, clients)
                 when (formatId) {
                     "audio" -> request.addOption("-x").addOption("--audio-format", "m4a")
