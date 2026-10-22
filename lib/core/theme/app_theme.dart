@@ -176,9 +176,12 @@ class AppTheme {
       dividerColor: scheme.outline,
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
-        backgroundColor: scheme.inverseSurface,
-        actionTextColor: scheme.inversePrimary,
-        contentTextStyle: text.bodyMedium?.copyWith(color: scheme.onInverseSurface),
+        // 1.0.49: dark snackbars are smoky glass, not a white slab.
+        backgroundColor: scheme.brightness == Brightness.dark ? const Color(0xF22C2C2E) : scheme.inverseSurface,
+        actionTextColor: scheme.brightness == Brightness.dark ? scheme.primary : scheme.inversePrimary,
+        contentTextStyle: text.bodyMedium?.copyWith(
+          color: scheme.brightness == Brightness.dark ? Colors.white.withValues(alpha: 0.92) : scheme.onInverseSurface,
+        ),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
       // 1.0.49: dialogs, sheets and menus are thick glass: a high-alpha
