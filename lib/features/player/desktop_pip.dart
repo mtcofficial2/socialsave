@@ -21,6 +21,32 @@ class DesktopPip {
   /// for the moment the window is still small.
   static bool restoring = false;
 
+  /// The app's size before the mini player, kept by [holdLayout].
+  static Size? layoutSize;
+
+  static bool get holding => (active || restoring) && layoutSize != null;
+
+  /// Pages under the mini player keep laying out at the full window size.
+  /// At the small size the shell went to its phone layout and the Library
+  /// dropped the docked player (it was disposed, which closed PiP and
+  /// restarted the video); squeezing the wide layout broke painting.
+  static Widget holdLayout(BuildContext context, Widget child) {
+    final mq = MediaQuery.of(context);
+    if (!active && !restoring) layoutSize = mq.size;
+    final s = layoutSize;
+    if (!holding || s == null) return child;
+    return ClipRect(
+      child: OverflowBox(
+        alignment: Alignment.topLeft,
+        minWidth: s.width,
+        maxWidth: s.width,
+        minHeight: s.height,
+        maxHeight: s.height,
+        child: MediaQuery(data: mq.copyWith(size: s), child: child),
+      ),
+    );
+  }
+
   static const _kX = 'pip.x';
   static const _kY = 'pip.y';
   static const _kW = 'pip.w';
@@ -83,6 +109,6 @@ class DesktopPip {
     if (r != null) await windowManager.setBounds(r);
     if (_wasMaximized) await windowManager.maximize();
     await windowManager.focus();
-    Future<void>.delayed(const Duration(seconds: 1), () => restoring = false);
+    Future<void>.delayed(const Duration(seconds: 1), () => restoring = false).ignore();
   }
 }

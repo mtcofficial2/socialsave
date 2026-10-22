@@ -39,7 +39,6 @@ import 'package:social_save/features/library/vault_service.dart';
 import 'package:social_save/shared/routing/app_router.dart'
     show debugOpenVault, debugOpenMenu, debugDockFirst;
 import 'package:social_save/shared/widgets/skeleton.dart';
-import 'package:social_save/features/player/desktop_pip.dart';
 import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/features/player/player_session.dart';
 import 'package:social_save/shared/models/social_platform.dart';
@@ -631,9 +630,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
             Expanded(
               child: LayoutBuilder(
                 builder: (context, constraints) {
-                  // Kept while the docked player hands off to picture in
-                  // picture, so the small window doesn't drop the dock.
-                  final twoPane = MediaQuery.sizeOf(context).width >= 900 || DesktopPip.active || DesktopPip.restoring;
+                  final twoPane = MediaQuery.sizeOf(context).width >= 900;
                   final list = _libraryList(catalog);
                   if (!twoPane) return list;
                   final docked = _docked;

@@ -6,6 +6,7 @@ import 'package:social_save/features/status/hd_status_screen.dart';
 import 'package:social_save/features/library/share_hub.dart';
 import 'package:social_save/shared/routing/onboarding.dart';
 import 'package:go_router/go_router.dart';
+import 'package:social_save/features/player/desktop_pip.dart';
 import 'package:social_save/features/downloader/presentation/screens/active_download_screen.dart';
 import 'package:social_save/features/downloader/presentation/screens/playlist_screen.dart';
 import 'package:social_save/features/downloader/presentation/screens/preview_screen.dart';
@@ -87,7 +88,11 @@ final appRouter = GoRouter(
   routes: [
     StatefulShellRoute.indexedStack(
       builder: (context, state, navigationShell) {
-        final shell = LinkOfferWatcher(child: OnboardingGate(child: AppShell(navigationShell: navigationShell)));
+        // Under the PC mini player the pages keep their full-window layout.
+        final shell = DesktopPip.holdLayout(
+          context,
+          LinkOfferWatcher(child: OnboardingGate(child: AppShell(navigationShell: navigationShell))),
+        );
         // Windows: drop videos or link shortcuts anywhere on the window.
         if (Plat.isWindows) return WindowsDropZone(child: shell);
         return shell;
