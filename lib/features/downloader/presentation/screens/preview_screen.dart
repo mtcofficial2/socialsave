@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:social_save/core/engine/phone_engine.dart';
 import 'package:social_save/shared/widgets/skeleton.dart';
@@ -507,7 +508,9 @@ class _LookupScaffold extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 12),
-            if (loading)
+            if (loading && _QuickLook.idOf(url) != null)
+              _QuickLook(url: url)
+            else if (loading)
               // Shaped like the preview that is coming (1.0.37), instead of a
               // grey box and a bar.
               const SkeletonBox(height: 180, radius: 16)
@@ -661,4 +664,81 @@ Future<(String, DownloadTicket)> resolvePreviewStream(MediaRepository repo, Medi
   }
   PreviewTiming.mark('url');
   return (url, ticket);
+}
+
+/// YouTube thumbnail at once (built from the video id) and the title from
+/// oEmbed in about a second, while the phone engine reads the formats.
+class _QuickLook extends StatefulWidget {
+  const _QuickLook({required this.url});
+
+  final String url;
+
+  static final _id = RegExp(r'(?:youtu\.be/|[?&]v=|/(?:shorts|embed|live|v)/)([A-Za-z0-9_-]{11})');
+
+  static String? idOf(String url) {
+    if (!url.contains('youtu')) return null;
+    return _id.firstMatch(url)?.group(1);
+  }
+
+  @override
+  State<_QuickLook> createState() => _QuickLookState();
+}
+
+class _QuickLookState extends State<_QuickLook> {
+  String? _title;
+  String? _author;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetch();
+  }
+
+  Future<void> _fetch() async {
+    try {
+      final dio = Dio(BaseOptions(
+        connectTimeout: const Duration(seconds: 4),
+        receiveTimeout: const Duration(seconds: 4),
+      ));
+      final res = await dio.get<Map<String, dynamic>>(
+        'https://www.youtube.com/oembed',
+        queryParameters: {'url': widget.url, 'format': 'json'},
+      );
+      final data = res.data;
+      if (!mounted || data == null) return;
+      setState(() {
+        _title = data['title'] as String?;
+        _author = data['author_name'] as String?;
+      });
+    } catch (_) {
+      // The full lookup still fills in the title.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final id = _QuickLook.idOf(widget.url)!;
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        VideoThumbnail(
+          url: 'https://i.ytimg.com/vi/$id/hqdefault.jpg',
+          height: 180,
+          borderRadius: 16,
+        ),
+        if (_title != null) ...[
+          const SizedBox(height: 12),
+          Text(
+            _title!,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+          ),
+          if (_author != null)
+            Text(_author!, style: TextStyle(color: scheme.onSurfaceVariant)),
+        ],
+      ],
+    );
+  }
 }

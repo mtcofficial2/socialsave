@@ -223,7 +223,7 @@ object PhoneEngine {
     }
 
     private const val LAST_CLIENT = "yt_last_client"
-    private const val SLOW_PREFIX = "yt_slow_"
+    private const val SLOW_PREFIX = "yt_slow2_" // v2: ignores marks a network outage set
     private const val SLOW_MS = 15_000L
     private fun prefs() = app.getSharedPreferences("phone_engine", Context.MODE_PRIVATE)
 
@@ -238,6 +238,35 @@ object PhoneEngine {
         // runs; without it every YouTube run re-downloads and re-solves the
         // player in QuickJS (about 35 s on this phone).
         request.addOption("--cache-dir", File(app.filesDir, "yt-dlp-cache").absolutePath)
+        // yt-dlp keeps its preprocessed-player cache off by default, so QuickJS
+        // re-parses the whole player on every run. A tiny plugin turns it on.
+        jscPluginDir()?.let { request.addOption("--plugin-dirs", it) }
+    }
+
+    private const val JSC_PLUGIN = "# SocialSave: reuse the preprocessed YouTube player between runs.\n" +
+        "from yt_dlp.extractor.youtube.jsc._builtin.ejs import EJSBaseJCP\n" +
+        "EJSBaseJCP._ENABLE_PREPROCESSED_PLAYER_CACHE = True\n"
+
+    @Volatile private var jscPlugin: String? = null
+    private fun jscPluginDir(): String? = jscPlugin ?: try {
+        // --plugin-dirs needs yt-dlp 2025.02 or newer.
+        val v = YoutubeDL.version(app) ?: ""
+        if (v < "2025.02") return null
+        val root = File(app.filesDir, "yt-dlp-plugins")
+        val file = File(root, "socialsave/yt_dlp_plugins/extractor/ss_jsc.py")
+        if (!file.exists() || file.readText() != JSC_PLUGIN) {
+            file.parentFile?.mkdirs()
+            file.writeText(JSC_PLUGIN)
+        }
+        root.absolutePath.also { jscPlugin = it }
+    } catch (e: Throwable) { Log.w(TAG, "jsc plugin: ${e.message}"); null }
+
+    /** No network: every client would fail the same way, so stop and blame nothing. */
+    private fun isNetworkError(message: String?): Boolean {
+        val m = (message ?: "").lowercase()
+        return m.contains("errno 7]") || m.contains("errno 101]") || m.contains("errno 111]") ||
+            m.contains("no address associated") || m.contains("network is unreachable") ||
+            m.contains("failed to resolve") || m.contains("connection refused") || m.contains("name or service not known")
     }
 
     /** Runs [work] with each client set until one gets past the bot check. */
@@ -255,6 +284,7 @@ object PhoneEngine {
                 val ms = SystemClock.elapsedRealtime() - t0
                 val timedOut = (e.message ?: "").contains("timed out", true)
                 Log.w(TAG, "youtube client $clients failed after ${ms}ms: ${(e.message ?: e.javaClass.simpleName).lines().lastOrNull { it.isNotBlank() }?.take(160)}")
+                if (isNetworkError(e.message)) throw e
                 if (prefs().getString(LAST_CLIENT, null) == clients) prefs().edit().remove(LAST_CLIENT).apply()
                 // A client that fails slowly is skipped for a day.
                 if (ms > SLOW_MS || timedOut) prefs().edit().putLong(SLOW_PREFIX + clients, System.currentTimeMillis() + 86_400_000L).apply()

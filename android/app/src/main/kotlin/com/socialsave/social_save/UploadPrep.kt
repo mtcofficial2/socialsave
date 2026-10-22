@@ -291,11 +291,13 @@ object UploadPrep {
 
     /**
      * Landscape and square fit inside 1920×1080. Portrait fits inside 1080×1920.
-     * Both are 1080p. The picture is scaled to fit and padded, never stretched
+     * Smaller clips keep their size. Larger ones are scaled to fit and padded, never stretched
      * or cropped, and a portrait clip is not placed on a landscape canvas.
      */
     internal fun targetSize(dispW: Int, dispH: Int): Pair<Int, Int> {
         if (dispW < 2 || dispH < 2) return 1920 to 1080
+        // Below 1080p keeps its own size (even sides for the encoder): no upscaling.
+        if (max(dispW, dispH) <= 1920 && minOf(dispW, dispH) <= 1080) return (dispW and 1.inv()) to (dispH and 1.inv())
         return if (dispH > dispW) 1080 to 1920 else 1920 to 1080
     }
 
