@@ -26,6 +26,8 @@ import 'package:social_save/core/theme/app_colors.dart';
 import 'package:social_save/features/library/device_media.dart';
 import 'package:social_save/features/library/tiktok_ready.dart';
 import 'package:social_save/features/player/pip.dart';
+import 'package:social_save/features/player/desktop_pip.dart';
+import 'package:social_save/features/player/presentation/widgets/desktop_pip_controls.dart';
 import 'package:social_save/features/player/presentation/widgets/phone_player_chrome.dart';
 import 'package:social_save/features/player/presentation/widgets/subtitle_tools.dart';
 import 'package:social_save/features/player/presentation/widgets/premium_player_chrome.dart';
@@ -1253,7 +1255,28 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     unawaited(PipController.setAspect(width, height));
   }
 
+  /// Windows: the window itself becomes the mini player (same player, so
+  /// playback never restarts).
+  Future<void> _toggleDesktopPip() async {
+    if (!DesktopSupport.isWindows) return;
+    if (_inPip) {
+      setState(() => _inPip = false);
+      await DesktopPip.exit();
+      return;
+    }
+    if (_fs) await _setFs(false);
+    final w = _frameWidth;
+    final h = _frameHeight;
+    final aspect = (w != null && h != null && h > 0) ? w / h : 16 / 9;
+    await DesktopPip.enter(aspect: aspect);
+    if (mounted) setState(() => _inPip = true);
+  }
+
   Future<void> _playOverApps() async {
+    if (DesktopSupport.isWindows) {
+      await _toggleDesktopPip();
+      return;
+    }
     _syncPipAspect();
     final ok = await PipController.enter();
     if (!ok && mounted) {
@@ -1850,9 +1873,13 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
           unawaited(_toggleFs()),
       const SingleActivator(LogicalKeyboardKey.f11): () =>
           unawaited(_toggleFs()),
+      const SingleActivator(LogicalKeyboardKey.keyI): () =>
+          unawaited(_toggleDesktopPip()),
       const SingleActivator(LogicalKeyboardKey.escape): () {
         final state = _videoKey.currentState;
-        if (_fs) {
+        if (_inPip) {
+          unawaited(_toggleDesktopPip());
+        } else if (_fs) {
           unawaited(_setFs(false));
         } else if (state != null && state.isFullscreen()) {
           unawaited(state.exitFullscreen());
@@ -2586,6 +2613,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       landscape: true,
       desktop: true,
       region: _holdControls,
+      showPip: !_session.isVault,
+      onPip: () => unawaited(_toggleDesktopPip()),
       onBack: () {
         if (_fs) {
           unawaited(_setFs(false));
@@ -3081,6 +3110,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     }
     PipController.setAllowed(false);
     PipController.clearListener();
+    if (DesktopPip.active) unawaited(DesktopPip.exit());
     WakelockPlus.disable();
     DeviceMediaService().setSecure(false);
     _player.dispose();
@@ -3107,17 +3137,39 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
           );
 
     if (_inPip) {
+      final pictureOnly = _FittedVideo(
+        width: _frameWidth,
+        height: _frameHeight,
+        child: Video(
+          controller: _video,
+          fill: Colors.black,
+          fit: BoxFit.contain,
+          controls: null,
+        ),
+      );
+      if (!DesktopSupport.isWindows) {
+        return Scaffold(backgroundColor: Colors.black, body: pictureOnly);
+      }
       return Scaffold(
         backgroundColor: Colors.black,
-        body: _FittedVideo(
-          width: _frameWidth,
-          height: _frameHeight,
-          child: Video(
-            controller: _video,
-            fill: Colors.black,
-            fit: BoxFit.contain,
-            controls: null,
-          ),
+        body: Stack(
+          fit: StackFit.expand,
+          children: [
+            pictureOnly,
+            DesktopPipControls(
+              player: _player,
+              onExpand: () => unawaited(_toggleDesktopPip()),
+              onClose: () async {
+                await _toggleDesktopPip();
+                if (!mounted) return;
+                if (widget.embedded) {
+                  widget.onClose?.call();
+                } else {
+                  unawaited(Navigator.maybePop(context));
+                }
+              },
+            ),
+          ],
         ),
       );
     }
