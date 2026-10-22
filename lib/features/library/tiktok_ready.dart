@@ -157,7 +157,7 @@ class _PrepProgressDialogState extends State<_PrepProgressDialog> {
           ),
           const SizedBox(height: 12),
           Text(
-            known ? '$_stage · ${(_fraction * 100).round()}%' : _stage,
+            known ? '$_stage - ${(_fraction * 100).round()}%' : _stage,
             style: TextStyle(color: scheme.onSurface, fontWeight: FontWeight.w600),
           ),
           if (_left.isNotEmpty)
