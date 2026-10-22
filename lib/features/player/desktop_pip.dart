@@ -16,6 +16,11 @@ class DesktopPip {
   static bool _wasMaximized = false;
   static bool active = false;
 
+  /// True while the window grows back from the mini player, so layouts that
+  /// key off the window width (the Library's dock) don't drop the player
+  /// for the moment the window is still small.
+  static bool restoring = false;
+
   static const _kX = 'pip.x';
   static const _kY = 'pip.y';
   static const _kW = 'pip.w';
@@ -62,6 +67,7 @@ class DesktopPip {
   static Future<void> exit() async {
     if (!active) return;
     active = false;
+    restoring = true;
     try {
       final now = await windowManager.getBounds();
       final prefs = await SharedPreferences.getInstance();
@@ -77,5 +83,6 @@ class DesktopPip {
     if (r != null) await windowManager.setBounds(r);
     if (_wasMaximized) await windowManager.maximize();
     await windowManager.focus();
+    Future<void>.delayed(const Duration(seconds: 1), () => restoring = false);
   }
 }

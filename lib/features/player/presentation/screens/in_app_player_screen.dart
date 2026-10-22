@@ -66,6 +66,7 @@ class InAppPlayerScreen extends ConsumerStatefulWidget {
     this.startAt,
     this.fullscreenOnly = false,
     this.autoPlay = true,
+    this.pipOnly = false,
   });
 
   final PlayerSession session;
@@ -79,6 +80,10 @@ class InAppPlayerScreen extends ConsumerStatefulWidget {
   /// full screen closes this page, handing the position back.
   final bool fullscreenOnly;
   final bool autoPlay;
+
+  /// PC: the docked player's picture in picture. Opens straight into the
+  /// mini player; leaving it closes this page, handing the position back.
+  final bool pipOnly;
 
   @override
   ConsumerState<InAppPlayerScreen> createState() => _InAppPlayerScreenState();
@@ -265,6 +270,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         }
         setState(() => _frameWidth = value);
         _syncPipAspect();
+        _autoEnterPip();
         _nudgeResume();
       }),
     );
@@ -273,6 +279,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         if (!mounted || value == null || value <= 0) return;
         setState(() => _frameHeight = value);
         _syncPipAspect();
+        _autoEnterPip();
       }),
     );
     _subs.add(
@@ -309,6 +316,14 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     }
     _open();
     _showChrome();
+    if (widget.pipOnly && DesktopSupport.isWindows) {
+      // No picture size yet after 2 s: go in with the default shape.
+      Future<void>.delayed(const Duration(seconds: 2), () {
+        if (!mounted || _pipStarted) return;
+        _pipStarted = true;
+        unawaited(_toggleDesktopPip());
+      });
+    }
     if (widget.fullscreenOnly && DesktopSupport.isWindows) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) unawaited(_setFs(true));
@@ -1271,6 +1286,15 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     if (_inPip) {
       setState(() => _inPip = false);
       await DesktopPip.exit();
+      if (widget.pipOnly && mounted) _handBack();
+      return;
+    }
+    // Docked beside the Library: the window shrinking to the mini player
+    // took the Library to one column, which removed (and disposed) this
+    // player. PiP closed at once and the video restarted from 0:00. Open the
+    // player as its own page in PiP instead, then carry on here.
+    if (widget.embedded) {
+      await _openDockedFullscreen(pip: true);
       return;
     }
     if (_fs) await _setFs(false);
@@ -1284,6 +1308,27 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   }
 
   bool _closingPip = false;
+  bool _pipStarted = false;
+
+  /// pipOnly page: into the mini player once the picture's shape is known.
+  void _autoEnterPip() {
+    if (!widget.pipOnly || _pipStarted || !DesktopSupport.isWindows) return;
+    if (_frameWidth == null || _frameHeight == null) return;
+    _pipStarted = true;
+    unawaited(_toggleDesktopPip());
+  }
+
+  void _handBack() {
+    Navigator.of(context).pop(
+      _FsHandBack(
+        position: _pendingSeek ?? _player.state.position,
+        playing: _player.state.playing,
+        queueIndex: _queueIndex,
+        rate: _rate,
+        volume: _player.state.volume,
+      ),
+    );
+  }
 
   /// Back is held for a check only where auto picture in picture can apply.
   bool get _mayAutoPip =>
@@ -1408,7 +1453,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     );
   }
 
-  Future<void> _openDockedFullscreen() async {
+  Future<void> _openDockedFullscreen({bool pip = false}) async {
     if (_handoff || !mounted) return;
     final wasPlaying = _player.state.playing;
     final at = _pendingSeek ?? _player.state.position;
@@ -1438,7 +1483,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
             pageBuilder: (_, _, _) => InAppPlayerScreen(
               session: session,
               startAt: at,
-              fullscreenOnly: true,
+              fullscreenOnly: !pip,
+              pipOnly: pip,
               autoPlay: wasPlaying,
             ),
           ),
@@ -3157,7 +3203,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     }
     PipController.setAllowed(false);
     PipController.clearListener();
-    if (DesktopPip.active) unawaited(DesktopPip.exit());
+    // Only the player that opened the mini player closes it.
+    if (DesktopPip.active && _inPip) unawaited(DesktopPip.exit());
     WakelockPlus.disable();
     DeviceMediaService().setSecure(false);
     _player.dispose();
@@ -3211,7 +3258,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                 _closingPip = true;
                 await _player.pause();
                 await _toggleDesktopPip();
-                if (!mounted) return;
+                // pipOnly: leaving PiP already closed this page.
+                if (!mounted || widget.pipOnly) return;
                 if (widget.embedded) {
                   widget.onClose?.call();
                 } else {

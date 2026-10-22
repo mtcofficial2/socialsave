@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:social_save/features/player/desktop_pip.dart';
 
 /// Window width where the PC shell (sidebar) replaces the bottom bar.
 const double kDesktopShellMinWidth = 840;
@@ -12,8 +13,13 @@ const double kDesktopSidebarWidth = 232;
 /// Content-area width where a screen may split into two columns.
 const double kDesktopSplitWidth = 900;
 
+/// Stays on while the window is the mini player (and growing back from it):
+/// switching to the phone layout there rebuilt the pages and dropped the
+/// player docked beside the Library.
 bool isDesktopShell(BuildContext context) =>
-    MediaQuery.sizeOf(context).width >= kDesktopShellMinWidth;
+    MediaQuery.sizeOf(context).width >= kDesktopShellMinWidth ||
+    DesktopPip.active ||
+    DesktopPip.restoring;
 
 /// Marks the page area beside the desktop sidebar so gutters are not applied twice.
 class DesktopChrome extends InheritedWidget {
