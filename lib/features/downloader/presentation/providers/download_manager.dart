@@ -29,7 +29,6 @@ import 'package:social_save/core/network/connectivity_service.dart';
 import 'package:social_save/features/settings/domain/entities/app_settings.dart';
 import 'package:social_save/shared/models/download_status.dart';
 import 'package:social_save/shared/models/download_task.dart';
-import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/models/download_ticket.dart';
 import 'package:social_save/shared/models/media_format.dart';
 import 'package:social_save/shared/models/media_info.dart';
@@ -44,6 +43,15 @@ final downloadManagerProvider =
 typedef InAppTiktokAsk = Future<bool> Function(String title);
 
 InAppTiktokAsk? inAppTiktokAsk;
+
+/// Asked when Download is tapped for a video: true = TikTok-ready, false = just download.
+Future<bool?> Function(String title)? inAppTiktokChoice;
+
+/// Opens the live prep progress on screen; returns its close call (null: no screen).
+void Function()? Function()? inAppPrepProgress;
+
+/// Tasks the user asked to make TikTok-ready (capped pick plus prep).
+final Set<String> _tiktokTasks = <String>{};
 
 class DownloadManagerState {
   const DownloadManagerState({this.tasks = const {}});
@@ -155,12 +163,14 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       );
     }
 
+    final tiktok = Plat.isAndroid && _videoFormat(format.id) && await _chooseTiktok(media.title);
     final ticket = await ref.read(mediaRepositoryProvider).requestDownload(
           url: media.sourceUrl,
-          formatId: format.id,
+          formatId: tiktok ? '${format.id}+tt' : format.id,
         );
 
     final id = _uuid.v4();
+    if (tiktok) _tiktokTasks.add(id);
     var task = DownloadTask.fromMedia(
       id: id,
       media: media,
@@ -258,7 +268,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
         // A retry of an on-phone save (or "Try with server"): prepare again.
         final fresh = await ref.read(mediaRepositoryProvider).requestDownload(
               url: task.sourceUrl,
-              formatId: task.format.id,
+              formatId: _fid(task),
             );
         task = task.copyWith(
           jobId: fresh.jobId ?? '',
@@ -371,20 +381,14 @@ class DownloadManager extends Notifier<DownloadManagerState> {
           needs = await MediaStoreService().needsTiktokWork(savedPath);
         } catch (_) {}
         if (needs && !token.isCancelled) {
-          // YouTube is prepared as part of the download. Other saves still ask.
-          final automatic = readyTask.platform == SocialPlatform.youtube;
-          var yes = automatic;
-          if (!automatic) {
-            final asking = readyTask.copyWith(phase: 'askTiktok', bytesPerSecond: 0);
-            state = state.copyWithTask(asking);
-            await _signal(asking);
-            yes = await _askTiktok(readyTask.title);
-          }
+          // Only when the user chose "Yes, TikTok-ready" at Download.
+          final yes = _tiktokTasks.contains(readyTask.id);
           if (token.isCancelled) return;
           if (yes) {
             final working = readyTask.copyWith(phase: 'shareable', bytesPerSecond: 0);
             state = state.copyWithTask(working);
             await _signal(working);
+            final closePrep = inAppPrepProgress?.call();
             try {
               final ready = await MediaStoreService().makeUploadReady(savedPath);
               if (ready != null && ready.isNotEmpty) {
@@ -392,6 +396,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
                 readyTask = readyTask.copyWith(localPath: ready);
               }
             } catch (_) {}
+            closePrep?.call();
           }
         }
       }
@@ -592,7 +597,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     }
     final fresh = await ref.read(mediaRepositoryProvider).requestDownload(
           url: task.sourceUrl,
-          formatId: task.format.id,
+          formatId: _fid(task),
         );
     final current = state.byId(task.id);
     if (current != null && fresh.jobId != null) {
@@ -1112,6 +1117,23 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     } catch (_) {
       return false;
     }
+  }
+
+  String _fid(DownloadTask task) =>
+      _tiktokTasks.contains(task.id) ? '${task.format.id}+tt' : task.format.id;
+
+  bool _videoFormat(String id) => !id.startsWith('audio') && id != 'preview';
+
+  Future<bool> _chooseTiktok(String title) async {
+    final ask = inAppTiktokChoice;
+    if (ask != null) {
+      try {
+        final pick = await ask(title);
+        if (pick != null) return pick;
+      } catch (_) {}
+    }
+    // App not on screen (share sheet, bubble): ask on the bubble.
+    return _askTiktok(title);
   }
 
   bool _tiktokVideo(String path) {

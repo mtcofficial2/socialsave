@@ -24,6 +24,8 @@ import 'package:social_save/features/library/share_session.dart';
 import 'package:social_save/features/library/transfer_boost.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
 import 'package:flutter/material.dart';
+import 'package:social_save/features/library/tiktok_ready.dart';
+import 'package:social_save/shared/widgets/premium_glass.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart' show ProviderContainer, ProviderScope;
 import 'package:social_save/shared/models/download_status.dart';
@@ -2851,35 +2853,66 @@ void _pumpOverlay(ProviderContainer c, String id) {
 
 /// The floating card's callbacks (details, cancel, background download). Used by
 /// the app's own engine and by the headless engine (lib/bg_main.dart).
-Future<bool> _askTiktokInApp(String title) async {
+Future<bool> _askTiktokInApp(String title) async =>
+    await tiktokChoiceDialog() ?? false;
+
+/// "Make this video TikTok-ready?" Null when no screen is up to ask on.
+Future<bool?> tiktokChoiceDialog() async {
   final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
-  if (ctx == null || !ctx.mounted) return false;
-  final name = title.trim().isEmpty ? 'This video' : title.trim();
-  final yes = await showDialog<bool>(
+  if (ctx == null || !ctx.mounted) return null;
+  return showDialog<bool>(
     context: ctx,
     barrierDismissible: false,
-    builder: (context) => AlertDialog(
-      title: const Text('Make this video work on TikTok?'),
-      content: Text(
-        '$name is a kind of video TikTok may not open. Social Save can remake it as 30 fps H.264, fitted to 1080p without stretching. Portrait stays portrait.',
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context, false),
-          child: const Text('Keep this file'),
+    builder: (context) {
+      final scheme = Theme.of(context).colorScheme;
+      return Dialog(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+        child: PremiumGlass(
+          level: GlassLevel.thick,
+          radius: 28,
+          padding: const EdgeInsets.fromLTRB(22, 22, 22, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Make this video TikTok-ready?',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(color: scheme.onSurface, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              Text('Converts to 1080p 30fps H.264 so TikTok accepts it in full quality.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant)),
+              const SizedBox(height: 18),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    child: const Text('Just download'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    child: const Text('Yes, TikTok-ready'),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
-        FilledButton(
-          onPressed: () => Navigator.pop(context, true),
-          child: const Text('Make it ready'),
-        ),
-      ],
-    ),
+      );
+    },
   );
-  return yes == true;
 }
 
 void installOverlayHandlers(ProviderContainer? Function() container) {
   inAppTiktokAsk = _askTiktokInApp;
+  inAppTiktokChoice = (_) => tiktokChoiceDialog();
+  inAppPrepProgress = () {
+    final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
+    if (ctx == null || !ctx.mounted) return null;
+    return showTiktokPrepProgress(ctx);
+  };
   MediaEvents.on('overlayAnalyze', (args) async {
     final u = args is String ? videoLinkIn(args) : null;
     final c = container();

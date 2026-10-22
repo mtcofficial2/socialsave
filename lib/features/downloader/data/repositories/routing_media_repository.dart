@@ -51,14 +51,17 @@ class RoutingMediaRepository implements MediaRepository {
   Future<DownloadTicket> requestDownload({required String url, required String formatId}) async {
     if (await PhoneEngine.isEnabled()) {
       if (!_serverOnce(url)) return PhoneEngine.start(url: _valid(url), formatId: formatId);
-      final ticket = await hosted.requestDownload(url: url, formatId: formatId);
+      final ticket = await hosted.requestDownload(url: url, formatId: _plain(formatId));
       PhoneEngine.serverFor
         ..remove(url.trim())
         ..remove(_urlValidator.validate(url).normalized?.toString());
       return ticket;
     }
-    return hosted.requestDownload(url: url, formatId: formatId);
+    return hosted.requestDownload(url: url, formatId: _plain(formatId));
   }
+
+  /// The server knows no TikTok-ready flag; it gets the plain format id.
+  String _plain(String id) => id.endsWith('+tt') ? id.substring(0, id.length - 3) : id;
 
   @override
   Future<DownloadJobStatus> getJobStatus(String jobId) {

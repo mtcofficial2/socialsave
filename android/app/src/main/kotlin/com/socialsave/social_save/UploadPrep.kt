@@ -27,13 +27,23 @@ object UploadPrep {
     private val done = java.util.concurrent.atomic.AtomicInteger(-1)
     @Volatile private var startedAt = 0L
     @Volatile private var stage = ""
+    @Volatile private var durUs = 0L
+    @Volatile private var encodeAt = 0L
+    @Volatile private var repack = false
 
     /** Fraction done (0..1, or -1 when unknown), time left and the current step, for the progress dialog. */
     fun progress(): Map<String, Any> {
         val permille = done.get()
         val elapsed = android.os.SystemClock.elapsedRealtime() - startedAt
         val eta = if (permille in 20..999 && startedAt > 0) elapsed * (1000 - permille) / permille else -1L
-        return mapOf("fraction" to (if (permille < 0) -1.0 else permille / 1000.0), "etaMs" to eta, "stage" to stage)
+        // Speed: seconds of video encoded per wall second (only while the chip encodes).
+        val wall = android.os.SystemClock.elapsedRealtime() - encodeAt
+        val speed = if (encodeAt > 0 && durUs > 0 && permille in 1..950 && wall > 300)
+            (permille / 950.0) * (durUs / 1000.0) / wall else 0.0
+        return mapOf(
+            "fraction" to (if (permille < 0) -1.0 else permille / 1000.0), "etaMs" to eta,
+            "stage" to stage, "speed" to speed, "repack" to repack,
+        )
     }
 
     internal fun setProgress(fraction: Double, step: String? = null) {
@@ -72,7 +82,10 @@ object UploadPrep {
         cancel.set(false)
         trace.setLength(0)
         done.set(-1)
-        stage = "Checking the video"
+        stage = "Checking video"
+        durUs = 0L
+        encodeAt = 0L
+        repack = false
         startedAt = android.os.SystemClock.elapsedRealtime()
         val job = look(ctx, path) ?: return path
         val source = job.source
@@ -81,7 +94,10 @@ object UploadPrep {
             "target ${clip.outW}x${clip.outH} from ${clip.dispW}x${clip.dispH} " +
                 "fps ${clip.fps} ${clip.video} picture ${clip.pictureOk}",
         )
+        durUs = clip.durationUs
         if (clip.ready(moovIsNearStart(source))) {
+            repack = true
+            setProgress(1.0, "Already TikTok-ready")
             note("already ready")
             return path
         }
@@ -94,7 +110,9 @@ object UploadPrep {
         if (!clip.pictureOk) {
             // Cache, not the download folder. MediaMuxer fails on some shared
             // storage paths and that used to drop through to a full software encode.
-            setProgress(0.0, "Rewriting the picture")
+            val short = minOf(clip.outW, clip.outH)
+            encodeAt = android.os.SystemClock.elapsedRealtime()
+            setProgress(0.0, if (short >= 1080) "Converting to 1080p 30fps" else "Keeping ${short}p, 30fps")
             val hw = HardwareTranscode.transcode(source, hwFile, bitrateBits(clip.outW, clip.outH), clip.outW, clip.outH)
             note("hardware result $hw ${clip.video} ${clip.outW}x${clip.outH}")
             if (!stopped() && (hw == 1 || hw == 2)) {
@@ -110,7 +128,8 @@ object UploadPrep {
             }
         } else {
             val audioFrom = if (!clip.audioOk && clip.hasAudio) source else null
-            setProgress(0.5, "Repacking")
+            repack = true
+            setProgress(0.3, "Already TikTok-ready")
             wrote = remux(ctx, job, source, audioFrom, out)
             if (wrote && !acceptable(ctx, job, out)) {
                 Log.w(TAG, "remux failed the check")
@@ -176,6 +195,7 @@ object UploadPrep {
             return if (source.isFile) source.absolutePath else path
         }
         dest.setReadable(true, false)
+        setProgress(1.0, "Ready for TikTok")
         return dest.absolutePath
     }
 

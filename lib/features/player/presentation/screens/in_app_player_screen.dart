@@ -118,6 +118,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   bool _pinchZoom = false;
   bool _locked = false;
   bool _lockHint = false;
+  AppLifecycleState? _lastLife;
   int? _frameWidth;
   int? _frameHeight;
   Duration? _markA;
@@ -648,12 +649,18 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     }
     // With "Keep playing when screen is off" turned off, stop when the app
     // leaves the screen (not in picture-in-picture).
+    // Auto-enter PiP pauses the activity before "pipChanged" arrives, so
+    // _inPip is still false here. Pausing at once froze the video inside the
+    // PiP window. Wait for the mode change first.
+    _lastLife = state;
     if (state == AppLifecycleState.paused &&
         Plat.isAndroid &&
-        !_inPip &&
         !ref.read(settingsControllerProvider).backgroundPlay &&
         _player.state.playing) {
-      unawaited(_player.pause());
+      unawaited(Future<void>.delayed(const Duration(milliseconds: 1200), () {
+        if (!mounted || _inPip || _lastLife != AppLifecycleState.paused) return;
+        if (_player.state.playing) unawaited(_player.pause());
+      }));
     }
   }
 

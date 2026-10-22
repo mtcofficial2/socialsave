@@ -545,7 +545,7 @@ class MainActivity : FlutterFragmentActivity() {
                 "setPipAllowed" -> {
                     pipAllowed = call.argument<Boolean>("allowed") == true
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                        setPictureInPictureParams(pipParams())
+                        try { setPictureInPictureParams(pipParams()) } catch (e: Exception) { android.util.Log.w("Pip", "params: $e") }
                     }
                     result.success(pipAllowed)
                 }
@@ -553,7 +553,7 @@ class MainActivity : FlutterFragmentActivity() {
                     pipWidth = (call.argument<Int>("width") ?: 16).coerceAtLeast(1)
                     pipHeight = (call.argument<Int>("height") ?: 9).coerceAtLeast(1)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        setPictureInPictureParams(pipParams())
+                        try { setPictureInPictureParams(pipParams()) } catch (e: Exception) { android.util.Log.w("Pip", "params: $e") }
                     }
                     result.success(true)
                 }
@@ -1076,7 +1076,8 @@ class MainActivity : FlutterFragmentActivity() {
         return try {
             enterPictureInPictureMode(pipParams())
             true
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            android.util.Log.w("Pip", "enter failed: $e")
             false
         }
     }
@@ -1094,8 +1095,15 @@ class MainActivity : FlutterFragmentActivity() {
     private fun pipRatio(width: Int, height: Int): Rational {
         val w = width.coerceAtLeast(1).toDouble()
         val h = height.coerceAtLeast(1).toDouble()
-        val clamped = (w / h).coerceIn(0.41841, 2.39)
-        return Rational((clamped * 1000).toInt().coerceAtLeast(1), 1000)
+        // Android allows 1:2.39 to 2.39:1. Round inward so the edge cases
+        // (very tall Shorts, wide films) stay valid: 418/1000 was below 1/2.39
+        // and made setAspectRatio throw.
+        val r = w / h
+        return when {
+            r <= 100.0 / 239.0 -> Rational(100, 239)
+            r >= 2.39 -> Rational(239, 100)
+            else -> Rational(width.coerceAtLeast(1), height.coerceAtLeast(1))
+        }
     }
 
     private fun saveToDownloads(sourcePath: String, name: String, mime: String): String {

@@ -71,7 +71,10 @@ object PhoneEngine {
                 "start" -> {
                     val id = call.argument<String>("id") ?: ""
                     val url = call.argument<String>("url") ?: ""
-                    val formatId = call.argument<String>("formatId") ?: "auto"
+                    // "<id>+tt" asks for the TikTok-ready pick. Only "auto" changes:
+                    // "tiktok" is capped at 1080p/30fps H.264, plain "auto" keeps the best.
+                    val raw = call.argument<String>("formatId") ?: "auto"
+                    val formatId = if (raw.endsWith("+tt")) raw.removeSuffix("+tt").let { if (it == "auto") "tiktok" else it } else raw
                     try { start(id, url, formatId); result.success(true) }
                     catch (e: Exception) { result.error("engine", e.message ?: "Could not start", null) }
                 }
@@ -312,7 +315,11 @@ object PhoneEngine {
         if (formatId == "audio-mp3") return "ba/b"
         if (formatId == "original") return "bv*+ba/b"
         val height = formatId.removeSuffix("p").toIntOrNull()
-        if (height == null || formatId == "auto") {
+        if (formatId == "auto" || (height == null && formatId != "tiktok")) {
+            // Best quality, no cap. The -S sort still takes H.264 at equal height.
+            return "bv*+ba/b"
+        }
+        if (height == null || formatId == "tiktok") {
             // Long side <= 1920 means up to 1080p in portrait and landscape.
             val c = "[height<=?1920][width<=?1920]"
             return if (isYouTube(url)) {
@@ -400,7 +407,7 @@ object PhoneEngine {
                     .addOption("-f", selector(formatId, url))
                     .addOption("-o", File(dir, "media.%(ext)s").absolutePath)
                 if (infoJson != null) request.addOption("--load-info-json", infoJson.absolutePath)
-                if (formatId == "auto") request.addOption("-S", "res:1080,fps:30,vcodec:h264,acodec:aac")
+                if (formatId == "tiktok") request.addOption("-S", "res:1080,fps:30,vcodec:h264,acodec:aac")
             // Same height in H.264 beats AV1/VP9: the phone has no AV1 chip, so an AV1 pick makes "TikTok-ready" a slow software decode.
             else if (formatId != "original" && !formatId.startsWith("audio")) request.addOption("-S", "res,fps,vcodec:h264,acodec:aac")
                 youtubeOptions(request, clients)

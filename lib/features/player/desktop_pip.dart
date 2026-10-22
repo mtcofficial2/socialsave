@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -18,6 +19,10 @@ class DesktopPip {
   static const _kX = 'pip.x';
   static const _kY = 'pip.y';
   static const _kW = 'pip.w';
+  // Portrait (Shorts) keeps its own size: a landscape width reused for 9:16
+  // made a window taller than the screen.
+  static const _kWTall = 'pip.wTall';
+  static bool _tall = false;
 
   static Size _screen() {
     final displays = ui.PlatformDispatcher.instance.displays;
@@ -34,8 +39,12 @@ class DesktopPip {
     _restore = await windowManager.getBounds();
     final prefs = await SharedPreferences.getInstance();
     final screen = _screen();
-    var w = prefs.getDouble(_kW) ?? (a >= 1 ? 400.0 : 240.0);
-    w = w.clamp(220.0, screen.width * 0.6);
+    _tall = a < 1;
+    var w = prefs.getDouble(_tall ? _kWTall : _kW) ?? (_tall ? 240.0 : 400.0);
+    // Fit both edges: at most 60% of the screen wide and 55% tall.
+    final maxW = math.min(screen.width * 0.6, screen.height * 0.55 * a);
+    final minW = math.min(_tall ? 140.0 : 220.0, maxW);
+    w = w.clamp(minW, maxW);
     final h = w / a;
     var x = prefs.getDouble(_kX) ?? (screen.width - w - 24);
     var y = prefs.getDouble(_kY) ?? (screen.height - h - 72);
@@ -43,7 +52,8 @@ class DesktopPip {
     y = y.clamp(0.0, screen.height - h);
     active = true;
     await windowManager.setTitleBarStyle(TitleBarStyle.hidden, windowButtonVisibility: false);
-    await windowManager.setMinimumSize(const Size(200, 112));
+    // Minimum keeps the video's shape, so a portrait window can shrink too.
+    await windowManager.setMinimumSize(a >= 1 ? Size(200, 200 / a) : Size(112 * a, 112));
     await windowManager.setAlwaysOnTop(true);
     await windowManager.setBounds(Rect.fromLTWH(x, y, w, h));
     await windowManager.setAspectRatio(a);
@@ -57,9 +67,10 @@ class DesktopPip {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setDouble(_kX, now.left);
       await prefs.setDouble(_kY, now.top);
-      await prefs.setDouble(_kW, now.width);
+      await prefs.setDouble(_tall ? _kWTall : _kW, now.width);
     } catch (_) {}
     await windowManager.setAspectRatio(0);
+    await windowManager.setMinimumSize(const Size(360, 480));
     await windowManager.setAlwaysOnTop(false);
     await windowManager.setTitleBarStyle(TitleBarStyle.normal);
     final r = _restore;
