@@ -203,7 +203,13 @@ object UploadPrep {
         val sizeOk = dispW == outW && dispH == outH
         val fpsOk = fps in 29.5..30.5
         val rotOk = ((rotation % 360) + 360) % 360 == 0
-        val pictureOk = codecOk && sizeOk && fpsOk && rotOk
+        // 1.0.50: TikTok takes H.264 8-bit 4:2:0 from 720p to 1080p at up to
+        // 60 fps, so such a file only needs a new container (near instant)
+        // instead of a full re-encode to exactly 1080p30.
+        val longSide = max(dispW, dispH)
+        val shortSide = minOf(dispW, dispH)
+        val fastOk = codecOk && fps in 23.0..60.5 && longSide in 1280..1920 && shortSide in 720..1080
+        val pictureOk = (codecOk && sizeOk && fpsOk && rotOk) || fastOk
         val audioOk = !hasAudio || audio == "aac"
         fun ready(moov: Boolean) = pictureOk && audioOk && moov
     }
@@ -498,11 +504,15 @@ object UploadPrep {
             Log.w(TAG, "check codec ${clip.video} ${clip.pix}")
             return false
         }
-        if (clip.dispW != want.outW || clip.dispH != want.outH) {
-            Log.w(TAG, "check size ${clip.dispW}x${clip.dispH} want ${want.outW}x${want.outH}")
+        // A kept picture (remux) keeps its own size and rate.
+        val wantW = if (want.pictureOk) want.dispW else want.outW
+        val wantH = if (want.pictureOk) want.dispH else want.outH
+        if (clip.dispW != wantW || clip.dispH != wantH) {
+            Log.w(TAG, "check size ${clip.dispW}x${clip.dispH} want ${wantW}x${wantH}")
             return false
         }
-        if (clip.fps !in 29.5..30.5) {
+        val fpsRange = if (want.pictureOk) (want.fps - 1.0)..(want.fps + 1.0) else 29.5..30.5
+        if (clip.fps !in fpsRange) {
             Log.w(TAG, "check fps ${clip.fps}")
             return false
         }
