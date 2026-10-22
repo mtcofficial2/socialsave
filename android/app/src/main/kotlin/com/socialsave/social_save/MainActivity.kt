@@ -854,6 +854,9 @@ class MainActivity : FlutterFragmentActivity() {
                         }
                     }
                 }
+                "uploadPrepProgress" -> {
+                    result.success(UploadPrep.progress())
+                }
                 "cancelUploadPrep" -> {
                     UploadPrep.cancel()
                     result.success(true)

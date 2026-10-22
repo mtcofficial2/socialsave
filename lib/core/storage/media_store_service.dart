@@ -12,6 +12,16 @@ class MediaStoreService {
 
   /// True when this video is one TikTok may refuse. False when it is already
   /// a normal file, or when the phone cannot tell.
+  /// Live progress of [makeUploadReady]: fraction (-1 unknown), etaMs (-1 unknown) and stage.
+  Future<Map<String, Object?>> uploadPrepProgress() async {
+    try {
+      final raw = await _channel.invokeMethod<Map<Object?, Object?>>('uploadPrepProgress');
+      return {for (final e in (raw ?? const {}).entries) '${e.key}': e.value};
+    } catch (_) {
+      return const {};
+    }
+  }
+
   Future<bool> needsTiktokWork(String path) async {
     try {
       return await _channel.invokeMethod<bool>('needsTiktokWork', {'path': path}) ?? false;

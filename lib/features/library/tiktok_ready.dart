@@ -60,22 +60,7 @@ Future<bool> offerTiktokReady(
   unawaited(showDialog<void>(
     context: context,
     barrierDismissible: false,
-    builder: (context) => const PopScope(
-      canPop: false,
-      child: AlertDialog(
-        content: Row(
-          children: [
-            SizedBox(
-              width: 28,
-              height: 28,
-              child: CircularProgressIndicator(strokeWidth: 3),
-            ),
-            SizedBox(width: 16),
-            Expanded(child: Text('Making a file TikTok can open…')),
-          ],
-        ),
-      ),
-    ),
+    builder: (context) => const PopScope(canPop: false, child: _PrepProgressDialog()),
   ));
   await Future<void>.delayed(const Duration(milliseconds: 80));
   String? ready;
@@ -107,4 +92,81 @@ Future<bool> offerTiktokReady(
 void _note(BuildContext context, String text) {
   if (!context.mounted) return;
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+}
+
+/// Shows real progress and the time left while the phone rewrites the video.
+class _PrepProgressDialog extends StatefulWidget {
+  const _PrepProgressDialog();
+
+  @override
+  State<_PrepProgressDialog> createState() => _PrepProgressDialogState();
+}
+
+class _PrepProgressDialogState extends State<_PrepProgressDialog> {
+  Timer? _poll;
+  double _fraction = -1;
+  int _etaMs = -1;
+  String _stage = 'Checking the video';
+
+  @override
+  void initState() {
+    super.initState();
+    _poll = Timer.periodic(const Duration(milliseconds: 400), (_) async {
+      final p = await MediaStoreService().uploadPrepProgress();
+      if (!mounted) return;
+      setState(() {
+        final f = (p['fraction'] as num?)?.toDouble() ?? -1;
+        if (f > _fraction) _fraction = f;
+        _etaMs = (p['etaMs'] as num?)?.toInt() ?? -1;
+        final stage = p['stage'] as String?;
+        if (stage != null && stage.isNotEmpty) _stage = stage;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _poll?.cancel();
+    super.dispose();
+  }
+
+  String get _left {
+    if (_etaMs < 0) return '';
+    final s = (_etaMs / 1000).ceil();
+    if (s < 2) return 'Almost done';
+    if (s < 60) return 'About $s s left';
+    return 'About ${(s / 60).ceil()} min left';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final known = _fraction >= 0;
+    return AlertDialog(
+      title: const Text('Making a file TikTok can open'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              minHeight: 8,
+              value: known ? _fraction.clamp(0.0, 1.0) : null,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            known ? '$_stage · ${(_fraction * 100).round()}%' : _stage,
+            style: TextStyle(color: scheme.onSurface, fontWeight: FontWeight.w600),
+          ),
+          if (_left.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(_left, style: TextStyle(color: scheme.onSurfaceVariant)),
+            ),
+        ],
+      ),
+    );
+  }
 }

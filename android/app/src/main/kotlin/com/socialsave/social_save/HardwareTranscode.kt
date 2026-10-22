@@ -154,6 +154,9 @@ object HardwareTranscode {
                             val rel = (pts - ptsBase).coerceAtLeast(0L)
                             if (!fitter.accept(rel, drainNow)) return giveUp("frame drop")
                             frames++
+                            if (durationUs > 0 && frames % 5 == 0) {
+                                UploadPrep.setProgress(0.95 * rel.toDouble() / durationUs)
+                            }
                             if (frames == 1 || frames % 60 == 0) Log.i(TAG, "chip frame $frames")
                         } else {
                             dec.releaseOutputBuffer(outIndex, false)
@@ -250,8 +253,10 @@ object HardwareTranscode {
         val names = hardwareNames(MediaFormat.MIMETYPE_VIDEO_AVC, encoder = true)
         for (name in names) {
             val formats = ArrayList<MediaFormat>()
-            formats.add(encoderFormat(width, height, bitrate, frameRate, fast = true, profile = false))
+            // High profile first: better picture at the same size. Chips that
+            // reject it fall back to their default profile.
             formats.add(encoderFormat(width, height, bitrate, frameRate, fast = true, profile = true))
+            formats.add(encoderFormat(width, height, bitrate, frameRate, fast = true, profile = false))
             // Speed keys without the extras some chips reject. Still faster
             // than a plain configure, which locks the chip to playback speed.
             formats.add(encoderFormat(width, height, bitrate, frameRate, fast = false, profile = false, rateOnly = true))
@@ -290,8 +295,13 @@ object HardwareTranscode {
         format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
         if (profile) {
             format.setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileHigh)
-            // Level 5.2 covers a 4K portrait frame. The constant is inlined.
-            format.setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.AVCLevel52)
+            // 4.2 covers 1080p at 30 fps; larger frames need 5.2.
+            val level = if (width.toLong() * height <= 1920L * 1088L) {
+                MediaCodecInfo.CodecProfileLevel.AVCLevel42
+            } else {
+                MediaCodecInfo.CodecProfileLevel.AVCLevel52
+            }
+            format.setInteger(MediaFormat.KEY_LEVEL, level)
         }
         if (fast || rateOnly) {
             // Same request a video editor sends: run the chip as fast as it

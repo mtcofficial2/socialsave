@@ -24,6 +24,24 @@ object UploadPrep {
     private const val TAG = "UploadPrep"
     private val cancel = AtomicBoolean(false)
     private val trace = StringBuilder()
+    private val done = java.util.concurrent.atomic.AtomicInteger(-1)
+    @Volatile private var startedAt = 0L
+    @Volatile private var stage = ""
+
+    /** Fraction done (0..1, or -1 when unknown), time left and the current step, for the progress dialog. */
+    fun progress(): Map<String, Any> {
+        val permille = done.get()
+        val elapsed = android.os.SystemClock.elapsedRealtime() - startedAt
+        val eta = if (permille in 20..999 && startedAt > 0) elapsed * (1000 - permille) / permille else -1L
+        return mapOf("fraction" to (if (permille < 0) -1.0 else permille / 1000.0), "etaMs" to eta, "stage" to stage)
+    }
+
+    internal fun setProgress(fraction: Double, step: String? = null) {
+        val value = (fraction.coerceIn(0.0, 1.0) * 1000).toInt()
+        // Only forward, so the bar never jumps back.
+        done.updateAndGet { old -> if (value > old) value else old }
+        if (step != null) stage = step
+    }
 
     /** Last prepare notes, for a debug test. One line each. */
     fun notes(): String = synchronized(trace) { trace.toString() }
@@ -53,6 +71,9 @@ object UploadPrep {
     fun prepare(ctx: Context, path: String?): String? {
         cancel.set(false)
         trace.setLength(0)
+        done.set(-1)
+        stage = "Checking the video"
+        startedAt = android.os.SystemClock.elapsedRealtime()
         val job = look(ctx, path) ?: return path
         val source = job.source
         val clip = job.clip
@@ -73,9 +94,11 @@ object UploadPrep {
         if (!clip.pictureOk) {
             // Cache, not the download folder. MediaMuxer fails on some shared
             // storage paths and that used to drop through to a full software encode.
+            setProgress(0.0, "Rewriting the picture")
             val hw = HardwareTranscode.transcode(source, hwFile, bitrateBits(clip.outW, clip.outH), clip.outW, clip.outH)
             note("hardware result $hw ${clip.video} ${clip.outW}x${clip.outH}")
             if (!stopped() && (hw == 1 || hw == 2)) {
+                setProgress(0.96, "Finishing")
                 val audioFrom = if (hw == 2 && clip.hasAudio) source else null
                 wrote = remux(ctx, job, hwFile, audioFrom, out)
             }
@@ -87,6 +110,7 @@ object UploadPrep {
             }
         } else {
             val audioFrom = if (!clip.audioOk && clip.hasAudio) source else null
+            setProgress(0.5, "Repacking")
             wrote = remux(ctx, job, source, audioFrom, out)
             if (wrote && !acceptable(ctx, job, out)) {
                 Log.w(TAG, "remux failed the check")

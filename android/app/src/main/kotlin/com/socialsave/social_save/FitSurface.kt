@@ -113,7 +113,10 @@ internal class FitSurface {
     /** Shows this decoded frame, after emitting any 30 fps slots the previous one still owes. */
     fun accept(ptsUs: Long, drain: () -> Boolean): Boolean {
         if (!waitForFrame()) return false
-        if (haveFrame && !emitUntil(ptsUs, drain)) return false
+        // A slot takes the frame nearest to it, not the last one before it.
+        // Sources that are not exactly 60 fps (59.94, phone jitter) then
+        // keep an even cadence instead of doubling and skipping frames.
+        if (haveFrame && !emitUntil(ptsUs - STEP_US / 4, drain)) return false
         return try {
             surfaceTexture?.updateTexImage()
             haveFrame = true
