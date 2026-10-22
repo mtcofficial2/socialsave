@@ -1,6 +1,8 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
+import 'package:social_save/shared/widgets/liquid_glass.dart';
+import 'package:social_save/shared/widgets/premium_glass.dart';
+
+export 'package:social_save/shared/widgets/premium_glass.dart';
 
 /// Wallpaper the glass surfaces frost over.
 class GlassBackground extends StatelessWidget {
@@ -10,26 +12,30 @@ class GlassBackground extends StatelessWidget {
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     final wide = MediaQuery.sizeOf(context).width >= 840;
-    return DecoratedBox(
+    GlassGrain.ensure();
+    // Drawn once and reused: nothing in here animates.
+    return RepaintBoundary(
+      child: DecoratedBox(
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: dark
               ? wide
-                  ? const [Color(0xFF161E2A), Color(0xFF0B1016), Color(0xFF0C1820)]
-                  : const [Color(0xFF121A24), Color(0xFF0A1016), Color(0xFF102028)]
-              : const [Color(0xFFF5FAFF), Color(0xFFEEF3F7), Color(0xFFF7F4EF)],
+                  ? const [Color(0xFF101217), Color(0xFF0A0B0E), Color(0xFF0C1014)]
+                  : const [Color(0xFF0E1015), Color(0xFF0A0B0E), Color(0xFF0D1216)]
+              : const [Color(0xFFF2F5FA), Color(0xFFEAF0F7), Color(0xFFF6F2EC)],
         ),
       ),
       child: Stack(
         children: [
-          _Glow(top: wide ? -160 : -90, left: wide ? 160 : -50, size: wide ? 520 : 280, color: const Color(0x665EEAD4)),
-          _Glow(top: wide ? -40 : 180, right: wide ? 40 : -80, size: wide ? 420 : 320, color: const Color(0x5593C5FD)),
-          _Glow(bottom: wide ? -80 : -40, left: wide ? 280 : -20, size: wide ? 380 : 300, color: const Color(0x44A5F3FC)),
-          _Glow(bottom: 80, right: -30, size: wide ? 280 : 220, color: const Color(0x33C4B5FD)),
+          _Glow(top: wide ? -200 : -120, left: wide ? 120 : -90, size: wide ? 640 : 380, color: const Color(0xAA5EEAD4)),
+          _Glow(top: wide ? -80 : 140, right: wide ? 0 : -120, size: wide ? 560 : 420, color: const Color(0x9993C5FD)),
+          _Glow(bottom: wide ? -140 : -90, left: wide ? 240 : -60, size: wide ? 520 : 400, color: const Color(0x88A5F3FC)),
+          _Glow(bottom: 40, right: -80, size: wide ? 400 : 320, color: const Color(0x88C4B5FD)),
         ],
       ),
+    ),
     );
   }
 }
@@ -60,19 +66,22 @@ class _Glow extends StatelessWidget {
       right: right,
       bottom: bottom,
       child: IgnorePointer(
-        child: Container(
+        child: SizedBox(
           width: size,
           height: size,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: color.withValues(alpha: dark ? 0.22 : color.a),
-            boxShadow: [
-              BoxShadow(
-                color: color.withValues(alpha: dark ? 0.28 : 0.55),
-                blurRadius: 80,
-                spreadRadius: 20,
+          // A radial fade is far cheaper than a blurred box shadow.
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: RadialGradient(
+                colors: [
+                  color.withValues(alpha: dark ? 0.30 : color.a),
+                  color.withValues(alpha: dark ? 0.12 : color.a * 0.45),
+                  color.withValues(alpha: 0),
+                ],
+                stops: const [0.0, 0.45, 1.0],
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -98,41 +107,14 @@ class Glass extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    final radius = BorderRadius.circular(borderRadius);
-    final tint = dark
-        ? const [Color(0xCC1C2633), Color(0x99141C28)]
-        : const [Color(0xD9FFFFFF), Color(0xA6FFFFFF)];
-    final panel = DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: radius,
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: tint,
-        ),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: dark ? 0.05 : 0.35),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: dark ? 0.10 : 0.03),
-            blurRadius: 18,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: padding == null ? child : Padding(padding: padding!, child: child),
-    );
-
-    return ClipRRect(
-      borderRadius: radius,
-      child: blur
-          ? BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
-              child: panel,
-            )
-          : panel,
+    // 1.0.49: one premium glass for every panel. Lists keep blur off so
+    // scrolling stays smooth; they get the same tint, rim and shadow.
+    return PremiumGlass(
+      radius: borderRadius,
+      blur: blur,
+      padding: padding,
+      lifted: blur,
+      child: child,
     );
   }
 }
@@ -145,6 +127,7 @@ class GlassCard extends StatelessWidget {
     this.clipBehavior = Clip.antiAlias,
     this.margin,
     this.blur = false,
+    this.onTap,
   });
 
   final Widget? child;
@@ -152,12 +135,16 @@ class GlassCard extends StatelessWidget {
   final EdgeInsetsGeometry? margin;
   final bool blur;
 
+  /// When set, the card squashes while held (GlassPress).
+  final VoidCallback? onTap;
+
   @override
   Widget build(BuildContext context) {
-    final glass = Glass(
+    Widget glass = Glass(
       blur: blur,
       child: child ?? const SizedBox.shrink(),
     );
+    if (onTap != null) glass = GlassPress(onTap: onTap!, child: glass);
     if (margin == null) return glass;
     return Padding(padding: margin!, child: glass);
   }

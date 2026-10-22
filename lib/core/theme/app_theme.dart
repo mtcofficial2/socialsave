@@ -181,15 +181,20 @@ class AppTheme {
         contentTextStyle: text.bodyMedium?.copyWith(color: scheme.onInverseSurface),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
+      // 1.0.49: dialogs, sheets and menus are thick glass: a high-alpha
+      // neutral tint, a bright hairline rim and smooth corners. No backdrop
+      // blur, because the modal barrier already dims what is behind.
       dialogTheme: DialogThemeData(
-        backgroundColor: scheme.surfaceContainerHigh,
+        backgroundColor: liquidGlass ? _thickGlass(scheme) : scheme.surfaceContainerHigh,
         surfaceTintColor: Colors.transparent,
         insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        shape: liquidGlass
+            ? RoundedSuperellipseBorder(borderRadius: BorderRadius.circular(30), side: _rim(scheme))
+            : RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         titleTextStyle: text.titleLarge?.copyWith(fontWeight: FontWeight.w700, fontSize: 19),
       ),
       navigationRailTheme: NavigationRailThemeData(
-        backgroundColor: scheme.surfaceContainerLowest,
+        backgroundColor: liquidGlass ? Colors.transparent : scheme.surfaceContainerLowest,
         indicatorColor: scheme.secondaryContainer,
         selectedIconTheme: IconThemeData(color: scheme.onSecondaryContainer),
         unselectedIconTheme: IconThemeData(color: scheme.onSurfaceVariant),
@@ -214,12 +219,37 @@ class AppTheme {
         textStyle: text.bodySmall?.copyWith(color: scheme.onInverseSurface),
       ),
       bottomSheetTheme: BottomSheetThemeData(
-        backgroundColor: scheme.surfaceContainerHigh,
+        backgroundColor: liquidGlass ? _thickGlass(scheme) : scheme.surfaceContainerHigh,
         surfaceTintColor: Colors.transparent,
         showDragHandle: true,
         constraints: const BoxConstraints(maxWidth: 640),
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        shape: liquidGlass
+            ? RoundedSuperellipseBorder(
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(34)),
+                side: _rim(scheme),
+              )
+            : const RoundedRectangleBorder(
+                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+              ),
+      ),
+      popupMenuTheme: PopupMenuThemeData(
+        color: liquidGlass ? _thickGlass(scheme) : scheme.surfaceContainer,
+        surfaceTintColor: Colors.transparent,
+        elevation: liquidGlass ? 10 : 3,
+        shadowColor: Colors.black.withValues(alpha: 0.35),
+        shape: liquidGlass
+            ? RoundedSuperellipseBorder(borderRadius: BorderRadius.circular(18), side: _rim(scheme))
+            : RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+      menuTheme: MenuThemeData(
+        style: MenuStyle(
+          backgroundColor: WidgetStatePropertyAll(liquidGlass ? _thickGlass(scheme) : scheme.surfaceContainer),
+          surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+          shape: WidgetStatePropertyAll(
+            liquidGlass
+                ? RoundedSuperellipseBorder(borderRadius: BorderRadius.circular(18), side: _rim(scheme))
+                : RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
         ),
       ),
       switchTheme: SwitchThemeData(
@@ -240,6 +270,18 @@ class AppTheme {
       ),
     );
   }
+
+  /// Near-opaque neutral glass for dialogs, sheets and menus.
+  static Color _thickGlass(ColorScheme scheme) => scheme.brightness == Brightness.dark
+      ? const Color(0xF01C1C1E)
+      : const Color(0xF2FFFFFF);
+
+  static BorderSide _rim(ColorScheme scheme) => BorderSide(
+        width: 1,
+        color: scheme.brightness == Brightness.dark
+            ? Colors.white.withValues(alpha: 0.14)
+            : Colors.white.withValues(alpha: 0.9),
+      );
 
   static TextTheme _textTheme(TextTheme base, String fontFamily) {
     try {

@@ -1,6 +1,7 @@
 import 'package:social_save/shared/widgets/brand_header.dart';
 import 'package:social_save/shared/widgets/liquid_glass.dart';
 import 'package:flutter/material.dart';
+import 'package:social_save/shared/widgets/premium_glass.dart';
 import 'package:social_save/core/constants/app_constants.dart';
 import 'package:social_save/shared/widgets/app_logo.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
@@ -27,9 +28,20 @@ class DesktopSidebar extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     return SizedBox(
       width: kDesktopSidebarWidth,
+      // 1.0.49: the rail is a glass column. Painted only (no backdrop
+      // blur), so the whole window does not re-blur on every repaint.
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: scheme.surface.withValues(alpha: 0.30),
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: GlassTokens.tint(scheme.brightness == Brightness.dark),
+          ),
+          border: Border(
+            right: BorderSide(
+              color: Colors.white.withValues(alpha: scheme.brightness == Brightness.dark ? 0.10 : 0.70),
+            ),
+          ),
         ),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 22, 14, 16),

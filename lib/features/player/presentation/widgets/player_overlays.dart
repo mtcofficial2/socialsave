@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'dart:ui';
 
+import 'package:social_save/shared/widgets/premium_glass.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -36,7 +36,7 @@ class PlayerGlassSheet extends StatelessWidget {
       child: ClipRRect(
         borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+          filter: GlassTokens.blur(24),
           child: Container(
             constraints: BoxConstraints(maxHeight: maxH),
             decoration: BoxDecoration(
@@ -389,7 +389,7 @@ class PlayerFirstHint extends StatelessWidget {
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(28),
                 child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                  filter: GlassTokens.blur(20),
                   child: Container(
                     padding: const EdgeInsets.fromLTRB(22, 22, 22, 16),
                     decoration: BoxDecoration(

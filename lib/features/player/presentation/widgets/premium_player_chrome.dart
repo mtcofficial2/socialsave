@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'dart:ui';
 
+import 'package:social_save/shared/widgets/premium_glass.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
@@ -613,7 +613,7 @@ class _PlayButtonState extends State<_PlayButton> {
                     )
                   : ClipOval(
                       child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+                        filter: GlassTokens.blur(14),
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 180),
                           width: s,
@@ -875,7 +875,7 @@ class PlayerHudPill extends StatelessWidget {
     return ClipRRect(
       borderRadius: BorderRadius.circular(18),
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        filter: GlassTokens.blur(18),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           decoration: BoxDecoration(

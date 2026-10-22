@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'dart:ui';
 
+import 'package:social_save/shared/widgets/premium_glass.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
@@ -413,7 +413,7 @@ class PhonePlayerChrome extends StatelessWidget {
     }
     return ClipOval(
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        filter: GlassTokens.blur(16),
         child: Material(
           color: ink.withValues(alpha: 0.62),
           shape: const CircleBorder(),

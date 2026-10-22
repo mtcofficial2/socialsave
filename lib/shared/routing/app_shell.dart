@@ -156,7 +156,8 @@ class AppShell extends ConsumerWidget {
                 ),
               ],
             ),
-      bottomNavigationBar: chrome,
+      // One shared backdrop for the nav pill and the download pill.
+      bottomNavigationBar: BackdropGroup(child: chrome),
     );
   }
 }
@@ -222,10 +223,11 @@ class _MiniProgress extends StatelessWidget {
                       ),
                       Text(
                         '${(progress * 100).round()}%  •  $speed',
+                        // 1.0.49: accent text on light glass fell under 4.5:1.
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
-                          color: scheme.primary,
+                          color: scheme.onSurface.withValues(alpha: 0.72),
                         ),
                       ),
                     ],

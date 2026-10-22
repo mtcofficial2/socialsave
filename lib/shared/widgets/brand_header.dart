@@ -1,8 +1,7 @@
-import 'dart:ui' show ImageFilter;
-
 import 'package:flutter/material.dart';
 import 'package:social_save/shared/widgets/app_logo.dart';
 import 'package:social_save/shared/widgets/liquid_glass.dart';
+import 'package:social_save/shared/widgets/premium_glass.dart';
 
 class BrandHeader extends StatelessWidget {
   const BrandHeader({
@@ -69,89 +68,16 @@ class FloatingGlass extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final dark = scheme.brightness == Brightness.dark;
-    final shape = BorderRadius.circular(radius);
+    // 1.0.49: all three looks use the shared premium glass. The nav bar and
+    // the download pill share one backdrop pass under the shell's BackdropGroup.
+    final content = Material(type: MaterialType.transparency, child: child);
     if (ghost) {
-      // One cheap blur. A second filter or a looping highlight inside this
-      // bar forces the whole screen to re-blur and makes taps feel late.
-      return DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: shape,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: dark ? 0.28 : 0.10),
-              blurRadius: 12,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: shape,
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: (dark ? scheme.surfaceContainerHigh : scheme.surface)
-                    .withValues(alpha: dark ? 0.32 : 0.40),
-                borderRadius: shape,
-                border: Border.all(
-                  width: 0.8,
-                  color: Colors.white.withValues(alpha: dark ? 0.22 : 0.70),
-                ),
-              ),
-              child: Material(type: MaterialType.transparency, child: child),
-            ),
-          ),
-        ),
-      );
+      return PremiumGlass(radius: radius, level: GlassLevel.thin, grouped: true, child: content);
     }
     if (bare) {
-      // Lighter variant: no border, no shadow, softer fill.
-      return ClipRRect(
-        borderRadius: shape,
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: scheme.surface.withValues(alpha: dark ? 0.38 : 0.45),
-              borderRadius: shape,
-            ),
-            child: Material(type: MaterialType.transparency, child: child),
-          ),
-        ),
-      );
+      return PremiumGlass(radius: radius, level: GlassLevel.thin, grouped: true, lifted: false, child: content);
     }
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: shape,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: dark ? 0.45 : 0.16),
-            blurRadius: 28,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: shape,
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: scheme.surface.withValues(alpha: dark ? 0.55 : 0.62),
-              borderRadius: shape,
-              border: Border.all(
-                color: (dark ? Colors.white : scheme.outline).withValues(
-                  alpha: dark ? 0.14 : 0.25,
-                ),
-              ),
-            ),
-            child: Material(type: MaterialType.transparency, child: child),
-          ),
-        ),
-      ),
-    );
+    return PremiumGlass(radius: radius, child: content);
   }
 }
 
@@ -193,7 +119,8 @@ class StitchNavBar extends StatelessWidget {
     final inset = MediaQuery.paddingOf(context).bottom;
     final scheme = Theme.of(context).colorScheme;
     return Padding(
-      padding: EdgeInsets.fromLTRB(16, 0, 16, 10 + inset),
+      // 1.0.49: floating pill, 64 px tall, at least 20 px above the bottom edge.
+      padding: EdgeInsets.fromLTRB(16, 0, 16, inset > 10 ? inset + 10 : 20),
       child: FloatingGlass(
         radius: 999,
         ghost: true,

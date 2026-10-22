@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:ui';
 
 import 'package:file_selector/file_selector.dart' as fs;
+import 'package:social_save/shared/widgets/premium_glass.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -692,7 +693,7 @@ class _MiniDockFill extends StatelessWidget {
   Widget build(BuildContext context) {
     if (glass) return child;
     return BackdropFilter(
-      filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+      filter: GlassTokens.blur(24),
       child: child,
     );
   }
@@ -1370,7 +1371,7 @@ class _AudioPlayButtonState extends State<_AudioPlayButton> {
     }
     return ClipOval(
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        filter: GlassTokens.blur(16),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
           width: s,
