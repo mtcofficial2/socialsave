@@ -57,6 +57,38 @@ class PhoneEngine {
   static bool isEngineMessage(String? message) =>
       message != null && message.startsWith('On-phone engine:');
 
+  /// YouTube's "confirm you're not a bot" (the server is blocked the same way,
+  /// so the answer is signing in on the phone, not the server).
+  static bool isBotCheck(String? message) =>
+      message != null && message.contains("prove it isn't a bot");
+
+  /// The message without the internal "On-phone engine:" tag.
+  static String display(String message) => message.replaceFirst('On-phone engine: ', '');
+
+  /// True once the WebView login left YouTube cookies on the phone.
+  static final ValueNotifier<bool> youTubeSignedIn = ValueNotifier<bool>(false);
+
+  static Future<bool> refreshYouTubeSignIn() async {
+    try {
+      youTubeSignedIn.value = await _channel.invokeMethod<bool>('ytSignedIn') ?? false;
+    } catch (_) {}
+    return youTubeSignedIn.value;
+  }
+
+  /// Opens the Google sign-in page; cookies stay in app-private storage.
+  static Future<void> signInYouTube() async {
+    try {
+      await _channel.invokeMethod<bool>('ytSignIn');
+    } catch (_) {}
+  }
+
+  static Future<void> signOutYouTube() async {
+    try {
+      await _channel.invokeMethod<bool>('ytSignOut');
+    } catch (_) {}
+    youTubeSignedIn.value = false;
+  }
+
   static bool isEngineError(Object? error) =>
       error is AppException && error.cause is PhoneEngineFailure;
 

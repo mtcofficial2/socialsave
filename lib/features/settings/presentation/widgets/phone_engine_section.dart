@@ -126,6 +126,7 @@ class _PhoneEngineSectionState extends State<PhoneEngineSection> {
                         ),
                       ],
                     ),
+                    const _YouTubeSignIn(),
                   ],
                   if (_note != null)
                     Text(_note!, style: TextStyle(fontSize: 12.5, color: scheme.onSurfaceVariant)),
@@ -202,6 +203,61 @@ class _SetupDialogState extends State<_SetupDialog> {
         if (_error != null)
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Close')),
       ],
+    );
+  }
+}
+
+/// "Sign in to YouTube" / "Sign out": cookies for the on-phone engine when
+/// YouTube asks the phone to prove it isn't a bot.
+class _YouTubeSignIn extends StatefulWidget {
+  const _YouTubeSignIn();
+
+  @override
+  State<_YouTubeSignIn> createState() => _YouTubeSignInState();
+}
+
+class _YouTubeSignInState extends State<_YouTubeSignIn> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    PhoneEngine.refreshYouTubeSignIn();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) PhoneEngine.refreshYouTubeSignIn();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return ValueListenableBuilder<bool>(
+      valueListenable: PhoneEngine.youTubeSignedIn,
+      builder: (context, signedIn, _) => Row(
+        children: [
+          Expanded(
+            child: Text(
+              signedIn
+                  ? 'Signed in to YouTube on this phone'
+                  : "YouTube: sign in if it asks this phone to prove it isn't a bot",
+              style: TextStyle(fontSize: 12.5, color: scheme.onSurfaceVariant),
+            ),
+          ),
+          TextButton.icon(
+            key: const ValueKey('settings-youtube-sign-in'),
+            onPressed: signedIn ? PhoneEngine.signOutYouTube : PhoneEngine.signInYouTube,
+            icon: Icon(signedIn ? Icons.logout_rounded : Icons.login_rounded, size: 18),
+            label: Text(signedIn ? 'Sign out' : 'Sign in to YouTube'),
+          ),
+        ],
+      ),
     );
   }
 }

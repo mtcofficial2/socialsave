@@ -176,6 +176,11 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/socialsave_widget_info" />
         </receiver>
+        <activity
+            android:name=".YouTubeLoginActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:theme="@android:style/Theme.Material.NoActionBar" />
     </application>
     <queries>
         <intent>

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:social_save/core/engine/phone_engine.dart';
 
 class ErrorBanner extends StatelessWidget {
   const ErrorBanner({
@@ -33,20 +34,26 @@ class ErrorBanner extends StatelessWidget {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                message,
+                PhoneEngine.display(message),
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                       color: scheme.onErrorContainer,
                       height: 1.4,
                     ),
               ),
             ),
-            if (onRetry != null || onTryServer != null)
+            if (onRetry != null || onTryServer != null || PhoneEngine.isBotCheck(message))
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   if (onRetry != null)
                     TextButton(onPressed: onRetry, child: const Text('Retry')),
-                  if (onTryServer != null)
+                  if (PhoneEngine.isBotCheck(message))
+                    TextButton(
+                      key: const ValueKey('youtube-sign-in'),
+                      onPressed: PhoneEngine.signInYouTube,
+                      child: const Text('Sign in to YouTube'),
+                    ),
+                  if (onTryServer != null && !PhoneEngine.isBotCheck(message))
                     TextButton(
                       key: const ValueKey('try-with-server'),
                       onPressed: onTryServer,

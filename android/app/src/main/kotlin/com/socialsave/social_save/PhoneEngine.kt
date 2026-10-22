@@ -45,9 +45,16 @@ object PhoneEngine {
                 "prepare" -> background(result) { prepare(); status() }
                 "update" -> background(result) {
                     prepare()
-                    val outcome = YoutubeDL.updateYoutubeDL(app, YoutubeDL.UpdateChannel.STABLE)
+                    val outcome = try {
+                        YoutubeDL.updateYoutubeDL(app, YoutubeDL.UpdateChannel.STABLE)
+                    } catch (e: Exception) {
+                        YoutubeDL.updateYoutubeDL(app, YoutubeDL.UpdateChannel.NIGHTLY)
+                    }
                     mapOf("status" to (outcome?.name ?: "UNKNOWN"), "version" to YoutubeDL.version(app))
                 }
+                "ytSignedIn" -> result.success(YouTubeLogin.signedIn(app))
+                "ytSignIn" -> { YouTubeLogin.start(app); result.success(true) }
+                "ytSignOut" -> { YouTubeLogin.signOut(app); result.success(true) }
                 "info" -> {
                     val url = call.argument<String>("url") ?: ""
                     background(result) { info(url) }
@@ -120,13 +127,60 @@ object PhoneEngine {
 
     private fun info(url: String): String {
         prepare()
-        val request = YoutubeDLRequest(url)
-            .addOption("--dump-single-json")
-            .addOption("--no-playlist")
-            .addOption("--ignore-config")
-            .addOption("--no-warnings")
-            .addOption("--socket-timeout", 25)
-        return YoutubeDL.execute(request).out
+        return withClients(url) { clients ->
+            val request = YoutubeDLRequest(url)
+                .addOption("--dump-single-json")
+                .addOption("--no-playlist")
+                .addOption("--ignore-config")
+                .addOption("--no-warnings")
+                .addOption("--socket-timeout", 25)
+            youtubeOptions(request, clients)
+            YoutubeDL.execute(request).out
+        }
+    }
+
+    private fun isYouTube(url: String): Boolean {
+        val u = url.lowercase()
+        return u.contains("youtube.com/") || u.contains("youtu.be/") || u.contains("youtube-nocookie.com/")
+    }
+
+    private fun isBotCheck(message: String?): Boolean {
+        val m = (message ?: "").lowercase()
+        return m.contains("not a bot") || m.contains("sign in to confirm") ||
+            m.contains("page needs to be reloaded") || m.contains("requested format is not available") ||
+            m.contains("http error 403") || m.contains("po token")
+    }
+
+    /**
+     * Player clients to try in order (Oct 2026). On flagged IPs YouTube answers
+     * web, tv and android_vr with "confirm you're not a bot"; web_embedded still
+     * returns full DASH formats with no login or PO token; mweb/android give 360p.
+     * Signed in, the cookie-friendly web clients go first.
+     */
+    private fun clientSets(): List<String> {
+        val sets = mutableListOf<String>()
+        if (YouTubeLogin.signedIn(app)) sets += "default,web_safari,mweb"
+        sets += "web_embedded,mweb,android"
+        sets += "default,tv_simply,web_safari"
+        sets += "android_vr,ios,tv"
+        return sets
+    }
+
+    private fun youtubeOptions(request: YoutubeDLRequest, clients: String?) {
+        if (clients != null) request.addOption("--extractor-args", "youtube:player_client=$clients")
+        YouTubeLogin.cookieFile(app)?.let { request.addOption("--cookies", it.absolutePath) }
+    }
+
+    /** Runs [work] with each client set until one gets past the bot check. */
+    private fun <T> withClients(url: String, work: (String?) -> T): T {
+        if (!isYouTube(url)) return work(null)
+        var last: Throwable? = null
+        for (clients in clientSets()) {
+            try { return work(clients) }
+            catch (e: YoutubeDL.CanceledException) { throw e }
+            catch (e: Throwable) { if (!isBotCheck(e.message)) throw e; last = e }
+        }
+        throw last ?: IllegalStateException("YouTube refused every client")
     }
 
     private fun selector(formatId: String): String {
@@ -157,6 +211,9 @@ object PhoneEngine {
         pool.execute {
             try {
                 prepare()
+                withClients(url) { clients ->
+                if (job.state == "cancelled") return@withClients
+                dir.listFiles()?.forEach { it.deleteRecursively() }
                 val request = YoutubeDLRequest(url)
                     .addOption("--no-playlist")
                     .addOption("--ignore-config")
@@ -173,6 +230,7 @@ object PhoneEngine {
                     .addOption("--no-resize-buffer")
                     .addOption("-f", selector(formatId))
                     .addOption("-o", File(dir, "media.%(ext)s").absolutePath)
+                youtubeOptions(request, clients)
                 when (formatId) {
                     "audio" -> request.addOption("-x").addOption("--audio-format", "m4a")
                     "audio-mp3" -> request.addOption("-x").addOption("--audio-format", "mp3").addOption("--audio-quality", "0")
@@ -186,6 +244,7 @@ object PhoneEngine {
                     job.tracker.line(line)
                     job.progress = maxOf(job.progress, job.tracker.value)
                     job.eta = eta
+                }
                 }
                 if (job.state == "cancelled") return@execute
                 val file = dir.listFiles()
@@ -209,6 +268,11 @@ object PhoneEngine {
 
     /** yt-dlp's stderr is long; keep the ERROR line people can act on. */
     private fun cleanError(raw: String): String {
+        if (raw.lowercase().contains("not a bot") || raw.lowercase().contains("sign in to confirm")) {
+            return if (YouTubeLogin.signedIn(app))
+                "YouTube asked this phone to prove it isn't a bot, even signed in. Tap Sign in to YouTube to sign in again, then Retry."
+            else "YouTube asked this phone to prove it isn't a bot. Tap Sign in to YouTube, then Retry."
+        }
         val line = raw.lines().lastOrNull { it.contains("ERROR:") } ?: raw.lines().firstOrNull { it.isNotBlank() } ?: raw
         return line.substringAfter("ERROR:").trim().take(300)
     }

@@ -376,7 +376,10 @@ def _run_ydl(url: str, opts: dict[str, Any], *, download: bool) -> dict[str, Any
 
 def _youtube_attempts() -> list[dict[str, Any]]:
     """Innertube clients first: Render IPs often get a bot page instead of ytInitialPlayerResponse."""
+    # Oct 2026: web_embedded still returns full DASH formats without a PO token
+    # or sign-in on IPs that get "confirm you're not a bot" for web/tv/android_vr.
     return [
+        {"extractor_args": {"youtube": {"player_client": ["web_embedded", "mweb", "android"]}}},
         {
             "extractor_args": {
                 "youtube": {

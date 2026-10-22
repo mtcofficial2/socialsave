@@ -470,7 +470,7 @@ class _FailureCard extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            message,
+            PhoneEngine.display(message),
             style: TextStyle(
               fontSize: 13,
               height: 1.35,
@@ -478,6 +478,19 @@ class _FailureCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 10),
+          if (PhoneEngine.isBotCheck(message)) ...[
+            SizedBox(
+              width: double.infinity,
+              height: 44,
+              child: FilledButton.icon(
+                key: const ValueKey('youtube-sign-in'),
+                onPressed: PhoneEngine.signInYouTube,
+                icon: const Icon(Icons.login_rounded),
+                label: const Text('Sign in to YouTube'),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
           SizedBox(
             width: double.infinity,
             height: 44,
@@ -491,7 +504,7 @@ class _FailureCard extends StatelessWidget {
               label: const Text('Retry'),
             ),
           ),
-          if (onTryServer != null) ...[
+          if (onTryServer != null && !PhoneEngine.isBotCheck(message)) ...[
             const SizedBox(height: 8),
             SizedBox(
               width: double.infinity,
