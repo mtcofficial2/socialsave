@@ -208,7 +208,9 @@ object UploadPrep {
         // instead of a full re-encode to exactly 1080p30.
         val longSide = max(dispW, dispH)
         val shortSide = minOf(dispW, dispH)
-        val fastOk = codecOk && fps in 23.0..60.5 && longSide in 1280..1920 && shortSide in 720..1080
+        // 1.0.51: up to 1080p and up to 30 fps only; 50/60 fps is re-encoded
+        // to 30 by the video chip (TikTok-ready is a 30 fps target).
+        val fastOk = codecOk && fps in 23.0..30.5 && longSide <= 1920 && shortSide <= 1080
         val pictureOk = (codecOk && sizeOk && fpsOk && rotOk) || fastOk
         val audioOk = !hasAudio || audio == "aac"
         fun ready(moov: Boolean) = pictureOk && audioOk && moov

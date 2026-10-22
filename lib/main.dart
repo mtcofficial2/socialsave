@@ -6,6 +6,7 @@ import 'package:social_save/features/library/desktop_tray.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/core/engine/phone_engine.dart';
 import 'package:social_save/core/config/build_flags.dart';
+import 'package:social_save/core/config/env_config.dart';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
@@ -350,7 +351,11 @@ Future<void> main(List<String> args) async {
   // "Download on this phone (no server)": keep yt-dlp current (daily, only
   // while the switch is on).
   if (Plat.isAndroid && !kLocalEngine) {
+    unawaited(PhoneEngine.warm());
     unawaited(Future<void>.delayed(const Duration(seconds: 20), PhoneEngine.updateIfDue));
+    // Render's free tier sleeps (~25 s to wake). Wake it now, in the
+    // background, so it is up by the time a link is pasted.
+    unawaited(_wakeServer());
   }
 
   runApp(
@@ -944,4 +949,18 @@ Future<void> _pairTest(String role, String file, [String? file2]) async {
   print('debug pair-test join result=ok');
   await Future<void>.delayed(const Duration(seconds: 1));
   exit(0);
+}
+
+Future<void> _wakeServer() async {
+  if (await PhoneEngine.isEnabled()) return;
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+  try {
+    final req = await client.getUrl(Uri.parse('${EnvConfig.apiBaseUrl}/health'));
+    final res = await req.close().timeout(const Duration(seconds: 60));
+    await res.drain<void>();
+  } catch (_) {
+    // Offline or still waking: the first request will wait as before.
+  } finally {
+    client.close(force: true);
+  }
 }

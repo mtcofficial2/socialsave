@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -46,6 +47,7 @@ class PhoneEngine {
     await prefs.setBool(_enabledKey, value);
     enabled.value = value;
     _loaded = true;
+    if (value) unawaited(warm());
   }
 
   /// Links the user chose "Try with server" for: their next analyze and
@@ -121,6 +123,15 @@ class PhoneEngine {
     } catch (e) {
       throw _error(e);
     }
+  }
+
+  /// Unpacks the engine and loads Python in the background so the first
+  /// paste doesn't wait for it. Safe to call often; does nothing when off.
+  static Future<void> warm() async {
+    if (!await isEnabled()) return;
+    try {
+      await _channel.invokeMethod<bool>('warm');
+    } catch (_) {}
   }
 
   /// yt-dlp self-update (stable channel). Returns {status, version}.

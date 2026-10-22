@@ -4,6 +4,8 @@ import android.content.Context
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.util.Log
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
@@ -26,9 +28,13 @@ object PhoneEngine {
     private val pool = Executors.newCachedThreadPool()
     private val jobs = ConcurrentHashMap<String, Job>()
     @Volatile private var ready = false
+    private const val TAG = "PhoneEngine"
+    /** Info JSON from the last analyze per link, so the save skips a second extraction. */
+    private val infoCache = ConcurrentHashMap<String, Pair<Long, File>>()
+    private const val INFO_TTL_MS = 20 * 60 * 1000L
     private lateinit var app: Context
 
-    private class Job(val dir: File) {
+    private class Job(val id: String, val dir: File) {
         @Volatile var state = "processing"
         @Volatile var progress = 0.0
         @Volatile var eta = -1L
@@ -43,6 +49,9 @@ object PhoneEngine {
             when (call.method) {
                 "status" -> result.success(status())
                 "prepare" -> background(result) { prepare(); status() }
+                // App start / switch on: unpack Python + ffmpeg and start the
+                // interpreter once, so the first paste does not pay for it.
+                "warm" -> { pool.execute { try { prepare(); warmPython() } catch (_: Throwable) {} }; result.success(true) }
                 "update" -> background(result) {
                     prepare()
                     val outcome = try {
@@ -108,9 +117,31 @@ object PhoneEngine {
     private fun prepare() {
         if (ready) return
         if (!supported()) throw IllegalStateException("This phone can't run the on-phone engine (needs a 64-bit ARM phone).")
+        val t0 = SystemClock.elapsedRealtime()
         YoutubeDL.init(app)
         FFmpeg.init(app)
         ready = true
+        Log.i(TAG, "timing prepare ${SystemClock.elapsedRealtime() - t0}ms")
+    }
+
+    @Volatile private var warmed = false
+    /** First yt-dlp run loads Python modules from flash; do it before the user pastes. */
+    private fun warmPython() {
+        if (warmed) return
+        val t0 = SystemClock.elapsedRealtime()
+        try { YoutubeDL.execute(YoutubeDLRequest(emptyList()).addOption("--version")) } catch (_: Throwable) {}
+        warmed = true
+        Log.i(TAG, "timing warm ${SystemClock.elapsedRealtime() - t0}ms")
+    }
+
+    private fun cacheKey(url: String) = url.trim()
+
+    private fun cachedInfo(url: String): File? {
+        val hit = infoCache[cacheKey(url)] ?: return null
+        if (SystemClock.elapsedRealtime() - hit.first > INFO_TTL_MS || !hit.second.isFile) {
+            infoCache.remove(cacheKey(url)); return null
+        }
+        return hit.second
     }
 
     private fun <T> background(result: MethodChannel.Result, work: () -> T) {
@@ -135,8 +166,23 @@ object PhoneEngine {
                 .addOption("--no-warnings")
                 .addOption("--socket-timeout", 25)
             youtubeOptions(request, clients)
-            YoutubeDL.execute(request).out
+            val t0 = SystemClock.elapsedRealtime()
+            val out = YoutubeDL.execute(request).out
+            Log.i(TAG, "timing info ${SystemClock.elapsedRealtime() - t0}ms clients=$clients")
+            remember(url, out)
+            out
         }
+    }
+
+    private fun remember(url: String, out: String) {
+        try {
+            val start = out.indexOf('{')
+            if (start < 0) return
+            val dir = File(app.cacheDir, "phone_engine_info").apply { mkdirs() }
+            val file = File(dir, "i${cacheKey(url).hashCode().toUInt()}.json")
+            file.writeText(out.substring(start))
+            infoCache[cacheKey(url)] = SystemClock.elapsedRealtime() to file
+        } catch (_: Throwable) {}
     }
 
     private fun isYouTube(url: String): Boolean {
@@ -183,11 +229,32 @@ object PhoneEngine {
         throw last ?: IllegalStateException("YouTube refused every client")
     }
 
-    private fun selector(formatId: String): String {
+    private const val H264 = "[vcodec~='^(avc|h264)']"
+    private const val AAC = "[acodec~='^(mp4a|aac)']"
+    // TikTok's "download" format is the watermarked share copy.
+    private const val NOWM = "[format_id!=download]"
+
+    /**
+     * "auto" is the default and the TikTok-ready pick: up to 1080p, H.264 + AAC,
+     * up to 30 fps first, so the prep step only has to repack. YouTube's only
+     * progressive H.264 is 360p, so YouTube goes DASH-first; TikTok and the
+     * rest offer progressive H.264 with sound, so those go progressive-first
+     * (no merge). "original" and explicit heights keep higher quality.
+     */
+    private fun selector(formatId: String, url: String): String {
         if (formatId == "audio") return "ba[ext=m4a]/ba/b"
         if (formatId == "audio-mp3") return "ba/b"
+        if (formatId == "original") return "bv*+ba/b"
         val height = formatId.removeSuffix("p").toIntOrNull()
-        if (height == null || formatId == "auto" || formatId == "original") return "bv*+ba/b"
+        if (height == null || formatId == "auto") {
+            // Long side <= 1920 means up to 1080p in portrait and landscape.
+            val c = "[height<=?1920][width<=?1920]"
+            return if (isYouTube(url)) {
+                "bv*$c$H264[fps<=?30]+ba$AAC/bv*$c$H264+ba$AAC/bv*$c$H264+ba/bv*$c+ba/b$c/b"
+            } else {
+                "b$c$H264$NOWM[acodec!=none][fps<=?30]/b$c$H264$NOWM[acodec!=none]/bv*$c$H264$NOWM+ba/b$c$NOWM[acodec!=none]/bv*$c+ba/b"
+            }
+        }
         val dash = "bv*[height<=$height]+ba/b[height<=$height][acodec!=none][vcodec!=none]/b[height<=$height]/b"
         // H.264 + AAC at the asked height. VP9, AV1, or Opus in an MP4 is
         // still 1080p or 720p, and TikTok says it could not decode it.
@@ -195,9 +262,10 @@ object PhoneEngine {
         // (a letterboxed 1920x804 frame is a 1080p film).
         val lo = height * 7 / 10
         return if (height <= 1080) {
-            "bv*[height<=$height][height>=$lo][vcodec^=avc1]+ba[acodec^=mp4a]/" +
-                "bv*[height<=$height][height>=$lo][vcodec^=avc1]+ba[ext=m4a]/" +
-                "bv*[height<=$height][vcodec^=avc1]+ba[acodec^=mp4a]/$dash"
+            "bv*[height<=$height][height>=$lo]$H264+ba$AAC/" +
+                "bv*[height<=$height][height>=$lo]$H264+ba[ext=m4a]/" +
+                "b[height<=$height][height>=$lo]$H264[acodec!=none]/" +
+                "bv*[height<=$height]$H264+ba$AAC/$dash"
         } else dash
     }
 
@@ -206,46 +274,28 @@ object PhoneEngine {
         val dir = File(File(app.cacheDir, "phone_engine"), id)
         dir.deleteRecursively()
         dir.mkdirs()
-        val job = Job(dir)
+        val job = Job(id, dir)
         jobs[id] = job
         pool.execute {
             try {
                 prepare()
-                withClients(url) { clients ->
-                if (job.state == "cancelled") return@withClients
-                dir.listFiles()?.forEach { it.deleteRecursively() }
-                val request = YoutubeDLRequest(url)
-                    .addOption("--no-playlist")
-                    .addOption("--ignore-config")
-                    .addOption("--newline")
-                    .addOption("--progress")
-                    .addOption("--no-part")
-                    .addOption("--retries", 3)
-                    .addOption("--fragment-retries", 3)
-                    .addOption("--socket-timeout", 25)
-                    .addOption("--concurrent-fragments", 8)
-                    // Fixed 256 KB reads so progress arrives in steady steps
-                    // (yt-dlp otherwise doubles its read size: 1, 2, 4 MB...).
-                    .addOption("--buffer-size", "256K")
-                    .addOption("--no-resize-buffer")
-                    .addOption("-f", selector(formatId))
-                    .addOption("-o", File(dir, "media.%(ext)s").absolutePath)
-                youtubeOptions(request, clients)
-                when (formatId) {
-                    "audio" -> request.addOption("-x").addOption("--audio-format", "m4a")
-                    "audio-mp3" -> request.addOption("-x").addOption("--audio-format", "mp3").addOption("--audio-quality", "0")
-                    else -> request
-                        .addOption("--merge-output-format", "mp4")
-                        .addOption("--remux-video", "mp4")
-                        .addOption("--postprocessor-args", "ffmpeg:-movflags +faststart")
+                val t0 = SystemClock.elapsedRealtime()
+                val cached = cachedInfo(url)
+                var done = false
+                if (cached != null) {
+                    // Reuse the analyze result: no second extraction.
+                    try {
+                        fetch(job, dir, url, formatId, null, cached)
+                        done = true
+                    } catch (e: YoutubeDL.CanceledException) { throw e }
+                    catch (e: Throwable) {
+                        if (job.state == "cancelled") throw e
+                        Log.w(TAG, "load-info-json failed, extracting again: ${e.message?.take(200)}")
+                        infoCache.remove(cacheKey(url))
+                    }
                 }
-                YoutubeDL.execute(request, id) { _, eta, line ->
-                    // One smooth value over the video, the audio and the merge.
-                    job.tracker.line(line)
-                    job.progress = maxOf(job.progress, job.tracker.value)
-                    job.eta = eta
-                }
-                }
+                if (!done) withClients(url) { clients -> fetch(job, dir, url, formatId, clients, null) }
+                Log.i(TAG, "timing download ${SystemClock.elapsedRealtime() - t0}ms cached=${cached != null && done}")
                 if (job.state == "cancelled") return@execute
                 val file = dir.listFiles()
                     ?.filter { it.isFile && !it.name.endsWith(".part") && !it.name.endsWith(".ytdl") }
@@ -264,6 +314,44 @@ object PhoneEngine {
                 dir.deleteRecursively()
             }
         }
+    }
+
+    private fun fetch(job: Job, dir: File, url: String, formatId: String, clients: String?, infoJson: File?) {
+                if (job.state == "cancelled") return
+                dir.listFiles()?.forEach { it.deleteRecursively() }
+                val request = YoutubeDLRequest(if (infoJson != null) emptyList() else listOf(url))
+                    .addOption("--no-playlist")
+                    .addOption("--ignore-config")
+                    .addOption("--newline")
+                    .addOption("--progress")
+                    .addOption("--no-part")
+                    .addOption("--retries", 3)
+                    .addOption("--fragment-retries", 3)
+                    .addOption("--socket-timeout", 25)
+                    .addOption("--concurrent-fragments", 8)
+                    // Fixed 256 KB reads so progress arrives in steady steps
+                    // (yt-dlp otherwise doubles its read size: 1, 2, 4 MB...).
+                    .addOption("--buffer-size", "256K")
+                    .addOption("--no-resize-buffer")
+                    .addOption("-f", selector(formatId, url))
+                    .addOption("-o", File(dir, "media.%(ext)s").absolutePath)
+                if (infoJson != null) request.addOption("--load-info-json", infoJson.absolutePath)
+                if (formatId == "auto") request.addOption("-S", "res:1080,fps:30,vcodec:h264,acodec:aac")
+                youtubeOptions(request, clients)
+                when (formatId) {
+                    "audio" -> request.addOption("-x").addOption("--audio-format", "m4a")
+                    "audio-mp3" -> request.addOption("-x").addOption("--audio-format", "mp3").addOption("--audio-quality", "0")
+                    else -> request
+                        .addOption("--merge-output-format", "mp4")
+                        .addOption("--remux-video", "mp4")
+                        .addOption("--postprocessor-args", "ffmpeg:-movflags +faststart")
+                }
+                YoutubeDL.execute(request, job.id) { _, eta, line ->
+                    // One smooth value over the video, the audio and the merge.
+                    job.tracker.line(line)
+                    job.progress = maxOf(job.progress, job.tracker.value)
+                    job.eta = eta
+                }
     }
 
     /** yt-dlp's stderr is long; keep the ERROR line people can act on. */
