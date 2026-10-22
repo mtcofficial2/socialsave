@@ -46,9 +46,10 @@ class IosGlassPainter extends CustomPainter {
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            Colors.white.withValues(alpha: dark ? 0.22 : 0.48),
-            Colors.white.withValues(alpha: dark ? 0.05 : 0.12),
-            Colors.white.withValues(alpha: dark ? 0.12 : 0.26),
+            // Dark: a smoky lighter-grey lift, never milky.
+            Colors.white.withValues(alpha: dark ? 0.12 : 0.48),
+            Colors.white.withValues(alpha: dark ? 0.08 : 0.12),
+            Colors.white.withValues(alpha: dark ? 0.07 : 0.26),
           ],
           stops: const [0.0, 0.48, 1.0],
         ).createShader(rect),
@@ -61,8 +62,8 @@ class IosGlassPainter extends CustomPainter {
           begin: const Alignment(-0.6, -1),
           end: const Alignment(0.4, 0.15),
           colors: [
-            Colors.white.withValues(alpha: dark ? 0.50 : 0.75),
-            Colors.white.withValues(alpha: dark ? 0.08 : 0.14),
+            Colors.white.withValues(alpha: dark ? 0.06 : 0.75),
+            Colors.white.withValues(alpha: dark ? 0.015 : 0.14),
             const Color(0x00FFFFFF),
           ],
           stops: const [0.0, 0.28, 0.62],
@@ -77,9 +78,10 @@ class IosGlassPainter extends CustomPainter {
         ..shader = LinearGradient(
           begin: Alignment.bottomCenter,
           end: Alignment.topCenter,
+          // Dark: a faint inner shade instead of a white bottom reflection.
           colors: [
-            Colors.white.withValues(alpha: dark ? 0.20 : 0.38),
-            const Color(0x00FFFFFF),
+            dark ? Colors.black.withValues(alpha: 0.18) : Colors.white.withValues(alpha: 0.38),
+            dark ? const Color(0x00000000) : const Color(0x00FFFFFF),
           ],
         ).createShader(
           Rect.fromLTWH(0, size.height * 0.62, size.width, size.height * 0.38),
@@ -92,14 +94,14 @@ class IosGlassPainter extends CustomPainter {
       rim,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.25
+        ..strokeWidth = dark ? 1.0 : 1.25
         ..shader = LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            Colors.white.withValues(alpha: dark ? 0.90 : 1),
-            Colors.white.withValues(alpha: dark ? 0.22 : 0.38),
-            Colors.white.withValues(alpha: dark ? 0.55 : 0.72),
+            Colors.white.withValues(alpha: dark ? 0.18 : 1),
+            Colors.white.withValues(alpha: dark ? 0.06 : 0.38),
+            Colors.white.withValues(alpha: dark ? 0.03 : 0.72),
           ],
           stops: const [0.0, 0.5, 1.0],
         ).createShader(rect),
@@ -144,7 +146,7 @@ class IosGlassPlate extends StatelessWidget {
             : RoundedRectangleBorder(borderRadius: BorderRadius.circular(radius!)),
         shadows: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: dark ? 0.35 : 0.14),
+            color: Colors.black.withValues(alpha: dark ? 0.45 : 0.14),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),

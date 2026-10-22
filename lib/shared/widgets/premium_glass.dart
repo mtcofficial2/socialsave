@@ -77,8 +77,8 @@ class GlassTokens {
     final boost = level == GlassLevel.thick ? 0.18 : 0.0;
     return dark
         ? [
-            const Color(0xFF1C1C1E).withValues(alpha: 0.38 + boost),
-            const Color(0xFF1C1C1E).withValues(alpha: 0.26 + boost),
+            const Color(0xFF1C1C1E).withValues(alpha: 0.52 + boost),
+            const Color(0xFF1C1C1E).withValues(alpha: 0.40 + boost),
           ]
         : [
             Colors.white.withValues(alpha: 0.55 + boost),
@@ -210,20 +210,20 @@ class GlassRimPainter extends CustomPainter {
         Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1
-          ..color = (dark ? Colors.white : Colors.black).withValues(alpha: dark ? 0.28 : 0.18),
+          ..color = (dark ? Colors.white : Colors.black).withValues(alpha: dark ? 0.16 : 0.18),
       );
       return;
     }
     canvas.save();
     canvas.clipRSuperellipse(outer);
     canvas.drawRect(
-      Rect.fromLTWH(0, 0, size.width, size.height * 0.38),
+      Rect.fromLTWH(0, 0, size.width, size.height * (dark ? 0.14 : 0.38)),
       Paint()
         ..shader = LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            Colors.white.withValues(alpha: dark ? 0.08 : 0.26),
+            Colors.white.withValues(alpha: dark ? 0.045 : 0.26),
             const Color(0x00FFFFFF),
           ],
         ).createShader(Rect.fromLTWH(0, 0, size.width, size.height * 0.38)),
@@ -248,9 +248,9 @@ class GlassRimPainter extends CustomPainter {
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            Colors.white.withValues(alpha: dark ? 0.45 : 0.85),
-            Colors.white.withValues(alpha: dark ? 0.05 : 0.15),
-            (dark ? Colors.white : Colors.black).withValues(alpha: dark ? 0.12 : 0.06),
+            Colors.white.withValues(alpha: dark ? 0.16 : 0.85),
+            Colors.white.withValues(alpha: dark ? 0.03 : 0.15),
+            Colors.black.withValues(alpha: dark ? 0.30 : 0.06),
           ],
           stops: const [0.0, 0.55, 1.0],
         ).createShader(rect),

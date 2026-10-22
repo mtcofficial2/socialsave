@@ -98,9 +98,9 @@ class StitchNavBar extends StatelessWidget {
   static Color ovalColor(ColorScheme scheme) {
     final dark = scheme.brightness == Brightness.dark;
     return Color.alphaBlend(
-      scheme.primary.withValues(alpha: dark ? 0.16 : 0.13),
+      scheme.primary.withValues(alpha: dark ? 0.08 : 0.13),
       dark
-          ? Colors.white.withValues(alpha: 0.07)
+          ? Colors.white.withValues(alpha: 0.10)
           : scheme.onSurface.withValues(alpha: 0.03),
     );
   }
@@ -178,9 +178,11 @@ class StitchNavBar extends StatelessWidget {
   }) {
     final selected = index == i;
     final scheme = Theme.of(context).colorScheme;
+    final dark = scheme.brightness == Brightness.dark;
+    // Dark: soft tinted white for the active tab, white 0.6 for the rest.
     final color = selected
-        ? scheme.primary
-        : scheme.onSurface.withValues(alpha: 0.86);
+        ? (dark ? Color.lerp(scheme.primary, Colors.white, 0.25)! : scheme.primary)
+        : (dark ? Colors.white.withValues(alpha: 0.60) : scheme.onSurface.withValues(alpha: 0.86));
     return Expanded(
       child: Semantics(
         button: true,

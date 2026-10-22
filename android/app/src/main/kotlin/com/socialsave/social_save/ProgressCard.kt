@@ -547,9 +547,10 @@ object ProgressCard {
             fill.shader = LinearGradient(
                 b.left.toFloat(), b.top.toFloat(), b.left.toFloat(), b.bottom.toFloat(),
                 intArrayOf(
-                    white(if (dark) 0.55f else 0.86f),
-                    white(if (dark) 0.40f else 0.72f),
-                    white(if (dark) 0.50f else 0.80f),
+                    // 1.0.49: dark is a smoky neutral, not milky white.
+                    if (dark) smoke(0.78f) else white(0.86f),
+                    if (dark) smoke(0.70f) else white(0.72f),
+                    if (dark) smoke(0.74f) else white(0.80f),
                 ),
                 floatArrayOf(0f, 0.48f, 1f),
                 Shader.TileMode.CLAMP,
@@ -559,8 +560,8 @@ object ProgressCard {
                 b.left + b.width() * 0.2f, b.top.toFloat(),
                 b.left + b.width() * 0.7f, b.top + b.height() * 0.575f,
                 intArrayOf(
-                    white(if (dark) 0.50f else 0.75f),
-                    white(if (dark) 0.08f else 0.14f),
+                    white(if (dark) 0.06f else 0.75f),
+                    white(if (dark) 0.015f else 0.14f),
                     Color.argb(0, 255, 255, 255),
                 ),
                 floatArrayOf(0f, 0.28f, 0.62f),
@@ -574,7 +575,7 @@ object ProgressCard {
             val refTop = b.top + b.height() * 0.68f
             reflect.shader = LinearGradient(
                 b.left.toFloat(), b.bottom.toFloat(), b.left.toFloat(), refTop,
-                intArrayOf(white(if (dark) 0.20f else 0.38f), Color.argb(0, 255, 255, 255)),
+                intArrayOf(if (dark) Color.argb(46, 0, 0, 0) else white(0.38f), Color.argb(0, 255, 255, 255)),
                 null,
                 Shader.TileMode.CLAMP,
             )
@@ -585,9 +586,9 @@ object ProgressCard {
             rim.shader = LinearGradient(
                 b.left.toFloat(), b.top.toFloat(), b.left.toFloat(), b.bottom.toFloat(),
                 intArrayOf(
-                    white(if (dark) 0.90f else 1f),
-                    white(if (dark) 0.22f else 0.38f),
-                    white(if (dark) 0.55f else 0.72f),
+                    white(if (dark) 0.18f else 1f),
+                    white(if (dark) 0.06f else 0.38f),
+                    white(if (dark) 0.03f else 0.72f),
                 ),
                 floatArrayOf(0f, 0.5f, 1f),
                 Shader.TileMode.CLAMP,
@@ -596,6 +597,8 @@ object ProgressCard {
             val inner = RectF(b.left + inset, b.top + inset, b.right - inset, b.bottom - inset)
             canvas.drawRoundRect(inner, (radius - inset).coerceAtLeast(0f), (radius - inset).coerceAtLeast(0f), rim)
         }
+
+        private fun smoke(a: Float): Int = Color.argb((a * 255).toInt().coerceIn(0, 255), 28, 28, 30)
 
         override fun setAlpha(alpha: Int) {}
         override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) {}

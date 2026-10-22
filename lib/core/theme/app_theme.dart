@@ -279,7 +279,7 @@ class AppTheme {
   static BorderSide _rim(ColorScheme scheme) => BorderSide(
         width: 1,
         color: scheme.brightness == Brightness.dark
-            ? Colors.white.withValues(alpha: 0.14)
+            ? Colors.white.withValues(alpha: 0.10)
             : Colors.white.withValues(alpha: 0.9),
       );
 
