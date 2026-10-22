@@ -1268,6 +1268,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     final w = _frameWidth;
     final h = _frameHeight;
     final aspect = (w != null && h != null && h > 0) ? w / h : 16 / 9;
+    // Notices (USB connected, etc.) would cover the mini player.
+    ScaffoldMessenger.maybeOf(context)?.hideCurrentSnackBar();
     await DesktopPip.enter(aspect: aspect);
     if (mounted) setState(() => _inPip = true);
   }
