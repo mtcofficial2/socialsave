@@ -31,6 +31,8 @@ class AppSettings extends Equatable {
     this.pocketPause = true,
     this.headsetControls = true,
     this.backgroundPlay = true,
+    this.autoPip = true,
+    this.autoPipOnBlur = false,
     this.volumeKeysSeek = true,
     this.hapticAlerts = true,
     this.saveTreeUri,
@@ -67,6 +69,13 @@ class AppSettings extends Equatable {
 
   /// Android: keep playing audio when the screen is off or the app is in the background.
   final bool backgroundPlay;
+
+  /// PC: a playing video goes to picture in picture when the window is
+  /// minimized or the player is left.
+  final bool autoPip;
+
+  /// PC: also when another app takes focus. Off by default.
+  final bool autoPipOnBlur;
   final bool volumeKeysSeek;
   final bool hapticAlerts;
   final String? saveTreeUri;
@@ -95,6 +104,8 @@ class AppSettings extends Equatable {
     bool? pocketPause,
     bool? headsetControls,
     bool? backgroundPlay,
+    bool? autoPip,
+    bool? autoPipOnBlur,
     bool? volumeKeysSeek,
     bool? hapticAlerts,
     String? saveTreeUri,
@@ -124,6 +135,8 @@ class AppSettings extends Equatable {
       pocketPause: pocketPause ?? this.pocketPause,
       headsetControls: headsetControls ?? this.headsetControls,
       backgroundPlay: backgroundPlay ?? this.backgroundPlay,
+      autoPip: autoPip ?? this.autoPip,
+      autoPipOnBlur: autoPipOnBlur ?? this.autoPipOnBlur,
       volumeKeysSeek: volumeKeysSeek ?? this.volumeKeysSeek,
       hapticAlerts: hapticAlerts ?? this.hapticAlerts,
       saveTreeUri: clearSaveTree ? null : (saveTreeUri ?? this.saveTreeUri),
@@ -158,6 +171,8 @@ class AppSettings extends Equatable {
       'pocketPause': pocketPause,
       'headsetControls': headsetControls,
       'backgroundPlay': backgroundPlay,
+      'autoPip': autoPip,
+      'autoPipOnBlur': autoPipOnBlur,
       'volumeKeysSeek': volumeKeysSeek,
       'hapticAlerts': hapticAlerts,
       if (saveTreeUri != null) 'saveTreeUri': saveTreeUri!,
@@ -203,6 +218,8 @@ class AppSettings extends Equatable {
       pocketPause: map['pocketPause'] as bool? ?? true,
       headsetControls: map['headsetControls'] as bool? ?? true,
       backgroundPlay: map['backgroundPlay'] as bool? ?? true,
+      autoPip: map['autoPip'] as bool? ?? true,
+      autoPipOnBlur: map['autoPipOnBlur'] as bool? ?? false,
       volumeKeysSeek: map['volumeKeysSeek'] as bool? ?? true,
       hapticAlerts: map['hapticAlerts'] as bool? ?? true,
       saveTreeUri: (map['saveTreeUri'] as String?)?.trim().isNotEmpty == true
@@ -236,6 +253,8 @@ class AppSettings extends Equatable {
         pocketPause,
         headsetControls,
         backgroundPlay,
+        autoPip,
+        autoPipOnBlur,
         volumeKeysSeek,
         hapticAlerts,
         saveTreeUri,

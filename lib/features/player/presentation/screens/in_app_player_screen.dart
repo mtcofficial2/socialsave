@@ -27,6 +27,7 @@ import 'package:social_save/features/library/device_media.dart';
 import 'package:social_save/features/library/tiktok_ready.dart';
 import 'package:social_save/features/player/pip.dart';
 import 'package:social_save/features/player/desktop_pip.dart';
+import 'package:window_manager/window_manager.dart';
 import 'package:social_save/features/player/presentation/widgets/desktop_pip_controls.dart';
 import 'package:social_save/features/player/presentation/widgets/phone_player_chrome.dart';
 import 'package:social_save/features/player/presentation/widgets/subtitle_tools.dart';
@@ -84,7 +85,7 @@ class InAppPlayerScreen extends ConsumerStatefulWidget {
 }
 
 class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, WindowListener {
   static const _rates = <double>[0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 
   late final Player _player;
@@ -303,6 +304,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       _keyMap = _desktopKeys();
       HardwareKeyboard.instance.addHandler(_onHardwareKey);
       InAppPlayerScreen.openCount++;
+      windowManager.addListener(this);
     }
     _open();
     _showChrome();
@@ -1272,6 +1274,41 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     ScaffoldMessenger.maybeOf(context)?.hideCurrentSnackBar();
     await DesktopPip.enter(aspect: aspect);
     if (mounted) setState(() => _inPip = true);
+  }
+
+  bool _closingPip = false;
+
+  /// Back is held for a check only where auto picture in picture can apply.
+  bool get _mayAutoPip =>
+      DesktopSupport.isWindows &&
+      !widget.embedded &&
+      !_inPip &&
+      !_closingPip &&
+      !_session.isVault &&
+      ref.read(settingsControllerProvider).autoPip;
+
+  /// PC auto picture in picture: on, a video is playing, not the vault,
+  /// not already in the mini player, and not docked beside the Library.
+  bool _autoPipReady({bool blur = false}) {
+    if (!DesktopSupport.isWindows || _inPip || _closingPip || widget.embedded) return false;
+    if (_session.isVault || !_ready || !_player.state.playing) return false;
+    final s = ref.read(settingsControllerProvider);
+    return blur ? (s.autoPip && s.autoPipOnBlur) : s.autoPip;
+  }
+
+  @override
+  void onWindowMinimize() {
+    if (!_autoPipReady()) return;
+    unawaited(() async {
+      await windowManager.restore();
+      await _toggleDesktopPip();
+    }());
+  }
+
+  @override
+  void onWindowBlur() {
+    if (!_autoPipReady(blur: true)) return;
+    unawaited(_toggleDesktopPip());
   }
 
   Future<void> _playOverApps() async {
@@ -3080,6 +3117,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     if (DesktopSupport.isWindows) {
       HardwareKeyboard.instance.removeHandler(_onHardwareKey);
       InAppPlayerScreen.openCount--;
+      windowManager.removeListener(this);
     }
     _keyFocus.dispose();
     _sleepTimer?.cancel();
@@ -3162,6 +3200,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
               player: _player,
               onExpand: () => unawaited(_toggleDesktopPip()),
               onClose: () async {
+                // Closing the mini player stops the video.
+                _closingPip = true;
+                await _player.pause();
                 await _toggleDesktopPip();
                 if (!mounted) return;
                 if (widget.embedded) {
@@ -3187,9 +3228,18 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         (_error != null || _themedChrome);
     return PopScope(
       // Back leaves full screen first.
-      canPop: !_fs,
+      // Leaving a playing video on the PC goes to picture in picture.
+      // Decided at Back time (play state is not part of this build).
+      canPop: !_fs && !_mayAutoPip,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && _fs) unawaited(_setFs(false));
+        if (didPop) return;
+        if (_fs) {
+          unawaited(_setFs(false));
+        } else if (_autoPipReady()) {
+          unawaited(_toggleDesktopPip());
+        } else {
+          Navigator.of(context).pop();
+        }
       },
       child: Scaffold(
         backgroundColor: themedPage ? cs.surface : Colors.black,

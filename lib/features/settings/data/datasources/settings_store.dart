@@ -41,6 +41,8 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
       '${AppConstants.settingsPrefsPrefix}pauseBelowBattery';
   static const _pocketPause = '${AppConstants.settingsPrefsPrefix}pocketPause';
   static const _backgroundPlay = '${AppConstants.settingsPrefsPrefix}backgroundPlay';
+  static const _autoPip = '${AppConstants.settingsPrefsPrefix}autoPip';
+  static const _autoPipOnBlur = '${AppConstants.settingsPrefsPrefix}autoPipOnBlur';
   static const _headsetControls =
       '${AppConstants.settingsPrefsPrefix}headsetControls';
   static const _volumeKeysSeek =
@@ -76,6 +78,8 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
       'pocketPause': _prefs.getBool(_pocketPause),
       'headsetControls': _prefs.getBool(_headsetControls),
       'backgroundPlay': _prefs.getBool(_backgroundPlay),
+      'autoPip': _prefs.getBool(_autoPip),
+      'autoPipOnBlur': _prefs.getBool(_autoPipOnBlur),
       'volumeKeysSeek': _prefs.getBool(_volumeKeysSeek),
       'hapticAlerts': _prefs.getBool(_hapticAlerts),
       'saveTreeUri': _prefs.getString(_saveTreeUri),
@@ -118,6 +122,8 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
     await _prefs.setBool(_pocketPause, settings.pocketPause);
     await _prefs.setBool(_headsetControls, settings.headsetControls);
     await _prefs.setBool(_backgroundPlay, settings.backgroundPlay);
+    await _prefs.setBool(_autoPip, settings.autoPip);
+    await _prefs.setBool(_autoPipOnBlur, settings.autoPipOnBlur);
     await _prefs.setBool(_volumeKeysSeek, settings.volumeKeysSeek);
     await _prefs.setBool(_hapticAlerts, settings.hapticAlerts);
     final tree = settings.saveTreeUri;
