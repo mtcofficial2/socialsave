@@ -20,6 +20,7 @@ class AppSettings extends Equatable {
     this.lastChosenQuality,
     this.qualityByPlatform = const {},
     this.useDynamicColor = false,
+    this.liquidGlass = true,
     this.classicHome = false,
     this.minimalShortcuts = true,
     this.usbQuickAction = true,
@@ -47,6 +48,9 @@ class AppSettings extends Equatable {
   final String? lastChosenQuality;
   final Map<String, String> qualityByPlatform;
   final bool useDynamicColor;
+
+  /// iPhone-style lens on the tab bar, main buttons, players, and theme switch.
+  final bool liquidGlass;
   final bool classicHome;
 
   /// Home quick shortcuts without the card background (icon + label).
@@ -80,6 +84,7 @@ class AppSettings extends Equatable {
     String? lastChosenQuality,
     Map<String, String>? qualityByPlatform,
     bool? useDynamicColor,
+    bool? liquidGlass,
     bool? classicHome,
     bool? minimalShortcuts,
     bool? usbQuickAction,
@@ -108,6 +113,7 @@ class AppSettings extends Equatable {
       lastChosenQuality: lastChosenQuality ?? this.lastChosenQuality,
       qualityByPlatform: qualityByPlatform ?? this.qualityByPlatform,
       useDynamicColor: useDynamicColor ?? this.useDynamicColor,
+      liquidGlass: liquidGlass ?? this.liquidGlass,
       classicHome: classicHome ?? this.classicHome,
       minimalShortcuts: minimalShortcuts ?? this.minimalShortcuts,
       usbQuickAction: usbQuickAction ?? this.usbQuickAction,
@@ -141,6 +147,7 @@ class AppSettings extends Equatable {
       if (lastChosenQuality != null) 'lastChosenQuality': lastChosenQuality!,
       'qualityByPlatform': qualityByPlatform,
       'useDynamicColor': useDynamicColor,
+      'liquidGlass': liquidGlass,
       'classicHome': classicHome,
       'minimalShortcuts': minimalShortcuts,
       'usbQuickAction': usbQuickAction,
@@ -185,6 +192,7 @@ class AppSettings extends Equatable {
       lastChosenQuality: map['lastChosenQuality'] as String?,
       qualityByPlatform: _stringMap(map['qualityByPlatform']),
       useDynamicColor: map['useDynamicColor'] as bool? ?? true,
+      liquidGlass: map['liquidGlass'] as bool? ?? true,
       classicHome: map['classicHome'] as bool? ?? false,
       minimalShortcuts: map['minimalShortcuts'] as bool? ?? true,
       usbQuickAction: map['usbQuickAction'] as bool? ?? true,
@@ -217,6 +225,7 @@ class AppSettings extends Equatable {
         lastChosenQuality,
         qualityByPlatform,
         useDynamicColor,
+        liquidGlass,
         classicHome,
         minimalShortcuts,
         usbQuickAction,

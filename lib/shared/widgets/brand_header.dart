@@ -2,6 +2,7 @@ import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:social_save/shared/widgets/app_logo.dart';
+import 'package:social_save/shared/widgets/liquid_glass.dart';
 
 class BrandHeader extends StatelessWidget {
   const BrandHeader({
@@ -34,9 +35,9 @@ class BrandHeader extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.3,
-                    ),
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.3,
+                ),
               ),
             )
           else
@@ -50,15 +51,19 @@ class BrandHeader extends StatelessWidget {
 /// Frosted, detached surface: blur, low-opacity fill, hairline border and a
 /// soft shadow, so what is behind it shows through.
 class FloatingGlass extends StatelessWidget {
-  const FloatingGlass({super.key, required this.radius, required this.child, this.bare = false, this.ghost = false});
+  const FloatingGlass({
+    super.key,
+    required this.radius,
+    required this.child,
+    this.bare = false,
+    this.ghost = false,
+  });
 
   final double radius;
   final bool bare;
 
-  /// Nav-bar style (1.0.45): a frosted floating pill. Backdrop blur with a
-  /// little saturation, a translucent fill, a hairline border and a soft drop
-  /// shadow, so it reads as floating in light and dark while content still
-  /// shows through.
+  /// Nav-bar style: a light frost, a translucent fill, a hairline border and a
+  /// soft shadow. The blur stays small so scrolling under the bar stays smooth.
   final bool ghost;
   final Widget child;
 
@@ -68,44 +73,31 @@ class FloatingGlass extends StatelessWidget {
     final dark = scheme.brightness == Brightness.dark;
     final shape = BorderRadius.circular(radius);
     if (ghost) {
-      const s = 1.5;
-      const r = 0.2126, g = 0.7152, bl = 0.0722;
-      final matrix = <double>[
-        r + (1 - r) * s, g - g * s, bl - bl * s, 0, 0,
-        r - r * s, g + (1 - g) * s, bl - bl * s, 0, 0,
-        r - r * s, g - g * s, bl + (1 - bl) * s, 0, 0,
-        0, 0, 0, 1, 0,
-      ];
+      // One cheap blur. A second filter or a looping highlight inside this
+      // bar forces the whole screen to re-blur and makes taps feel late.
       return DecoratedBox(
         decoration: BoxDecoration(
           borderRadius: shape,
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: dark ? 0.42 : 0.12),
-              blurRadius: 28,
-              offset: const Offset(0, 10),
-            ),
-            BoxShadow(
-              color: Colors.black.withValues(alpha: dark ? 0.20 : 0.05),
-              blurRadius: 4,
-              offset: const Offset(0, 1),
+              color: Colors.black.withValues(alpha: dark ? 0.28 : 0.10),
+              blurRadius: 12,
+              offset: const Offset(0, 6),
             ),
           ],
         ),
         child: ClipRRect(
           borderRadius: shape,
           child: BackdropFilter(
-            filter: ImageFilter.compose(
-              outer: ColorFilter.matrix(matrix),
-              inner: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
-            ),
+            filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
             child: DecoratedBox(
               decoration: BoxDecoration(
-                color: (dark ? scheme.surfaceContainerHigh : scheme.surface).withValues(alpha: dark ? 0.50 : 0.58),
+                color: (dark ? scheme.surfaceContainerHigh : scheme.surface)
+                    .withValues(alpha: dark ? 0.32 : 0.40),
                 borderRadius: shape,
                 border: Border.all(
                   width: 0.8,
-                  color: dark ? Colors.white.withValues(alpha: 0.12) : scheme.onSurface.withValues(alpha: 0.10),
+                  color: Colors.white.withValues(alpha: dark ? 0.22 : 0.70),
                 ),
               ),
               child: Material(type: MaterialType.transparency, child: child),
@@ -150,7 +142,9 @@ class FloatingGlass extends StatelessWidget {
               color: scheme.surface.withValues(alpha: dark ? 0.55 : 0.62),
               borderRadius: shape,
               border: Border.all(
-                color: (dark ? Colors.white : scheme.outline).withValues(alpha: dark ? 0.14 : 0.25),
+                color: (dark ? Colors.white : scheme.outline).withValues(
+                  alpha: dark ? 0.14 : 0.25,
+                ),
               ),
             ),
             child: Material(type: MaterialType.transparency, child: child),
@@ -179,7 +173,9 @@ class StitchNavBar extends StatelessWidget {
     final dark = scheme.brightness == Brightness.dark;
     return Color.alphaBlend(
       scheme.primary.withValues(alpha: dark ? 0.16 : 0.13),
-      dark ? Colors.white.withValues(alpha: 0.07) : scheme.onSurface.withValues(alpha: 0.03),
+      dark
+          ? Colors.white.withValues(alpha: 0.07)
+          : scheme.onSurface.withValues(alpha: 0.03),
     );
   }
 
@@ -209,32 +205,30 @@ class StitchNavBar extends StatelessWidget {
             child: LayoutBuilder(
               builder: (context, box) {
                 final w = box.maxWidth / _tabs.length;
-                const pad = 5.0;
                 return Stack(
                   children: [
-                    // One oval behind the active tab's icon AND label; it
-                    // slides to the tapped tab.
-                    AnimatedPositioned(
-                      duration: const Duration(milliseconds: 320),
-                      curve: Curves.easeOutCubic,
-                      left: w * index.clamp(0, _tabs.length - 1) + pad,
-                      top: pad,
-                      bottom: pad,
-                      width: w - pad * 2,
-                      child: IgnorePointer(
-                        child: DecoratedBox(
-                          key: const ValueKey('nav-active-oval'),
-                          decoration: ShapeDecoration(
-                            color: ovalColor(scheme),
-                            shape: const StadiumBorder(),
-                          ),
-                        ),
-                      ),
+                    // Liquid-glass lens behind the active tab's icon and label.
+                    // Off: the same travel, with the flat oval fill.
+                    LiquidSlider(
+                      index: index.clamp(0, _tabs.length - 1).toInt(),
+                      count: _tabs.length,
+                      slotWidth: w,
+                      dark: scheme.brightness == Brightness.dark,
+                      glass: LiquidGlassScope.of(context),
+                      flatColor: ovalColor(scheme),
+                      navKey: true,
                     ),
                     Row(
                       children: [
                         for (var i = 0; i < _tabs.length; i++)
-                          _item(context, i, _tabs[i].$1, _tabs[i].$2, _tabs[i].$3, badge: i == 2 ? downloadBadge : 0),
+                          _item(
+                            context,
+                            i,
+                            _tabs[i].$1,
+                            _tabs[i].$2,
+                            _tabs[i].$3,
+                            badge: i == 2 ? downloadBadge : 0,
+                          ),
                       ],
                     ),
                   ],
@@ -257,7 +251,9 @@ class StitchNavBar extends StatelessWidget {
   }) {
     final selected = index == i;
     final scheme = Theme.of(context).colorScheme;
-    final color = selected ? scheme.primary : scheme.onSurface.withValues(alpha: 0.86);
+    final color = selected
+        ? scheme.primary
+        : scheme.onSurface.withValues(alpha: 0.86);
     return Expanded(
       child: Semantics(
         button: true,
@@ -287,20 +283,33 @@ class StitchNavBar extends StatelessWidget {
                       children: [
                         AnimatedSwitcher(
                           duration: const Duration(milliseconds: 200),
-                          child: Icon(selected ? selectedIcon : icon, key: ValueKey(selected), color: color, size: 24),
+                          child: Icon(
+                            selected ? selectedIcon : icon,
+                            key: ValueKey(selected),
+                            color: color,
+                            size: 24,
+                          ),
                         ),
                         if (badge > 0)
                           Positioned(
                             top: -6,
                             right: -10,
                             child: Container(
-                              constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
-                              padding: const EdgeInsets.symmetric(horizontal: 4),
+                              constraints: const BoxConstraints(
+                                minWidth: 18,
+                                minHeight: 18,
+                              ),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                              ),
                               alignment: Alignment.center,
                               decoration: BoxDecoration(
                                 color: scheme.primary,
                                 borderRadius: BorderRadius.circular(999),
-                                border: Border.all(color: scheme.surface, width: 2),
+                                border: Border.all(
+                                  color: scheme.surface,
+                                  width: 2,
+                                ),
                               ),
                               child: Text(
                                 badge > 9 ? '9+' : '$badge',
@@ -325,7 +334,10 @@ class StitchNavBar extends StatelessWidget {
                       color: color,
                       height: 1.1,
                     ),
-                    child: FittedBox(fit: BoxFit.scaleDown, child: Text(label, maxLines: 1, softWrap: false)),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(label, maxLines: 1, softWrap: false),
+                    ),
                   ),
                 ],
               ),
@@ -336,3 +348,5 @@ class StitchNavBar extends StatelessWidget {
     );
   }
 }
+
+

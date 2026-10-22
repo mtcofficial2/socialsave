@@ -25,6 +25,7 @@ import 'package:social_save/shared/widgets/platform_logo.dart';
 import 'package:social_save/features/home/presentation/widgets/supported_platforms.dart';
 import 'package:social_save/features/home/presentation/widgets/save_queue_section.dart';
 import 'package:social_save/features/home/presentation/widgets/url_input_card.dart';
+import 'package:social_save/features/status/hd_status_screen.dart';
 import 'package:social_save/features/updates/update_card.dart';
 import 'package:social_save/shared/widgets/brand_header.dart';
 import 'package:social_save/shared/widgets/compliance_notice.dart';
@@ -226,6 +227,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             // 1.0.36: sharing sits above Recent Downloads.
             const NearbyShareBar(compact: true),
             const SizedBox(height: 12),
+            const HdStatusEntry(),
+            const SizedBox(height: 12),
             const RecentDownloadsSection(),
             const SizedBox(height: 16),
             const SupportedPlatformsSection(),
@@ -293,6 +296,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                     children: const [
                       // 1.0.36: sharing sits above Recent Downloads.
                       NearbyShareBar(compact: true),
+                      SizedBox(height: 16),
+                      HdStatusEntry(),
                       SizedBox(height: 16),
                       RecentDownloadsSection(),
                       SizedBox(height: 16),

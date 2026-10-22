@@ -66,6 +66,10 @@ class SettingsController extends Notifier<AppSettings> {
     return _commit(state.copyWith(useDynamicColor: value));
   }
 
+  Future<void> setLiquidGlass(bool value) {
+    return _commit(state.copyWith(liquidGlass: value));
+  }
+
   Future<void> setClassicHome(bool value) {
     return _commit(state.copyWith(classicHome: value));
   }

@@ -97,30 +97,16 @@ func formatSelector(quality string, hasFFmpeg bool, maxHeight int) string {
 		return "best[acodec!=none][vcodec!=none]/best"
 	}
 	if hasFFmpeg {
-		if localEngine {
-			// Desktop saves: H.264 + AAC near the asked height first, so the
-			// file plays in Windows' own players and on any phone it is sent
-			// to (AV1/VP9 in MP4 often does not). YouTube has no H.264 above
-			// 1080p, so 1440p/4K fall through to the normal choice.
-			if height := RequestedMaxHeight(quality, 0); height != nil && *height > 0 && *height <= 1080 {
-				h := *height
-				// 70% of the asked height still counts as that quality, so
-				// letterboxed films (1920x804) qualify as 1080p. 1.0.37: was
-				// half the height, which gave a 720p file for "1080p" when
-				// YouTube had no H.264 1080p (Big Buck Bunny). Then VP9 at the
-				// asked height, then the best below it.
-				lo := strconv.Itoa(h * 7 / 10)
-				hi := strconv.Itoa(h)
-				return "bv*[height<=" + hi + "][height>=" + lo + "][vcodec^=avc1]+ba[ext=m4a]/" +
-					"bv*[height<=" + hi + "][height>=" + lo + "][vcodec^=vp]+ba/" + dashFirst(h)
-			}
-		}
 		// Many small pieces in parallel. One combined file is what YouTube throttles.
+		// Up to 1080p, H.264 + AAC at that height comes first. VP9, AV1, or
+		// Opus inside an MP4 still shows as 1080p or 720p, and TikTok then
+		// says it could not decode the video. YouTube has no H.264 above
+		// 1080p, so 1440p and 4K stay on the best stream.
 		mapping := map[string]string{
-			"360p":     dashFirst(360),
-			"480p":     dashFirst(480),
-			"720p":     dashFirst(720),
-			"1080p":    dashFirst(1080),
+			"360p":     compatibleFirst(360),
+			"480p":     compatibleFirst(480),
+			"720p":     compatibleFirst(720),
+			"1080p":    compatibleFirst(1080),
 			"1440p":    dashFirst(1440),
 			"2160p":    dashFirst(2160),
 			"4k":       dashFirst(2160),
@@ -150,6 +136,18 @@ func formatSelector(quality string, hasFFmpeg bool, maxHeight int) string {
 		return selector
 	}
 	return "best[acodec!=none][vcodec!=none]/best"
+}
+
+// compatibleFirst keeps the asked height and prefers a normal MP4:
+// H.264 video and AAC audio. A letterboxed frame still counts when it
+// is at least 70% of that height (1920x804 is a 1080p film).
+func compatibleFirst(height int) string {
+	hi := strconv.Itoa(height)
+	lo := strconv.Itoa(height * 7 / 10)
+	return "bv*[height<=" + hi + "][height>=" + lo + "][vcodec^=avc1]+ba[acodec^=mp4a]/" +
+		"bv*[height<=" + hi + "][height>=" + lo + "][vcodec^=avc1]+ba[ext=m4a]/" +
+		"bv*[height<=" + hi + "][vcodec^=avc1]+ba[acodec^=mp4a]/" +
+		dashFirst(height)
 }
 
 func dashFirst(height int) string {

@@ -29,6 +29,7 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
       '${AppConstants.settingsPrefsPrefix}qualityByPlatform';
   static const _dynamicColor =
       '${AppConstants.settingsPrefsPrefix}useDynamicColor';
+  static const _liquidGlass = '${AppConstants.settingsPrefsPrefix}liquidGlass';
   static const _classicHome = '${AppConstants.settingsPrefsPrefix}classicHome';
   static const _usbQuickAction = '${AppConstants.settingsPrefsPrefix}usbQuickAction';
   static const _minimalShortcuts = '${AppConstants.settingsPrefsPrefix}minimalShortcutsV2'; // 1.0.45: on by default (new key so an earlier saved 'off' doesn't stick)
@@ -64,6 +65,7 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
       'lastChosenQuality': _prefs.getString(_lastQuality),
       'qualityByPlatform': _decodePlatforms(_prefs.getString(_qualityByPlatform)),
       'useDynamicColor': _prefs.getBool(_dynamicColor),
+      'liquidGlass': _prefs.getBool(_liquidGlass),
       'classicHome': _prefs.getBool(_classicHome),
       'minimalShortcuts': _prefs.getBool(_minimalShortcuts),
       'usbQuickAction': _prefs.getBool(_usbQuickAction),
@@ -105,6 +107,7 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
       jsonEncode(settings.qualityByPlatform),
     );
     await _prefs.setBool(_dynamicColor, settings.useDynamicColor);
+    await _prefs.setBool(_liquidGlass, settings.liquidGlass);
     await _prefs.setBool(_classicHome, settings.classicHome);
     await _prefs.setBool(_minimalShortcuts, settings.minimalShortcuts);
     await _prefs.setBool(_usbQuickAction, settings.usbQuickAction);

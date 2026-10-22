@@ -7,6 +7,7 @@ import 'dart:io';
 import 'package:file_selector/file_selector.dart' show getDirectoryPath;
 
 import 'package:flutter/material.dart';
+import 'package:social_save/shared/widgets/liquid_glass.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -32,6 +33,7 @@ import 'package:social_save/features/library/presentation/library_screen.dart'
         vaultUnlockedProvider;
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
 import 'package:social_save/features/library/summarize_sheet.dart';
+import 'package:social_save/features/library/tiktok_ready.dart';
 import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
 import 'package:social_save/features/library/vault_service.dart';
 import 'package:social_save/shared/routing/app_router.dart'
@@ -813,19 +815,26 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
         borderRadius: BorderRadius.circular(26),
         border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.5)),
       ),
-      child: Row(
-        children: [
-          Expanded(child: _sourceTab(0, sourceIcon, sourceLabel)),
-          Expanded(child: _sourceTab(1, Icons.lock_rounded, 'Vault')),
-        ],
+      child: GlassChoiceShell(
+        index: _tab,
+        count: 2,
+        child: Row(
+          children: [
+            Expanded(child: _sourceTab(0, sourceIcon, sourceLabel)),
+            Expanded(child: _sourceTab(1, Icons.lock_rounded, 'Vault')),
+          ],
+        ),
       ),
     );
   }
 
   Widget _sourceTab(int value, IconData icon, String label) {
     final scheme = Theme.of(context).colorScheme;
+    final glass = LiquidGlassScope.of(context);
     final on = _tab == value;
-    final fg = on ? scheme.onPrimaryContainer : scheme.onSurfaceVariant;
+    final fg = glass
+        ? (on ? scheme.primary : scheme.onSurfaceVariant)
+        : (on ? scheme.onPrimaryContainer : scheme.onSurfaceVariant);
     return Semantics(
       button: true,
       selected: on,
@@ -842,7 +851,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
           curve: Curves.easeOutCubic,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: on ? scheme.primaryContainer : Colors.transparent,
+            color: !glass && on ? scheme.primaryContainer : Colors.transparent,
             borderRadius: BorderRadius.circular(22),
           ),
           child: Row(
@@ -1401,6 +1410,13 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
           title: const Text('Share file'),
           onTap: () => Navigator.pop(context, 'share'),
         ),
+        if (!DesktopSupport.isWindows)
+          ListTile(
+            leading: const Icon(Icons.movie_filter_outlined),
+            title: const Text('Make TikTok ready'),
+            subtitle: const Text('Rewrite this saved video so TikTok can open it'),
+            onTap: () => Navigator.pop(context, 'tiktok'),
+          ),
         if (DesktopSupport.isWindows)
           ListTile(
             leading: const Icon(Icons.folder_open_outlined),
@@ -1485,6 +1501,19 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
     if (action == 'reveal') {
       final path = video.path;
       if (path != null) await DesktopSupport.revealInFolder(path);
+      return;
+    }
+    if (action == 'tiktok') {
+      final path = await DeviceMediaService().resolvePlayablePath(video);
+      if (!mounted) return;
+      if (path == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('That video is not on this phone.')),
+        );
+        return;
+      }
+      final refresh = await offerTiktokReady(context, path: path, title: video.title);
+      if (refresh && mounted) await _reload();
       return;
     }
     if (action == 'share' ||

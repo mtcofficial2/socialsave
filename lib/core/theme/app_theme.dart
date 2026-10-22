@@ -2,17 +2,26 @@ import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:social_save/core/theme/app_colors.dart';
+import 'package:social_save/shared/widgets/liquid_glass.dart';
 
 class AppTheme {
   const AppTheme._();
 
-  static ThemeData light({String fontFamily = 'Inter', ColorScheme? colorScheme}) =>
-      _theme(colorScheme ?? AppColors.lightScheme(), fontFamily);
+  static ThemeData light({
+    String fontFamily = 'Inter',
+    ColorScheme? colorScheme,
+    bool liquidGlass = true,
+  }) =>
+      _theme(colorScheme ?? AppColors.lightScheme(), fontFamily, liquidGlass);
 
-  static ThemeData dark({String fontFamily = 'Inter', ColorScheme? colorScheme}) =>
-      _theme(colorScheme ?? AppColors.darkScheme(), fontFamily);
+  static ThemeData dark({
+    String fontFamily = 'Inter',
+    ColorScheme? colorScheme,
+    bool liquidGlass = true,
+  }) =>
+      _theme(colorScheme ?? AppColors.darkScheme(), fontFamily, liquidGlass);
 
-  static ThemeData _theme(ColorScheme scheme, String fontFamily) {
+  static ThemeData _theme(ColorScheme scheme, String fontFamily, bool liquidGlass) {
     final base = ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
@@ -101,13 +110,42 @@ class AppTheme {
         constraints: const BoxConstraints(minHeight: 48),
       ),
       filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(
-          minimumSize: const Size(64, 48),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
-          textStyle: text.titleMedium?.copyWith(fontWeight: FontWeight.w600, fontSize: 15),
-        ),
+        style: liquidGlass
+            ? FilledButton.styleFrom(
+                minimumSize: const Size(64, 48),
+                backgroundColor: Colors.transparent,
+                foregroundColor: scheme.onSurface,
+                disabledForegroundColor: scheme.onSurface.withValues(alpha: 0.38),
+                elevation: 0,
+                shadowColor: Colors.transparent,
+                surfaceTintColor: Colors.transparent,
+                shape: const StadiumBorder(),
+                textStyle: text.titleMedium?.copyWith(fontWeight: FontWeight.w600, fontSize: 15),
+              ).copyWith(
+                backgroundBuilder: liquidGlassButtonLayer,
+                iconColor: WidgetStateProperty.resolveWith((states) {
+                  if (states.contains(WidgetState.disabled)) {
+                    return scheme.onSurface.withValues(alpha: 0.38);
+                  }
+                  return scheme.primary;
+                }),
+                overlayColor: WidgetStateProperty.resolveWith((states) {
+                  if (states.contains(WidgetState.pressed)) {
+                    return Colors.white.withValues(alpha: scheme.brightness == Brightness.dark ? 0.14 : 0.28);
+                  }
+                  if (states.contains(WidgetState.hovered) || states.contains(WidgetState.focused)) {
+                    return Colors.white.withValues(alpha: 0.10);
+                  }
+                  return null;
+                }),
+              )
+            : FilledButton.styleFrom(
+                minimumSize: const Size(64, 48),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                textStyle: text.titleMedium?.copyWith(fontWeight: FontWeight.w600, fontSize: 15),
+              ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(

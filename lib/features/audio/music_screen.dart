@@ -11,6 +11,7 @@ import 'package:social_save/features/audio/audio_service.dart';
 import 'package:social_save/features/library/nearby_service.dart';
 import 'package:social_save/features/library/nearby_ui.dart';
 import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
+import 'package:social_save/shared/widgets/liquid_glass.dart';
 
 String _fmt(Duration d) {
   final m = d.inMinutes;
@@ -555,10 +556,12 @@ class _MiniAudioBarState extends State<MiniAudioBar> {
                         ),
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(20),
-                          child: BackdropFilter(
-                            filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                          child: _MiniDockFill(
+                            glass: LiquidGlassScope.of(context),
                             child: Material(
-                              color: scheme.surfaceContainerHigh.withValues(alpha: dark ? 0.82 : 0.90),
+                              color: LiquidGlassScope.of(context)
+                                  ? Colors.transparent
+                                  : scheme.surfaceContainerHigh.withValues(alpha: dark ? 0.82 : 0.90),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(20),
                                 side: BorderSide(color: scheme.outlineVariant.withValues(alpha: dark ? 0.25 : 0.5)),
@@ -571,6 +574,18 @@ class _MiniAudioBarState extends State<MiniAudioBar> {
                                   onTap: () => openNowPlaying(context),
                                   child: Stack(
                                     children: [
+                                      if (LiquidGlassScope.of(context)) ...[
+                                        Positioned.fill(
+                                          child: ColoredBox(
+                                            color: scheme.surface.withValues(alpha: dark ? 0.55 : 0.70),
+                                          ),
+                                        ),
+                                        Positioned.fill(
+                                          child: IgnorePointer(
+                                            child: IosGlassPlate(dark: dark, radius: 20),
+                                          ),
+                                        ),
+                                      ],
                                       Padding(
                                         padding: const EdgeInsets.fromLTRB(8, 8, 6, 8),
                                         child: Row(
@@ -665,6 +680,24 @@ class _MiniAudioBarState extends State<MiniAudioBar> {
   }
 }
 
+/// Frosts the mini player when liquid glass is off. The glass look is painted
+/// inside the dock, so this adds no second blur.
+class _MiniDockFill extends StatelessWidget {
+  const _MiniDockFill({required this.glass, required this.child});
+
+  final bool glass;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (glass) return child;
+    return BackdropFilter(
+      filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+      child: child,
+    );
+  }
+}
+
 /// Icon without a plate; a soft theme-tinted circle on hover or press.
 class _QuietIcon extends StatefulWidget {
   const _QuietIcon({required this.icon, required this.label, required this.onTap, this.size = 24, this.box = 40, this.dim = false, this.color});
@@ -683,6 +716,30 @@ class _QuietIcon extends StatefulWidget {
 class _QuietIconState extends State<_QuietIcon> {
   bool _hover = false;
   bool _down = false;
+
+  Widget _plate(bool lit, ColorScheme scheme, Widget child) {
+    if (!LiquidGlassScope.of(context) || widget.box < 48) {
+      return AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOut,
+        width: widget.box,
+        height: widget.box,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: scheme.onSurface.withValues(alpha: lit ? 0.08 : 0),
+        ),
+        child: child,
+      );
+    }
+    return LiquidSquash(
+      pressed: _down,
+      child: IosGlassPlate(
+        dark: scheme.brightness == Brightness.dark,
+        shadow: true,
+        child: SizedBox(width: widget.box, height: widget.box, child: child),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -706,16 +763,10 @@ class _QuietIconState extends State<_QuietIcon> {
             onTapCancel: () => setState(() => _down = false),
             onTapUp: (_) => setState(() => _down = false),
             onTap: widget.onTap,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 160),
-              curve: Curves.easeOut,
-              width: widget.box,
-              height: widget.box,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: scheme.onSurface.withValues(alpha: lit ? 0.08 : 0),
-              ),
-              child: AnimatedScale(
+            child: _plate(
+              lit,
+              scheme,
+              AnimatedScale(
                 scale: _down ? 0.9 : 1,
                 duration: const Duration(milliseconds: 120),
                 child: Icon(widget.icon, size: widget.size, color: base),
@@ -1281,38 +1332,55 @@ class _AudioPlayButtonState extends State<_AudioPlayButton> {
           onTapUp: (_) => setState(() => _down = false),
           onTap: widget.onTap,
           child: AnimatedScale(
-            scale: _down ? 0.92 : (_hover ? 1.04 : 1.0),
+            scale: LiquidGlassScope.of(context)
+                ? (_hover && !_down ? 1.04 : 1.0)
+                : (_down ? 0.92 : (_hover ? 1.04 : 1.0)),
             duration: const Duration(milliseconds: 180),
             curve: Curves.easeOutCubic,
-            child: ClipOval(
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  width: s,
-                  height: s,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: scheme.onSurface.withValues(alpha: _hover ? 0.14 : 0.09),
-                    border: Border.all(color: scheme.onSurface.withValues(alpha: 0.14), width: 0.8),
-                  ),
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 180),
-                    transitionBuilder: (c, a) => FadeTransition(
-                      opacity: a,
-                      child: ScaleTransition(scale: Tween(begin: 0.8, end: 1.0).animate(a), child: c),
-                    ),
-                    child: Icon(
-                      widget.playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                      key: ValueKey(widget.playing),
-                      size: 38,
-                      color: scheme.onSurface,
-                    ),
-                  ),
-                ),
-              ),
-            ),
+            child: _face(scheme, s),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _face(ColorScheme scheme, double s) {
+    final icon = AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      transitionBuilder: (c, a) => FadeTransition(
+        opacity: a,
+        child: ScaleTransition(scale: Tween(begin: 0.8, end: 1.0).animate(a), child: c),
+      ),
+      child: Icon(
+        widget.playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+        key: ValueKey(widget.playing),
+        size: 38,
+        color: scheme.onSurface,
+      ),
+    );
+    if (LiquidGlassScope.of(context)) {
+      return LiquidSquash(
+        pressed: _down,
+        child: IosGlassPlate(
+          dark: scheme.brightness == Brightness.dark,
+          shadow: true,
+          child: SizedBox(width: s, height: s, child: icon),
+        ),
+      );
+    }
+    return ClipOval(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          width: s,
+          height: s,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: scheme.onSurface.withValues(alpha: _hover ? 0.14 : 0.09),
+            border: Border.all(color: scheme.onSurface.withValues(alpha: 0.14), width: 0.8),
+          ),
+          child: icon,
         ),
       ),
     );

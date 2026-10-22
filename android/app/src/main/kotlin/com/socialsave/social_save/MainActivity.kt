@@ -1,5 +1,6 @@
 package com.socialsave.social_save
 
+import android.app.AppOpsManager
 import android.app.PictureInPictureParams
 import android.content.ClipData
 import android.content.ContentUris
@@ -71,6 +72,22 @@ class MainActivity : FlutterFragmentActivity() {
         val pending = deleteResult
         deleteResult = null
         pending?.success(if (r.resultCode == RESULT_OK) deleteDone + deleteAsked else deleteDone)
+    }
+
+    /** True when Android 13+ is blocking this sideloaded app's accessibility switch. */
+    private fun restrictedSettingsBlocked(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
+        return try {
+            val ops = getSystemService(AppOpsManager::class.java) ?: return false
+            val mode = ops.unsafeCheckOpNoThrow(
+                "android:access_restricted_settings",
+                android.os.Process.myUid(),
+                packageName,
+            )
+            mode == AppOpsManager.MODE_IGNORED || mode == AppOpsManager.MODE_ERRORED
+        } catch (_: Throwable) {
+            false
+        }
     }
 
     /// MediaStore entry for a file: its content uri, video id, or a lookup by path.
@@ -664,10 +681,20 @@ class MainActivity : FlutterFragmentActivity() {
                         "overlay" to Settings.canDrawOverlays(this),
                         "bubble" to (BubbleService.instance != null),
                         "sdk" to Build.VERSION.SDK_INT,
+                        "restricted" to restrictedSettingsBlocked(),
                     ))
                 }
                 "openAccessibilitySettings" -> {
-                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    val component = ComponentName(this, LinkWatcherService::class.java).flattenToString()
+                    val args = android.os.Bundle().apply {
+                        putString(":settings:fragment_args_key", component)
+                    }
+                    startActivity(
+                        Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            .putExtra(":settings:fragment_args_key", component)
+                            .putExtra(":settings:show_fragment_args", args),
+                    )
                     result.success(true)
                 }
                 "openOverlaySettings" -> {
@@ -798,6 +825,57 @@ class MainActivity : FlutterFragmentActivity() {
                     }
                     pickVideoResult = result
                     openVideo.launch(arrayOf("video/*", "audio/*"))
+                }
+                "needsTiktokWork" -> {
+                    val path = call.argument<String>("path")
+                    io.execute {
+                        val needs = try {
+                            UploadPrep.needsWork(applicationContext, path)
+                        } catch (_: Exception) {
+                            false
+                        }
+                        runOnUiThread { result.success(needs) }
+                    }
+                }
+                "askTiktok" -> {
+                    val title = call.argument<String>("title") ?: ""
+                    LinkPrompt.presentTiktokAsk(this, title) { yes ->
+                        try { result.success(yes) } catch (_: Exception) {}
+                    }
+                }
+                "makeUploadReady" -> {
+                    val path = call.argument<String>("path")
+                    io.execute {
+                        try {
+                            val out = UploadPrep.prepare(applicationContext, path)
+                            runOnUiThread { result.success(out) }
+                        } catch (e: Exception) {
+                            runOnUiThread { result.success(path) }
+                        }
+                    }
+                }
+                "cancelUploadPrep" -> {
+                    UploadPrep.cancel()
+                    result.success(true)
+                }
+                "statusPrepare" -> {
+                    val path = call.argument<String>("path")
+                    val uri = call.argument<String>("uri")
+                    val photo = call.argument<Boolean>("photo") == true
+                    io.execute {
+                        try {
+                            val out = StatusPrep.prepare(applicationContext, path, uri, photo)
+                            runOnUiThread { result.success(out) }
+                        } catch (e: Exception) {
+                            runOnUiThread { result.error("status", e.message ?: "Could not prepare that file", null) }
+                        }
+                    }
+                }
+                "statusProgress" -> result.success(StatusPrep.progress)
+                "statusShare" -> {
+                    val path = call.argument<String>("path")
+                    val business = call.argument<Boolean>("business") == true
+                    result.success(StatusPrep.share(this, path, business))
                 }
                 "storageStats" -> {
                     try {

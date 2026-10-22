@@ -370,6 +370,12 @@ String _speedLine(DownloadTask task, Formatters formatters) {
   if (task.status == DownloadStatus.running && task.phase == 'merging') {
     return 'Merging video and sound…';
   }
+  if (task.phase == 'askTiktok') {
+    return 'Make this one work on TikTok?';
+  }
+  if (task.phase == 'shareable') {
+    return 'Making a file TikTok can open…';
+  }
   if (task.status == DownloadStatus.running && task.phase == 'saving') {
     return 'Saving the file…';
   }

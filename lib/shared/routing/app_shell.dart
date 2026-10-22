@@ -26,7 +26,8 @@ class AppShell extends ConsumerWidget {
     final activeCount = ref.watch(
       downloadManagerProvider.select((state) => state.active.length),
     );
-    final showMini = current != null &&
+    final showMini =
+        current != null &&
         current.status != DownloadStatus.completed &&
         current.status != DownloadStatus.cancelled;
 
@@ -56,11 +57,15 @@ class AppShell extends ConsumerWidget {
                 child: _MiniProgress(
                   title: current.title,
                   progress: current.progress,
-                  speed: ref.watch(formattersProvider).speed(current.bytesPerSecond),
+                  speed: ref
+                      .watch(formattersProvider)
+                      .speed(current.bytesPerSecond),
                   thumbnail: current.thumbnailUrl,
                   onOpen: () => context.push('/progress/${current.id}'),
                   onPause: current.status.canPause
-                      ? () => ref.read(downloadManagerProvider.notifier).pause(current.id)
+                      ? () => ref
+                            .read(downloadManagerProvider.notifier)
+                            .pause(current.id)
                       : null,
                 ),
               ),
@@ -92,7 +97,14 @@ class AppShell extends ConsumerWidget {
                 active: true,
                 child: Column(
                   children: [
-                    Expanded(child: UpdateChecker(child: TabTransition(index: navigationShell.currentIndex, child: navigationShell))),
+                    Expanded(
+                      child: UpdateChecker(
+                        child: TabTransition(
+                          index: navigationShell.currentIndex,
+                          child: navigationShell,
+                        ),
+                      ),
+                    ),
                     chrome,
                   ],
                 ),
@@ -105,36 +117,45 @@ class AppShell extends ConsumerWidget {
 
     // The new Home has its own Send / Receive card and Music tile, so the
     // floating buttons only show there with the Classic home screen.
-    final classicHome = ref.watch(settingsControllerProvider.select((s) => s.classicHome));
+    final classicHome = ref.watch(
+      settingsControllerProvider.select((s) => s.classicHome),
+    );
     // Send / Receive and Music live on Home (and in menus), so the floating
     // buttons only appear with the Classic home screen.
     final hideFab = !classicHome;
     return Scaffold(
       backgroundColor: Colors.transparent,
       extendBody: true,
-      body: UpdateChecker(child: TabTransition(index: navigationShell.currentIndex, child: navigationShell)),
-      floatingActionButton: hideFab ? null : Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          FloatingActionButton.small(
-            key: const ValueKey('music-fab'),
-            heroTag: 'music-fab',
-            tooltip: 'Music player',
-            onPressed: () => context.push('/music'),
-            child: const Icon(Icons.library_music_rounded),
-          ),
-          const SizedBox(height: 10),
-          FloatingActionButton.extended(
-            key: const ValueKey('share-hub-fab'),
-            heroTag: 'share-fab',
-            tooltip: 'Send or receive with nearby devices',
-            onPressed: () => context.push('/share'),
-            icon: const Icon(Icons.swap_horiz_rounded),
-            label: const Text('Send / Receive'),
-          ),
-        ],
+      body: UpdateChecker(
+        child: TabTransition(
+          index: navigationShell.currentIndex,
+          child: navigationShell,
+        ),
       ),
+      floatingActionButton: hideFab
+          ? null
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                FloatingActionButton.small(
+                  key: const ValueKey('music-fab'),
+                  heroTag: 'music-fab',
+                  tooltip: 'Music player',
+                  onPressed: () => context.push('/music'),
+                  child: const Icon(Icons.library_music_rounded),
+                ),
+                const SizedBox(height: 10),
+                FloatingActionButton.extended(
+                  key: const ValueKey('share-hub-fab'),
+                  heroTag: 'share-fab',
+                  tooltip: 'Send or receive with nearby devices',
+                  onPressed: () => context.push('/share'),
+                  icon: const Icon(Icons.swap_horiz_rounded),
+                  label: const Text('Send / Receive'),
+                ),
+              ],
+            ),
       bottomNavigationBar: chrome,
     );
   }
@@ -165,72 +186,71 @@ class _MiniProgress extends StatelessWidget {
       bare: true,
       child: Semantics(
         button: true,
-        label: 'Download in progress: $title, ${(progress * 100).round()} percent. Tap to open.',
+        label:
+            'Download in progress: $title, ${(progress * 100).round()} percent. Tap to open.',
         onTap: onOpen,
         child: InkWell(
-        borderRadius: BorderRadius.circular(22),
-        onTap: onOpen,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
-          child: Row(
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: SizedBox(
-                  width: 40,
-                  height: 40,
-                  child: thumbnail == null || thumbnail!.isEmpty
-                      ? ColoredBox(color: scheme.surfaceContainerHigh)
-                      : Image.network(thumbnail!, fit: BoxFit.cover),
+          borderRadius: BorderRadius.circular(22),
+          onTap: onOpen,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
+            child: Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: SizedBox(
+                    width: 40,
+                    height: 40,
+                    child: thumbnail == null || thumbnail!.isEmpty
+                        ? ColoredBox(color: scheme.surfaceContainerHigh)
+                        : Image.network(thumbnail!, fit: BoxFit.cover),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
-                    ),
-                    Text(
-                      '${(progress * 100).round()}%  •  $speed',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: scheme.primary,
+                      Text(
+                        '${(progress * 100).round()}%  •  $speed',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: scheme.primary,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              if (onPause != null)
+                if (onPause != null)
+                  IconButton(
+                    onPressed: onPause,
+                    icon: const Icon(Icons.pause_rounded, size: 20),
+                  ),
                 IconButton(
-                  onPressed: onPause,
-                  icon: const Icon(Icons.pause_rounded, size: 20),
+                  onPressed: onOpen,
+                  icon: const Icon(Icons.open_in_new_rounded, size: 18),
                 ),
-              IconButton(
-                onPressed: onOpen,
-                icon: const Icon(Icons.open_in_new_rounded, size: 18),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
-      ),
       ),
     );
   }
 }
 
-/// Premium tab-switch motion: the incoming tab fades in, slides ~24dp from
-/// the side it sits on in the tab order and settles from 0.98 scale. Tabs stay
-/// alive in the indexed stack, so scroll positions are preserved, and the nav
-/// pill lives outside this widget so it never animates.
+/// Short slide when the tab changes. Tabs stay alive in the indexed stack, so
+/// scroll positions are preserved. The nav pill lives outside this widget.
 class TabTransition extends StatefulWidget {
   const TabTransition({super.key, required this.index, required this.child});
 
@@ -245,7 +265,7 @@ class _TabTransitionState extends State<TabTransition>
     with SingleTickerProviderStateMixin {
   late final AnimationController _c = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 320),
+    duration: const Duration(milliseconds: 220),
     value: 1,
   );
   double _dir = 1;
@@ -277,13 +297,11 @@ class _TabTransitionState extends State<TabTransition>
       builder: (context, child) {
         if (_c.value >= 1) return child!;
         final t = Curves.easeOutCubic.transform(_c.value);
-        final fade = Curves.easeOut.transform((_c.value * 1.6).clamp(0.0, 1.0));
-        return Opacity(
-          opacity: 0.15 + 0.85 * fade,
-          child: Transform.translate(
-            offset: Offset(_dir * 24 * (1 - t), 0),
-            child: child,
-          ),
+        // Slide only. Fading the whole page is a full-screen offscreen layer
+        // and makes every tab change feel late.
+        return Transform.translate(
+          offset: Offset(_dir * 12 * (1 - t), 0),
+          child: child,
         );
       },
     );

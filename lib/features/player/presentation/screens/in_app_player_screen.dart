@@ -24,6 +24,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/platform/phone_body.dart';
 import 'package:social_save/core/theme/app_colors.dart';
 import 'package:social_save/features/library/device_media.dart';
+import 'package:social_save/features/library/tiktok_ready.dart';
 import 'package:social_save/features/player/pip.dart';
 import 'package:social_save/features/player/presentation/widgets/phone_player_chrome.dart';
 import 'package:social_save/features/player/presentation/widgets/subtitle_tools.dart';
@@ -2743,6 +2744,13 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                 if (v == 'tv') unawaited(_playOnTv());
                 if (v == 'open') unawaited(_openExternal());
                 if (v == 'session') sendToSessionPeer(context, File(_session.filePath!));
+                if (v == 'tiktok') {
+                  unawaited(offerTiktokReady(
+                    context,
+                    path: _session.filePath!,
+                    title: _session.title,
+                  ));
+                }
               },
               itemBuilder: (_) => [
                 if (_session.filePath != null && !_session.isVault && ShareSession.active)
@@ -2770,6 +2778,11 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                     value: 'open',
                     child: Text('Open in another app'),
                   ),
+                  if (!DesktopSupport.isWindows)
+                    PopupMenuItem(
+                      value: 'tiktok',
+                      child: Text('Make TikTok ready'),
+                    ),
                 ],
               ],
             ),

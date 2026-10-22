@@ -7,6 +7,7 @@ import 'dart:io';
 import 'package:file_selector/file_selector.dart' show getDirectoryPath;
 
 import 'package:flutter/material.dart';
+import 'package:social_save/shared/widgets/liquid_glass.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -24,6 +25,7 @@ import 'package:social_save/features/library/session_ui.dart';
 import 'package:social_save/features/library/share_session.dart';
 import 'package:social_save/features/library/presentation/library_look.dart';
 import 'package:social_save/features/library/summarize_sheet.dart';
+import 'package:social_save/features/library/tiktok_ready.dart';
 import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
 import 'package:social_save/features/library/vault_service.dart';
 import 'package:social_save/shared/routing/app_router.dart'
@@ -974,20 +976,28 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
         borderRadius: BorderRadius.circular(LibraryPalette.radius),
         border: Border.all(color: look.border),
       ),
-      child: Row(
-        children: [
-          Expanded(child: _sourceTab(0, sourceIcon, sourceLabel)),
-          Expanded(child: _sourceTab(1, Icons.lock_rounded, 'Vault')),
-        ],
+      child: GlassChoiceShell(
+        index: _tab,
+        count: 2,
+        child: Row(
+          children: [
+            Expanded(child: _sourceTab(0, sourceIcon, sourceLabel)),
+            Expanded(child: _sourceTab(1, Icons.lock_rounded, 'Vault')),
+          ],
+        ),
       ),
     );
   }
 
   Widget _sourceTab(int value, IconData icon, String label) {
     final look = LibraryPalette.of(context);
+    final glass = LiquidGlassScope.of(context);
     final on = _tab == value;
+    final fg = glass
+        ? (on ? look.accent : look.muted)
+        : (on ? look.onAccent : look.muted);
     return Material(
-      color: on ? look.accent : Colors.transparent,
+      color: !glass && on ? look.accent : Colors.transparent,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
@@ -997,12 +1007,12 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 16, color: on ? look.onAccent : look.muted),
+              Icon(icon, size: 16, color: fg),
               const SizedBox(width: 6),
               Text(
                 label,
                 style: TextStyle(
-                  color: on ? look.onAccent : look.muted,
+                  color: fg,
                   fontWeight: on ? FontWeight.w700 : FontWeight.w500,
                   fontSize: 13,
                 ),
@@ -1549,6 +1559,13 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
           title: const Text('Share file'),
           onTap: () => Navigator.pop(context, 'share'),
         ),
+        if (!DesktopSupport.isWindows)
+          ListTile(
+            leading: const Icon(Icons.movie_filter_outlined),
+            title: const Text('Make TikTok ready'),
+            subtitle: const Text('Rewrite this saved video so TikTok can open it'),
+            onTap: () => Navigator.pop(context, 'tiktok'),
+          ),
         if (DesktopSupport.isWindows)
           ListTile(
             leading: const Icon(Icons.folder_open_outlined),
@@ -1633,6 +1650,19 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     if (action == 'reveal') {
       final path = video.path;
       if (path != null) await DesktopSupport.revealInFolder(path);
+      return;
+    }
+    if (action == 'tiktok') {
+      final path = await DeviceMediaService().resolvePlayablePath(video);
+      if (!mounted) return;
+      if (path == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('That video is not on this phone.')),
+        );
+        return;
+      }
+      final refresh = await offerTiktokReady(context, path: path, title: video.title);
+      if (refresh && mounted) await _reload();
       return;
     }
     if (action == 'share' ||

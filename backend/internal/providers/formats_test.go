@@ -72,6 +72,22 @@ func TestFormatSelectorCapsHeight(t *testing.T) {
 	}
 }
 
+func TestFormatSelectorPrefersH264AtAskedHeight(t *testing.T) {
+	got := FormatSelector("1080p", true, 1080)
+	if !contains(got, "vcodec^=avc1") || !contains(got, "acodec^=mp4a") || !contains(got, "height<=1080") || !contains(got, "height>=756") {
+		t.Fatal(got)
+	}
+	if len(got) >= 19 && got[:19] == "bv*[height<=1080]+ba" {
+		t.Fatal(got)
+	}
+	if contains(FormatSelector("1440p", true, 1440), "avc1") {
+		t.Fatal(FormatSelector("1440p", true, 1440))
+	}
+	if contains(FormatSelector("720p", true, 1080), "height<=720") == false || contains(FormatSelector("720p", true, 1080), "vcodec^=avc1") == false {
+		t.Fatal(FormatSelector("720p", true, 1080))
+	}
+}
+
 func TestBuildFormatsKeepsVideoAndAddsAudio(t *testing.T) {
 	info := mediaInfo{
 		Ext:    "mp4",

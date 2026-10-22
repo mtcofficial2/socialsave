@@ -2,6 +2,7 @@ import 'package:animations/animations.dart';
 import 'package:social_save/features/audio/music_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:social_save/features/home/presentation/screens/browse_screen.dart';
+import 'package:social_save/features/status/hd_status_screen.dart';
 import 'package:social_save/features/library/share_hub.dart';
 import 'package:social_save/shared/routing/onboarding.dart';
 import 'package:go_router/go_router.dart';
@@ -146,6 +147,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/browse',
       pageBuilder: (context, state) => _page(state, const BrowseScreen()),
+    ),
+    GoRoute(
+      path: '/status',
+      pageBuilder: (context, state) => _page(state, const HdStatusScreen()),
     ),
     GoRoute(
       path: '/background-detect',

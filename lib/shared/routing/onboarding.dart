@@ -6,6 +6,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
+import 'package:social_save/shared/widgets/liquid_glass.dart';
 
 const _doneKey = 'socialsave_onboarding_done_v1';
 
@@ -122,14 +123,12 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     Icons.palette_rounded,
                     'Pick your look',
                     'Choose how SocialSave looks. You can change this later in Settings.',
-                    extra: SegmentedButton<ThemeMode>(
-                      segments: const [
-                        ButtonSegment(value: ThemeMode.system, label: Text('Auto'), icon: Icon(Icons.brightness_auto_rounded)),
-                        ButtonSegment(value: ThemeMode.light, label: Text('Light'), icon: Icon(Icons.light_mode_rounded)),
-                        ButtonSegment(value: ThemeMode.dark, label: Text('Dark'), icon: Icon(Icons.dark_mode_rounded)),
-                      ],
-                      selected: {mode},
-                      onSelectionChanged: (s) => ref.read(settingsControllerProvider.notifier).setThemeMode(s.first),
+                    extra: ThemeModePicker(
+                      mode: mode,
+                      systemLabel: 'Auto',
+                      systemIcon: Icons.brightness_auto_rounded,
+                      plain: ThemeModePlain.segmented,
+                      onChanged: (next) => ref.read(settingsControllerProvider.notifier).setThemeMode(next),
                     ),
                   ),
                 ],

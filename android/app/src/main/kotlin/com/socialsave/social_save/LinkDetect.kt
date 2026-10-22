@@ -45,7 +45,7 @@ object LinkDetect {
     fun enabled(c: Context): Boolean {
         val p = flutter(c)
         return p.getBoolean("flutter.socialsave_offerCopiedLinks", true) &&
-            p.getBoolean("flutter.bgdetect.enabled", false)
+            p.getBoolean("flutter.bgdetect.enabled", true)
     }
 
     /** True once per distinct link (a repeat within a minute is ignored). */

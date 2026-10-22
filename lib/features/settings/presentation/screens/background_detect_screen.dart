@@ -27,6 +27,7 @@ class _BackgroundDetectScreenState extends ConsumerState<BackgroundDetectScreen>
   bool _accessibility = false;
   bool _overlay = false;
   bool _bubbleRunning = false;
+  bool _restricted = false;
   int _sdk = 0;
   SharedPreferences? _prefs;
 
@@ -66,6 +67,7 @@ class _BackgroundDetectScreenState extends ConsumerState<BackgroundDetectScreen>
         _accessibility = r['accessibility'] == true;
         _overlay = r['overlay'] == true;
         _bubbleRunning = r['bubble'] == true;
+        _restricted = r['restricted'] == true;
         _sdk = (r['sdk'] as int?) ?? 0;
       });
     } catch (_) {
@@ -191,19 +193,21 @@ class _BackgroundDetectScreenState extends ConsumerState<BackgroundDetectScreen>
             ),
             step(
               '1. Accessibility service',
-              'Open Accessibility settings, find "SocialSave link detection" (under Downloaded apps or Installed services) and switch it on.',
+              _restricted
+                  ? 'Android is blocking this switch because SocialSave was installed from an APK. The row "SocialSave link detection" stays grey until you allow restricted settings.'
+                  : 'Open Accessibility settings, find "SocialSave link detection" (under Downloaded apps or Installed services) and switch it on.',
               _accessibility,
               button: 'Open Accessibility settings',
               onTap: () => _call('openAccessibilitySettings'),
-              extra: _sdk >= 33
+              extra: _restricted || _sdk >= 33
                   ? Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(color: scheme.onSurface.withValues(alpha: 0.05), borderRadius: BorderRadius.circular(16)),
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        const Text('Switch is greyed out?', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                        Text(_restricted ? 'Android is blocking this switch' : 'Switch is greyed out?', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                         const SizedBox(height: 4),
                         Text(
-                          'Android blocks this for apps installed outside Google Play. Open App info, tap the three dots at the top right, choose "Allow restricted settings", then go back to Accessibility settings.',
+                          'Tap the grey "SocialSave link detection" row. Android shows "Restricted setting. For your security, this setting is currently unavailable." Tap OK. Then open App info and, if a three-dot menu is at the top right, choose "Allow restricted settings" and confirm with your screen lock. Go back and turn the switch on. If App info has no three-dot menu, this phone cannot allow the switch for an APK install. Share the link into SocialSave, or use the Download copied link tile and the bubble.',
                           style: TextStyle(fontSize: 12.5, height: 1.4, color: muted),
                         ),
                         TextButton(onPressed: () => _call('openAppInfo'), child: const Text('Open App info')),
@@ -243,7 +247,7 @@ class _BackgroundDetectScreenState extends ConsumerState<BackgroundDetectScreen>
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4),
               child: Text(
-                'Android only lets apps read the clipboard in the background through an accessibility service, so there is no way around this setup. You can disable it any time in Accessibility settings.',
+                'The accessibility switch is only for noticing a copy while SocialSave is closed. Sharing a link into the app, the Download copied link quick-settings tile, and the bubble do not need that switch. You can turn the service off any time in Accessibility settings.',
                 style: TextStyle(fontSize: 12.5, height: 1.4, color: muted),
               ),
             ),

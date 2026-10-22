@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:social_save/shared/models/social_platform.dart';
+import 'package:social_save/shared/widgets/liquid_glass.dart';
 
 /// Height label such as 1080p, using the shorter side of the frame.
 String? phoneResolutionLabel(int? width, int? height) {
@@ -170,18 +171,18 @@ class PhonePlayerChrome extends StatelessWidget {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      _skipButton(back: true),
+                      _skipButton(context, back: true),
                       SizedBox(width: landscape ? 28 : 22),
                       _PlayOrb(player: player, compact: landscape),
                       SizedBox(width: landscape ? 28 : 22),
-                      _skipButton(back: false),
+                      _skipButton(context, back: false),
                     ],
                   ),
                 ),
               ),
               _PhoneSeek(player: player, centerLabel: resolution),
               const SizedBox(height: 2),
-              _actionRow(),
+              _actionRow(context),
             ],
           ),
         ),
@@ -373,8 +374,43 @@ class PhonePlayerChrome extends StatelessWidget {
     );
   }
 
-  Widget _skipButton({required bool back}) {
+  Widget _skipButton(BuildContext context, {required bool back}) {
     final size = landscape ? 44.0 : 56.0;
+    final face = Semantics(
+      button: true,
+      label: back ? 'Rewind 10 seconds' : 'Forward 10 seconds',
+      excludeSemantics: true,
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              back ? Icons.replay_10_rounded : Icons.forward_10_rounded,
+              color: Colors.white,
+              size: landscape ? 22 : 28,
+            ),
+            Text(
+              '10s',
+              style: TextStyle(
+                color: violet,
+                fontSize: landscape ? 8 : 9,
+                fontWeight: FontWeight.w800,
+                height: 1,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    void tap() {
+      HapticFeedback.selectionClick();
+      onSkip(back ? -10 : 10);
+    }
+    if (LiquidGlassScope.of(context)) {
+      return _GlassOrb(size: size, onTap: tap, child: face);
+    }
     return ClipOval(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
@@ -383,49 +419,19 @@ class PhonePlayerChrome extends StatelessWidget {
           shape: const CircleBorder(),
           child: InkWell(
             customBorder: const CircleBorder(),
-            onTap: () {
-              HapticFeedback.selectionClick();
-              onSkip(back ? -10 : 10);
-            },
-            child: Semantics(
-              button: true,
-              label: back ? 'Rewind 10 seconds' : 'Forward 10 seconds',
-              excludeSemantics: true,
-              child: SizedBox(
-              width: size,
-              height: size,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    back ? Icons.replay_10_rounded : Icons.forward_10_rounded,
-                    color: Colors.white,
-                    size: landscape ? 22 : 28,
-                  ),
-                  Text(
-                    '10s',
-                    style: TextStyle(
-                      color: violet,
-                      fontSize: landscape ? 8 : 9,
-                      fontWeight: FontWeight.w800,
-                      height: 1,
-                    ),
-                  ),
-                ],
-              ),
-              ),
-            ),
+            onTap: tap,
+            child: face,
           ),
         ),
       ),
     );
   }
 
-  Widget _actionRow() {
+  Widget _actionRow(BuildContext context) {
     return Row(
       children: [
         _iconButton(Icons.skip_previous_rounded, onPrevious, 'Previous video'),
-        _speedBadge(),
+        _speedBadge(context),
         Opacity(
           opacity: hasNext ? 1 : 0.35,
           child: _iconButton(
@@ -463,12 +469,25 @@ class PhonePlayerChrome extends StatelessWidget {
     );
   }
 
-  Widget _speedBadge() {
+  Widget _speedBadge(BuildContext context) {
+    final glass = LiquidGlassScope.of(context);
+    final label = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      child: Text(
+        phoneRateLabel(rate),
+        style: const TextStyle(
+          color: violet,
+          fontWeight: FontWeight.w800,
+          fontSize: 12,
+        ),
+      ),
+    );
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 2),
       child: Material(
-        color: pill.withValues(alpha: 0.82),
+        color: glass ? Colors.transparent : pill.withValues(alpha: 0.82),
         borderRadius: BorderRadius.circular(999),
+        clipBehavior: Clip.antiAlias,
         child: InkWell(
           borderRadius: BorderRadius.circular(999),
           onTap: () {
@@ -479,17 +498,7 @@ class PhonePlayerChrome extends StatelessWidget {
             button: true,
             label: 'Playback speed ${phoneRateLabel(rate)}. Tap to change.',
             excludeSemantics: true,
-            child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            child: Text(
-              phoneRateLabel(rate),
-              style: const TextStyle(
-                color: violet,
-                fontWeight: FontWeight.w800,
-                fontSize: 12,
-              ),
-            ),
-            ),
+            child: glass ? IosGlassPlate(dark: true, child: label) : label,
           ),
         ),
       ),
@@ -531,6 +540,7 @@ class _PlayOrb extends StatefulWidget {
 class _PlayOrbState extends State<_PlayOrb> {
   StreamSubscription<bool>? _sub;
   late bool _playing;
+  bool _down = false;
 
   @override
   void initState() {
@@ -550,6 +560,42 @@ class _PlayOrbState extends State<_PlayOrb> {
   @override
   Widget build(BuildContext context) {
     final size = widget.compact ? 52.0 : 72.0;
+    final icon = AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      transitionBuilder: (child, anim) => ScaleTransition(
+        scale: anim,
+        child: RotationTransition(turns: Tween(begin: 0.85, end: 1.0).animate(anim), child: child),
+      ),
+      child: Icon(
+        _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+        key: ValueKey(_playing),
+        color: LiquidGlassScope.of(context) ? Colors.white : Colors.black,
+        size: widget.compact ? 28 : 38,
+      ),
+    );
+    if (LiquidGlassScope.of(context)) {
+      return GestureDetector(
+        onTapDown: (_) => setState(() => _down = true),
+        onTapCancel: () => setState(() => _down = false),
+        onTapUp: (_) => setState(() => _down = false),
+        onTap: () {
+          HapticFeedback.mediumImpact();
+          unawaited(widget.player.playOrPause());
+        },
+        child: LiquidSquash(
+          pressed: _down,
+          child: IosGlassPlate(
+            dark: true,
+            shadow: true,
+            child: Semantics(
+              button: true,
+              label: _playing ? 'Pause' : 'Play',
+              child: SizedBox(width: size, height: size, child: icon),
+            ),
+          ),
+        ),
+      );
+    }
     return DecoratedBox(
       decoration: BoxDecoration(
         shape: BoxShape.circle,
@@ -576,24 +622,42 @@ class _PlayOrbState extends State<_PlayOrb> {
           child: Semantics(
             button: true,
             label: _playing ? 'Pause' : 'Play',
-            child: SizedBox(
-              width: size,
-              height: size,
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 180),
-                transitionBuilder: (child, anim) => ScaleTransition(
-                  scale: anim,
-                  child: RotationTransition(turns: Tween(begin: 0.85, end: 1.0).animate(anim), child: child),
-                ),
-                child: Icon(
-                  _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                  key: ValueKey(_playing),
-                  color: Colors.black,
-                  size: widget.compact ? 28 : 38,
-                ),
-              ),
-            ),
+            child: SizedBox(width: size, height: size, child: icon),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Painted play/skip circle. Replaces the live blur when liquid glass is on.
+class _GlassOrb extends StatefulWidget {
+  const _GlassOrb({required this.size, required this.onTap, required this.child});
+
+  final double size;
+  final VoidCallback onTap;
+  final Widget child;
+
+  @override
+  State<_GlassOrb> createState() => _GlassOrbState();
+}
+
+class _GlassOrbState extends State<_GlassOrb> {
+  bool _down = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _down = true),
+      onTapCancel: () => setState(() => _down = false),
+      onTapUp: (_) => setState(() => _down = false),
+      onTap: widget.onTap,
+      child: LiquidSquash(
+        pressed: _down,
+        child: IosGlassPlate(
+          dark: true,
+          shadow: true,
+          child: SizedBox(width: widget.size, height: widget.size, child: widget.child),
         ),
       ),
     );

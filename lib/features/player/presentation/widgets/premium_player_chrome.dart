@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
+import 'package:social_save/shared/widgets/liquid_glass.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// "Classic player controls" switch (default off = the premium controls).
@@ -392,6 +393,30 @@ class _QuietButtonState extends State<_QuietButton> {
   bool _hover = false;
   bool _down = false;
 
+  Widget _orb(bool lit, Widget child) {
+    if (!LiquidGlassScope.of(context) || widget.box < 48) {
+      return AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOut,
+        width: widget.box,
+        height: widget.box,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Colors.white.withValues(alpha: lit ? 0.10 : 0),
+        ),
+        child: child,
+      );
+    }
+    return LiquidSquash(
+      pressed: _down,
+      child: IosGlassPlate(
+        dark: true,
+        shadow: true,
+        child: SizedBox(width: widget.box, height: widget.box, child: child),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final lit = _hover || _down;
@@ -415,16 +440,9 @@ class _QuietButtonState extends State<_QuietButton> {
               HapticFeedback.selectionClick();
               widget.onTap();
             },
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 160),
-              curve: Curves.easeOut,
-              width: widget.box,
-              height: widget.box,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.white.withValues(alpha: lit ? 0.10 : 0),
-              ),
-              child: AnimatedScale(
+            child: _orb(
+              lit,
+              AnimatedScale(
                 scale: _down ? 0.9 : 1,
                 duration: const Duration(milliseconds: 120),
                 child: Icon(widget.icon, color: Colors.white.withValues(alpha: lit ? 1 : 0.88), size: widget.size),
@@ -573,38 +591,56 @@ class _PlayButtonState extends State<_PlayButton> {
             unawaited(widget.player.playOrPause());
           },
           child: AnimatedScale(
-            scale: _down ? 0.92 : (_hover ? 1.04 : 1.0),
+            scale: LiquidGlassScope.of(context) ? (_hover && !_down ? 1.04 : 1.0) : (_down ? 0.92 : (_hover ? 1.04 : 1.0)),
             duration: const Duration(milliseconds: 180),
             curve: Curves.easeOutCubic,
-            child: ClipOval(
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  width: s,
-                  height: s,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.white.withValues(alpha: _hover ? 0.18 : 0.12),
-                    border: Border.all(color: Colors.white.withValues(alpha: 0.16), width: 0.8),
-                  ),
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 180),
-                    switchInCurve: Curves.easeOutCubic,
-                    switchOutCurve: Curves.easeInCubic,
-                    transitionBuilder: (c, a) => FadeTransition(
-                      opacity: a,
-                      child: ScaleTransition(scale: Tween(begin: 0.8, end: 1.0).animate(a), child: c),
+            child: LiquidSquash(
+              pressed: LiquidGlassScope.of(context) && _down,
+              child: LiquidGlassScope.of(context)
+                  ? IosGlassPlate(
+                      dark: true,
+                      shadow: true,
+                      child: SizedBox(
+                        width: s,
+                        height: s,
+                        child: Icon(
+                          _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                          key: ValueKey(_playing),
+                          color: Colors.white,
+                          size: s * 0.5,
+                        ),
+                      ),
+                    )
+                  : ClipOval(
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 180),
+                          width: s,
+                          height: s,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.white.withValues(alpha: _hover ? 0.18 : 0.12),
+                            border: Border.all(color: Colors.white.withValues(alpha: 0.16), width: 0.8),
+                          ),
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 180),
+                            switchInCurve: Curves.easeOutCubic,
+                            switchOutCurve: Curves.easeInCubic,
+                            transitionBuilder: (c, a) => FadeTransition(
+                              opacity: a,
+                              child: ScaleTransition(scale: Tween(begin: 0.8, end: 1.0).animate(a), child: c),
+                            ),
+                            child: Icon(
+                              _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                              key: ValueKey(_playing),
+                              color: Colors.white,
+                              size: s * 0.5,
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
-                    child: Icon(
-                      _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                      key: ValueKey(_playing),
-                      color: Colors.white,
-                      size: s * 0.5,
-                    ),
-                  ),
-                ),
-              ),
             ),
           ),
         ),

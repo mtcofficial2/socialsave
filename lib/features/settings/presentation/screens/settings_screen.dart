@@ -28,6 +28,7 @@ import 'package:social_save/features/settings/domain/entities/app_settings.dart'
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
 import 'package:social_save/features/settings/presentation/screens/font_picker_sheet.dart';
 import 'package:social_save/shared/widgets/glass.dart';
+import 'package:social_save/shared/widgets/liquid_glass.dart';
 import 'package:social_save/features/library/share_hub.dart';
 import 'package:social_save/features/settings/presentation/widgets/engine_section.dart';
 import 'package:social_save/features/settings/presentation/widgets/phone_engine_section.dart';
@@ -68,7 +69,7 @@ class SettingsScreen extends ConsumerWidget {
             const SizedBox(height: 12),
             DesktopColumns(
               sections: [
-                _Sec(title: 'Appearance & Theme', keys: 'appearance theme dark light font typeface wallpaper color home shortcuts minimal', child: Column(
+                _Sec(title: 'Appearance & Theme', keys: 'appearance theme dark light system font typeface wallpaper color home shortcuts minimal liquid glass', child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
             _groupTitle(context, Icons.palette_outlined, 'Appearance & Theme'),
@@ -82,21 +83,22 @@ class SettingsScreen extends ConsumerWidget {
                       child: Text('Interface Theme', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
                     ),
                     const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: BoxDecoration(
-                        color: scheme.surfaceContainerLow,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Row(
-                        children: [
-                          _themeCell(context, 'System', Icons.devices, ThemeMode.system, settings.themeMode, controller.setThemeMode),
-                          _themeCell(context, 'Light', Icons.light_mode, ThemeMode.light, settings.themeMode, controller.setThemeMode),
-                          _themeCell(context, 'Dark', Icons.dark_mode_outlined, ThemeMode.dark, settings.themeMode, controller.setThemeMode),
-                        ],
-                      ),
+                    ThemeModePicker(
+                      mode: settings.themeMode,
+                      onChanged: controller.setThemeMode,
                     ),
-                    const SizedBox(height: 16),
+                    SwitchListTile(
+                      key: const ValueKey('liquid-glass-switch'),
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Liquid glass', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                      subtitle: Text(
+                        'Glass lens on the tab bar, main buttons, players, the round download bubble, and the System, Light, and Dark switch',
+                        style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant),
+                      ),
+                      value: settings.liquidGlass,
+                      onChanged: controller.setLiquidGlass,
+                    ),
+                    const SizedBox(height: 8),
                     _navRow(
                       context,
                       icon: Icons.font_download_outlined,
@@ -607,46 +609,6 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _themeCell(
-    BuildContext context,
-    String label,
-    IconData icon,
-    ThemeMode mode,
-    ThemeMode current,
-    ValueChanged<ThemeMode> onChanged,
-  ) {
-    final selected = current == mode;
-    final scheme = Theme.of(context).colorScheme;
-    return Expanded(
-      child: Material(
-        color: selected ? scheme.primary : Colors.transparent,
-        borderRadius: BorderRadius.circular(8),
-        child: InkWell(
-          onTap: () => onChanged(mode),
-          borderRadius: BorderRadius.circular(8),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(icon, size: 16, color: selected ? scheme.onPrimary : scheme.onSurfaceVariant),
-                const SizedBox(width: 4),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: selected ? scheme.onPrimary : scheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }

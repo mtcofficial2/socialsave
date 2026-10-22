@@ -142,7 +142,7 @@ object HeadlessEngine {
             "overlayProgress" -> {
                 if (m != null) {
                     val st = (m["state"] as? String) ?: "running"
-                    if (st == "running") touch()
+                    if (st == "running" || st == "ask") touch()
                     ProgressCard.update(
                         (m["id"] as? String) ?: "",
                         m["title"] as? String,
@@ -182,6 +182,38 @@ object HeadlessEngine {
             }
             "stopKeepAlive" -> {
                 try { app.startService(Intent(app, DownloadKeepAliveService::class.java).apply { action = DownloadKeepAliveService.ACTION_STOP }) } catch (_: Exception) {}
+                result.success(true)
+            }
+            "needsTiktokWork" -> {
+                val path = m?.get("path") as? String
+                Thread {
+                    val needs = try {
+                        UploadPrep.needsWork(app, path)
+                    } catch (_: Exception) {
+                        false
+                    }
+                    main.post { result.success(needs) }
+                }.start()
+            }
+            "askTiktok" -> {
+                val title = (m?.get("title") as? String) ?: ""
+                LinkPrompt.presentTiktokAsk(app, title) { yes ->
+                    try { result.success(yes) } catch (_: Exception) {}
+                }
+            }
+            "makeUploadReady" -> {
+                val path = m?.get("path") as? String
+                Thread {
+                    val out = try {
+                        UploadPrep.prepare(app, path)
+                    } catch (_: Exception) {
+                        path
+                    }
+                    main.post { result.success(out) }
+                }.start()
+            }
+            "cancelUploadPrep" -> {
+                UploadPrep.cancel()
                 result.success(true)
             }
             "nearbyLock", "wifiLock" -> result.success(false)

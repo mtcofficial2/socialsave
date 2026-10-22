@@ -27,8 +27,10 @@ import 'package:social_save/features/library/presentation/library_screen.dart'
     show vaultServiceProvider;
 import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
+import 'package:social_save/features/status/hd_status_screen.dart';
 import 'package:social_save/features/updates/update_card.dart';
 import 'package:social_save/shared/widgets/compliance_notice.dart';
+import 'package:social_save/shared/widgets/liquid_glass.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
 import 'package:social_save/shared/widgets/video_thumbnail.dart';
@@ -241,7 +243,9 @@ class _HomeScreenV2State extends ConsumerState<HomeScreenV2> with WidgetsBinding
       const SizedBox(height: 14),
       _Reveal(index: 2, child: _SendReceiveCard(onTap: () => context.push('/share'))),
       const SizedBox(height: 14),
-      _Reveal(index: 3, child: _QuickActions(onLibrary: () => context.go('/library'))),
+      _Reveal(index: 3, child: const HdStatusEntry()),
+      const SizedBox(height: 14),
+      _Reveal(index: 4, child: _QuickActions(onLibrary: () => context.go('/library'))),
     ];
   }
 
@@ -384,6 +388,56 @@ class _SendReceiveCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    if (LiquidGlassScope.of(context)) {
+      final dark = scheme.brightness == Brightness.dark;
+      return GlassPress(
+        key: const ValueKey('home-send-receive'),
+        semanticLabel: 'Send or receive files with a nearby phone or PC',
+        onTap: () {
+          HapticFeedback.selectionClick();
+          onTap();
+        },
+        child: IosGlassPlate(
+          dark: dark,
+          radius: 28,
+          shadow: true,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+            child: Row(
+              children: [
+                Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                    color: scheme.primary.withValues(alpha: 0.16),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.swap_horiz_rounded, size: 28, color: scheme.primary),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Send / Receive',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, letterSpacing: -0.3, color: scheme.onSurface),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Share files with a phone or PC nearby',
+                        style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.arrow_forward_rounded, color: scheme.primary),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
     return Semantics(
       button: true,
       label: 'Send or receive files with a nearby phone or PC',

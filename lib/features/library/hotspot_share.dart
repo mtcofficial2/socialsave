@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:social_save/core/platform/plat.dart';
+import 'package:social_save/shared/widgets/liquid_glass.dart';
 import 'package:social_save/features/library/pc_hotspot.dart';
 
 /// Xender-style "Fast share": the sending phone opens its own local-only
@@ -566,21 +567,20 @@ class _HotspotBandPickerState extends State<HotspotBandPicker> {
   Widget build(BuildContext context) {
     return ValueListenableBuilder<String>(
       valueListenable: HotspotShare.band,
-      builder: (context, v, _) => SegmentedButton<String>(
+      builder: (context, v, _) => LiquidOrSegmented<String>(
         key: const ValueKey('hotspot-band'),
         showSelectedIcon: false,
+        enabled: widget.enabled,
         segments: const [
           ButtonSegment(value: 'auto', label: Text('Auto'), tooltip: 'Prefer 5 GHz, fall back to 2.4 GHz'),
           ButtonSegment(value: '5', label: Text('5 GHz'), tooltip: 'Fastest'),
           ButtonSegment(value: '2.4', label: Text('2.4 GHz'), tooltip: 'Works with every phone and PC'),
         ],
-        selected: {v},
-        onSelectionChanged: widget.enabled
-            ? (s) async {
-                await HotspotShare.setBand(s.first);
-                widget.onChanged?.call(s.first);
-              }
-            : null,
+        selected: v,
+        onSelectionChanged: (s) async {
+          await HotspotShare.setBand(s.first);
+          widget.onChanged?.call(s.first);
+        },
       ),
     );
   }

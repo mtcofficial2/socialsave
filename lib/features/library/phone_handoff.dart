@@ -2820,7 +2820,11 @@ void _pumpOverlay(ProviderContainer c, String id) {
       return;
     }
     final st = t.status;
-    final state = st == DownloadStatus.completed
+    final asking = t.phase == 'askTiktok';
+    final preparing = t.phase == 'shareable';
+    final state = asking
+        ? 'ask'
+        : st == DownloadStatus.completed
         ? 'done'
         : st == DownloadStatus.failed
             ? 'failed'
@@ -2831,12 +2835,14 @@ void _pumpOverlay(ProviderContainer c, String id) {
       await MediaEvents.channel.invokeMethod<void>('overlayProgress', {
         'id': id,
         'title': t.title,
-        'percent': t.progress,
-        'speed': _speedText(t),
+        'percent': preparing ? 0.0 : t.progress,
+        'speed': preparing ? '' : _speedText(t),
         'state': state,
       });
     } catch (_) {}
-    if (state != 'running') stop();
+    // The TikTok question and the rewrite still need this timer.
+    // done, failed, and cancelled are the last frame.
+    if (state != 'running' && state != 'ask') stop();
   }
 
   _overlayTimer = Timer.periodic(const Duration(milliseconds: 400), (_) => unawaited(push()));
@@ -2845,7 +2851,35 @@ void _pumpOverlay(ProviderContainer c, String id) {
 
 /// The floating card's callbacks (details, cancel, background download). Used by
 /// the app's own engine and by the headless engine (lib/bg_main.dart).
+Future<bool> _askTiktokInApp(String title) async {
+  final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
+  if (ctx == null || !ctx.mounted) return false;
+  final name = title.trim().isEmpty ? 'This video' : title.trim();
+  final yes = await showDialog<bool>(
+    context: ctx,
+    barrierDismissible: false,
+    builder: (context) => AlertDialog(
+      title: const Text('Make this video work on TikTok?'),
+      content: Text(
+        '$name is a kind of video TikTok may not open. Social Save can remake it as 30 fps H.264, fitted to 1080p without stretching. Portrait stays portrait.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Keep this file'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('Make it ready'),
+        ),
+      ],
+    ),
+  );
+  return yes == true;
+}
+
 void installOverlayHandlers(ProviderContainer? Function() container) {
+  inAppTiktokAsk = _askTiktokInApp;
   MediaEvents.on('overlayAnalyze', (args) async {
     final u = args is String ? videoLinkIn(args) : null;
     final c = container();

@@ -5,6 +5,7 @@ import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/widgets/error_banner.dart';
 import 'package:social_save/shared/widgets/platform_badge.dart';
 import 'package:social_save/shared/widgets/glass.dart';
+import 'package:social_save/shared/widgets/liquid_glass.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
 
 class UrlInputCard extends ConsumerStatefulWidget {
@@ -236,15 +237,18 @@ class _UrlInputCardState extends ConsumerState<UrlInputCard> {
       visualDensity: VisualDensity.compact,
     );
     final onPressed = state.isAnalyzing ? null : widget.onAnalyze;
+    final glass = LiquidGlassScope.of(context);
     final icon = state.isAnalyzing
         ? SizedBox(
             width: 16,
             height: 16,
             child: CircularProgressIndicator(
               strokeWidth: 2,
-              color: emphasizePaste
-                  ? scheme.onSecondaryContainer
-                  : scheme.onPrimary,
+              color: glass
+                  ? scheme.primary
+                  : emphasizePaste
+                      ? scheme.onSecondaryContainer
+                      : scheme.onPrimary,
             ),
           )
         : const Icon(Icons.arrow_forward_rounded, size: 18);

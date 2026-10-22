@@ -135,13 +135,15 @@ object PhoneEngine {
         val height = formatId.removeSuffix("p").toIntOrNull()
         if (height == null || formatId == "auto" || formatId == "original") return "bv*+ba/b"
         val dash = "bv*[height<=$height]+ba/b[height<=$height][acodec!=none][vcodec!=none]/b[height<=$height]/b"
-        // Phones decode H.264 in hardware everywhere; AV1/VP9 often not. YouTube
-        // has no H.264 above 1080p, so 1440p/4K use the normal choice.
-        // 70% of the asked height still counts (letterboxed 1920x804 is 1080p);
-        // then VP9 at that height, then the best below it.
+        // H.264 + AAC at the asked height. VP9, AV1, or Opus in an MP4 is
+        // still 1080p or 720p, and TikTok says it could not decode it.
+        // YouTube has no H.264 above 1080p. 70% of the height still counts
+        // (a letterboxed 1920x804 frame is a 1080p film).
         val lo = height * 7 / 10
         return if (height <= 1080) {
-            "bv*[height<=$height][height>=$lo][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=$height][height>=$lo][vcodec^=vp]+ba/$dash"
+            "bv*[height<=$height][height>=$lo][vcodec^=avc1]+ba[acodec^=mp4a]/" +
+                "bv*[height<=$height][height>=$lo][vcodec^=avc1]+ba[ext=m4a]/" +
+                "bv*[height<=$height][vcodec^=avc1]+ba[acodec^=mp4a]/$dash"
         } else dash
     }
 
@@ -174,7 +176,10 @@ object PhoneEngine {
                 when (formatId) {
                     "audio" -> request.addOption("-x").addOption("--audio-format", "m4a")
                     "audio-mp3" -> request.addOption("-x").addOption("--audio-format", "mp3").addOption("--audio-quality", "0")
-                    else -> request.addOption("--merge-output-format", "mp4").addOption("--remux-video", "mp4")
+                    else -> request
+                        .addOption("--merge-output-format", "mp4")
+                        .addOption("--remux-video", "mp4")
+                        .addOption("--postprocessor-args", "ffmpeg:-movflags +faststart")
                 }
                 YoutubeDL.execute(request, id) { _, eta, line ->
                     // One smooth value over the video, the audio and the merge.

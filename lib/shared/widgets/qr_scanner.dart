@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/platform/media_events.dart';
+import 'package:social_save/shared/widgets/liquid_glass.dart';
 
 const _facingPref = 'socialsave_qr_camera_facing';
 
@@ -145,14 +146,14 @@ class _QrScannerState extends State<QrScanner> {
               child: Semantics(
                 label: 'Choose camera: front or rear',
                 container: true,
-                child: SegmentedButton<CameraFacing>(
+                child: LiquidOrSegmented<CameraFacing>(
                   key: const ValueKey('qr-camera-choice'),
                   showSelectedIcon: false,
                   segments: const [
                     ButtonSegment(value: CameraFacing.back, icon: Icon(Icons.photo_camera_back_rounded), label: Text('Rear')),
                     ButtonSegment(value: CameraFacing.front, icon: Icon(Icons.photo_camera_front_rounded), label: Text('Front')),
                   ],
-                  selected: {_facing},
+                  selected: _facing,
                   onSelectionChanged: (s) => _choose(s.first),
                 ),
               ),

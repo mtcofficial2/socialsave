@@ -1,4 +1,5 @@
 import 'package:social_save/shared/widgets/brand_header.dart';
+import 'package:social_save/shared/widgets/liquid_glass.dart';
 import 'package:flutter/material.dart';
 import 'package:social_save/core/constants/app_constants.dart';
 import 'package:social_save/shared/widgets/app_logo.dart';
@@ -39,34 +40,10 @@ class DesktopSidebar extends StatelessWidget {
                 padding: EdgeInsets.fromLTRB(8, 0, 8, 22),
                 child: AppLogo(size: 32, showWordmark: true),
               ),
-              _SideDestination(
-                selected: index == 0,
-                icon: Icons.home_outlined,
-                selectedIcon: Icons.home_rounded,
-                label: 'Home',
-                onTap: () => onSelect(0),
-              ),
-              _SideDestination(
-                selected: index == 1,
-                icon: Icons.video_library_outlined,
-                selectedIcon: Icons.video_library_rounded,
-                label: 'Library',
-                onTap: () => onSelect(1),
-              ),
-              _SideDestination(
-                selected: index == 2,
-                icon: Icons.download_outlined,
-                selectedIcon: Icons.download_rounded,
-                label: 'Downloads',
-                badge: downloadBadge,
-                onTap: () => onSelect(2),
-              ),
-              _SideDestination(
-                selected: index == 3,
-                icon: Icons.tune_outlined,
-                selectedIcon: Icons.tune_rounded,
-                label: 'Settings',
-                onTap: () => onSelect(3),
+              _SideNav(
+                index: index,
+                downloadBadge: downloadBadge,
+                onSelect: onSelect,
               ),
               if (onMusic != null) ...[
                 const SizedBox(height: 10),
@@ -106,6 +83,69 @@ class DesktopSidebar extends StatelessWidget {
   }
 }
 
+/// One slot per destination. The lens travels inside this stack, the same
+/// stretch the phone tab bar uses, along the column instead of the row.
+const double _kSideSlot = 48;
+
+class _SideNav extends StatelessWidget {
+  const _SideNav({
+    required this.index,
+    required this.downloadBadge,
+    required this.onSelect,
+  });
+
+  final int index;
+  final int downloadBadge;
+  final ValueChanged<int> onSelect;
+
+  static const _tabs = <(IconData, IconData, String)>[
+    (Icons.home_outlined, Icons.home_rounded, 'Home'),
+    (Icons.video_library_outlined, Icons.video_library_rounded, 'Library'),
+    (Icons.download_outlined, Icons.download_rounded, 'Downloads'),
+    (Icons.tune_outlined, Icons.tune_rounded, 'Settings'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final selected = index.clamp(0, _tabs.length - 1).toInt();
+    return SizedBox(
+      height: _kSideSlot * _tabs.length,
+      child: Stack(
+        children: [
+          LiquidSlider(
+            index: selected,
+            count: _tabs.length,
+            slotWidth: _kSideSlot,
+            vertical: true,
+            dark: scheme.brightness == Brightness.dark,
+            glass: LiquidGlassScope.of(context),
+            flatColor: StitchNavBar.ovalColor(scheme),
+            navKey: true,
+            pad: 4,
+          ),
+          Column(
+            children: [
+              for (var i = 0; i < _tabs.length; i++)
+                SizedBox(
+                  height: _kSideSlot,
+                  child: _SideDestination(
+                    selected: selected == i,
+                    icon: _tabs[i].$1,
+                    selectedIcon: _tabs[i].$2,
+                    label: _tabs[i].$3,
+                    badge: i == 2 ? downloadBadge : 0,
+                    onTap: () => onSelect(i),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _SideDestination extends StatefulWidget {
   const _SideDestination({
     required this.selected,
@@ -135,69 +175,65 @@ class _SideDestinationState extends State<_SideDestination> {
     final scheme = Theme.of(context).colorScheme;
     final selected = widget.selected;
     final color = selected ? scheme.primary : scheme.onSurfaceVariant;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hover = true),
-        onExit: (_) => setState(() => _hover = false),
-        child: Semantics(
-          button: true,
-          selected: selected,
-          label: widget.badge > 0 ? '${widget.label}, ${widget.badge} new' : widget.label,
-          excludeSemantics: true,
-          onTap: widget.onTap,
-          child: GestureDetector(
+    final row = Row(
+      children: [
+        Icon(selected ? widget.selectedIcon : widget.icon, size: 22, color: color),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            widget.label,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+              color: selected ? scheme.primary : scheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        if (widget.badge > 0)
+          Container(
+            constraints: const BoxConstraints(minWidth: 22, minHeight: 22),
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: scheme.primary,
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              widget.badge > 9 ? '9+' : '${widget.badge}',
+              style: TextStyle(
+                color: scheme.onPrimary,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+      ],
+    );
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: Semantics(
+        button: true,
+        selected: selected,
+        label: widget.badge > 0 ? '${widget.label}, ${widget.badge} new' : widget.label,
+        excludeSemantics: true,
+        onTap: widget.onTap,
+        child: GestureDetector(
           onTap: widget.onTap,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 240),
             curve: Curves.easeOutCubic,
-            constraints: const BoxConstraints(minHeight: 46),
+            alignment: Alignment.centerLeft,
             decoration: BoxDecoration(
-              color: selected
-                  ? StitchNavBar.ovalColor(scheme)
-                  : _hover
-                      ? scheme.onSurface.withValues(alpha: 0.06)
-                      : Colors.transparent,
+              color: !selected && _hover
+                  ? scheme.onSurface.withValues(alpha: 0.06)
+                  : Colors.transparent,
               borderRadius: BorderRadius.circular(999),
             ),
             padding: const EdgeInsets.symmetric(horizontal: 14),
-            child: Row(
-              children: [
-                Icon(selected ? widget.selectedIcon : widget.icon, size: 22, color: color),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    widget.label,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-                      color: selected ? scheme.primary : scheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-                if (widget.badge > 0)
-                  Container(
-                    constraints: const BoxConstraints(minWidth: 22, minHeight: 22),
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: scheme.primary,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      widget.badge > 9 ? '9+' : '${widget.badge}',
-                      style: TextStyle(
-                        color: scheme.onPrimary,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
+            child: row,
           ),
-        ),
         ),
       ),
     );

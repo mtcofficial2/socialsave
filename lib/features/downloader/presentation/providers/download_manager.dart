@@ -13,6 +13,7 @@ import 'package:social_save/core/utils/file_utils.dart';
 import 'package:social_save/core/engine/local_engine.dart';
 import 'package:social_save/core/constants/app_constants.dart';
 import 'package:social_save/core/platform/media_events.dart';
+import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/core/platform/phone_body.dart';
 import 'package:social_save/core/platform/phone_power.dart';
 import 'package:social_save/core/di/providers.dart';
@@ -28,6 +29,7 @@ import 'package:social_save/core/network/connectivity_service.dart';
 import 'package:social_save/features/settings/domain/entities/app_settings.dart';
 import 'package:social_save/shared/models/download_status.dart';
 import 'package:social_save/shared/models/download_task.dart';
+import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/models/download_ticket.dart';
 import 'package:social_save/shared/models/media_format.dart';
 import 'package:social_save/shared/models/media_info.dart';
@@ -37,6 +39,11 @@ import 'package:uuid/uuid.dart';
 
 final downloadManagerProvider =
     NotifierProvider<DownloadManager, DownloadManagerState>(DownloadManager.new);
+
+/// The app UI registers this. The round bubble answers first when it is showing.
+typedef InAppTiktokAsk = Future<bool> Function(String title);
+
+InAppTiktokAsk? inAppTiktokAsk;
 
 class DownloadManagerState {
   const DownloadManagerState({this.tasks = const {}});
@@ -350,15 +357,49 @@ class DownloadManager extends Notifier<DownloadManagerState> {
         throw _mapAttemptError(lastError);
       }
 
-      var completed = state.byId(id);
-      if (completed == null) {
+      final loaded = state.byId(id);
+      if (loaded == null) {
         return;
       }
-      final savedPath = completed.localPath;
-      final finished = completed.copyWith(
+      // Keep a non-null task. Reassigning the promoted `loaded` value
+      // makes Dart treat it as nullable again.
+      DownloadTask readyTask = loaded;
+      var savedPath = loaded.localPath;
+      if (Plat.isAndroid && savedPath != null && _tiktokVideo(savedPath)) {
+        var needs = false;
+        try {
+          needs = await MediaStoreService().needsTiktokWork(savedPath);
+        } catch (_) {}
+        if (needs && !token.isCancelled) {
+          // YouTube is prepared as part of the download. Other saves still ask.
+          final automatic = readyTask.platform == SocialPlatform.youtube;
+          var yes = automatic;
+          if (!automatic) {
+            final asking = readyTask.copyWith(phase: 'askTiktok', bytesPerSecond: 0);
+            state = state.copyWithTask(asking);
+            await _signal(asking);
+            yes = await _askTiktok(readyTask.title);
+          }
+          if (token.isCancelled) return;
+          if (yes) {
+            final working = readyTask.copyWith(phase: 'shareable', bytesPerSecond: 0);
+            state = state.copyWithTask(working);
+            await _signal(working);
+            try {
+              final ready = await MediaStoreService().makeUploadReady(savedPath);
+              if (ready != null && ready.isNotEmpty) {
+                savedPath = ready;
+                readyTask = readyTask.copyWith(localPath: ready);
+              }
+            } catch (_) {}
+          }
+        }
+      }
+      final finished = readyTask.copyWith(
         status: DownloadStatus.completed,
-        receivedBytes: completed.totalBytes ?? completed.receivedBytes,
+        receivedBytes: readyTask.totalBytes ?? readyTask.receivedBytes,
         bytesPerSecond: 0,
+        clearPhase: true,
       );
       await ref.read(downloadsRepositoryProvider).upsert(
             DownloadRecord.fromTask(finished),
@@ -372,13 +413,15 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       if (doneSettings.hapticAlerts) {
         unawaited(PhoneBody.vibrate(saved: true));
       }
-      if (savedPath != null && File(savedPath).existsSync()) {
+      final candidate = savedPath;
+      if (candidate != null && File(candidate).existsSync()) {
+        final String publishPath = candidate;
         unawaited(() async {
           try {
             final published = await MediaStoreService().publishToDownloads(
-              sourcePath: savedPath,
-              fileName: p.basename(savedPath),
-              mimeType: switch (p.extension(savedPath).toLowerCase()) {
+              sourcePath: publishPath,
+              fileName: p.basename(publishPath),
+              mimeType: switch (p.extension(publishPath).toLowerCase()) {
                 '.webm' => 'video/webm',
                 '.mp3' => 'audio/mpeg',
                 '.m4a' => 'audio/mp4',
@@ -389,13 +432,13 @@ class DownloadManager extends Notifier<DownloadManagerState> {
             if (tree != null && tree.isNotEmpty) {
               await PhoneBody.copyIntoFolder(
                 treeUri: tree,
-                path: savedPath,
-                name: p.basename(savedPath),
+                path: publishPath,
+                name: p.basename(publishPath),
               );
             }
             if (published == null || published.isEmpty) {
-              await MediaStoreService().scanFile(savedPath);
-            } else if (!published.startsWith('content:') && published != savedPath) {
+              await MediaStoreService().scanFile(publishPath);
+            } else if (!published.startsWith('content:') && published != publishPath) {
               final latest = state.byId(id);
               if (latest != null) {
                 final updated = latest.copyWith(localPath: published);
@@ -644,6 +687,9 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     }
     await _wifiWaits.remove(id)?.cancel();
     _tokens[id]?.cancel('cancelled');
+    try {
+      await MediaStoreService().cancelUploadPrep();
+    } catch (_) {}
     if (deletePartial) {
       await _deletePartial(task.localPath);
     }
@@ -998,7 +1044,11 @@ class DownloadManager extends Notifier<DownloadManagerState> {
             ? (task.errorMessage ?? 'Waiting for the phone')
             : task.status == DownloadStatus.paused
                 ? 'Paused'
-                : task.phase == 'merging'
+                : task.phase == 'askTiktok'
+                    ? 'Make this one work on TikTok?'
+                    : task.phase == 'shareable'
+                    ? 'Making a file TikTok can open…'
+                    : task.phase == 'merging'
                     ? 'Merging video and sound…'
                     : task.bytesPerSecond <= 0
                     ? 'Starting'
@@ -1048,6 +1098,33 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       return file.length();
     }
     return 0;
+  }
+
+  Future<bool> _askTiktok(String title) async {
+    try {
+      final onBubble = await MediaStoreService().askTiktokOnBubble(title);
+      if (onBubble != null) return onBubble;
+    } catch (_) {}
+    final ask = inAppTiktokAsk;
+    if (ask == null) return false;
+    try {
+      return await ask(title);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool _tiktokVideo(String path) {
+    switch (p.extension(path).toLowerCase()) {
+      case '.mp4':
+      case '.m4v':
+      case '.mov':
+      case '.mkv':
+      case '.webm':
+        return true;
+      default:
+        return false;
+    }
   }
 
   Future<void> _deletePartial(String? path) async {

@@ -7,8 +7,10 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
@@ -40,6 +42,7 @@ object LinkPrompt {
     private var mutedC = 0
     private var accentC = 0
     private var chipBg = 0
+    private var promptAnswer: ((Boolean) -> Unit)? = null
 
     private fun paintChips() {
         chipViews.forEachIndexed { i, v ->
@@ -148,8 +151,16 @@ object LinkPrompt {
                     cornerRadius = dp(context, 22).toFloat()
                 }
                 setOnClickListener {
-                    ProgressCard.begin(context, windowType, url)
-                    dismiss()
+                    val loc = IntArray(2)
+                    card.getLocationOnScreen(loc)
+                    val ax = loc[0] + card.width / 2
+                    val ay = loc[1] + card.height / 2
+                    handler.removeCallbacks(autoClose)
+                    card.pivotX = card.width / 2f
+                    card.pivotY = card.height / 2f
+                    card.animate().scaleX(0.08f).scaleY(0.08f).alpha(0f).setDuration(280).start()
+                    ProgressCard.begin(context, windowType, url, ax, ay)
+                    removeSoon()
                     // No activity: the app's engine (if alive) or a headless one downloads.
                     if (!HeadlessEngine.send(context, "bgDownload", mapOf("pref" to selected, "url" to url))) {
                         val i = Intent(context, MainActivity::class.java).apply {
@@ -198,7 +209,151 @@ object LinkPrompt {
         if (Looper.myLooper() == Looper.getMainLooper()) run.run() else handler.post(run)
     }
 
+    /**
+     * The same floating card, asking whether to rewrite this download.
+     * Returns false when the card cannot be shown, so the caller can ask
+     * another way. One tap answers. The rest of the screen stays usable.
+     */
+    fun ask(context: Context, title: String, onAnswer: (Boolean) -> Unit): Boolean {
+        if (Looper.myLooper() != Looper.getMainLooper()) return false
+        if (promptAnswer != null) {
+            handler.post { onAnswer(false) }
+            return true
+        }
+        if (!Settings.canDrawOverlays(context)) return false
+        removeWindow()
+        val dark = (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+        val surface = if (dark) Color.parseColor("#F2182029") else Color.parseColor("#F2FFFFFF")
+        val ink = if (dark) Color.parseColor("#FFEAF0F6") else Color.parseColor("#FF111A22")
+        val muted = if (dark) Color.parseColor("#99EAF0F6") else Color.parseColor("#99111A22")
+        val accent = Color.parseColor("#FF4C8DFF")
+        val name = title.trim().ifEmpty { "This video" }
+        val card = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(context, 20), dp(context, 18), dp(context, 20), dp(context, 14))
+            background = GradientDrawable().apply {
+                setColor(surface)
+                cornerRadius = dp(context, 28).toFloat()
+            }
+            elevation = dp(context, 10).toFloat()
+        }
+        card.addView(TextView(context).apply {
+            text = "Make this video work on TikTok?"
+            setTextColor(ink)
+            textSize = 17f
+            typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+        })
+        card.addView(TextView(context).apply {
+            text = name
+            setTextColor(ink)
+            textSize = 14f
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(0, dp(context, 8), 0, 0)
+        })
+        card.addView(TextView(context).apply {
+            text = "TikTok may not open this file. Social Save can remake it as 30 fps H.264, fitted to 1080p without stretching. Portrait stays portrait."
+            setTextColor(muted)
+            textSize = 13f
+            setPadding(0, dp(context, 6), 0, dp(context, 12))
+        })
+        val row = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+        }
+        row.addView(TextView(context).apply {
+            text = "Keep this file"
+            setTextColor(muted)
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setPadding(dp(context, 12), 0, dp(context, 12), 0)
+            minimumHeight = dp(context, 44)
+            setOnClickListener { complete(false) }
+        })
+        row.addView(TextView(context).apply {
+            text = "Make it ready"
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            gravity = Gravity.CENTER
+            setPadding(dp(context, 18), 0, dp(context, 18), 0)
+            minimumHeight = dp(context, 44)
+            background = GradientDrawable().apply {
+                setColor(accent)
+                cornerRadius = dp(context, 22).toFloat()
+            }
+            setOnClickListener { complete(true) }
+        })
+        card.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        val root = FrameLayout(context)
+        root.setPadding(dp(context, 14), dp(context, 8), dp(context, 14), dp(context, 14))
+        root.addView(card, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        val type = if (Build.VERSION.SDK_INT >= 26) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
+        }
+        val lp = WindowManager.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            type,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.TOP
+            y = dp(context, 36)
+        }
+        return try {
+            val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            wm.addView(root, lp)
+            view = root
+            manager = wm
+            promptAnswer = onAnswer
+            root.alpha = 0f
+            root.translationY = -dp(context, 24).toFloat()
+            root.animate().alpha(1f).translationY(0f).setDuration(240).start()
+            true
+        } catch (e: Exception) {
+            promptAnswer = null
+            view = null
+            android.util.Log.w("LinkWatch", "tiktok question card failed: $e")
+            false
+        }
+    }
+
+    /** Floating card when it can show, otherwise the bubble, otherwise null. */
+    fun presentTiktokAsk(context: Context, title: String, deliver: (Boolean?) -> Unit) {
+        val run = Runnable {
+            if (ask(context, title) { yes -> deliver(yes) }) return@Runnable
+            if (ProgressCard.active && !ProgressCard.busyAsking()) {
+                ProgressCard.ask(title) { yes -> deliver(yes) }
+            } else {
+                deliver(null)
+            }
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) run.run() else handler.post(run)
+    }
+
+    private fun complete(yes: Boolean) {
+        val cb = promptAnswer ?: return
+        promptAnswer = null
+        removeWindow()
+        handler.post { cb.invoke(yes) }
+    }
+
     fun dismiss() {
+        val cb = promptAnswer
+        promptAnswer = null
+        removeWindow()
+        if (cb != null) handler.post { cb.invoke(false) }
+    }
+
+    private fun removeWindow() {
         handler.removeCallbacks(autoClose)
         val v = view ?: return
         view = null
@@ -210,5 +365,16 @@ object LinkPrompt {
         } catch (_: Exception) {
             try { manager?.removeView(v) } catch (_: Exception) {}
         }
+    }
+
+    /** Removes the card after it has already shrunk into the progress bubble. */
+    private fun removeSoon() {
+        handler.removeCallbacks(autoClose)
+        val v = view ?: return
+        val m = manager
+        view = null
+        handler.postDelayed({
+            try { m?.removeViewImmediate(v) } catch (_: Exception) {}
+        }, 270)
     }
 }

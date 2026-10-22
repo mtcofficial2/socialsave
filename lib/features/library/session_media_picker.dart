@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:social_save/core/platform/plat.dart';
+import 'package:social_save/shared/widgets/liquid_glass.dart';
 import 'package:social_save/features/library/device_media.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
 
@@ -411,7 +412,7 @@ class _SessionMediaPickerState extends State<SessionMediaPicker> with AutomaticK
         if (Plat.isAndroid)
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
-            child: SegmentedButton<MediaKind>(
+            child: LiquidOrSegmented<MediaKind>(
               key: const ValueKey('pick-kind'),
               showSelectedIcon: false,
               segments: const [
@@ -419,7 +420,7 @@ class _SessionMediaPickerState extends State<SessionMediaPicker> with AutomaticK
                 ButtonSegment(value: MediaKind.image, icon: Icon(Icons.photo_rounded), label: Text('Photos')),
                 ButtonSegment(value: MediaKind.audio, icon: Icon(Icons.music_note_rounded), label: Text('Music')),
               ],
-              selected: {_kind},
+              selected: _kind,
               onSelectionChanged: (s) {
                 setState(() {
                   _kind = s.first;

@@ -14,6 +14,7 @@ import 'package:social_save/core/theme/app_theme.dart';
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
 import 'package:social_save/shared/routing/app_router.dart';
 import 'package:social_save/shared/widgets/glass.dart';
+import 'package:social_save/shared/widgets/liquid_glass.dart';
 import 'package:window_manager/window_manager.dart';
 
 class SocialSaveApp extends ConsumerWidget {
@@ -33,21 +34,26 @@ class SocialSaveApp extends ConsumerWidget {
       theme: AppTheme.light(
         fontFamily: settings.fontFamily,
         colorScheme: dynamicOn ? lightDynamic : null,
+        liquidGlass: settings.liquidGlass,
       ),
       darkTheme: AppTheme.dark(
         fontFamily: settings.fontFamily,
         colorScheme: dynamicOn ? darkDynamic : null,
+        liquidGlass: settings.liquidGlass,
       ),
       themeMode: settings.themeMode,
       builder: (context, child) {
-        final app = Stack(
-          fit: StackFit.expand,
-          children: [
-            const GlassBackground(),
-            if (child != null) Positioned.fill(child: _desktopKeys(child)),
-            if (!kIsWeb) const NearbyIncomingCard(),
-            if (!kIsWeb) const SessionPill(),
-          ],
+        final app = LiquidGlassScope(
+          enabled: settings.liquidGlass,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              const GlassBackground(),
+              if (child != null) Positioned.fill(child: _desktopKeys(child)),
+              if (!kIsWeb) const NearbyIncomingCard(),
+              if (!kIsWeb) const SessionPill(),
+            ],
+          ),
         );
         final scaled = MediaQuery(
           data: MediaQuery.of(context).copyWith(

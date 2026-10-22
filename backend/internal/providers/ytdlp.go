@@ -542,6 +542,8 @@ func downloadArgs(rawURL string, cfg config.Config, selector, out, ffmpeg, forma
 			args = append(args, "-x", "--audio-format", "mp3", "--audio-quality", "0")
 		default:
 			args = append(args, "--merge-output-format", "mp4", "--remux-video", "mp4")
+			// moov at the front. TikTok gives up when it is at the end of the file.
+			args = append(args, "--postprocessor-args", "ffmpeg:-movflags +faststart")
 		}
 	}
 	return append(args, toolArgs(rawURL)...)

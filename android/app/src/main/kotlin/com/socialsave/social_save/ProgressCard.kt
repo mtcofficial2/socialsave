@@ -1,45 +1,67 @@
 package com.socialsave.social_save
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
+import android.graphics.Outline
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PixelFormat
+import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
-import android.text.TextUtils
+import android.os.SystemClock
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.view.WindowManager
+import android.view.animation.OvershootInterpolator
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import kotlin.math.abs
+import kotlin.math.min
 
-/** Live progress card that replaces the "Download this video?" card after Download
- *  is tapped. Fed by the Dart download pipeline (title, percent, speed, state). */
+/** Draggable circular progress that the download card shrinks into.
+ *  Done only closes the bubble. Open is the only control that brings SocialSave forward. */
 object ProgressCard {
     private val handler = Handler(Looper.getMainLooper())
     private var root: FrameLayout? = null
     private var wm: WindowManager? = null
+    private var lp: WindowManager.LayoutParams? = null
     private var ctx: Context? = null
-    private var titleV: TextView? = null
-    private var subV: TextView? = null
-    private var fillV: View? = null
-    private var restV: View? = null
-    private var cancelV: TextView? = null
+    private var ring: RingView? = null
+    private var doneV: TextView? = null
     private var openV: TextView? = null
     private var taskId: String = ""
     private var finished = false
-    private val close = Runnable { dismiss() }
+    private var accent = Color.parseColor("#FF4C8DFF")
+    private var surface = Color.WHITE
+    private var ink = Color.BLACK
+    private var muted = Color.GRAY
+    private var useGlass = true
+    private var darkUi = false
+    private var asking = false
+    private var answer: ((Boolean) -> Unit)? = null
+    private var yesV: TextView? = null
+    private var noV: TextView? = null
+    private val hideFinished = Runnable { dismiss() }
 
     val active: Boolean get() = root != null
 
     private fun dp(c: Context, v: Int) = (v * c.resources.displayMetrics.density).toInt()
 
-    fun begin(context: Context, windowType: Int, url: String) {
+    fun begin(context: Context, windowType: Int, url: String, anchorX: Int = -1, anchorY: Int = -1) {
         val run = Runnable {
             dismissNow()
             finished = false
@@ -48,156 +70,588 @@ object ProgressCard {
             val m = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
             val dark = (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
                 Configuration.UI_MODE_NIGHT_YES
-            val surface = if (dark) Color.parseColor("#F2182029") else Color.parseColor("#F2FFFFFF")
-            val ink = if (dark) Color.parseColor("#FFEAF0F6") else Color.parseColor("#FF111A22")
-            val muted = if (dark) Color.parseColor("#99EAF0F6") else Color.parseColor("#99111A22")
+            darkUi = dark
+            useGlass = glassOn(context)
+            surface = if (dark) Color.parseColor("#F2182029") else Color.parseColor("#F2FFFFFF")
+            ink = if (dark) Color.parseColor("#FFEAF0F6") else Color.parseColor("#FF111A22")
+            muted = if (dark) Color.parseColor("#99EAF0F6") else Color.parseColor("#99111A22")
             val track = if (dark) Color.parseColor("#33FFFFFF") else Color.parseColor("#22000000")
-            val accent = Color.parseColor("#FF4C8DFF")
+            accent = Color.parseColor("#FF4C8DFF")
 
-            val card = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(context, 20), dp(context, 18), dp(context, 20), dp(context, 12))
-                background = GradientDrawable().apply { setColor(surface); cornerRadius = dp(context, 28).toFloat() }
-                elevation = dp(context, 10).toFloat()
+            val size = dp(context, 76)
+            val bubble = FrameLayout(context)
+            val ringView = RingView(context, accent, track, ink).apply {
+                contentDescription = "Download progress. Long-press to cancel."
             }
-            titleV = TextView(context).apply {
-                text = "Starting download"
-                setTextColor(ink)
-                textSize = 16f
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-            }
-            card.addView(titleV)
-            subV = TextView(context).apply {
-                text = LinkDetect.platformName(url)
-                setTextColor(muted)
-                textSize = 12.5f
-                maxLines = 1
-                setPadding(0, dp(context, 4), 0, dp(context, 12))
-            }
-            card.addView(subV)
-            val bar = LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                background = GradientDrawable().apply { setColor(track); cornerRadius = dp(context, 3).toFloat() }
-            }
-            fillV = View(context).apply {
-                background = GradientDrawable().apply { setColor(accent); cornerRadius = dp(context, 3).toFloat() }
-            }
-            restV = View(context)
-            bar.addView(fillV, LinearLayout.LayoutParams(0, dp(context, 6), 0.02f))
-            bar.addView(restV, LinearLayout.LayoutParams(0, dp(context, 6), 0.98f))
-            card.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            val row = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.END }
-            cancelV = TextView(context).apply {
-                text = "Cancel"
-                setTextColor(muted)
-                textSize = 14f
-                gravity = Gravity.CENTER
-                setPadding(dp(context, 18), 0, dp(context, 18), 0)
-                minimumHeight = dp(context, 44)
-                setOnClickListener {
-                    ctx?.let { HeadlessEngine.send(it, "overlayCancel", taskId) }
-                    dismiss()
-                }
-            }
-            openV = TextView(context).apply {
-                text = "Open"
-                visibility = View.GONE
-                setTextColor(Color.WHITE)
-                textSize = 14f
-                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-                gravity = Gravity.CENTER
-                setPadding(dp(context, 22), 0, dp(context, 22), 0)
-                minimumHeight = dp(context, 44)
-                background = GradientDrawable().apply { setColor(accent); cornerRadius = dp(context, 22).toFloat() }
-                setOnClickListener {
-                    dismiss()
-                    val i = Intent(context, MainActivity::class.java).apply {
-                        putExtra(MainActivity.EXTRA_QUICK_ACTION, "library")
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            ring = ringView
+            bubble.addView(ringView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            bubble.background = if (useGlass) GlassDisc(dark) else circle(surface, size)
+            if (useGlass) {
+                bubble.outlineProvider = object : ViewOutlineProvider() {
+                    override fun getOutline(view: View, outline: Outline) {
+                        outline.setRoundRect(0, 0, view.width, view.height, view.height / 2f)
                     }
-                    try { context.startActivity(i) } catch (_: Exception) {}
                 }
+                bubble.clipToOutline = true
             }
-            row.addView(cancelV)
-            row.addView(openV)
-            card.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            bubble.elevation = dp(context, 8).toFloat()
+            bubble.contentDescription = "Downloading ${LinkDetect.platformName(url)}"
 
-            val r = FrameLayout(context)
-            r.setPadding(dp(context, 14), dp(context, 8), dp(context, 14), dp(context, 14))
-            r.addView(card, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            val lp = WindowManager.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, windowType,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+            val params = WindowManager.LayoutParams(
+                size, size, windowType,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
                     WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
                 PixelFormat.TRANSLUCENT,
-            ).apply { gravity = Gravity.TOP; y = dp(context, 36) }
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                // No blur-behind. That flag frosts the whole screen on this
+                // phone and blocks using other apps while a download runs.
+            }
+            val dm = context.resources.displayMetrics
+            if (anchorX > 0 && anchorY > 0) {
+                params.x = anchorX - size / 2
+                params.y = anchorY - size / 2
+            } else {
+                params.x = (dm.widthPixels - size) / 2
+                params.y = dp(context, 96)
+            }
+            lp = params
+            root = bubble
+            wm = m
+            clamp()
+            installDrag(bubble)
             try {
-                m.addView(r, lp)
-                root = r
-                wm = m
+                m.addView(bubble, params)
+                bubble.scaleX = 0.15f
+                bubble.scaleY = 0.15f
+                bubble.alpha = 0.5f
+                bubble.animate().scaleX(1f).scaleY(1f).alpha(1f)
+                    .setDuration(320)
+                    .setInterpolator(OvershootInterpolator(1.6f))
+                    .start()
             } catch (e: Exception) {
-                android.util.Log.w("LinkWatch", "progress card failed: $e")
+                android.util.Log.w("LinkWatch", "progress bubble failed: $e")
+                root = null
+                ring = null
             }
         }
         if (Looper.myLooper() == Looper.getMainLooper()) run.run() else handler.post(run)
     }
 
-    /** state: running | done | failed | cancelled. percent < 0 keeps the bar small. */
+    /** state: running | done | failed | cancelled. percent is 0..1. */
     fun update(id: String, title: String?, percent: Double, speed: String?, state: String) {
         handler.post {
-            val c = ctx ?: return@post
-            if (root == null || finished) return@post
-            taskId = id
-            if (!title.isNullOrBlank()) titleV?.text = title
-            val p = percent.coerceIn(0.0, 1.0).toFloat().coerceAtLeast(0.02f)
-            (fillV?.layoutParams as? LinearLayout.LayoutParams)?.weight = p
-            (restV?.layoutParams as? LinearLayout.LayoutParams)?.weight = 1f - p
-            fillV?.requestLayout()
+            if (asking) return@post
+            if (root == null || (finished && state == "running")) return@post
+            if (id.isNotEmpty()) taskId = id
+            val p = percent.toFloat().coerceIn(0f, 1f)
             when (state) {
+                "ask" -> Unit
                 "done" -> {
-                    finished = true
-                    (fillV?.layoutParams as? LinearLayout.LayoutParams)?.weight = 1f
-                    (restV?.layoutParams as? LinearLayout.LayoutParams)?.weight = 0f
-                    subV?.text = "Done \u00B7 saved to your library"
-                    cancelV?.visibility = View.GONE
-                    openV?.text = "Done \u00B7 Open"
-                    openV?.visibility = View.VISIBLE
-                    handler.postDelayed(close, 6000)
+                    ring?.setFraction(1f, spinning = false)
+                    showChoice(saved = true, title = title)
                 }
                 "failed", "cancelled" -> {
-                    finished = true
-                    subV?.text = if (state == "failed") "Could not finish" else "Cancelled"
-                    cancelV?.text = "Close"
-                    cancelV?.setOnClickListener { dismiss() }
-                    handler.postDelayed(close, 4000)
+                    showChoice(saved = false, title = if (state == "failed") "Could not finish" else "Cancelled")
                 }
                 else -> {
-                    subV?.text = if (percent < 0.01 && (speed ?: "").isEmpty()) "Preparing\u2026"
-                    else ((speed ?: "").let { if (it.isEmpty()) "" else it + "  \u00B7  " }) + "${(percent * 100).toInt()}%"
+                    if (finished) return@post
+                    val spinning = p < 0.02f && (speed ?: "").isEmpty()
+                    ring?.setFraction(p, spinning)
                 }
             }
         }
     }
 
+    private fun showChoice(saved: Boolean, title: String?) {
+        val bubble = root ?: return
+        val context = ctx ?: return
+        val params = lp ?: return
+        if (finished) return
+        finished = true
+        asking = false
+        yesV = null
+        noV = null
+        handler.removeCallbacks(hideFinished)
+        val reveal = Runnable {
+            bubble.removeAllViews()
+            ring = null
+            val row = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER
+                setPadding(dp(context, 6), dp(context, 6), dp(context, 6), dp(context, 6))
+            }
+            val close = TextView(context).apply {
+                text = if (saved) "Done" else "Close"
+                setTextColor(muted)
+                textSize = 14f
+                gravity = Gravity.CENTER
+                setPadding(dp(context, 14), 0, dp(context, 14), 0)
+                minimumHeight = dp(context, 40)
+            }
+            doneV = close
+            row.addView(close)
+            if (saved) {
+                val open = TextView(context).apply {
+                    text = "Open"
+                    setTextColor(Color.WHITE)
+                    textSize = 14f
+                    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                    gravity = Gravity.CENTER
+                    setPadding(dp(context, 16), 0, dp(context, 16), 0)
+                    minimumHeight = dp(context, 40)
+                    background = GradientDrawable().apply {
+                        setColor(accent)
+                        cornerRadius = dp(context, 20).toFloat()
+                    }
+                }
+                openV = open
+                row.addView(open, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    leftMargin = dp(context, 4)
+                })
+            } else {
+                openV = null
+            }
+            row.alpha = 0f
+            bubble.addView(row, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            row.animate().alpha(1f).setDuration(180).start()
+            val label = title?.takeIf { it.isNotBlank() }
+            bubble.contentDescription = if (saved) {
+                "Saved${if (label != null) ": $label" else ""}. Done stays here. Open opens SocialSave."
+            } else {
+                title ?: "Could not finish"
+            }
+        }
+        val current = ring
+        if (current == null) reveal.run() else current.animate().alpha(0f).setDuration(140).withEndAction(reveal).start()
+
+        val fromW = params.width
+        val fromH = params.height
+        val toW = dp(context, if (saved) 188 else 112)
+        val toH = dp(context, 52)
+        val cx = params.x + fromW / 2
+        val cy = params.y + fromH / 2
+        ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 280
+            addUpdateListener { a ->
+                val t = a.animatedValue as Float
+                params.width = (fromW + (toW - fromW) * t).toInt()
+                params.height = (fromH + (toH - fromH) * t).toInt()
+                params.x = cx - params.width / 2
+                params.y = cy - params.height / 2
+                (bubble.background as? GradientDrawable)?.cornerRadius = params.height / 2f
+                bubble.invalidateOutline()
+                clamp()
+                try { wm?.updateViewLayout(bubble, params) } catch (_: Exception) {}
+            }
+            start()
+        }
+        handler.postDelayed(hideFinished, 30000)
+    }
+
+    private fun installDrag(bubble: View) {
+        val slop = dp(bubble.context, 6)
+        var sx = 0f
+        var sy = 0f
+        var ox = 0
+        var oy = 0
+        var moved = false
+        var downAt = 0L
+        bubble.setOnTouchListener { _, e ->
+            val params = lp ?: return@setOnTouchListener false
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    handler.removeCallbacks(hideFinished)
+                    sx = e.rawX
+                    sy = e.rawY
+                    ox = params.x
+                    oy = params.y
+                    moved = false
+                    downAt = SystemClock.uptimeMillis()
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = (e.rawX - sx).toInt()
+                    val dy = (e.rawY - sy).toInt()
+                    if (abs(dx) > slop || abs(dy) > slop) moved = true
+                    if (moved) {
+                        params.x = ox + dx
+                        params.y = oy + dy
+                        clamp()
+                        try { wm?.updateViewLayout(bubble, params) } catch (_: Exception) {}
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (!moved && e.actionMasked == MotionEvent.ACTION_UP) {
+                        onTap(e.x, e.y, SystemClock.uptimeMillis() - downAt)
+                    }
+                    if (finished) handler.postDelayed(hideFinished, 30000)
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun onTap(x: Float, y: Float, held: Long) {
+        if (asking) {
+            val yes = yesV
+            val no = noV
+            if (yes != null && hit(yes, x, y)) {
+                restoreRing()
+                reply(true)
+            } else if (no != null && hit(no, x, y)) {
+                reply(false)
+            }
+            return
+        }
+        if (!finished) {
+            if (held > 500) {
+                ctx?.let { HeadlessEngine.send(it, "overlayCancel", taskId) }
+                dismiss()
+            }
+            return
+        }
+        val open = openV
+        val done = doneV
+        if (open != null && hit(open, x, y)) {
+            val context = ctx
+            dismiss()
+            if (context != null) {
+                val i = Intent(context, MainActivity::class.java).apply {
+                    putExtra(MainActivity.EXTRA_QUICK_ACTION, "library")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                }
+                try { context.startActivity(i) } catch (_: Exception) {}
+            }
+        } else if (done != null && hit(done, x, y)) {
+            dismiss()
+        }
+    }
+
+    private fun hit(child: View, x: Float, y: Float): Boolean {
+        val rect = android.graphics.Rect()
+        child.getHitRect(rect)
+        val parent = child.parent as? View
+        if (parent != null) rect.offset(parent.left, parent.top)
+        return rect.contains(x.toInt(), y.toInt())
+    }
+
+    private fun clamp() {
+        val params = lp ?: return
+        val c = ctx ?: return
+        val dm = c.resources.displayMetrics
+        params.x = params.x.coerceIn(0, (dm.widthPixels - params.width).coerceAtLeast(0))
+        params.y = params.y.coerceIn(0, (dm.heightPixels - params.height).coerceAtLeast(0))
+    }
+
+    private fun circle(color: Int, size: Int): GradientDrawable {
+        return GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(color)
+            cornerRadius = size / 2f
+        }
+    }
+
     private fun dismissNow() {
-        handler.removeCallbacks(close)
+        handler.removeCallbacks(hideFinished)
+        reply(false)
         val v = root ?: return
         root = null
+        ring = null
+        doneV = null
+        openV = null
+        yesV = null
+        noV = null
         try { wm?.removeView(v) } catch (_: Exception) {}
     }
 
     fun dismiss() {
-        handler.removeCallbacks(close)
+        handler.removeCallbacks(hideFinished)
+        reply(false)
         val v = root ?: return
         root = null
+        ring = null
+        doneV = null
+        openV = null
+        yesV = null
+        noV = null
         try {
             val m = wm
-            v.animate().alpha(0f).translationY(-48f).setDuration(160).start()
-            // Always remove the window, even if the animation is cancelled.
+            v.animate().alpha(0f).scaleX(0.6f).scaleY(0.6f).setDuration(160).start()
             handler.postDelayed({ try { m?.removeViewImmediate(v) } catch (_: Exception) {} }, 180)
         } catch (_: Exception) {
             try { wm?.removeView(v) } catch (_: Exception) {}
+        }
+    }
+
+    /** True while a TikTok yes/no is waiting on this bubble. */
+    fun busyAsking(): Boolean = answer != null
+
+    /**
+     * Ask on the bubble. Calls [onAnswer] once. Yes puts the ring back so the
+     * rewrite can show progress. No leaves the question until the next update.
+     */
+    fun ask(title: String, onAnswer: (Boolean) -> Unit) {
+        val run = Runnable {
+            if (root == null || answer != null) {
+                handler.post { onAnswer(false) }
+                return@Runnable
+            }
+            answer = onAnswer
+            showQuestion(title)
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) run.run() else handler.post(run)
+    }
+
+    private fun showQuestion(title: String) {
+        val bubble = root ?: return
+        val context = ctx ?: return
+        val params = lp ?: return
+        asking = true
+        finished = false
+        handler.removeCallbacks(hideFinished)
+        ring?.setFraction(0f, false)
+        bubble.removeAllViews()
+        ring = null
+        yesV = null
+        noV = null
+        val row = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(context, 14), dp(context, 6), dp(context, 8), dp(context, 6))
+        }
+        val label = TextView(context).apply {
+            text = "TikTok?"
+            setTextColor(ink)
+            textSize = 15f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            maxLines = 1
+        }
+        row.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val no = TextView(context).apply {
+            text = "No"
+            setTextColor(muted)
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setPadding(dp(context, 12), 0, dp(context, 12), 0)
+            minimumHeight = dp(context, 40)
+        }
+        noV = no
+        row.addView(no)
+        val yes = TextView(context).apply {
+            text = "Yes"
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            gravity = Gravity.CENTER
+            setPadding(dp(context, 14), 0, dp(context, 14), 0)
+            minimumHeight = dp(context, 36)
+            background = GradientDrawable().apply {
+                setColor(accent)
+                cornerRadius = dp(context, 18).toFloat()
+            }
+        }
+        yesV = yes
+        row.addView(yes, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            leftMargin = dp(context, 4)
+        })
+        bubble.addView(row, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        val name = title.trim().take(80)
+        bubble.contentDescription = if (name.isEmpty()) {
+            "Make this video work on TikTok? No keeps this file. Yes rewrites it."
+        } else {
+            "Make $name work on TikTok? No keeps this file. Yes rewrites it."
+        }
+        resize(bubble, params, dp(context, 248), dp(context, 56))
+    }
+
+    private fun restoreRing() {
+        val bubble = root ?: return
+        val context = ctx ?: return
+        val params = lp ?: return
+        asking = false
+        yesV = null
+        noV = null
+        finished = false
+        bubble.removeAllViews()
+        val track = if (darkUi) Color.parseColor("#33FFFFFF") else Color.parseColor("#22000000")
+        val ringView = RingView(context, accent, track, ink).apply {
+            contentDescription = "Making a file TikTok can open. Long-press to cancel."
+            setFraction(0f, spinning = true)
+        }
+        ring = ringView
+        bubble.addView(ringView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        bubble.contentDescription = "Making a file TikTok can open"
+        val size = dp(context, 76)
+        resize(bubble, params, size, size)
+    }
+
+    private fun resize(bubble: View, params: WindowManager.LayoutParams, toW: Int, toH: Int) {
+        val fromW = params.width
+        val fromH = params.height
+        val cx = params.x + fromW / 2
+        val cy = params.y + fromH / 2
+        ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 280
+            addUpdateListener { a ->
+                val t = a.animatedValue as Float
+                params.width = (fromW + (toW - fromW) * t).toInt()
+                params.height = (fromH + (toH - fromH) * t).toInt()
+                params.x = cx - params.width / 2
+                params.y = cy - params.height / 2
+                (bubble.background as? GradientDrawable)?.cornerRadius = params.height / 2f
+                bubble.invalidateOutline()
+                clamp()
+                try { wm?.updateViewLayout(bubble, params) } catch (_: Exception) {}
+            }
+            start()
+        }
+    }
+
+    private fun reply(yes: Boolean) {
+        val cb = answer
+        answer = null
+        asking = false
+        if (cb != null) handler.post { cb.invoke(yes) }
+    }
+
+    private fun glassOn(context: Context): Boolean = try {
+        context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+            .getBoolean("flutter.socialsave_liquidGlass", true)
+    } catch (_: Exception) {
+        true
+    }
+
+    /** Same lens as the Flutter glass: translucent fill, top shine, rim. No looping paint. */
+    private class GlassDisc(private val dark: Boolean) : Drawable() {
+        private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val shine = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val reflect = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val rim = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+        private val rect = RectF()
+        private val clip = Path()
+
+        private fun white(alpha: Float): Int {
+            val a = (alpha * 255f).toInt().coerceIn(0, 255)
+            return Color.argb(a, 255, 255, 255)
+        }
+
+        override fun draw(canvas: Canvas) {
+            val b = bounds
+            if (b.width() <= 0 || b.height() <= 0) return
+            rect.set(b)
+            val radius = min(b.width(), b.height()) / 2f
+            fill.shader = LinearGradient(
+                b.left.toFloat(), b.top.toFloat(), b.left.toFloat(), b.bottom.toFloat(),
+                intArrayOf(
+                    white(if (dark) 0.55f else 0.86f),
+                    white(if (dark) 0.40f else 0.72f),
+                    white(if (dark) 0.50f else 0.80f),
+                ),
+                floatArrayOf(0f, 0.48f, 1f),
+                Shader.TileMode.CLAMP,
+            )
+            canvas.drawRoundRect(rect, radius, radius, fill)
+            shine.shader = LinearGradient(
+                b.left + b.width() * 0.2f, b.top.toFloat(),
+                b.left + b.width() * 0.7f, b.top + b.height() * 0.575f,
+                intArrayOf(
+                    white(if (dark) 0.50f else 0.75f),
+                    white(if (dark) 0.08f else 0.14f),
+                    Color.argb(0, 255, 255, 255),
+                ),
+                floatArrayOf(0f, 0.28f, 0.62f),
+                Shader.TileMode.CLAMP,
+            )
+            canvas.drawRoundRect(rect, radius, radius, shine)
+            canvas.save()
+            clip.reset()
+            clip.addRoundRect(rect, radius, radius, Path.Direction.CW)
+            canvas.clipPath(clip)
+            val refTop = b.top + b.height() * 0.68f
+            reflect.shader = LinearGradient(
+                b.left.toFloat(), b.bottom.toFloat(), b.left.toFloat(), refTop,
+                intArrayOf(white(if (dark) 0.20f else 0.38f), Color.argb(0, 255, 255, 255)),
+                null,
+                Shader.TileMode.CLAMP,
+            )
+            canvas.drawRect(b.left.toFloat(), refTop, b.right.toFloat(), b.bottom.toFloat(), reflect)
+            canvas.restore()
+            val stroke = (b.height() * 1.25f / 76f).coerceAtLeast(2f)
+            rim.strokeWidth = stroke
+            rim.shader = LinearGradient(
+                b.left.toFloat(), b.top.toFloat(), b.left.toFloat(), b.bottom.toFloat(),
+                intArrayOf(
+                    white(if (dark) 0.90f else 1f),
+                    white(if (dark) 0.22f else 0.38f),
+                    white(if (dark) 0.55f else 0.72f),
+                ),
+                floatArrayOf(0f, 0.5f, 1f),
+                Shader.TileMode.CLAMP,
+            )
+            val inset = stroke / 2f
+            val inner = RectF(b.left + inset, b.top + inset, b.right - inset, b.bottom - inset)
+            canvas.drawRoundRect(inner, (radius - inset).coerceAtLeast(0f), (radius - inset).coerceAtLeast(0f), rim)
+        }
+
+        override fun setAlpha(alpha: Int) {}
+        override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) {}
+        @Deprecated("Deprecated in Java")
+        override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+    }
+
+    private class RingView(
+        context: Context,
+        private val accent: Int,
+        private val track: Int,
+        private val ink: Int,
+    ) : View(context) {
+        private var fraction = 0f
+        private var spinning = true
+        private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+            color = track
+        }
+        private val arcPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+            color = accent
+        }
+        private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = ink
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        }
+        private val oval = RectF()
+
+        fun setFraction(value: Float, spinning: Boolean) {
+            fraction = value.coerceIn(0f, 1f)
+            this.spinning = spinning
+            invalidate()
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            val stroke = width * 0.07f
+            trackPaint.strokeWidth = stroke
+            arcPaint.strokeWidth = stroke
+            val pad = stroke / 2f + width * 0.1f
+            oval.set(pad, pad, width - pad, height - pad)
+            canvas.drawArc(oval, 0f, 360f, false, trackPaint)
+            if (spinning) {
+                val t = (SystemClock.uptimeMillis() % 1100) / 1100f
+                canvas.drawArc(oval, t * 360f - 90f, 96f, false, arcPaint)
+                postInvalidateOnAnimation()
+            } else {
+                canvas.drawArc(oval, -90f, 360f * fraction.coerceAtLeast(0.02f), false, arcPaint)
+            }
+            val shown = if (spinning) "…" else "${(fraction * 100).toInt()}"
+            textPaint.textSize = width * 0.2f
+            val y = height / 2f - (textPaint.descent() + textPaint.ascent()) / 2f
+            canvas.drawText(shown, width / 2f, y, textPaint)
         }
     }
 }
