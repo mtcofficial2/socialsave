@@ -88,6 +88,55 @@ bool isChannelSection(String raw) {
   return false;
 }
 
+/// Channel root for a channel page or one of its tabs (Videos, Shorts, Live).
+/// Null for a watch URL, a playlist, or anything that is not YouTube.
+String? youtubeChannelBase(String raw) {
+  final root = youtubeChannelRoot(raw);
+  if (root != null) return root;
+  final uri = _youtubeUri(raw);
+  if (uri == null) return null;
+  final segs = _pathSegs(uri);
+  if (segs.length == 2 &&
+      segs.first.startsWith('@') &&
+      segs.first.length > 1 &&
+      _youtubeTabs.contains(segs[1].toLowerCase())) {
+    return '${uri.scheme}://${uri.host}/${segs.first}';
+  }
+  if (segs.length == 3 &&
+      (segs[0] == 'channel' || segs[0] == 'c' || segs[0] == 'user') &&
+      segs[1].isNotEmpty &&
+      _youtubeTabs.contains(segs[2].toLowerCase())) {
+    return '${uri.scheme}://${uri.host}/${segs[0]}/${segs[1]}';
+  }
+  return null;
+}
+
+/// `videos`, `shorts`, or `streams` when [raw] is that channel tab. Live counts as streams.
+String? youtubeChannelTab(String raw) {
+  final uri = _youtubeUri(raw);
+  if (uri == null) return null;
+  final segs = _pathSegs(uri);
+  String? tab;
+  if (segs.length == 2 && segs.first.startsWith('@') && segs.first.length > 1) {
+    tab = segs[1].toLowerCase();
+  } else if (segs.length == 3 &&
+      (segs[0] == 'channel' || segs[0] == 'c' || segs[0] == 'user') &&
+      segs[1].isNotEmpty) {
+    tab = segs[2].toLowerCase();
+  }
+  if (tab == null || !_youtubeTabs.contains(tab)) return null;
+  if (tab == 'live') return 'streams';
+  return tab;
+}
+
+/// https://www.youtube.com/@name/videos or the same channel's Shorts tab.
+String? youtubeChannelTabUrl(String raw, String tab) {
+  final base = youtubeChannelBase(raw);
+  if (base == null) return null;
+  final name = tab.toLowerCase() == 'live' ? 'streams' : tab.toLowerCase();
+  return '$base/$name';
+}
+
 /// https://www.youtube.com/@name or /channel/id, with no tab and no video id.
 /// Null for a tab, a watch URL, or anything that is not YouTube.
 String? youtubeChannelRoot(String raw) {
@@ -114,18 +163,24 @@ Future<List<PlaylistEntry>> expandChannelSections(
   Future<List<PlaylistEntry>> Function(String url) load, {
   int cap = 40,
   Duration tabTimeout = const Duration(seconds: 25),
+  String? onlyTab,
 }) async {
+  final wanted = onlyTab == null
+      ? null
+      : (onlyTab.toLowerCase() == 'live' ? 'streams' : onlyTab.toLowerCase());
   final targets = <String>[];
   final direct = <PlaylistEntry>[];
   for (final item in items) {
     final url = item.url.trim();
     if (isChannelSection(url)) {
+      if (wanted != null && youtubeChannelTab(url) != wanted) continue;
       if (!targets.contains(url)) targets.add(url);
       continue;
     }
     final root = youtubeChannelRoot(url);
     if (root != null) {
-      for (final tab in const ['videos', 'shorts', 'streams']) {
+      final tabs = wanted == null ? const ['videos', 'shorts', 'streams'] : [wanted];
+      for (final tab in tabs) {
         final next = '$root/$tab';
         if (!targets.contains(next)) targets.add(next);
       }
@@ -133,7 +188,7 @@ Future<List<PlaylistEntry>> expandChannelSections(
     }
     direct.add(item);
   }
-  if (targets.isEmpty) return items;
+  if (targets.isEmpty) return wanted == null ? items : direct;
 
   targets.sort((a, b) => _tabRank(a).compareTo(_tabRank(b)));
   final out = <PlaylistEntry>[];

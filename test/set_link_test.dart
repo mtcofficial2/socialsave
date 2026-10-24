@@ -43,6 +43,31 @@ void main() {
       youtubeChannelRoot('https://www.youtube.com/channel/UCabcdefghijklmnop'),
       'https://www.youtube.com/channel/UCabcdefghijklmnop',
     );
+    expect(youtubeChannelBase('https://www.youtube.com/@creator/shorts'), 'https://www.youtube.com/@creator');
+    expect(youtubeChannelTab('https://www.youtube.com/@creator/shorts'), 'shorts');
+    expect(youtubeChannelTab('https://www.youtube.com/@creator/live'), 'streams');
+    expect(youtubeChannelTab('https://www.youtube.com/@creator'), isNull);
+    expect(
+      youtubeChannelTabUrl('https://www.youtube.com/@creator', 'shorts'),
+      'https://www.youtube.com/@creator/shorts',
+    );
+  });
+
+  test('shorts only opens the shorts tab', () async {
+    final calls = <String>[];
+    final out = await expandChannelSections(
+      const [
+        PlaylistEntry(title: 'Videos', url: 'https://www.youtube.com/@c/videos'),
+        PlaylistEntry(title: 'Shorts', url: 'https://www.youtube.com/@c/shorts'),
+      ],
+      (url) async {
+        calls.add(url);
+        return const [PlaylistEntry(title: 'S', url: 'https://www.youtube.com/shorts/bbb')];
+      },
+      onlyTab: 'shorts',
+    );
+    expect(calls, ['https://www.youtube.com/@c/shorts']);
+    expect(out.single.url, 'https://www.youtube.com/shorts/bbb');
   });
 
   test('channel tabs expand into videos and are not walked again', () async {

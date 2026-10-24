@@ -31,27 +31,60 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
   int _step = 0;
   int _saveTotal = 0;
   bool _following = false;
+  String? _channelBase;
+  String _tab = 'videos';
+  int _loadGen = 0;
 
   @override
   void initState() {
     super.initState();
+    _channelBase = youtubeChannelBase(widget.url);
+    final opened = youtubeChannelTab(widget.url);
+    if (opened == 'shorts') _tab = 'shorts';
+    _load();
+    unawaited(_loadFollow());
+  }
+
+  /// The channel tab being listed. A playlist or TikTok profile stays on [widget.url].
+  String _listUrl() {
+    final base = _channelBase;
+    if (base == null) return widget.url;
+    return '$base/$_tab';
+  }
+
+  void _pickTab(Set<String> next) {
+    final tab = next.first;
+    if (tab == _tab || _saving) return;
+    setState(() {
+      _tab = tab;
+      _loading = true;
+      _error = null;
+      _items = const [];
+      _selected.clear();
+      _following = false;
+    });
     _load();
     unawaited(_loadFollow());
   }
 
   Future<void> _loadFollow() async {
-    final on = await FollowCreator.isFollowing(widget.url);
-    if (mounted) setState(() => _following = on);
+    final url = _listUrl();
+    final on = await FollowCreator.isFollowing(url);
+    if (mounted && url == _listUrl()) setState(() => _following = on);
   }
 
   Future<void> _load() async {
+    final gen = ++_loadGen;
+    final onlyTab = _channelBase == null ? null : _tab;
     try {
-      final raw = await ref.read(mediaRepositoryProvider).playlist(widget.url);
+      final raw = await ref.read(mediaRepositoryProvider).playlist(_listUrl());
+      if (!mounted || gen != _loadGen) return;
       final items = await expandChannelSections(
         raw,
         (url) => ref.read(mediaRepositoryProvider).playlist(url),
+        onlyTab: onlyTab,
       );
-      if (!mounted) return;
+      if (!mounted || gen != _loadGen) return;
       final onlyTabs = raw.isNotEmpty &&
           raw.every((entry) => isChannelSection(entry.url) || youtubeChannelRoot(entry.url) != null);
       if (items.isEmpty && onlyTabs) {
@@ -69,13 +102,13 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
         _loading = false;
       });
     } on AppException catch (error) {
-      if (!mounted) return;
+      if (!mounted || gen != _loadGen) return;
       setState(() {
         _error = error.message;
         _loading = false;
       });
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || gen != _loadGen) return;
       setState(() {
         _error = 'Could not read this public set.';
         _loading = false;
@@ -161,7 +194,7 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
 
   Future<void> _toggleFollow() async {
     if (_following) {
-      await FollowCreator.unfollow(widget.url);
+      await FollowCreator.unfollow(_listUrl());
       if (!mounted) return;
       setState(() => _following = false);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -170,7 +203,7 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
       return;
     }
     await FollowCreator.follow(
-      widget.url,
+      _listUrl(),
       _items.isEmpty ? 'Set' : _items.first.title,
       [for (final item in _items) item.url],
     );
@@ -211,13 +244,32 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
                     Padding(
                       padding: pagePadding(context, top: 8, bottom: 8),
                       child: Text(
-                        'Choose public videos to save. Private and login-only items are skipped.',
+                        _channelBase == null
+                            ? 'Choose public videos to save. Private and login-only items are skipped.'
+                            : _tab == 'shorts'
+                                ? 'The 40 newest Shorts. Older Shorts are not listed.'
+                                : 'The 40 newest videos. Open Shorts for shorts only.',
                         style: TextStyle(
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
                           height: 1.4,
                         ),
                       ),
                     ),
+                    if (_channelBase != null)
+                      Padding(
+                        padding: pagePadding(context, top: 0, bottom: 8),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: SegmentedButton<String>(
+                            segments: const [
+                              ButtonSegment(value: 'videos', label: Text('Videos')),
+                              ButtonSegment(value: 'shorts', label: Text('Shorts')),
+                            ],
+                            selected: {_tab},
+                            onSelectionChanged: _saving ? null : _pickTab,
+                          ),
+                        ),
+                      ),
                     Expanded(
                       child: ListView.builder(
                         padding: pagePadding(context, top: 0, bottom: 8),
@@ -267,13 +319,23 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
                                 onPressed: _toggleFollow,
                                 style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
                                 icon: const Icon(Icons.nightlight_outlined),
-                                label: Text(_following ? 'Stop overnight checks' : 'Check for new posts overnight'),
+                                label: Text(
+                                  _following
+                                      ? 'Stop overnight checks'
+                                      : _tab == 'shorts'
+                                          ? 'Check for new Shorts overnight'
+                                          : 'Check for new posts overnight',
+                                ),
                               ),
                               const SizedBox(height: 6),
                               Text(
                                 _following
-                                    ? 'New public posts from this set are queued overnight.'
-                                    : 'Posts already listed stay as they are. Nothing downloads until a new one appears.',
+                                    ? (_tab == 'shorts'
+                                        ? 'New Shorts from this creator are queued overnight.'
+                                        : 'New public posts from this set are queued overnight.')
+                                    : (_tab == 'shorts'
+                                        ? 'Shorts already listed stay as they are. Nothing downloads until a new Short appears.'
+                                        : 'Posts already listed stay as they are. Nothing downloads until a new one appears.'),
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
                                   fontSize: 12,

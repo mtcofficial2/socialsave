@@ -167,6 +167,7 @@ class FollowCreator {
         final opened = await expandChannelSections(
           entries,
           (url) => container.read(mediaRepositoryProvider).playlist(url),
+          onlyTab: youtubeChannelTab(set.url),
         );
         final onlyTabs = entries.isNotEmpty &&
             entries.every((entry) => isChannelSection(entry.url) || youtubeChannelRoot(entry.url) != null);
