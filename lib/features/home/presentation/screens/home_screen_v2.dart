@@ -13,6 +13,7 @@ import 'package:social_save/core/platform/desktop_support.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/core/storage/storage_migration.dart';
 import 'package:social_save/core/storage/vault_recovery.dart';
+import 'package:social_save/features/downloader/follow_creator.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
 import 'package:social_save/features/downloads/presentation/providers/downloads_controller.dart';
 import 'package:social_save/features/home/presentation/providers/home_controller.dart';
@@ -20,6 +21,7 @@ import 'package:social_save/features/home/presentation/screens/home_screen.dart'
 import 'package:social_save/features/home/presentation/widgets/save_queue_section.dart';
 import 'package:social_save/features/home/presentation/widgets/supported_platforms.dart';
 import 'package:social_save/features/home/presentation/widgets/url_input_card.dart';
+import 'package:social_save/core/utils/set_link.dart';
 import 'package:social_save/features/home/presentation/widgets/link_offer.dart';
 import 'package:social_save/features/library/hotspot_share.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
@@ -95,6 +97,7 @@ class _HomeScreenV2State extends ConsumerState<HomeScreenV2> with WidgetsBinding
 
   Future<void> _onArrive() async {
     if (!mounted) return;
+    unawaited(FollowCreator.checkIfDue(ProviderScope.containerOf(context, listen: false)));
     if (await _consumeShare()) return;
     await _importClipboard();
   }
@@ -103,6 +106,17 @@ class _HomeScreenV2State extends ConsumerState<HomeScreenV2> with WidgetsBinding
     if (!mounted) return false;
     if (DesktopSupport.isWindows) return false;
     const channel = MethodChannel('socialsave/media');
+    String? setUrl;
+    try {
+      setUrl = await channel.invokeMethod<String>('consumeSharedSet');
+    } catch (_) {}
+    if (setUrl != null && setUrl.trim().isNotEmpty && mounted) {
+      final target = setUrl.trim();
+      if (isPublicSet(target) || target.startsWith('http')) {
+        context.push('/playlist', extra: target);
+        return true;
+      }
+    }
     String? text;
     try {
       text = await channel.invokeMethod<String>('consumeSharedText');
@@ -113,6 +127,10 @@ class _HomeScreenV2State extends ConsumerState<HomeScreenV2> with WidgetsBinding
     ref.read(homeControllerProvider.notifier).setUrl(text);
     final url = ref.read(homeControllerProvider.notifier).validatedUrl();
     if (url == null || !mounted) return false;
+    if (isPublicSet(url)) {
+      context.push('/playlist', extra: url);
+      return true;
+    }
     HapticFeedback.lightImpact();
     unawaited(offerLink(url));
     return true;
@@ -137,6 +155,11 @@ class _HomeScreenV2State extends ConsumerState<HomeScreenV2> with WidgetsBinding
     final state = ref.read(homeControllerProvider);
     if (state.error != null || state.url.isEmpty) return;
     HapticFeedback.lightImpact();
+    final url = ref.read(homeControllerProvider.notifier).validatedUrl() ?? state.url;
+    if (isPublicSet(url)) {
+      await context.push('/playlist', extra: url);
+      return;
+    }
     if (kIsWeb && !await _confirmDownload(state.url)) return;
     if (!mounted) return;
     await _openPreview(state.url);
@@ -164,6 +187,10 @@ class _HomeScreenV2State extends ConsumerState<HomeScreenV2> with WidgetsBinding
     final url = ref.read(homeControllerProvider.notifier).validatedUrl();
     if (url == null || !mounted) return;
     HapticFeedback.lightImpact();
+    if (isPublicSet(url)) {
+      await context.push('/playlist', extra: url);
+      return;
+    }
     await _openPreview(url);
   }
 

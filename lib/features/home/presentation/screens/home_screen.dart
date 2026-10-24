@@ -17,6 +17,8 @@ import 'package:social_save/features/library/presentation/library_screen.dart'
     show vaultServiceProvider;
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/constants/app_constants.dart';
+import 'package:social_save/core/utils/set_link.dart';
+import 'package:social_save/features/downloader/follow_creator.dart';
 import 'package:social_save/features/home/presentation/providers/home_controller.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
 import 'package:social_save/features/downloads/presentation/providers/downloads_controller.dart';
@@ -83,6 +85,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   Future<void> _onArrive() async {
     if (!mounted) return;
+    unawaited(FollowCreator.checkIfDue(ProviderScope.containerOf(context, listen: false)));
     if (await _consumeShare()) return;
     await _importClipboard();
   }
@@ -92,6 +95,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     // Windows has no share intent; links come from paste / clipboard instead.
     if (DesktopSupport.isWindows) return false;
     const channel = MethodChannel('socialsave/media');
+    String? setUrl;
+    try {
+      setUrl = await channel.invokeMethod<String>('consumeSharedSet');
+    } catch (_) {}
+    if (setUrl != null && setUrl.trim().isNotEmpty && mounted) {
+      context.push('/playlist', extra: setUrl.trim());
+      return true;
+    }
     String? text;
     try {
       text = await channel.invokeMethod<String>('consumeSharedText');
@@ -102,6 +113,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     ref.read(homeControllerProvider.notifier).setUrl(text);
     final url = ref.read(homeControllerProvider.notifier).validatedUrl();
     if (url == null || !mounted) return false;
+    if (isPublicSet(url)) {
+      context.push('/playlist', extra: url);
+      return true;
+    }
     HapticFeedback.lightImpact();
     await _openPreview(url);
     return true;
@@ -132,6 +147,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     final state = ref.read(homeControllerProvider);
     if (state.error != null || state.url.isEmpty) return;
     HapticFeedback.lightImpact();
+    final url = ref.read(homeControllerProvider.notifier).validatedUrl() ?? state.url;
+    if (isPublicSet(url)) {
+      await context.push('/playlist', extra: url);
+      return;
+    }
     if (kIsWeb && !await _confirmDownload(state.url)) return;
     if (!mounted) return;
     await _openPreview(state.url);
@@ -167,6 +187,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     final url = ref.read(homeControllerProvider.notifier).validatedUrl();
     if (url == null || !mounted) return;
     HapticFeedback.lightImpact();
+    if (isPublicSet(url)) {
+      await context.push('/playlist', extra: url);
+      return;
+    }
     await _openPreview(url);
   }
 

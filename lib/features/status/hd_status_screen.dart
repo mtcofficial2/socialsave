@@ -27,12 +27,12 @@ class HdStatusEntry extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'HD WhatsApp status',
+                  'Stories and status',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, letterSpacing: -0.2, color: scheme.onSurface),
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'Prepare a photo or video so the status stays sharp',
+                  'Prepare a photo or video, then post it to WhatsApp, Instagram, or Facebook',
                   style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant),
                 ),
               ],
@@ -46,7 +46,7 @@ class HdStatusEntry extends StatelessWidget {
       return GlassPress(
         onTap: () => context.push('/status'),
         borderRadius: BorderRadius.circular(22),
-        semanticLabel: 'HD WhatsApp status. Prepare a photo or video so the status stays sharp',
+        semanticLabel: 'Stories and status. Prepare a photo or video, then post it to WhatsApp, Instagram, or Facebook',
         child: IosGlassPlate(dark: dark, radius: 22, child: child),
       );
     }
@@ -82,6 +82,7 @@ class _HdStatusScreenState extends State<HdStatusScreen> {
   List<_StatusPart> _parts = const [];
   bool _clipped = false;
   bool _photo = false;
+  String _dest = 'whatsapp';
   Timer? _tick;
 
   @override
@@ -174,22 +175,36 @@ class _HdStatusScreenState extends State<HdStatusScreen> {
     }
   }
 
-  Future<void> _share(_StatusPart part, {required bool business}) async {
+  String get _destName => switch (_dest) {
+        'instagram' => 'Instagram',
+        'facebook' => 'Facebook',
+        'business' => 'WhatsApp Business',
+        _ => 'WhatsApp',
+      };
+
+  Future<void> _share(_StatusPart part, {String? target}) async {
+    final dest = target ?? _dest;
+    final name = switch (dest) {
+      'instagram' => 'Instagram',
+      'facebook' => 'Facebook',
+      'business' => 'WhatsApp Business',
+      _ => 'WhatsApp',
+    };
     try {
       final code = await _channel.invokeMethod<String>('statusShare', {
         'path': part.path,
-        'business': business,
+        'target': dest,
       });
       if (!mounted) return;
       if (code == 'missing_app') {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(business ? 'WhatsApp Business is not installed.' : 'WhatsApp is not installed.')),
+          SnackBar(content: Text('$name is not installed.')),
         );
       }
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open WhatsApp.')),
+        SnackBar(content: Text('Could not open $name.')),
       );
     }
   }
@@ -212,7 +227,7 @@ class _HdStatusScreenState extends State<HdStatusScreen> {
                   ),
                   Expanded(
                     child: Text(
-                      'HD WhatsApp status',
+                      'Stories and status',
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
                     ),
                   ),
@@ -226,7 +241,7 @@ class _HdStatusScreenState extends State<HdStatusScreen> {
                   Padding(
                     padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
                     child: Text(
-                      'Pick a photo or video. Social Save prepares it, then you post that file to your status. It does not add a fade, and it does not invent detail that was not in the original.',
+                      'Pick a photo or video you already have. Social Save prepares it, then you post that file. It does not download anyone\'s stories, add a fade, or invent detail that was not in the original.',
                       style: TextStyle(height: 1.4, color: scheme.onSurfaceVariant),
                     ),
                   ),
@@ -234,11 +249,25 @@ class _HdStatusScreenState extends State<HdStatusScreen> {
                     Padding(
                       padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
                       child: Text(
-                        'This runs on the phone, next to WhatsApp. Open Social Save there, choose the photo or video, then share the prepared file to your status.',
+                        'This runs on the phone. Open Social Save there, choose the photo or video, then share the prepared file to WhatsApp, Instagram, or Facebook.',
                         style: TextStyle(height: 1.4, color: scheme.onSurface),
                       ),
                     )
                   else ...[
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+                      child: Wrap(
+                        spacing: 8,
+                        children: [
+                          for (final item in const [('whatsapp', 'WhatsApp'), ('instagram', 'Instagram'), ('facebook', 'Facebook')])
+                            ChoiceChip(
+                              label: Text(item.$2),
+                              selected: _dest == item.$1,
+                              onSelected: _preparing ? null : (_) => setState(() => _dest = item.$1),
+                            ),
+                        ],
+                      ),
+                    ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
                       child: Row(
@@ -295,9 +324,9 @@ class _HdStatusScreenState extends State<HdStatusScreen> {
                           children: [
                             Text(
                               _photo
-                                  ? 'The photo is a short video now. Post it as a status and do not crop it again in WhatsApp.'
+                                  ? 'The photo is a short video now. Post it to $_destName and do not crop it again.'
                                   : _parts.length == 1
-                                      ? 'Ready. Post this file as your status and do not crop it again in WhatsApp.'
+                                      ? 'Ready. Post this file to $_destName and do not crop it again.'
                                       : 'Ready in ${_parts.length} parts of 30 seconds. Post them in order.',
                               style: TextStyle(height: 1.4, color: scheme.onSurface),
                             ),
@@ -317,17 +346,18 @@ class _HdStatusScreenState extends State<HdStatusScreen> {
                               ),
                               const SizedBox(height: 8),
                               FilledButton.icon(
-                                onPressed: () => _share(part, business: false),
+                                onPressed: () => _share(part),
                                 icon: const Icon(Icons.send_rounded),
-                                label: Text(part.total == 1 ? 'Share to WhatsApp' : 'Share part ${part.part}'),
+                                label: Text(part.total == 1 ? 'Share to $_destName' : 'Share part ${part.part}'),
                               ),
-                              Align(
-                                alignment: Alignment.centerLeft,
-                                child: TextButton(
-                                  onPressed: () => _share(part, business: true),
-                                  child: const Text('WhatsApp Business'),
+                              if (_dest == 'whatsapp')
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: TextButton(
+                                    onPressed: () => _share(part, target: 'business'),
+                                    child: const Text('WhatsApp Business'),
+                                  ),
                                 ),
-                              ),
                             ],
                           ],
                         ),

@@ -72,13 +72,14 @@ object UploadPrep {
 
     internal fun stopped(): Boolean = cancel.get()
 
-    /** True when this video is not already the TikTok target. */
-    fun needsWork(ctx: Context, path: String?): Boolean {
-        val job = look(ctx, path) ?: return false
+    /** True when this video is not already the destination target. */
+    fun needsWork(ctx: Context, path: String?, dest: String? = "tiktok"): Boolean {
+        val job = look(ctx, path, normalize(dest)) ?: return false
         return !job.clip.ready(moovIsNearStart(job.source))
     }
 
-    fun prepare(ctx: Context, path: String?): String? {
+    fun prepare(ctx: Context, path: String?, dest: String? = "tiktok"): String? {
+        val kind = normalize(dest)
         cancel.set(false)
         trace.setLength(0)
         done.set(-1)
@@ -87,7 +88,7 @@ object UploadPrep {
         encodeAt = 0L
         repack = false
         startedAt = android.os.SystemClock.elapsedRealtime()
-        val job = look(ctx, path) ?: return path
+        val job = look(ctx, path, kind) ?: return path
         val source = job.source
         val clip = job.clip
         note(
@@ -97,7 +98,7 @@ object UploadPrep {
         durUs = clip.durationUs
         if (clip.ready(moovIsNearStart(source))) {
             repack = true
-            setProgress(1.0, "Already TikTok-ready")
+            setProgress(1.0, "Already ${label(kind)}-ready")
             note("already ready")
             return path
         }
@@ -121,7 +122,7 @@ object UploadPrep {
                 wrote = remux(ctx, job, hwFile, audioFrom, out)
             }
             hwFile.delete()
-            if (wrote && !acceptable(ctx, job, out)) {
+            if (wrote && !acceptable(ctx, job, out, kind)) {
                 Log.w(TAG, "chip file failed the check")
                 out.delete()
                 wrote = false
@@ -129,9 +130,9 @@ object UploadPrep {
         } else {
             val audioFrom = if (!clip.audioOk && clip.hasAudio) source else null
             repack = true
-            setProgress(0.3, "Already TikTok-ready")
+            setProgress(0.3, "Already ${label(kind)}-ready")
             wrote = remux(ctx, job, source, audioFrom, out)
-            if (wrote && !acceptable(ctx, job, out)) {
+            if (wrote && !acceptable(ctx, job, out, kind)) {
                 Log.w(TAG, "remux failed the check")
                 out.delete()
                 wrote = false
@@ -140,7 +141,7 @@ object UploadPrep {
         if (!wrote && !stopped()) {
             if (out.exists()) out.delete()
             wrote = write(ctx, job.libPath, command(job, out), out)
-            if (wrote && !acceptable(ctx, job, out)) {
+            if (wrote && !acceptable(ctx, job, out, kind)) {
                 Log.w(TAG, "software file failed the check")
                 out.delete()
                 wrote = false
@@ -195,7 +196,7 @@ object UploadPrep {
             return if (source.isFile) source.absolutePath else path
         }
         dest.setReadable(true, false)
-        setProgress(1.0, "Ready for TikTok")
+        setProgress(1.0, "Ready for ${label(kind)}")
         return dest.absolutePath
     }
 
@@ -218,6 +219,7 @@ object UploadPrep {
         val fps: Double,
         val durationUs: Long,
         val rotation: Int,
+        val portraitCanvas: Boolean,
     ) {
         val codecOk = video == "h264" && (pix == "yuv420p" || pix == "yuvj420p")
         val sizeOk = dispW == outW && dispH == outH
@@ -230,13 +232,30 @@ object UploadPrep {
         val shortSide = minOf(dispW, dispH)
         // 1.0.51: up to 1080p and up to 30 fps only; 50/60 fps is re-encoded
         // to 30 by the video chip (TikTok-ready is a 30 fps target).
-        val fastOk = codecOk && fps in 23.0..30.5 && longSide <= 1920 && shortSide <= 1080
+        // Reels and Shorts only skip a file that is already portrait.
+        val fastOk = if (portraitCanvas) {
+            codecOk && fps in 23.0..30.5 && dispH >= dispW && shortSide <= 1080 && longSide <= 1920
+        } else {
+            codecOk && fps in 23.0..30.5 && longSide <= 1920 && shortSide <= 1080
+        }
         val pictureOk = (codecOk && sizeOk && fpsOk && rotOk) || fastOk
         val audioOk = !hasAudio || audio == "aac"
         fun ready(moov: Boolean) = pictureOk && audioOk && moov
     }
 
-    private fun look(ctx: Context, path: String?): Look? {
+    private fun normalize(dest: String?): String = when (dest) {
+        "reels", "shorts", "x" -> dest
+        else -> "tiktok"
+    }
+
+    private fun label(dest: String) = when (dest) {
+        "reels" -> "Reels"
+        "shorts" -> "Shorts"
+        "x" -> "X"
+        else -> "TikTok"
+    }
+
+    private fun look(ctx: Context, path: String?, dest: String): Look? {
         if (path.isNullOrBlank()) return null
         val source = File(path)
         if (!source.isFile || source.length() < 1024) return null
@@ -302,20 +321,28 @@ object UploadPrep {
         val dispW = if (dw0 > 0) dw0 else geo?.first ?: 0
         val dispH = if (dh0 > 0) dh0 else geo?.second ?: 0
         if (durationUs <= 0) durationUs = geo?.fourth ?: 0L
-        val (outW, outH) = targetSize(dispW, dispH)
+        val portrait = dest == "reels" || dest == "shorts"
+        val (outW, outH) = targetSize(dispW, dispH, dest)
         return Look(
             source, ffmpeg, libPath,
-            Clip(video, pix, hasAudio, audio, dispW, dispH, outW, outH, fps, durationUs, rot),
+            Clip(video, pix, hasAudio, audio, dispW, dispH, outW, outH, fps, durationUs, rot, portrait),
         )
     }
 
     /**
-     * Landscape and square fit inside 1920×1080. Portrait fits inside 1080×1920.
-     * Smaller clips keep their size. Larger ones are scaled to fit and padded, never stretched
-     * or cropped, and a portrait clip is not placed on a landscape canvas.
+     * TikTok and X: landscape and square fit inside 1920×1080, portrait inside 1080×1920.
+     * Reels and Shorts use a portrait canvas. A landscape picture is letterboxed, not cropped.
+     * Smaller clips keep their size. Larger ones are scaled to fit and padded, never stretched.
      */
-    internal fun targetSize(dispW: Int, dispH: Int): Pair<Int, Int> {
-        if (dispW < 2 || dispH < 2) return 1920 to 1080
+    internal fun targetSize(dispW: Int, dispH: Int, dest: String = "tiktok"): Pair<Int, Int> {
+        val portrait = dest == "reels" || dest == "shorts"
+        if (dispW < 2 || dispH < 2) return if (portrait) 1080 to 1920 else 1920 to 1080
+        if (portrait) {
+            if (dispH >= dispW && dispW <= 1080 && dispH <= 1920) {
+                return (dispW and 1.inv()) to (dispH and 1.inv())
+            }
+            return 1080 to 1920
+        }
         // Below 1080p keeps its own size (even sides for the encoder): no upscaling.
         if (max(dispW, dispH) <= 1920 && minOf(dispW, dispH) <= 1080) return (dispW and 1.inv()) to (dispH and 1.inv())
         return if (dispH > dispW) 1080 to 1920 else 1920 to 1080
@@ -518,10 +545,10 @@ object UploadPrep {
      * frame rate match the target, sound is AAC when the source had sound, and
      * the length still lines up with the original.
      */
-    private fun acceptable(ctx: Context, job: Look, file: File): Boolean {
+    private fun acceptable(ctx: Context, job: Look, file: File, dest: String): Boolean {
         if (!file.isFile || file.length() < 1024) return false
         if (!moovIsNearStart(file)) return false
-        val checked = look(ctx, file.absolutePath) ?: return false
+        val checked = look(ctx, file.absolutePath, dest) ?: return false
         val clip = checked.clip
         val want = job.clip
         if (clip.video != "h264" || (clip.pix != "yuv420p" && clip.pix != "yuvj420p")) {

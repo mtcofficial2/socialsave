@@ -21,6 +21,8 @@ import 'package:social_save/core/storage/download_path_service.dart';
 import 'package:social_save/core/storage/media_store_service.dart';
 import 'package:social_save/core/errors/error_mapper.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
+import 'package:social_save/features/library/library_catalog.dart';
+import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/features/downloads/presentation/providers/downloads_controller.dart';
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
 import 'package:social_save/core/errors/error_messages.dart';
@@ -133,13 +135,16 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     required MediaInfo media,
     required MediaFormat format,
     bool start = true,
+    bool askExport = true,
   }) async {
     final settings = ref.read(settingsControllerProvider);
     await _assertNetwork(settings);
-    if (await _alreadySaved(media.sourceUrl, format.quality, format.format)) {
-      throw const AppException(
+    final saved = await _savedCopy(media.sourceUrl, format.quality, format.format);
+    if (saved != null) {
+      throw AppException(
         code: AppErrorCode.unknown,
         message: ErrorMessages.alreadySaved,
+        cause: saved,
       );
     }
 
@@ -163,7 +168,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       );
     }
 
-    final tiktok = Plat.isAndroid && _videoFormat(format.id) && await _chooseTiktok(media.title);
+    final tiktok = askExport && Plat.isAndroid && _videoFormat(format.id) && await _chooseTiktok(media.title);
     final ticket = await ref.read(mediaRepositoryProvider).requestDownload(
           url: media.sourceUrl,
           formatId: tiktok ? '${format.id}+tt' : format.id,
@@ -190,6 +195,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       } else {
         await _persist();
       }
+      unawaited(_noteQueued(media.sourceUrl));
       return state.byId(id) ?? task;
     }
 
@@ -224,7 +230,25 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     } else {
       await _persist();
     }
+    unawaited(_noteQueued(media.sourceUrl));
     return state.byId(id) ?? task;
+  }
+
+  /// A queued download is no longer "watch later", and the other device's
+  /// title for the same post is replaced by this device's file.
+  Future<void> _noteQueued(String url) async {
+    try {
+      await ref.read(libraryCatalogProvider.notifier).removeLater(url);
+    } catch (_) {}
+    try {
+      final records = await ref.read(downloadsRepositoryProvider).getAll();
+      for (final record in records) {
+        if (record.id.startsWith('sync:') && record.sourceUrl == url) {
+          await ref.read(downloadsRepositoryProvider).delete(record.id);
+        }
+      }
+      ref.invalidate(downloadsControllerProvider);
+    } catch (_) {}
   }
 
   Future<void> start(String id) async {
@@ -441,6 +465,9 @@ class DownloadManager extends Notifier<DownloadManagerState> {
                 name: p.basename(publishPath),
               );
             }
+            final kept = (published != null && published.isNotEmpty && !published.startsWith('content:'))
+                ? published
+                : publishPath;
             if (published == null || published.isEmpty) {
               await MediaStoreService().scanFile(publishPath);
             } else if (!published.startsWith('content:') && published != publishPath) {
@@ -453,6 +480,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
                     );
               }
             }
+            await _fileSaved(finished, kept);
           } catch (_) {}
         }());
       }
@@ -714,23 +742,25 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     if (task == null || !task.status.canRetry) {
       return;
     }
-    if (!kIsWeb) await _deletePartial(task.localPath);
-    // Web: the old server job failed or its link expired. On-phone engine:
-    // the job is gone. "Try with server": the server prepares it. In all
-    // three cases, prepare again.
-    final fresh = kIsWeb ||
-        (task.jobId?.startsWith(PhoneEngine.jobPrefix) ?? false) ||
-        PhoneEngine.serverFor.contains(task.sourceUrl);
+    final why = (task.errorMessage ?? '').toLowerCase();
+    final ticketDead = why.contains('expired') || why.contains('403') || why.contains('404') || why.contains('not found');
+    final reusable = !kIsWeb &&
+        !ticketDead &&
+        task.downloadUrl.isNotEmpty &&
+        task.localPath != null &&
+        !(task.jobId?.startsWith(PhoneEngine.jobPrefix) ?? false) &&
+        !PhoneEngine.serverFor.contains(task.sourceUrl);
+    if (!reusable && !kIsWeb) await _deletePartial(task.localPath);
     state = state.copyWithTask(
       task.copyWith(
         status: DownloadStatus.queued,
-        receivedBytes: 0,
+        receivedBytes: reusable ? null : 0,
         bytesPerSecond: 0,
         clearError: true,
         clearPhase: true,
-        downloadUrl: fresh ? '' : null,
-        jobId: fresh ? '' : null,
-        directUrl: fresh ? '' : null,
+        downloadUrl: reusable ? null : '',
+        jobId: reusable ? null : '',
+        directUrl: reusable ? null : '',
       ),
     );
     await start(id);
@@ -971,8 +1001,8 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     });
   }
 
-  Future<bool> _alreadySaved(String url, String quality, String format) async {
-    if (kIsWeb) return false;
+  Future<DownloadRecord?> _savedCopy(String url, String quality, String format) async {
+    if (kIsWeb) return null;
     // Same quality but another type (audio M4A vs MP3) is a different file.
     final ext = '.${const FileUtils().extensionFor(format)}';
     final records = await ref.read(downloadsRepositoryProvider).getAll();
@@ -983,18 +1013,45 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       final path = record.localPath;
       if (path == null || !File(path).existsSync()) continue;
       if (p.extension(path).toLowerCase() != ext) continue;
-      return true;
+      return record;
     }
-    return false;
+    return null;
+  }
+
+  Future<void> _fileSaved(DownloadTask task, String path) async {
+    try {
+      final id = await MediaStoreService().mediaIdForPath(path);
+      if (id != null) {
+        final key = 'device:$id';
+        final catalog = ref.read(libraryCatalogProvider.notifier);
+        await catalog.addToCollection(task.platform.displayName, key);
+        final author = task.author?.trim() ?? '';
+        if (author.isNotEmpty && author.toLowerCase() != task.platform.displayName.toLowerCase()) {
+          await catalog.addToCollection(author, key);
+        }
+      }
+    } catch (_) {}
+    if (task.platform == SocialPlatform.youtube || task.platform == SocialPlatform.tiktok) {
+      try {
+        await PhoneEngine.saveCaptions(url: task.sourceUrl, beside: path);
+      } catch (_) {}
+    }
   }
 
   Future<void> _persist() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final active = state.tasks.values.where((task) => task.status.isActive).toList();
+      final failed = state.tasks.values.where((task) => task.status == DownloadStatus.failed).toList()
+        ..sort((a, b) {
+          final aDate = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+          final bDate = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+          return bDate.compareTo(aDate);
+        });
+      final keep = [...active, ...failed.take(40)];
       await prefs.setString(
         'socialsave_active_downloads',
-        jsonEncode(active.map((task) => task.toJson()).toList()),
+        jsonEncode(keep.map((task) => task.toJson()).toList()),
       );
       await prefs.setBool('socialsave_resume_pending', active.isNotEmpty);
     } catch (_) {}
@@ -1014,7 +1071,12 @@ class DownloadManager extends Notifier<DownloadManagerState> {
         if (!_alive) return;
         if (item is! Map) continue;
         final task = DownloadTask.fromJson(Map<String, dynamic>.from(item));
-        if (task.id.isEmpty || !task.status.isActive) continue;
+        if (task.id.isEmpty) continue;
+        if (task.status == DownloadStatus.failed) {
+          if (state.byId(task.id) == null) state = state.copyWithTask(task);
+          continue;
+        }
+        if (!task.status.isActive) continue;
         if (state.byId(task.id) != null) continue;
         final resumed = task.status == DownloadStatus.running
             ? task.copyWith(status: DownloadStatus.paused, bytesPerSecond: 0)

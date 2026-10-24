@@ -11,6 +11,7 @@ import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/features/library/session_keepalive.dart';
 import 'package:path/path.dart' as p;
 import 'package:social_save/features/library/hotspot_share.dart';
+import 'package:social_save/features/library/library_sync.dart';
 import 'package:social_save/features/library/nearby_service.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
@@ -207,6 +208,8 @@ class ShareSession {
 
   static String? _token;
   static String? _pairToken;
+  static bool _librarySyncing = false;
+  static DateTime _libraryNotBefore = DateTime.fromMillisecondsSinceEpoch(0);
   static bool hostsHotspot = false;
   static bool joinedHotspot = false;
   static Timer? _beat;
@@ -621,6 +624,16 @@ class ShareSession {
           final name = peer.value?.name ?? 'The other device';
           unawaited(Future<void>.delayed(Duration.zero, () => _end('$name disconnected.', explicit: true)));
         }
+      case 'library':
+        final ok = _token != null && body['token'] == _token;
+        if (!ok) {
+          res.statusCode = HttpStatus.gone;
+          res.write(jsonEncode({'ok': false}));
+        } else {
+          _learnRoute(req, body);
+          _heard();
+          res.write(jsonEncode(await LibrarySync.accept(body)));
+        }
       default:
         res.statusCode = HttpStatus.notFound;
     }
@@ -891,6 +904,7 @@ class ShareSession {
     unawaited(_save());
     if (fresh) unawaited(SessionKeepAlive.start(_title(), _text()));
     _updateNotification();
+    _maybeSyncLibrary();
     if (fresh && !restored) {
       final first = pendingFirst;
       pendingFirst = null;
@@ -953,6 +967,28 @@ class ShareSession {
     }
   }
 
+  /// Titles only. Files stay on the device that saved them.
+  /// A successful answer waits two minutes. A miss tries again shortly.
+  static void _maybeSyncLibrary() {
+    final current = peer.value;
+    final token = _token;
+    if (current == null || token == null || _librarySyncing) return;
+    if (DateTime.now().isBefore(_libraryNotBefore)) return;
+    final host = current.host;
+    final port = current.port;
+    _librarySyncing = true;
+    _libraryNotBefore = DateTime.now().add(const Duration(seconds: 20));
+    unawaited(() async {
+      try {
+        final ok = await LibrarySync.exchange(host, port, token);
+        if (_token != token) return;
+        _libraryNotBefore = DateTime.now().add(ok ? const Duration(minutes: 2) : const Duration(seconds: 20));
+      } finally {
+        if (_token == token) _librarySyncing = false;
+      }
+    }());
+  }
+
   static Future<void> _tick() async {
     if (_pinging || peer.value == null) return;
     _pinging = true;
@@ -961,6 +997,7 @@ class ShareSession {
       if (peer.value == null) return;
       if (r == 200) {
         _heard();
+        _maybeSyncLibrary();
         return;
       }
       if (r == HttpStatus.gone) {
@@ -1075,6 +1112,8 @@ class ShareSession {
     _beat = null;
     _token = null;
     _pairToken = null;
+    _librarySyncing = false;
+    _libraryNotBefore = DateTime.fromMillisecondsSinceEpoch(0);
     _limitedPoll?.cancel();
     _limitedPoll = null;
     _limitedTarget = null;

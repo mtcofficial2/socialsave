@@ -251,61 +251,14 @@ class _MiniProgress extends StatelessWidget {
   }
 }
 
-/// Short slide when the tab changes. Tabs stay alive in the indexed stack, so
-/// scroll positions are preserved. The nav pill lives outside this widget.
-class TabTransition extends StatefulWidget {
-  const TabTransition({super.key, required this.index, required this.child});
+/// Tab body. The indexed stack keeps each tab alive, so scroll positions stay.
+/// The switch itself is instant: sliding this whole subtree made every glass
+/// surface resample for the length of the animation. The nav pill still travels.
+class TabTransition extends StatelessWidget {
+  const TabTransition({super.key, required int index, required this.child});
 
-  final int index;
   final Widget child;
 
   @override
-  State<TabTransition> createState() => _TabTransitionState();
-}
-
-class _TabTransitionState extends State<TabTransition>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _c = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 220),
-    value: 1,
-  );
-  double _dir = 1;
-
-  @override
-  void didUpdateWidget(TabTransition old) {
-    super.didUpdateWidget(old);
-    if (old.index != widget.index) {
-      _dir = widget.index > old.index ? 1 : -1;
-      if (MediaQuery.disableAnimationsOf(context)) {
-        _c.value = 1;
-      } else {
-        _c.forward(from: 0);
-      }
-    }
-  }
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _c,
-      child: widget.child,
-      builder: (context, child) {
-        if (_c.value >= 1) return child!;
-        final t = Curves.easeOutCubic.transform(_c.value);
-        // Slide only. Fading the whole page is a full-screen offscreen layer
-        // and makes every tab change feel late.
-        return Transform.translate(
-          offset: Offset(_dir * 12 * (1 - t), 0),
-          child: child,
-        );
-      },
-    );
-  }
+  Widget build(BuildContext context) => child;
 }

@@ -16,6 +16,9 @@ import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/platform/desktop_support.dart';
 import 'package:social_save/core/platform/phone_body.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
+import 'package:social_save/features/downloads/presentation/providers/downloads_controller.dart';
+import 'package:social_save/features/home/presentation/widgets/link_offer.dart';
+import 'package:social_save/features/library/library_sync.dart';
 import 'package:social_save/features/library/bundle_ui.dart';
 import 'package:social_save/features/library/device_media.dart';
 import 'package:social_save/features/library/library_catalog.dart';
@@ -1037,7 +1040,20 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
       );
     }
     if (_tab == 0) {
-      return _DeviceList(
+      final filtered =
+          _query.trim().isNotEmpty ||
+          _favoritesOnly ||
+          _collection != null ||
+          _platform != 'All';
+      final records = ref.watch(downloadsControllerProvider).valueOrNull ?? const <DownloadRecord>[];
+      final later = filtered ? const <WatchLaterItem>[] : catalog.later;
+      final sync = filtered
+          ? const <DownloadRecord>[]
+          : [
+              for (final record in records)
+                if (record.id.startsWith(LibrarySync.idPrefix) && record.sourceUrl.trim().isNotEmpty) record,
+            ];
+      final list = _DeviceList(
         selected: _selected,
         selecting: _selectMode || _selected.isNotEmpty,
         favorites: catalog.favorites,
@@ -1047,17 +1063,30 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
             .read(libraryCatalogProvider.notifier)
             .toggleFavorite('device:${video.id}'),
         videos: _device.where(_matchesVideo).toList(),
-        filtered:
-            _query.trim().isNotEmpty ||
-            _favoritesOnly ||
-            _collection != null ||
-            _platform != 'All',
+        filtered: filtered,
+        hideEmpty: later.isNotEmpty || sync.isNotEmpty,
         onPlay: _playDevice,
         progressOf: _progressOf,
         onRefresh: () => _reload(rescan: true),
         onVault: (video) => _confirmVault(video),
         onActions: _deviceActions,
         onSend: _sendDevice,
+      );
+      if (later.isEmpty && sync.isEmpty) return list;
+      return Column(
+        children: [
+          _SavedElsewhere(
+            later: later,
+            sync: sync,
+            onOpen: (url) {
+              offerLink(url);
+            },
+            onRemoveLater: (url) {
+              ref.read(libraryCatalogProvider.notifier).removeLater(url);
+            },
+          ),
+          Expanded(child: list),
+        ],
       );
     }
     return _VaultGate(
@@ -1413,8 +1442,8 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
         if (!DesktopSupport.isWindows)
           ListTile(
             leading: const Icon(Icons.movie_filter_outlined),
-            title: const Text('Make TikTok ready'),
-            subtitle: const Text('Rewrite this saved video so TikTok can open it'),
+            title: const Text('Prepare for another app'),
+            subtitle: const Text('TikTok, Reels, Shorts, or X. The saved file stays until you choose.'),
             onTap: () => Navigator.pop(context, 'tiktok'),
           ),
         if (DesktopSupport.isWindows)
@@ -1446,6 +1475,12 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
           onTap: () => Navigator.pop(context, 'near'),
         ),
         ListTile(
+          leading: const Icon(Icons.music_note_rounded),
+          title: const Text('Keep the sound'),
+          subtitle: const Text('Save the whole audio in Music, titled with the creator'),
+          onTap: () => Navigator.pop(context, 'keep'),
+        ),
+        ListTile(
           leading: const Icon(Icons.ring_volume_outlined),
           title: const Text('Use 30 seconds as a sound'),
           subtitle: const Text('Ringtone, notification, or alarm'),
@@ -1462,7 +1497,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
         ),
         ListTile(
           leading: const Icon(Icons.folder_outlined),
-          title: const Text('Add to collection'),
+          title: const Text('Move to collection'),
           onTap: () => Navigator.pop(context, 'collection'),
         ),
         ListTile(
@@ -1521,7 +1556,8 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
         action == 'tv' ||
         action == 'handoff' ||
         action == 'session' ||
-        action == 'sound') {
+        action == 'sound' ||
+        action == 'keep') {
       final path = await DeviceMediaService().resolvePlayablePath(video);
       if (path == null || !mounted) return;
       if (action == 'session') {
@@ -1546,6 +1582,16 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
       }
       if (action == 'handoff') {
         await showSendToPhone(context, File(path), video.title);
+        return;
+      }
+      if (action == 'keep') {
+        final record = await _recordForPath(path);
+        final author = record?.author?.trim();
+        await showKeepSound(
+          context,
+          path,
+          title: (author != null && author.isNotEmpty) ? author : video.title,
+        );
         return;
       }
       await showSoundClip(context, path);
@@ -1848,7 +1894,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
     }
     await ref
         .read(libraryCatalogProvider.notifier)
-        .addToCollection(name, 'device:${video.id}');
+        .moveToCollection(name, 'device:${video.id}');
   }
 
   Future<void> _editNote(String key) async {
@@ -1913,6 +1959,7 @@ class _DeviceList extends StatelessWidget {
     required this.onFavorite,
     required this.videos,
     required this.filtered,
+    this.hideEmpty = false,
     required this.onPlay,
     required this.onVault,
     required this.onActions,
@@ -1932,6 +1979,7 @@ class _DeviceList extends StatelessWidget {
   final ValueChanged<DeviceVideo> onFavorite;
   final List<DeviceVideo> videos;
   final bool filtered;
+  final bool hideEmpty;
   final ValueChanged<DeviceVideo> onPlay;
   final ValueChanged<DeviceVideo> onVault;
   final ValueChanged<DeviceVideo> onActions;
@@ -1939,6 +1987,7 @@ class _DeviceList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (videos.isEmpty) {
+      if (hideEmpty) return const SizedBox.shrink();
       if (filtered) {
         return const _V2Empty(
           icon: Icons.search_off_rounded,
@@ -2016,6 +2065,123 @@ class _DeviceList extends StatelessWidget {
     final refresh = onRefresh;
     if (refresh == null) return grid;
     return RefreshIndicator(onRefresh: refresh, child: grid);
+  }
+}
+
+class _SavedElsewhere extends StatelessWidget {
+  const _SavedElsewhere({
+    required this.later,
+    required this.sync,
+    required this.onOpen,
+    required this.onRemoveLater,
+  });
+
+  final List<WatchLaterItem> later;
+  final List<DownloadRecord> sync;
+  final ValueChanged<String> onOpen;
+  final ValueChanged<String> onRemoveLater;
+
+  @override
+  Widget build(BuildContext context) {
+    final look = LibraryPalette.of(context);
+    final gutter = _libraryGutter(context);
+    final children = <Widget>[];
+    if (later.isNotEmpty) {
+      children.add(_heading(look, 'Watch later'));
+      for (final item in later) {
+        children.add(_line(
+          look,
+          title: item.title,
+          caption: 'Nothing downloaded yet',
+          onTap: () => onOpen(item.url),
+          onClose: () => onRemoveLater(item.url),
+        ));
+      }
+    }
+    if (sync.isNotEmpty) {
+      children.add(_heading(look, 'On your other device'));
+      for (final record in sync.take(12)) {
+        children.add(_line(
+          look,
+          title: record.title,
+          caption: 'Tap to download it here',
+          onTap: () => onOpen(record.sourceUrl),
+        ));
+      }
+    }
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 240),
+      child: ListView(
+        shrinkWrap: true,
+        padding: EdgeInsets.fromLTRB(gutter, 0, gutter, 8),
+        children: children,
+      ),
+    );
+  }
+
+  Widget _heading(LibraryPalette look, String text) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 6, 4, 4),
+      child: Text(
+        text,
+        style: TextStyle(color: look.ink, fontSize: 13, fontWeight: FontWeight.w800),
+      ),
+    );
+  }
+
+  Widget _line(
+    LibraryPalette look, {
+    required String title,
+    required String caption,
+    required VoidCallback onTap,
+    VoidCallback? onClose,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Material(
+        color: look.card,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: look.border),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: onTap,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 48),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: look.ink, fontWeight: FontWeight.w700),
+                        ),
+                        Text(caption, style: TextStyle(color: look.muted, fontSize: 12)),
+                      ],
+                    ),
+                  ),
+                  if (onClose != null)
+                    IconButton(
+                      tooltip: 'Remove',
+                      onPressed: onClose,
+                      icon: Icon(Icons.close_rounded, color: look.muted, size: 18),
+                    )
+                  else
+                    Icon(Icons.download_rounded, color: look.accent, size: 18),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

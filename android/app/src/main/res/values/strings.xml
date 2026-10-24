@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="widget_description">Open SocialSave</string>
+    <string name="widget_description">Download a copied link</string>
     <string name="shortcut_paste_short">Paste link</string>
     <string name="shortcut_paste_long">Paste a link and download</string>
     <string name="shortcut_hotspot_short">Hotspot share</string>

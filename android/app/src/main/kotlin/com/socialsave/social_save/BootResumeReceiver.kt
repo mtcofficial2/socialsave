@@ -13,6 +13,8 @@ class BootResumeReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
         val prefs = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+        val follows = prefs.getString("flutter.socialsave_follows", null)
+        if (!follows.isNullOrBlank() && follows != "[]") FollowAlarm.schedule(context)
         val pending = prefs.getBoolean("flutter.socialsave_resume_pending", false)
         if (!pending) return
         val manager = context.getSystemService(NotificationManager::class.java)

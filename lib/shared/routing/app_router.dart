@@ -42,43 +42,39 @@ bool debugOpenMenu = false;
 /// Set by --dock-first: Library plays the first video docked (tests).
 bool debugDockFirst = false;
 
-/// Premium page transitions shared by every pushed page.
-///
-/// Pages in this app have see-through backgrounds, so scaling or sliding a
-/// page revealed the page underneath as a square edge/flash. Each pushed page
-/// therefore paints the (static) wallpaper itself and only the content moves:
-/// the wallpaper fades in as one steady full-screen layer, the content slides
-/// 24dp (sideways) or up slightly (modal-like pages) while it fades.
+/// Pushed pages. The wallpaper stays still and only the content slides a
+/// short distance. Fading the whole page allocated a full-screen layer and
+/// made every open feel late, especially over the glass surfaces.
 Page<void> _page(GoRouterState state, Widget child, {bool modal = false}) {
   return CustomTransitionPage<void>(
     key: state.pageKey,
     child: child,
-    transitionDuration: const Duration(milliseconds: 320),
-    reverseTransitionDuration: const Duration(milliseconds: 260),
+    transitionDuration: const Duration(milliseconds: 180),
+    reverseTransitionDuration: const Duration(milliseconds: 140),
     opaque: true,
     barrierColor: null,
     transitionsBuilder: (context, animation, secondary, child) {
-      final reduce = MediaQuery.disableAnimationsOf(context);
+      final wallpaper = const GlassBackground();
+      if (MediaQuery.disableAnimationsOf(context)) {
+        return Stack(fit: StackFit.expand, children: [wallpaper, child]);
+      }
       final curved = CurvedAnimation(
         parent: animation,
         curve: Curves.easeOutCubic,
         reverseCurve: Curves.easeInCubic,
       );
-      final content = reduce
-          ? child
-          : SlideTransition(
-              position: Tween<Offset>(
-                begin: modal ? const Offset(0, 0.03) : const Offset(0.05, 0),
-                end: Offset.zero,
-              ).animate(curved),
-              child: child,
-            );
-      return FadeTransition(
-        opacity: reduce ? animation : curved,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [const GlassBackground(), content],
-        ),
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          wallpaper,
+          SlideTransition(
+            position: Tween<Offset>(
+              begin: modal ? const Offset(0, 0.02) : const Offset(0.03, 0),
+              end: Offset.zero,
+            ).animate(curved),
+            child: child,
+          ),
+        ],
       );
     },
   );
@@ -151,7 +147,10 @@ final appRouter = GoRouter(
     ),
     GoRoute(
       path: '/browse',
-      pageBuilder: (context, state) => _page(state, const BrowseScreen()),
+      pageBuilder: (context, state) => _page(
+        state,
+        BrowseScreen(initialUrl: state.extra is String ? state.extra as String : null),
+      ),
     ),
     GoRoute(
       path: '/status',

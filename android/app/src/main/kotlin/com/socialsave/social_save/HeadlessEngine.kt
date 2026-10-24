@@ -32,9 +32,11 @@ object HeadlessEngine {
     private var ready = false
     private val pending = ArrayList<Pair<String, Any?>>()
     private var lastTouch = 0L
+    private var holdUntil = 0L
     private val reaper = object : Runnable {
         override fun run() {
-            if (android.os.SystemClock.uptimeMillis() - lastTouch > 45000) shutdown() else main.postDelayed(this, 5000)
+            val now = android.os.SystemClock.uptimeMillis()
+            if (now < holdUntil || now - lastTouch <= 45000) main.postDelayed(this, 5000) else shutdown()
         }
     }
 
@@ -61,6 +63,7 @@ object HeadlessEngine {
             if (!ensure(context.applicationContext)) { ok = false; return@Runnable }
             if (ready) ch?.invokeMethod(method, args) else pending.add(method to args)
         }
+        if (method == "followCheck") holdUntil = android.os.SystemClock.uptimeMillis() + 15 * 60 * 1000
         if (Looper.myLooper() == Looper.getMainLooper()) run.run() else main.post(run)
         return ok
     }
@@ -153,7 +156,12 @@ object HeadlessEngine {
                 }
                 result.success(true)
             }
-            "moveToBack", "consumeQuickAction", "consumeSharedText" -> result.success(null)
+            "moveToBack", "consumeQuickAction", "consumeSharedText", "consumeSharedSet" -> result.success(null)
+            "scheduleFollow" -> {
+                if (m?.get("on") == true) FollowAlarm.schedule(app) else FollowAlarm.cancel(app)
+                result.success(true)
+            }
+            "mediaIdForPath" -> result.success(MediaIds.videoId(app, m?.get("path") as? String))
             "log" -> { android.util.Log.i("SocialSaveSession", (m?.get("m") as? String) ?: ""); result.success(null) }
             "scanFile" -> {
                 val p = m?.get("path") as? String
@@ -186,9 +194,10 @@ object HeadlessEngine {
             }
             "needsTiktokWork" -> {
                 val path = m?.get("path") as? String
+                val dest = m?.get("dest") as? String
                 Thread {
                     val needs = try {
-                        UploadPrep.needsWork(app, path)
+                        UploadPrep.needsWork(app, path, dest)
                     } catch (_: Exception) {
                         false
                     }
@@ -203,9 +212,10 @@ object HeadlessEngine {
             }
             "makeUploadReady" -> {
                 val path = m?.get("path") as? String
+                val dest = m?.get("dest") as? String
                 Thread {
                     val out = try {
-                        UploadPrep.prepare(app, path)
+                        UploadPrep.prepare(app, path, dest)
                     } catch (_: Exception) {
                         path
                     }

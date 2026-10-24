@@ -283,7 +283,8 @@ class PhoneBody(
         return dest.toString()
     }
 
-    fun clipSound(path: String, kind: String): Map<String, Any?> {
+    fun clipSound(path: String, kind: String, title: String? = null): Map<String, Any?> {
+        if (kind == "music") return keepMusic(path, title)
         val clipped = clipAudio(path) ?: return mapOf(
             "ok" to false,
             "needsSettings" to false,
@@ -329,7 +330,70 @@ class PhoneBody(
         }
     }
 
-    private fun clipAudio(path: String): File? {
+    private fun keepMusic(path: String, title: String?): Map<String, Any?> {
+        val full = try {
+            clipAudio(path, Long.MAX_VALUE)
+        } catch (_: Exception) {
+            null
+        } ?: return mapOf(
+            "ok" to false,
+            "needsSettings" to false,
+            "message" to "This video has no audio to use.",
+        )
+        val raw = title?.trim()?.ifEmpty { null } ?: "Saved sound"
+        val name = raw.replace(Regex("[\\\\/:*?\"<>|]"), " ").take(80)
+        val uri = publishMusic(full, "$name.m4a", name) ?: return mapOf(
+            "ok" to false,
+            "needsSettings" to false,
+            "message" to "Could not save that sound.",
+        )
+        full.delete()
+        return mapOf(
+            "ok" to true,
+            "needsSettings" to false,
+            "message" to "Saved in Music as $name.",
+            "uri" to uri.toString(),
+        )
+    }
+
+    private fun publishMusic(file: File, name: String, title: String): android.net.Uri? {
+        val values = android.content.ContentValues().apply {
+            put(MediaStore.Audio.Media.DISPLAY_NAME, name)
+            put(MediaStore.Audio.Media.MIME_TYPE, "audio/mp4")
+            put(MediaStore.Audio.Media.TITLE, title)
+            put(MediaStore.Audio.Media.ARTIST, title)
+            put(MediaStore.Audio.Media.IS_MUSIC, true)
+            put(MediaStore.Audio.Media.IS_RINGTONE, false)
+            put(MediaStore.Audio.Media.IS_NOTIFICATION, false)
+            put(MediaStore.Audio.Media.IS_ALARM, false)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Audio.Media.RELATIVE_PATH, Environment.DIRECTORY_MUSIC + "/SocialSave")
+                put(MediaStore.Audio.Media.IS_PENDING, 1)
+            }
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
+            val folder = File(dir, "SocialSave")
+            if (!folder.exists()) folder.mkdirs()
+            val target = File(folder, name)
+            file.copyTo(target, overwrite = true)
+            values.put(MediaStore.Audio.Media.DATA, target.absolutePath)
+            val uri = activity.contentResolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values)
+            MediaScannerConnection.scanFile(activity, arrayOf(target.absolutePath), arrayOf("audio/mp4"), null)
+            return uri
+        }
+        val collection = MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val uri = activity.contentResolver.insert(collection, values) ?: return null
+        activity.contentResolver.openOutputStream(uri)?.use { output ->
+            FileInputStream(file).use { input -> input.copyTo(output) }
+        } ?: return null
+        values.clear()
+        values.put(MediaStore.Audio.Media.IS_PENDING, 0)
+        activity.contentResolver.update(uri, values, null, null)
+        return uri
+    }
+
+    private fun clipAudio(path: String, limitUs: Long = 30_000_000L): File? {
         val extractor = MediaExtractor()
         try {
             extractor.setDataSource(path)
@@ -360,7 +424,6 @@ class PhoneBody(
             muxer.start()
             val buffer = ByteBuffer.allocate(256 * 1024)
             val info = android.media.MediaCodec.BufferInfo()
-            val limitUs = 30_000_000L
             while (true) {
                 val size = extractor.readSampleData(buffer, 0)
                 if (size < 0) break

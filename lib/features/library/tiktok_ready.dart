@@ -12,15 +12,24 @@ import 'package:social_save/core/storage/media_store_service.dart';
 
 const _videoExts = {'mp4', 'm4v', 'mov', 'mkv', 'webm'};
 
-/// Rewrites a video that is already on the phone so TikTok can open it.
+const _exportDests = <(String, String, String)>[
+  ('tiktok', 'TikTok', 'Fits the picture in 1080p. Portrait stays portrait. 30 fps, sound kept.'),
+  ('reels', 'Reels', 'A portrait 1080×1920 canvas. Landscape is letterboxed, not cropped.'),
+  ('shorts', 'Shorts', 'A portrait 1080×1920 canvas. Landscape is letterboxed, not cropped.'),
+  ('x', 'X', 'Fits the picture in 1080p, the same way TikTok does. Sound stays.'),
+];
+
+/// Rewrites a saved video for TikTok, Reels, Shorts, or X.
+/// The original download quality is unchanged until the person asks.
 /// Returns true when the library list should refresh.
 Future<bool> offerTiktokReady(
   BuildContext context, {
   required String path,
   required String title,
+  String dest = '',
 }) async {
   if (!Plat.isAndroid) {
-    _note(context, 'Preparing a video for TikTok runs on the phone.');
+    _note(context, 'Preparing a video for another app runs on the phone.');
     return false;
   }
   if (!File(path).existsSync()) {
@@ -29,25 +38,52 @@ Future<bool> offerTiktokReady(
   }
   final ext = path.split('.').last.toLowerCase();
   if (!_videoExts.contains(ext)) {
-    _note(context, 'This kind of file cannot be prepared for TikTok.');
+    _note(context, 'This kind of file cannot be prepared.');
     return false;
   }
+  var chosen = dest;
+  if (chosen.isEmpty) {
+    if (!context.mounted) return false;
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ListTile(
+              title: Text('Prepare for another app'),
+              subtitle: Text('The saved file stays until you pick one. This does not lower the download.'),
+            ),
+            for (final item in _exportDests)
+              ListTile(
+                title: Text(item.$2),
+                subtitle: Text(item.$3),
+                onTap: () => Navigator.pop(context, item.$1),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (picked == null || !context.mounted) return false;
+    chosen = picked;
+  }
+  final label = _exportDests.firstWhere((item) => item.$1 == chosen, orElse: () => _exportDests.first).$2;
   var needs = false;
   try {
-    needs = await MediaStoreService().needsTiktokWork(path);
+    needs = await MediaStoreService().needsTiktokWork(path, dest: chosen);
   } catch (_) {}
   if (!context.mounted) return false;
   if (!needs) {
-    _note(context, 'TikTok can already open this video.');
+    _note(context, '$label can already open this video.');
     return false;
   }
   final name = title.trim().isEmpty ? 'This video' : title.trim();
   final yes = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
-      title: const Text('Make this video work on TikTok?'),
+      title: Text('Make this video work on $label?'),
       content: Text(
-        '$name is a kind of video TikTok may not open. Social Save can remake it as 30 fps H.264, fitted to 1080p without stretching. Portrait stays portrait.',
+        '$name will be remade as 30 fps H.264 with the sound kept. The picture is fitted, not stretched or cropped. The file you downloaded stays until this finishes.',
       ),
       actions: [
         TextButton(
@@ -62,18 +98,18 @@ Future<bool> offerTiktokReady(
     ),
   );
   if (yes != true || !context.mounted) return false;
-  final close = showTiktokPrepProgress(context);
+  final close = showTiktokPrepProgress(context, label: label);
   await Future<void>.delayed(const Duration(milliseconds: 80));
   String? ready;
   try {
-    ready = await MediaStoreService().makeUploadReady(path);
+    ready = await MediaStoreService().makeUploadReady(path, dest: chosen);
   } catch (_) {
     ready = path;
   }
   final out = (ready == null || ready.isEmpty) ? path : ready;
   var stillNeeds = true;
   try {
-    stillNeeds = await MediaStoreService().needsTiktokWork(out);
+    stillNeeds = await MediaStoreService().needsTiktokWork(out, dest: chosen);
   } catch (_) {}
   try {
     await MediaStoreService().scanFile(out);
@@ -84,7 +120,7 @@ Future<bool> offerTiktokReady(
       context,
       stillNeeds
           ? 'Could not rewrite it. The original file is still here.'
-          : 'This video is ready for TikTok.',
+          : 'This video is ready for $label.',
     );
   }
   return true;
@@ -95,8 +131,8 @@ void _note(BuildContext context, String text) {
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 }
 
-/// Opens the live TikTok-ready progress dialog. Call the result to close it.
-VoidCallback showTiktokPrepProgress(BuildContext context) {
+/// Opens the live export progress dialog. Call the result to close it.
+VoidCallback showTiktokPrepProgress(BuildContext context, {String label = 'TikTok'}) {
   BuildContext? dialogCtx;
   var closed = false;
   unawaited(showDialog<void>(
@@ -105,7 +141,7 @@ VoidCallback showTiktokPrepProgress(BuildContext context) {
     useRootNavigator: true,
     builder: (c) {
       dialogCtx = c;
-      return const PopScope(canPop: false, child: TiktokPrepProgress());
+      return PopScope(canPop: false, child: TiktokPrepProgress(label: label));
     },
   ).whenComplete(() => closed = true));
   return () {
@@ -120,7 +156,9 @@ VoidCallback showTiktokPrepProgress(BuildContext context) {
 /// The native side reports the encoded frame time over the duration every
 /// 250 ms; the bar eases toward it and never moves back.
 class TiktokPrepProgress extends StatefulWidget {
-  const TiktokPrepProgress({super.key});
+  const TiktokPrepProgress({super.key, this.label = 'TikTok'});
+
+  final String label;
 
   @override
   State<TiktokPrepProgress> createState() => _TiktokPrepProgressState();
@@ -212,7 +250,7 @@ class _TiktokPrepProgressState extends State<TiktokPrepProgress> with SingleTick
                 Icon(_repack ? Icons.check_circle_rounded : Icons.auto_awesome_rounded, color: scheme.primary, size: 22),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Text(_repack ? 'Already TikTok-ready' : 'Making it TikTok-ready',
+                  child: Text(_repack ? 'Already ${widget.label}-ready' : 'Making it ${widget.label}-ready',
                       style: theme.textTheme.titleMedium?.copyWith(color: scheme.onSurface, fontWeight: FontWeight.w600)),
                 ),
                 Text('$pct%',
@@ -230,7 +268,7 @@ class _TiktokPrepProgressState extends State<TiktokPrepProgress> with SingleTick
               ),
             ),
             const SizedBox(height: 12),
-            Text(_repack && _stage == 'Already TikTok-ready' ? 'Repacking, no conversion needed' : _stage,
+            Text(_repack ? 'Repacking, no conversion needed' : _stage,
                 style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurface)),
             if (info.isNotEmpty)
               Padding(

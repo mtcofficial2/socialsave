@@ -735,6 +735,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         Media(uri, httpHeaders: headers, start: startAt),
         play: widget.autoPlay,
       );
+      if (session.filePath != null) await _attachSidecar(session.filePath!);
       final audio = session.audioUrl;
       if (network && audio != null && audio.isNotEmpty) {
         // Preview of a split video+audio stream: add the audio as a track.
@@ -774,6 +775,22 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
               : 'Could not play this file in SocialSave.';
         });
       }
+    }
+  }
+
+  /// Loads a caption file saved beside the video. A missing file changes nothing.
+  Future<void> _attachSidecar(String path) async {
+    final dot = path.lastIndexOf('.');
+    final base = dot > 0 ? path.substring(0, dot) : path;
+    for (final ext in const ['.srt', '.vtt', '.ass']) {
+      final file = File('$base$ext');
+      if (!file.existsSync() || file.lengthSync() < 8) continue;
+      try {
+        await _player.setSubtitleTrack(
+          SubtitleTrack.uri(Uri.file(file.path).toString(), title: 'Captions'),
+        );
+      } catch (_) {}
+      return;
     }
   }
 
@@ -2872,6 +2889,14 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                     title: _session.title,
                   ));
                 }
+                if (v == 'keep') {
+                  final author = _session.author?.trim();
+                  unawaited(showKeepSound(
+                    context,
+                    _session.filePath!,
+                    title: (author != null && author.isNotEmpty) ? author : _session.title,
+                  ));
+                }
               },
               itemBuilder: (_) => [
                 if (_session.filePath != null && !_session.isVault && ShareSession.active)
@@ -2900,9 +2925,14 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                     child: Text('Open in another app'),
                   ),
                   if (!DesktopSupport.isWindows)
-                    PopupMenuItem(
+                    const PopupMenuItem(
                       value: 'tiktok',
-                      child: Text('Make TikTok ready'),
+                      child: Text('Prepare for another app'),
+                    ),
+                  if (!DesktopSupport.isWindows)
+                    const PopupMenuItem(
+                      value: 'keep',
+                      child: Text('Keep the sound'),
                     ),
                 ],
               ],

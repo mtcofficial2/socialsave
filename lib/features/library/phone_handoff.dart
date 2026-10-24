@@ -20,6 +20,8 @@ import 'package:social_save/features/library/pc_hotspot.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:social_save/features/library/nearby_service.dart';
 import 'package:social_save/features/library/session_ui.dart';
+import 'package:social_save/features/downloader/follow_creator.dart';
+import 'package:social_save/features/library/library_sync.dart';
 import 'package:social_save/features/library/share_session.dart';
 import 'package:social_save/features/library/transfer_boost.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
@@ -2399,6 +2401,22 @@ Future<bool> _receiveHandoff(BuildContext context, String raw, {String? mode, bo
   return file != null;
 }
 
+Future<void> showKeepSound(BuildContext context, String path, {String? title}) async {
+  if (!Plat.isAndroid) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Saving the sound into Music runs on the phone.')),
+    );
+    return;
+  }
+  final messenger = ScaffoldMessenger.of(context);
+  messenger.showSnackBar(const SnackBar(content: Text('Saving the sound…')));
+  final result = await PhoneBody.clipSound(path: path, kind: 'music', title: title);
+  if (!context.mounted) return;
+  messenger.showSnackBar(
+    SnackBar(content: Text(result.message.isEmpty ? 'Could not save that sound.' : result.message)),
+  );
+}
+
 Future<void> showSoundClip(BuildContext context, String path) async {
   final kind = await showModalBottomSheet<String>(
     context: context,
@@ -2937,6 +2955,11 @@ void installOverlayHandlers(ProviderContainer? Function() container) {
     if (url == null) return;
     await runBgDownload(c, '${args['pref'] ?? 'best'}', url);
   });
+  MediaEvents.on('followCheck', (_) async {
+    final c = container();
+    if (c == null) return;
+    await FollowCreator.run(c);
+  });
 }
 
 /// One yt-dlp analysis per link at a time: the card's prefetch and a Download
@@ -3000,6 +3023,7 @@ ProviderContainer? _appContainer() {
 }
 
 void listenForQuickActions() {
+  LibrarySync.containerOf = _appContainer;
   installOverlayHandlers(_appContainer);  if (!Plat.isAndroid) return;
   var busy = false;
   Future<void> run(Object? action) async {
@@ -3069,6 +3093,14 @@ void listenForQuickActions() {
     if (sharing) return;
     sharing = true;
     try {
+      String? setUrl;
+      try {
+        setUrl = await MediaEvents.channel.invokeMethod<String>('consumeSharedSet');
+      } catch (_) {}
+      if (setUrl != null && setUrl.trim().isNotEmpty) {
+        appRouter.push('/playlist', extra: setUrl.trim());
+        return;
+      }
       String? text;
       try {
         text = await MediaEvents.channel.invokeMethod<String>('consumeSharedText');
@@ -3088,6 +3120,7 @@ void listenForQuickActions() {
   }
 
   MediaEvents.on('sharedText', shared);
+  MediaEvents.on('sharedSet', shared);
   MediaEvents.on('quickAction', run);
   WidgetsBinding.instance.addPostFrameCallback((_) async {
     try {

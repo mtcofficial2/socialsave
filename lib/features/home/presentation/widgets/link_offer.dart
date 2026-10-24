@@ -5,12 +5,17 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/di/providers.dart';
+import 'package:social_save/core/errors/error_messages.dart';
 import 'package:social_save/core/errors/exceptions.dart';
 import 'package:social_save/core/notifications/notification_service.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/core/utils/platform_detector.dart';
+import 'package:social_save/core/utils/set_link.dart';
 import 'package:social_save/core/utils/url_validator.dart';
+import 'package:social_save/features/downloads/domain/entities/download_record.dart';
+import 'package:social_save/features/library/library_catalog.dart';
 import 'package:social_save/features/downloader/presentation/providers/download_manager.dart';
+import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
 import 'package:social_save/features/home/presentation/widgets/quality_pick.dart';
 import 'package:social_save/shared/models/media_format.dart';
@@ -52,7 +57,12 @@ String _clock(int s) {
 
 /// Shows the quiet "Download this video?" sheet (phone) or dialog (desktop).
 /// It analyses [url] first. [auto] keeps failures silent.
+/// A public set opens the set screen instead of a one-video sheet.
 Future<void> offerLink(String url, {bool auto = false}) async {
+  if (isPublicSet(url)) {
+    appRouter.push('/playlist', extra: url);
+    return;
+  }
   final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
   if (ctx == null || !ctx.mounted) return;
   final wide = MediaQuery.sizeOf(ctx).width >= 700;
@@ -124,6 +134,22 @@ class _OfferSheetState extends ConsumerState<_OfferSheet> {
     setState(() => _error = message);
   }
 
+  Future<void> _later() async {
+    final media = _media;
+    if (media == null || _starting) return;
+    HapticFeedback.lightImpact();
+    await ref.read(libraryCatalogProvider.notifier).addLater(WatchLaterItem(
+          url: media.sourceUrl,
+          title: media.title,
+          platform: media.platform.id,
+          author: media.author,
+        ));
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    Navigator.of(context).pop();
+    messenger?.showSnackBar(const SnackBar(content: Text('Saved for later. Nothing was downloaded.')));
+  }
+
   Future<void> _download() async {
     final media = _media;
     final format = _fmt ?? media?.defaultFormat;
@@ -140,6 +166,11 @@ class _OfferSheetState extends ConsumerState<_OfferSheet> {
         action: SnackBarAction(label: 'View', onPressed: () => appRouter.push('/progress/${task.id}')),
       ));
     } on AppException catch (e) {
+      if (!mounted) return;
+      if (await showAlreadySaved(context, e)) {
+        if (mounted) Navigator.of(context).pop();
+        return;
+      }
       if (mounted) {
         setState(() {
           _starting = false;
@@ -175,9 +206,20 @@ class _OfferSheetState extends ConsumerState<_OfferSheet> {
         ),
       );
     } else if (media == null) {
-      body = SizedBox(
-        height: 90,
-        child: Center(child: Text(_error!, textAlign: TextAlign.center, style: TextStyle(color: muted))),
+      body = Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(_error!, textAlign: TextAlign.center, style: TextStyle(color: muted)),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: () {
+              final target = widget.url;
+              Navigator.of(context).pop();
+              appRouter.push('/browse', extra: target);
+            },
+            child: const Text('Open in Browse'),
+          ),
+        ],
       );
     } else {
       final dur = media.durationSeconds;
@@ -264,10 +306,41 @@ class _OfferSheetState extends ConsumerState<_OfferSheet> {
               ),
             ),
           ]),
+          if (canDownload)
+            TextButton(
+              onPressed: _starting ? null : _later,
+              child: const Text('Watch later'),
+            ),
         ]),
       ),
     );
   }
+}
+
+/// True when [error] means the post is already in the library.
+/// Offers to open that file.
+Future<bool> showAlreadySaved(BuildContext context, Object error) async {
+  if (error is! AppException || error.message != ErrorMessages.alreadySaved) return false;
+  final record = error.cause;
+  if (record is! DownloadRecord || !context.mounted) {
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      const SnackBar(content: Text(ErrorMessages.alreadySaved)),
+    );
+    return true;
+  }
+  final open = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Already saved'),
+      content: Text('${record.title} is already in your library. The existing file was kept.'),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Close')),
+        FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Open')),
+      ],
+    ),
+  );
+  if (open == true && context.mounted) await openInAppPlayer(context, record);
+  return true;
 }
 
 /// Watches the clipboard for a copied video link: when the app opens or

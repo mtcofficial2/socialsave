@@ -62,11 +62,6 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
             <intent-filter>
-                <action android:name="android.intent.action.SEND"/>
-                <category android:name="android.intent.category.DEFAULT"/>
-                <data android:mimeType="text/plain"/>
-            </intent-filter>
-            <intent-filter>
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <data android:scheme="content" android:mimeType="video/*"/>
@@ -139,6 +134,19 @@
                 android:value="Floating bubble that offers to download a copied video link" />
         </service>
         <activity
+            android:name=".ShareRelayActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="text/plain"/>
+            </intent-filter>
+        </activity>
+        <activity
             android:name=".ClipboardPeekActivity"
             android:exported="false"
             android:excludeFromRecents="true"
@@ -166,6 +174,9 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+        <receiver
+            android:name=".FollowAlarmReceiver"
+            android:exported="false" />
         <receiver
             android:name=".SocialSaveWidget"
             android:exported="true">

@@ -13,9 +13,12 @@ import 'package:social_save/features/downloader/presentation/providers/download_
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
 import 'package:social_save/features/downloads/presentation/providers/downloads_controller.dart';
 import 'package:social_save/features/home/presentation/providers/home_controller.dart';
+import 'package:social_save/features/home/presentation/widgets/link_offer.dart';
+import 'package:social_save/features/library/image_device_stamp.dart';
 import 'package:social_save/features/library/vault_actions.dart';
 import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/shared/models/download_status.dart';
+import 'package:social_save/shared/models/download_task.dart';
 import 'package:social_save/shared/widgets/glass.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
 import 'package:social_save/shared/widgets/skeleton.dart';
@@ -37,7 +40,14 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
   @override
   Widget build(BuildContext context) {
     final history = ref.watch(downloadsControllerProvider);
-    final active = ref.watch(downloadManagerProvider).active;
+    final tasks = ref.watch(downloadManagerProvider).tasks.values.toList();
+    final active = tasks.where((task) => task.status.isActive).toList();
+    final waiting = tasks.where((task) =>
+        task.status == DownloadStatus.queued ||
+        task.status == DownloadStatus.waitingWifi ||
+        task.status == DownloadStatus.waitingPower ||
+        task.status == DownloadStatus.paused).toList();
+    final failed = tasks.where((task) => task.status == DownloadStatus.failed).toList();
     final scheme = Theme.of(context).colorScheme;
     final formatters = ref.watch(formattersProvider);
 
@@ -77,9 +87,15 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                   .where((item) => (item.format ?? '').toLowerCase().contains('m4a') ||
                       (item.quality ?? '').toLowerCase().contains('audio'))
                   .toList();
+            } else if (_filter == 'Failed' || _filter == 'Waiting') {
+              filtered = const [];
             }
             final showActive = _filter == 'All' || _filter == 'In Progress';
-            final empty = filtered.isEmpty && (!showActive || active.isEmpty);
+            final showWaiting = _filter == 'Waiting';
+            final showFailed = _filter == 'All' || _filter == 'Failed';
+            final queue = showWaiting ? waiting : (showActive ? active : const <DownloadTask>[]);
+            final problems = showFailed ? failed : const <DownloadTask>[];
+            final empty = filtered.isEmpty && queue.isEmpty && problems.isEmpty;
 
             return Column(
               children: [
@@ -119,6 +135,19 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                               count: '${records.where((item) => item.status == DownloadStatus.completed).length}',
                               selected: _filter == 'Completed',
                               onTap: () => setState(() => _filter = 'Completed'),
+                            ),
+                            _FilterChip(
+                              label: 'Waiting',
+                              count: '${waiting.length}',
+                              selected: _filter == 'Waiting',
+                              onTap: () => setState(() => _filter = 'Waiting'),
+                            ),
+                            _FilterChip(
+                              label: 'Failed',
+                              count: '${failed.length}',
+                              highlightCount: failed.isNotEmpty,
+                              selected: _filter == 'Failed',
+                              onTap: () => setState(() => _filter = 'Failed'),
                             ),
                             _FilterChip(
                               label: 'Audio',
@@ -167,8 +196,8 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                       : ListView(
                           padding: pagePadding(context, top: 8, bottom: 24 + MediaQuery.paddingOf(context).bottom),
                           children: [
-                            if (showActive)
-                              ...active.map((task) {
+                            if (queue.isNotEmpty)
+                              ...queue.map((task) {
                                 final pct = (task.progress * 100).round();
                                 return Padding(
                                   padding: const EdgeInsets.only(bottom: 12),
@@ -252,11 +281,30 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                                                         color: scheme.onSurfaceVariant,
                                                       ),
                                                     ),
+                                                    Text(
+                                                      (task.errorMessage != null && task.errorMessage!.isNotEmpty)
+                                                          ? task.errorMessage!
+                                                          : task.status.label,
+                                                      maxLines: 2,
+                                                      overflow: TextOverflow.ellipsis,
+                                                      style: TextStyle(
+                                                        fontSize: 12,
+                                                        color: scheme.onSurfaceVariant,
+                                                      ),
+                                                    ),
                                                   ],
                                                 ),
                                               ),
                                               Column(
                                                 children: [
+                                                  if (task.status.canResume)
+                                                    IconButton(
+                                                      tooltip: 'Resume',
+                                                      onPressed: () => ref
+                                                          .read(downloadManagerProvider.notifier)
+                                                          .resume(task.id),
+                                                      icon: const Icon(Icons.play_arrow_rounded, size: 18),
+                                                    ),
                                                   IconButton(
                                                     onPressed: task.status.canPause
                                                         ? () => ref
@@ -297,6 +345,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                                   ),
                                 );
                               }),
+                            ...problems.map((task) => _FailedCard(task: task)),
                             ...filtered.map((record) => _HistoryCard(record: record)),
                           ],
                         ),
@@ -404,10 +453,57 @@ class _FilterChip extends StatelessWidget {
   }
 }
 
+class _FailedCard extends ConsumerWidget {
+  const _FailedCard({required this.task});
+
+  final DownloadTask task;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final scheme = Theme.of(context).colorScheme;
+    final why = (task.errorMessage != null && task.errorMessage!.isNotEmpty)
+        ? task.errorMessage!
+        : 'This download stopped.';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: GlassCard(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(task.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 4),
+              Text(why, style: TextStyle(color: scheme.error, height: 1.35)),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton.tonalIcon(
+                  onPressed: () => ref.read(downloadManagerProvider.notifier).retry(task.id),
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: const Text('Retry'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _HistoryCard extends ConsumerWidget {
   const _HistoryCard({required this.record});
 
   final DownloadRecord record;
+
+  bool get _onOtherDevice =>
+      record.id.startsWith('sync:') && record.sourceUrl.trim().isNotEmpty;
+
+  Future<void> _open(BuildContext context) {
+    if (_onOtherDevice) return offerLink(record.sourceUrl);
+    return openInAppPlayer(context, record);
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -494,7 +590,7 @@ class _HistoryCard extends ConsumerWidget {
               Row(
                 children: [
                   GestureDetector(
-                    onTap: () => openInAppPlayer(context, record),
+                    onTap: () => _open(context),
                     child: SizedBox(
                       width: 72,
                       height: 72,
@@ -581,12 +677,14 @@ class _HistoryCard extends ConsumerWidget {
                   ),
                   PopupMenuButton<String>(
                     onSelected: (value) => _handle(context, ref, value),
-                    itemBuilder: (context) => const [
-                      PopupMenuItem(value: 'open', child: Text('Play')),
-                      PopupMenuItem(value: 'vault', child: Text('Move to vault')),
-                      PopupMenuItem(value: 'share', child: Text('Share')),
-                      PopupMenuItem(value: 'redownload', child: Text('Download again')),
-                      PopupMenuItem(value: 'delete', child: Text('Delete')),
+                    itemBuilder: (context) => [
+                      PopupMenuItem(value: 'open', child: Text(_onOtherDevice ? 'Download' : 'Play')),
+                      if (!_onOtherDevice && isStillPhotoPath(record.localPath, record.format))
+                        const PopupMenuItem(value: 'camera', child: Text('This device took it')),
+                      if (!_onOtherDevice) const PopupMenuItem(value: 'vault', child: Text('Move to vault')),
+                      if (!_onOtherDevice) const PopupMenuItem(value: 'share', child: Text('Share')),
+                      const PopupMenuItem(value: 'redownload', child: Text('Download again')),
+                      const PopupMenuItem(value: 'delete', child: Text('Delete')),
                     ],
                   ),
                 ],
@@ -598,13 +696,15 @@ class _HistoryCard extends ConsumerWidget {
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      'Saved on this device',
+                      _onOtherDevice ? 'Saved on your other device' : 'Saved on this device',
                       style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                     ),
                   ),
-                  _roundIcon(context, Icons.share_outlined, () => _handle(context, ref, 'share')),
-                  const SizedBox(width: 8),
-                  _roundIcon(context, Icons.open_in_new, () => _handle(context, ref, 'open')),
+                  if (!_onOtherDevice) ...[
+                    _roundIcon(context, Icons.share_outlined, () => _handle(context, ref, 'share')),
+                    const SizedBox(width: 8),
+                  ],
+                  _roundIcon(context, _onOtherDevice ? Icons.download_rounded : Icons.open_in_new, () => _handle(context, ref, 'open')),
                 ],
               ),
             ],
@@ -631,7 +731,7 @@ class _HistoryCard extends ConsumerWidget {
     try {
       switch (value) {
         case 'open':
-          await openInAppPlayer(context, record);
+          await _open(context);
         case 'vault':
           if (kIsWeb) {
             await ref.read(webLibraryProvider.notifier).update(record.id, (m) => m.copyWith(vault: true));
@@ -643,8 +743,23 @@ class _HistoryCard extends ConsumerWidget {
           } else {
             await moveDownloadToVault(context, ref, record);
           }
+        case 'camera':
+          final path = record.localPath;
+          if (path == null || path.isEmpty) {
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('That picture is not on this device.')),
+              );
+            }
+          } else {
+            await useDeviceCameraDetails(context, path);
+          }
         case 'share':
-          await controller.share(record);
+          if (_onOtherDevice) {
+            await _open(context);
+          } else {
+            await controller.share(record);
+          }
         case 'redownload':
           ref.read(homeControllerProvider.notifier).setUrl(record.sourceUrl);
           if (context.mounted) context.go('/');

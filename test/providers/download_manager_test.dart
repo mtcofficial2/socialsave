@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/network/connectivity_service.dart';
 import 'package:social_save/core/storage/download_path_service.dart';
@@ -97,6 +98,7 @@ void main() {
   late MockNotificationService notifications;
 
   setUp(() async {
+    SharedPreferences.setMockInitialValues({});
     temp = await Directory.systemTemp.createTemp('socialsave');
     media = MockMediaRepository();
     downloader = _RecordingDownloader();

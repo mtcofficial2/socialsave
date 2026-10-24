@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/core/utils/platform_detector.dart';
+import 'package:social_save/core/utils/set_link.dart';
 import 'package:social_save/features/home/presentation/widgets/link_offer.dart';
 import 'package:social_save/shared/models/social_platform.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -50,7 +53,10 @@ String _toUrl(String input) {
 }
 
 class BrowseScreen extends StatefulWidget {
-  const BrowseScreen({super.key});
+  const BrowseScreen({super.key, this.initialUrl});
+
+  final String? initialUrl;
+
   @override
   State<BrowseScreen> createState() => _BrowseScreenState();
 }
@@ -77,6 +83,13 @@ class _BrowseScreenState extends State<BrowseScreen> {
           onUrlChange: (c) => _sync(c.url),
           onPageFinished: (u) => _sync(u),
         ));
+    }
+    final start = widget.initialUrl?.trim() ?? '';
+    if (start.isNotEmpty) {
+      _field.text = start;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_go(start));
+      });
     }
   }
 
@@ -118,7 +131,9 @@ class _BrowseScreenState extends State<BrowseScreen> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final canDl = isDownloadablePage(_url) || (!_embedded && isDownloadablePage(_toUrl(_field.text)));
+    final page = _embedded ? _url : _toUrl(_field.text);
+    final set = isPublicSet(page);
+    final canDl = set || isDownloadablePage(page);
     return PopScope(
       canPop: !(_embedded && _canBack),
       onPopInvokedWithResult: (didPop, _) {
@@ -211,9 +226,9 @@ class _BrowseScreenState extends State<BrowseScreen> {
         floatingActionButton: canDl
             ? FloatingActionButton.extended(
                 key: const ValueKey('browse-download'),
-                onPressed: () => offerLink(_embedded ? _url : _toUrl(_field.text)),
+                onPressed: () => offerLink(page),
                 icon: const Icon(Icons.download_rounded),
-                label: const Text('Download'),
+                label: Text(set ? 'Save this set' : 'Download'),
               )
             : null,
       ),

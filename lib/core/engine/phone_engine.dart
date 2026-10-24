@@ -42,6 +42,17 @@ class PhoneEngine {
     return enabled.value;
   }
 
+  /// Public captions beside a saved YouTube or TikTok file. False when the
+  /// phone has no engine or the post has no public captions. Never throws.
+  static Future<bool> saveCaptions({required String url, required String beside}) async {
+    if (!Plat.isAndroid) return false;
+    try {
+      return await _channel.invokeMethod<bool>('captions', {'url': url, 'beside': beside}) ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   static Future<void> setEnabled(bool value) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_enabledKey, value);

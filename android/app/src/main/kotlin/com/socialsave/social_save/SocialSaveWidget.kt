@@ -13,8 +13,9 @@ class SocialSaveWidget : AppWidgetProvider() {
         appWidgetManager: AppWidgetManager,
         appWidgetIds: IntArray,
     ) {
-        val launch = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        val launch = Intent(context, ClipboardPeekActivity::class.java).apply {
+            putExtra("t0", android.os.SystemClock.uptimeMillis())
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
         }
         val pending = PendingIntent.getActivity(
             context,
@@ -24,6 +25,8 @@ class SocialSaveWidget : AppWidgetProvider() {
         )
         for (id in appWidgetIds) {
             val views = RemoteViews(context.packageName, R.layout.socialsave_widget)
+            views.setTextViewText(R.id.widget_title, "SocialSave")
+            views.setTextViewText(R.id.widget_subtitle, "Download a copied link")
             views.setOnClickPendingIntent(R.id.widget_root, pending)
             appWidgetManager.updateAppWidget(id, views)
         }

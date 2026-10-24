@@ -98,6 +98,11 @@ object PhoneEngine {
                     jobs.remove(id)?.dir?.deleteRecursively()
                     result.success(true)
                 }
+                "captions" -> {
+                    val url = call.argument<String>("url") ?: ""
+                    val beside = call.argument<String>("beside") ?: ""
+                    background(result) { writeCaptions(url, beside) }
+                }
                 else -> result.notImplemented()
             }
         }
@@ -193,6 +198,57 @@ object PhoneEngine {
             file.writeText(out.substring(start))
             infoCache[cacheKey(url)] = SystemClock.elapsedRealtime() to file
         } catch (_: Throwable) {}
+    }
+
+    /**
+     * Public captions only. Writes one sidecar next to [beside] and never
+     * throws into the download. A phone without the arm64 engine returns false.
+     */
+    private fun writeCaptions(url: String, beside: String): Boolean {
+        if (!supported() || url.isBlank() || beside.isBlank()) return false
+        val lower = url.lowercase()
+        if (!lower.contains("youtube") && !lower.contains("youtu.be") && !lower.contains("tiktok")) return false
+        val video = File(beside)
+        if (!video.isFile) return false
+        return try {
+            prepare()
+            val dir = File(app.cacheDir, "caps_" + System.nanoTime()).apply { mkdirs() }
+            try {
+                val request = YoutubeDLRequest(url)
+                    .addOption("--skip-download")
+                    .addOption("--write-subs")
+                    .addOption("--write-auto-subs")
+                    .addOption("--sub-langs", "en.*,en")
+                    .addOption("--convert-subs", "srt")
+                    .addOption("--no-playlist")
+                    .addOption("--ignore-config")
+                    .addOption("--no-warnings")
+                    .addOption("--socket-timeout", "20")
+                    .addOption("-o", File(dir, "cap.%(ext)s").absolutePath)
+                if (isYouTube(url)) youtubeOptions(request, "web_embedded")
+                YoutubeDL.execute(request)
+                val sub = findCaption(dir) ?: return false
+                val dest = File(video.parentFile, video.nameWithoutExtension + "." + sub.extension.lowercase())
+                sub.copyTo(dest, overwrite = true)
+                dest.isFile && dest.length() > 8
+            } finally {
+                dir.deleteRecursively()
+            }
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun findCaption(dir: File): File? {
+        val files = dir.listFiles() ?: return null
+        for (file in files) {
+            if (file.isDirectory) {
+                findCaption(file)?.let { return it }
+            } else if (file.extension.lowercase() in setOf("srt", "vtt", "ass") && file.length() > 8) {
+                return file
+            }
+        }
+        return null
     }
 
     private fun isYouTube(url: String): Boolean {

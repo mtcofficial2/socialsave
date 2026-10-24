@@ -180,11 +180,13 @@ class PhoneBody {
   static Future<PhoneClipResult> clipSound({
     required String path,
     required String kind,
+    String? title,
   }) async {
     try {
       final raw = await MediaEvents.channel.invokeMethod<Object?>('clipSound', {
         'path': path,
         'kind': kind,
+        if (title != null && title.trim().isNotEmpty) 'title': title.trim(),
       });
       if (raw is! Map) {
         return const PhoneClipResult(

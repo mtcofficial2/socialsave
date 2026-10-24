@@ -22,9 +22,9 @@ class MediaStoreService {
     }
   }
 
-  Future<bool> needsTiktokWork(String path) async {
+  Future<bool> needsTiktokWork(String path, {String dest = 'tiktok'}) async {
     try {
-      return await _channel.invokeMethod<bool>('needsTiktokWork', {'path': path}) ?? false;
+      return await _channel.invokeMethod<bool>('needsTiktokWork', {'path': path, 'dest': dest}) ?? false;
     } catch (_) {
       return false;
     }
@@ -42,12 +42,28 @@ class MediaStoreService {
 
   /// Rewrites a video TikTok cannot decode into 30 fps H.264 and AAC-LC.
   /// Landscape fits in 1920×1080. Portrait stays portrait. Returns the path to keep.
-  Future<String?> makeUploadReady(String path) async {
+  Future<String?> makeUploadReady(String path, {String dest = 'tiktok'}) async {
     try {
-      return await _channel.invokeMethod<String>('makeUploadReady', {'path': path});
+      return await _channel.invokeMethod<String>('makeUploadReady', {'path': path, 'dest': dest});
     } catch (_) {
       return path;
     }
+  }
+
+  /// MediaStore id for a saved video, or null when it is not indexed yet.
+  Future<String?> mediaIdForPath(String path) async {
+    try {
+      final id = await _channel.invokeMethod<String>('mediaIdForPath', {'path': path});
+      if (id == null || id.isEmpty) return null;
+      return id;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Writes a new file with the sidecar captions drawn on. The original stays.
+  Future<String?> burnCaptions(String path) async {
+    return await _channel.invokeMethod<String>('burnCaptions', {'path': path});
   }
 
   /// Stops a TikTok rewrite that is still running, for example when a download is cancelled.

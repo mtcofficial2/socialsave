@@ -73,10 +73,15 @@ object StatusPrep {
         }
     }
 
-    fun share(activity: Activity, path: String?, business: Boolean): String {
+    fun share(activity: Activity, path: String?, target: String): String {
         val file = File(path ?: return "missing")
         if (!file.exists()) return "missing"
-        val pkg = if (business) "com.whatsapp.w4b" else "com.whatsapp"
+        val pkg = when (target) {
+            "instagram" -> "com.instagram.android"
+            "facebook" -> "com.facebook.katana"
+            "business" -> "com.whatsapp.w4b"
+            else -> "com.whatsapp"
+        }
         val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", file)
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "video/mp4"

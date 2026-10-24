@@ -65,6 +65,7 @@ flutter {
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
     implementation("androidx.core:core-ktx:1.16.0")
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
     // On-phone engine for "Download on this phone (no server)" (as in Seal).
     implementation("io.github.junkfood02.youtubedl-android:library:0.18.1")
     implementation("io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1")

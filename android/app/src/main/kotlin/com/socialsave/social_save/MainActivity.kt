@@ -41,6 +41,7 @@ class MainActivity : FlutterFragmentActivity() {
     private var wifiLockPerf: android.net.wifi.WifiManager.WifiLock? = null
     private var multicastLock: android.net.wifi.WifiManager.MulticastLock? = null
     private var pendingShare: String? = null
+    private var pendingSet: String? = null
     private var openedVideo: Map<String, String>? = null
     private var pendingQuickAction: String? = null
     private var pipAllowed = false
@@ -155,6 +156,34 @@ class MainActivity : FlutterFragmentActivity() {
      * file itself when MediaStore knows it, otherwise a streamed copy.
      */
     private var pickVideoResult: MethodChannel.Result? = null
+    private var pickImageResult: MethodChannel.Result? = null
+    private val openImage = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val pending = pickImageResult
+        pickImageResult = null
+        if (pending == null) return@registerForActivityResult
+        if (uri == null) {
+            pending.success(null)
+            return@registerForActivityResult
+        }
+        io.execute {
+            try {
+                val direct = readablePathFor(uri)
+                val path = direct ?: run {
+                    val name = safeName(displayName(uri) ?: "photo.jpg")
+                    val out = File(freshSendDir(), name)
+                    contentResolver.openInputStream(uri)?.use { input ->
+                        FileOutputStream(out).use { input.copyTo(it, 1 shl 20) }
+                    }
+                    out.absolutePath
+                }
+                runOnUiThread {
+                    pending.success(mapOf("path" to path, "name" to (displayName(uri) ?: File(path).name)))
+                }
+            } catch (error: Exception) {
+                runOnUiThread { pending.error("pick_failed", error.message, null) }
+            }
+        }
+    }
     private val openVideo = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val pending = pickVideoResult
         pickVideoResult = null
@@ -192,6 +221,7 @@ class MainActivity : FlutterFragmentActivity() {
                 val base = when (parts.getOrNull(0)) {
                     "video" -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
                     "audio" -> MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+                    "image" -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
                     else -> null
                 }
                 if (id != null && base != null) mediaUri = ContentUris.withAppendedId(base, id)
@@ -384,6 +414,7 @@ class MainActivity : FlutterFragmentActivity() {
         }
 
         const val EXTRA_QUICK_ACTION = "socialsave_quick_action"
+        const val EXTRA_SHARED_SET = "ss_set"
         private const val ENGINE_ID = "socialsave_main"
 
         /** Ends the engine that outlived its activity (session over, app closed). */
@@ -716,10 +747,33 @@ class MainActivity : FlutterFragmentActivity() {
                     BubbleService.stop(this)
                     result.success(true)
                 }
+                "scheduleFollow" -> {
+                    if (call.argument<Boolean>("on") == true) FollowAlarm.schedule(this) else FollowAlarm.cancel(this)
+                    result.success(true)
+                }
                 "consumeSharedText" -> {
                     val text = pendingShare
                     pendingShare = null
                     result.success(text)
+                }
+                "consumeSharedSet" -> {
+                    val text = pendingSet
+                    pendingSet = null
+                    result.success(text)
+                }
+                "mediaIdForPath" -> {
+                    result.success(MediaIds.videoId(this, call.argument<String>("path")))
+                }
+                "burnCaptions" -> {
+                    val path = call.argument<String>("path")
+                    io.execute {
+                        try {
+                            val out = CaptionFiles.burn(applicationContext, path)
+                            runOnUiThread { result.success(out) }
+                        } catch (e: Exception) {
+                            runOnUiThread { result.error("captions", e.message ?: "Could not burn the captions in", null) }
+                        }
+                    }
                 }
                 "consumeQuickAction" -> {
                     val action = pendingQuickAction
@@ -826,11 +880,33 @@ class MainActivity : FlutterFragmentActivity() {
                     pickVideoResult = result
                     openVideo.launch(arrayOf("video/*", "audio/*"))
                 }
-                "needsTiktokWork" -> {
+                "pickImage" -> {
+                    if (pickImageResult != null) {
+                        result.error("busy", "A file picker is already open", null)
+                        return@setMethodCallHandler
+                    }
+                    pickImageResult = result
+                    openImage.launch(arrayOf("image/*"))
+                }
+                "stampDevicePhoto" -> {
                     val path = call.argument<String>("path")
                     io.execute {
+                        try {
+                            val out = ImageDeviceStamp.stamp(applicationContext, path)
+                            runOnUiThread { result.success(out) }
+                        } catch (e: Exception) {
+                            runOnUiThread {
+                                result.error("stamp", e.message ?: "Could not update that picture", null)
+                            }
+                        }
+                    }
+                }
+                "needsTiktokWork" -> {
+                    val path = call.argument<String>("path")
+                    val dest = call.argument<String>("dest")
+                    io.execute {
                         val needs = try {
-                            UploadPrep.needsWork(applicationContext, path)
+                            UploadPrep.needsWork(applicationContext, path, dest)
                         } catch (_: Exception) {
                             false
                         }
@@ -845,9 +921,10 @@ class MainActivity : FlutterFragmentActivity() {
                 }
                 "makeUploadReady" -> {
                     val path = call.argument<String>("path")
+                    val dest = call.argument<String>("dest")
                     io.execute {
                         try {
-                            val out = UploadPrep.prepare(applicationContext, path)
+                            val out = UploadPrep.prepare(applicationContext, path, dest)
                             runOnUiThread { result.success(out) }
                         } catch (e: Exception) {
                             runOnUiThread { result.success(path) }
@@ -877,8 +954,9 @@ class MainActivity : FlutterFragmentActivity() {
                 "statusProgress" -> result.success(StatusPrep.progress)
                 "statusShare" -> {
                     val path = call.argument<String>("path")
-                    val business = call.argument<Boolean>("business") == true
-                    result.success(StatusPrep.share(this, path, business))
+                    val target = call.argument<String>("target")
+                        ?: if (call.argument<Boolean>("business") == true) "business" else "whatsapp"
+                    result.success(StatusPrep.share(this, path, target))
                 }
                 "storageStats" -> {
                     try {
@@ -954,13 +1032,14 @@ class MainActivity : FlutterFragmentActivity() {
                 "clipSound" -> {
                     val path = call.argument<String>("path")
                     val kind = call.argument<String>("kind") ?: "ringtone"
+                    val title = call.argument<String>("title")
                     if (path.isNullOrBlank()) {
                         result.error("missing", "No video", null)
                         return@setMethodCallHandler
                     }
                     io.execute {
                         val outcome = try {
-                            phoneBody?.clipSound(path, kind) ?: mapOf(
+                            phoneBody?.clipSound(path, kind, title) ?: mapOf(
                                 "ok" to false,
                                 "needsSettings" to false,
                                 "message" to "Could not make that sound.",
@@ -1045,13 +1124,20 @@ class MainActivity : FlutterFragmentActivity() {
         setIntent(intent)
         captureOpenSession(intent)
         captureShare(intent)
-        channel?.invokeMethod("sharedText", pendingShare)
+        if (pendingSet != null) channel?.invokeMethod("sharedSet", pendingSet)
+        else channel?.invokeMethod("sharedText", pendingShare)
         captureOpenedVideo(intent)
         captureQuickAction(intent)
     }
 
     private fun captureShare(intent: Intent?) {
         if (intent?.action == Intent.ACTION_SEND && intent.type == "text/plain") {
+            val set = intent.getStringExtra(EXTRA_SHARED_SET)
+            if (!set.isNullOrBlank()) {
+                pendingSet = set
+                pendingShare = null
+                return
+            }
             pendingShare = intent.getStringExtra(Intent.EXTRA_TEXT)
         }
     }

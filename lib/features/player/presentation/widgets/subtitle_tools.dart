@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:social_save/core/platform/plat.dart';
+import 'package:social_save/core/storage/media_store_service.dart';
 
 /// Subtitle look, remembered between videos.
 class SubtitlePrefs {
@@ -47,6 +49,45 @@ class SubtitleToolsRow extends StatelessWidget {
   final Player player;
   final VoidCallback onChanged;
 
+  Future<void> _burn(BuildContext context) async {
+    final medias = player.state.playlist.medias;
+    final raw = medias.isEmpty ? '' : medias.first.uri;
+    final path = raw.startsWith('file://') ? Uri.parse(raw).toFilePath() : raw;
+    if (path.isEmpty || path.startsWith('http')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Burning captions works on a video saved on this phone.')),
+      );
+      return;
+    }
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Burn captions into a copy?'),
+        content: const Text('This writes a second video with the captions drawn on. The original file stays as it is.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Burn a copy')),
+        ],
+      ),
+    );
+    if (yes != true || !context.mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(const SnackBar(content: Text('Burning captions into a copy…')));
+    try {
+      final out = await MediaStoreService().burnCaptions(path);
+      if (!context.mounted) return;
+      messenger.showSnackBar(SnackBar(
+        content: Text((out == null || out.isEmpty) ? 'Could not burn the captions in. The original is unchanged.' : 'Saved a copy with captions.'),
+      ));
+    } on PlatformException catch (error) {
+      if (!context.mounted) return;
+      messenger.showSnackBar(SnackBar(content: Text(error.message ?? 'Could not burn the captions in. The original is unchanged.')));
+    } catch (_) {
+      if (!context.mounted) return;
+      messenger.showSnackBar(const SnackBar(content: Text('Could not burn the captions in. The original is unchanged.')));
+    }
+  }
+
   Future<void> _load(BuildContext context) async {
     final file = await fs.openFile(acceptedTypeGroups: const [
       fs.XTypeGroup(label: 'Subtitles', extensions: ['srt', 'vtt', 'ass', 'ssa', 'sub']),
@@ -79,6 +120,12 @@ class SubtitleToolsRow extends StatelessWidget {
               icon: const Icon(Icons.subtitles_rounded, size: 18),
               label: const Text('Load subtitle file'),
             ),
+            if (Plat.isAndroid)
+              TextButton.icon(
+                onPressed: () => _burn(context),
+                icon: const Icon(Icons.movie_filter_outlined, size: 18),
+                label: const Text('Burn into a copy'),
+              ),
           ],
         ),
         ValueListenableBuilder<double>(

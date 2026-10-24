@@ -483,20 +483,19 @@ class SongTile extends StatelessWidget {
 /// Slim player docked above the navigation bar.
 const _tabularFigures = [FontFeature.tabularFigures()];
 
-/// Opens the full player with a soft fade and rise.
+/// Opens the full player. The page slides up. A full-screen fade made this
+/// open late on the phone.
 void openNowPlaying(BuildContext context) {
   Navigator.of(context, rootNavigator: true).push(PageRouteBuilder<void>(
-    transitionDuration: const Duration(milliseconds: 380),
-    reverseTransitionDuration: const Duration(milliseconds: 280),
+    transitionDuration: const Duration(milliseconds: 200),
+    reverseTransitionDuration: const Duration(milliseconds: 160),
     pageBuilder: (_, a, __) => const NowPlayingScreen(),
-    transitionsBuilder: (_, a, __, child) {
-      final curved = CurvedAnimation(parent: a, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic);
-      return FadeTransition(
-        opacity: curved,
-        child: SlideTransition(
-          position: Tween(begin: const Offset(0, 0.08), end: Offset.zero).animate(curved),
-          child: child,
-        ),
+    transitionsBuilder: (context, animation, _, child) {
+      if (MediaQuery.disableAnimationsOf(context)) return child;
+      final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic);
+      return SlideTransition(
+        position: Tween(begin: const Offset(0, 0.04), end: Offset.zero).animate(curved),
+        child: child,
       );
     },
   ));

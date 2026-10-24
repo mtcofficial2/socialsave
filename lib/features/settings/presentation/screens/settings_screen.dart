@@ -19,6 +19,7 @@ import 'package:social_save/core/platform/media_events.dart';
 import 'package:social_save/core/platform/phone_body.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
 import 'package:social_save/features/library/hotspot_share.dart';
+import 'package:social_save/features/library/image_device_stamp.dart';
 import 'package:social_save/features/library/index_backup.dart';
 import 'package:social_save/features/library/library_catalog.dart';
 import 'package:social_save/core/constants/app_constants.dart';
@@ -373,6 +374,25 @@ class SettingsScreen extends ConsumerWidget {
                 ),
               ),
             ),
+                    ],
+                  )),
+                if (!kIsWeb)
+                  _Sec(title: 'Photos', keys: 'photo image camera metadata picture internet exif', child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _groupTitle(context, Icons.photo_camera_outlined, 'Photos'),
+                      GlassCard(
+                        child: Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: _navRow(
+                            context,
+                            icon: Icons.photo_camera_outlined,
+                            title: 'This device took the photo',
+                            subtitle: 'Pick a picture saved here, including one from the internet. Its camera details then name this device.',
+                            onTap: () => stampPhotoFromPicker(context),
+                          ),
+                        ),
+                      ),
                     ],
                   )),
                 if (!kIsWeb)

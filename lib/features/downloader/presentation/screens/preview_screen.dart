@@ -13,6 +13,7 @@ import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/core/errors/exceptions.dart';
 import 'package:social_save/core/theme/app_colors.dart';
 import 'package:social_save/features/downloader/presentation/providers/download_manager.dart';
+import 'package:social_save/features/home/presentation/widgets/link_offer.dart';
 import 'package:social_save/features/downloader/presentation/providers/preview_controller.dart';
 import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/features/player/player_session.dart';
@@ -608,7 +609,8 @@ extension on _PreviewScreenState {
         await context.push('/progress/${task.id}');
       }
     } on AppException catch (error) {
-      setState(() => _error = error.message);
+      if (mounted && await showAlreadySaved(context, error)) return;
+      if (mounted) setState(() => _error = error.message);
     } catch (_) {
       setState(() => _error = 'Could not start the download.');
     } finally {

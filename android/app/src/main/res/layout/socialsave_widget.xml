@@ -18,7 +18,8 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:paddingTop="4dp"
-        android:text="Open to paste a public video"
+        android:id="@+id/widget_subtitle"
+        android:text="Download a copied link"
         android:textColor="#E6FFFFFF"
         android:textSize="12sp" />
 </LinearLayout>

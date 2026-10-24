@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/errors/exceptions.dart';
+import 'package:social_save/core/utils/set_link.dart';
+import 'package:social_save/features/downloader/follow_creator.dart';
 import 'package:social_save/features/downloader/presentation/providers/download_manager.dart';
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
 import 'package:social_save/shared/models/media_format.dart';
@@ -24,20 +28,44 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
   List<PlaylistEntry> _items = const [];
   final Set<int> _selected = {};
   bool _saving = false;
+  int _step = 0;
+  int _saveTotal = 0;
+  bool _following = false;
 
   @override
   void initState() {
     super.initState();
     _load();
+    unawaited(_loadFollow());
+  }
+
+  Future<void> _loadFollow() async {
+    final on = await FollowCreator.isFollowing(widget.url);
+    if (mounted) setState(() => _following = on);
   }
 
   Future<void> _load() async {
     try {
-      final items = await ref.read(mediaRepositoryProvider).playlist(widget.url);
+      final raw = await ref.read(mediaRepositoryProvider).playlist(widget.url);
+      final items = await expandChannelSections(
+        raw,
+        (url) => ref.read(mediaRepositoryProvider).playlist(url),
+      );
       if (!mounted) return;
+      final onlyTabs = raw.isNotEmpty &&
+          raw.every((entry) => isChannelSection(entry.url) || youtubeChannelRoot(entry.url) != null);
+      if (items.isEmpty && onlyTabs) {
+        setState(() {
+          _error = 'This page listed channel tabs, not videos. Try again in a moment.';
+          _loading = false;
+        });
+        return;
+      }
       setState(() {
         _items = items;
-        _selected.addAll(List.generate(items.length, (index) => index));
+        _selected
+          ..clear()
+          ..addAll(List.generate(items.length, (index) => index));
         _loading = false;
       });
     } on AppException catch (error) {
@@ -49,67 +77,122 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        _error = 'Could not read this public playlist.';
+        _error = 'Could not read this public set.';
         _loading = false;
       });
     }
   }
 
+  bool _isTab(String url) => isChannelSection(url) || youtubeChannelRoot(url) != null;
+
   Future<void> _saveSelected() async {
-    setState(() => _saving = true);
+    final indexes = _selected.toList()..sort();
+    final targets = <PlaylistEntry>[];
+    for (final index in indexes) {
+      if (index < 0 || index >= _items.length) continue;
+      final entry = _items[index];
+      if (_isTab(entry.url)) continue;
+      targets.add(entry);
+    }
+    if (targets.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('These rows are channel tabs, not videos.')),
+      );
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _step = 0;
+      _saveTotal = targets.length;
+    });
     var saved = 0;
     var skipped = 0;
-    for (final index in _selected) {
-      final entry = _items[index];
-      try {
-        final media = await ref.read(mediaRepositoryProvider).analyze(entry.url);
-        if (!media.canDownload) {
-          skipped++;
-          continue;
-        }
-        final settings = ref.read(settingsControllerProvider);
-        final remembered = settings.qualityByPlatform[media.platform.id];
-        MediaFormat? format;
-        for (final item in media.formats) {
-          if (remembered != null && item.quality.toLowerCase() == remembered.toLowerCase()) {
-            format = item;
-            break;
+    try {
+      for (var i = 0; i < targets.length; i++) {
+        if (!mounted) return;
+        setState(() => _step = i + 1);
+        final entry = targets[i];
+        try {
+          final media = await ref
+              .read(mediaRepositoryProvider)
+              .analyze(entry.url)
+              .timeout(const Duration(seconds: 60));
+          if (!mounted) return;
+          if (!media.canDownload) {
+            skipped++;
+            continue;
           }
-        }
-        format ??= _firstQuality(media.formats, 'auto') ?? media.defaultFormat;
-        if (format == null) {
+          final settings = ref.read(settingsControllerProvider);
+          final remembered = settings.qualityByPlatform[media.platform.id];
+          MediaFormat? format;
+          for (final item in media.formats) {
+            if (remembered != null && item.quality.toLowerCase() == remembered.toLowerCase()) {
+              format = item;
+              break;
+            }
+          }
+          format ??= _firstQuality(media.formats, 'auto') ?? media.defaultFormat;
+          if (format == null) {
+            skipped++;
+            continue;
+          }
+          await ref.read(downloadManagerProvider.notifier).enqueue(
+                media: media,
+                format: format,
+                askExport: false,
+              );
+          saved++;
+        } on AppException {
           skipped++;
-          continue;
-        }
-        await ref.read(downloadManagerProvider.notifier).enqueue(media: media, format: format);
-        saved++;
-      } on AppException catch (error) {
-        if (error.message.toLowerCase().contains('already saved')) {
+        } on TimeoutException {
           skipped++;
-        } else {
+        } catch (_) {
           skipped++;
         }
-      } catch (_) {
-        skipped++;
       }
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
     if (!mounted) return;
-    setState(() => _saving = false);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Queued $saved. Skipped $skipped.')),
+    );
+  }
+
+  Future<void> _toggleFollow() async {
+    if (_following) {
+      await FollowCreator.unfollow(widget.url);
+      if (!mounted) return;
+      setState(() => _following = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Overnight checks stopped for this set.')),
+      );
+      return;
+    }
+    await FollowCreator.follow(
+      widget.url,
+      _items.isEmpty ? 'Set' : _items.first.title,
+      [for (final item in _items) item.url],
+    );
+    if (!mounted) return;
+    setState(() => _following = true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('New public posts from this set will be queued overnight. The posts already listed stay as they are.'),
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Public playlist')),
+      appBar: AppBar(title: const Text('Save this set')),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? EmptyState(
                   icon: Icons.playlist_remove_rounded,
-                  title: 'Could not open this playlist',
+                  title: 'Could not open this set',
                   message: _error!,
                   action: FilledButton.icon(
                     onPressed: () {
@@ -163,13 +246,43 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
                     ),
                     SafeArea(
                       child: Padding(
-                        padding: pagePadding(context, top: 8, bottom: 12),
-                        child: SizedBox(
-                          width: double.infinity,
-                          child: FilledButton(
-                            onPressed: _saving || _selected.isEmpty ? null : _saveSelected,
-                            child: Text(_saving ? 'Saving…' : 'Save ${_selected.length}'),
-                          ),
+                        // The home gesture band sits above the system inset on this phone.
+                        padding: pagePadding(
+                          context,
+                          top: 8,
+                          bottom: 12 + (MediaQuery.sizeOf(context).width < kDesktopShellMinWidth ? 56 : 0),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            FilledButton(
+                              onPressed: _saving || _selected.isEmpty ? null : _saveSelected,
+                              child: Text(
+                                _saving ? 'Saving $_step of $_saveTotal' : 'Save this set (${_selected.length})',
+                              ),
+                            ),
+                            if (canFollowSet(widget.url)) ...[
+                              const SizedBox(height: 8),
+                              OutlinedButton.icon(
+                                onPressed: _toggleFollow,
+                                style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+                                icon: const Icon(Icons.nightlight_outlined),
+                                label: Text(_following ? 'Stop overnight checks' : 'Check for new posts overnight'),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                _following
+                                    ? 'New public posts from this set are queued overnight.'
+                                    : 'Posts already listed stay as they are. Nothing downloads until a new one appears.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  height: 1.35,
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                       ),
                     ),

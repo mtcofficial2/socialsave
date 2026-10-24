@@ -1562,8 +1562,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
         if (!DesktopSupport.isWindows)
           ListTile(
             leading: const Icon(Icons.movie_filter_outlined),
-            title: const Text('Make TikTok ready'),
-            subtitle: const Text('Rewrite this saved video so TikTok can open it'),
+            title: const Text('Prepare for another app'),
+            subtitle: const Text('TikTok, Reels, Shorts, or X. The saved file stays until you choose.'),
             onTap: () => Navigator.pop(context, 'tiktok'),
           ),
         if (DesktopSupport.isWindows)
@@ -1595,6 +1595,12 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
           onTap: () => Navigator.pop(context, 'near'),
         ),
         ListTile(
+          leading: const Icon(Icons.music_note_rounded),
+          title: const Text('Keep the sound'),
+          subtitle: const Text('Save the whole audio in Music, titled with the creator'),
+          onTap: () => Navigator.pop(context, 'keep'),
+        ),
+        ListTile(
           leading: const Icon(Icons.ring_volume_outlined),
           title: const Text('Use 30 seconds as a sound'),
           subtitle: const Text('Ringtone, notification, or alarm'),
@@ -1611,7 +1617,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
         ),
         ListTile(
           leading: const Icon(Icons.folder_outlined),
-          title: const Text('Add to collection'),
+          title: const Text('Move to collection'),
           onTap: () => Navigator.pop(context, 'collection'),
         ),
         ListTile(
@@ -1670,7 +1676,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
         action == 'tv' ||
         action == 'handoff' ||
         action == 'session' ||
-        action == 'sound') {
+        action == 'sound' ||
+        action == 'keep') {
       final path = await DeviceMediaService().resolvePlayablePath(video);
       if (path == null || !mounted) return;
       if (action == 'session') {
@@ -1695,6 +1702,16 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
       }
       if (action == 'handoff') {
         await showSendToPhone(context, File(path), video.title);
+        return;
+      }
+      if (action == 'keep') {
+        final record = await _recordForPath(path);
+        final author = record?.author?.trim();
+        await showKeepSound(
+          context,
+          path,
+          title: (author != null && author.isNotEmpty) ? author : video.title,
+        );
         return;
       }
       await showSoundClip(context, path);
@@ -1997,7 +2014,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     }
     await ref
         .read(libraryCatalogProvider.notifier)
-        .addToCollection(name, 'device:${video.id}');
+        .moveToCollection(name, 'device:${video.id}');
   }
 
   Future<void> _editNote(String key) async {
