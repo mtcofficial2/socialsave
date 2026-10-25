@@ -19,6 +19,7 @@ import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/constants/app_constants.dart';
 import 'package:social_save/core/utils/set_link.dart';
 import 'package:social_save/features/downloader/follow_creator.dart';
+import 'package:social_save/features/home/favorite_creators_row.dart';
 import 'package:social_save/features/home/presentation/providers/home_controller.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
 import 'package:social_save/features/downloads/presentation/providers/downloads_controller.dart';
@@ -244,6 +245,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             const UpdateCard(),
             UrlInputCard(onAnalyze: _analyze, onPaste: _paste),
             _wakingRow(scheme),
+            const SizedBox(height: 12),
+            const FavoriteCreatorsRow(),
+            const SizedBox(height: 12),
             const _RecentLinks(),
             _playlistButton(),
             const SaveQueueSection(),
@@ -304,6 +308,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                       const UpdateCard(),
                       UrlInputCard(onAnalyze: _analyze, onPaste: _paste),
                       _wakingRow(scheme),
+                      const SizedBox(height: 12),
+                      const FavoriteCreatorsRow(),
+                      const SizedBox(height: 12),
                       const _RecentLinks(),
                       _playlistButton(),
                       const SaveQueueSection(),

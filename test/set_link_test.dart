@@ -8,18 +8,30 @@ void main() {
   test('public sets are playlists, profiles, highlights and albums', () {
     expect(isPublicSet('https://www.youtube.com/playlist?list=PLtest'), isTrue);
     expect(isPublicSet('https://www.youtube.com/watch?list=PLtest'), isTrue);
-    expect(isPublicSet('https://www.youtube.com/watch?v=abcdefghijk&list=PLtest'), isFalse);
+    expect(
+      isPublicSet('https://www.youtube.com/watch?v=abcdefghijk&list=PLtest'),
+      isFalse,
+    );
     expect(isPublicSet('https://www.youtube.com/@creator'), isTrue);
     expect(isPublicSet('https://www.youtube.com/@creator/videos'), isTrue);
     expect(isPublicSet('https://www.youtube.com/@creator/shorts'), isTrue);
     expect(isPublicSet('https://www.youtube.com/@creator/live'), isTrue);
     expect(isPublicSet('https://www.youtube.com/@creator/shorts/abc'), isFalse);
-    expect(isPublicSet('https://www.youtube.com/channel/UCabcdefghijklmnop'), isTrue);
-    expect(isPublicSet('https://www.youtube.com/channel/UCabcdefghijklmnop/videos'), isTrue);
+    expect(
+      isPublicSet('https://www.youtube.com/channel/UCabcdefghijklmnop'),
+      isTrue,
+    );
+    expect(
+      isPublicSet('https://www.youtube.com/channel/UCabcdefghijklmnop/videos'),
+      isTrue,
+    );
     expect(isPublicSet('https://www.youtube.com/shorts/abc'), isFalse);
     expect(isPublicSet('https://www.tiktok.com/@creator'), isTrue);
     expect(isPublicSet('https://www.tiktok.com/@creator/video/123'), isFalse);
-    expect(isPublicSet('https://www.instagram.com/stories/highlights/12345'), isTrue);
+    expect(
+      isPublicSet('https://www.instagram.com/stories/highlights/12345'),
+      isTrue,
+    );
     expect(isPublicSet('https://www.instagram.com/reel/abc'), isFalse);
     expect(isPublicSet('https://www.facebook.com/media/set/?set=a.1'), isTrue);
     expect(isPublicSet('https://www.instagram.com/accounts/login'), isFalse);
@@ -28,24 +40,59 @@ void main() {
   test('channel tabs are sections and a channel root is not', () {
     expect(isChannelSection('https://www.youtube.com/@creator/videos'), isTrue);
     expect(isChannelSection('https://www.youtube.com/@creator/shorts'), isTrue);
-    expect(isChannelSection('https://www.youtube.com/@creator/streams'), isTrue);
+    expect(
+      isChannelSection('https://www.youtube.com/@creator/streams'),
+      isTrue,
+    );
     expect(isChannelSection('https://www.youtube.com/@creator/live'), isTrue);
-    expect(isChannelSection('https://www.youtube.com/channel/UCabcdefghijklmnop/videos'), isTrue);
+    expect(
+      isChannelSection(
+        'https://www.youtube.com/channel/UCabcdefghijklmnop/videos',
+      ),
+      isTrue,
+    );
     expect(isChannelSection('https://www.youtube.com/@creator'), isFalse);
-    expect(isChannelSection('https://www.youtube.com/@creator/shorts/abc'), isFalse);
-    expect(isChannelSection('https://www.youtube.com/watch?v=abcdefghijk'), isFalse);
-    expect(isChannelSection('https://www.youtube.com/playlist?list=PLtest'), isFalse);
+    expect(
+      isChannelSection('https://www.youtube.com/@creator/shorts/abc'),
+      isFalse,
+    );
+    expect(
+      isChannelSection('https://www.youtube.com/watch?v=abcdefghijk'),
+      isFalse,
+    );
+    expect(
+      isChannelSection('https://www.youtube.com/playlist?list=PLtest'),
+      isFalse,
+    );
     expect(isChannelSection('https://www.tiktok.com/@creator'), isFalse);
-    expect(youtubeChannelRoot('https://www.youtube.com/@creator'), 'https://www.youtube.com/@creator');
-    expect(youtubeChannelRoot('https://www.youtube.com/@creator/videos'), isNull);
-    expect(youtubeChannelRoot('https://www.youtube.com/watch?v=abcdefghijk'), isNull);
+    expect(
+      youtubeChannelRoot('https://www.youtube.com/@creator'),
+      'https://www.youtube.com/@creator',
+    );
+    expect(
+      youtubeChannelRoot('https://www.youtube.com/@creator/videos'),
+      isNull,
+    );
+    expect(
+      youtubeChannelRoot('https://www.youtube.com/watch?v=abcdefghijk'),
+      isNull,
+    );
     expect(
       youtubeChannelRoot('https://www.youtube.com/channel/UCabcdefghijklmnop'),
       'https://www.youtube.com/channel/UCabcdefghijklmnop',
     );
-    expect(youtubeChannelBase('https://www.youtube.com/@creator/shorts'), 'https://www.youtube.com/@creator');
-    expect(youtubeChannelTab('https://www.youtube.com/@creator/shorts'), 'shorts');
-    expect(youtubeChannelTab('https://www.youtube.com/@creator/live'), 'streams');
+    expect(
+      youtubeChannelBase('https://www.youtube.com/@creator/shorts'),
+      'https://www.youtube.com/@creator',
+    );
+    expect(
+      youtubeChannelTab('https://www.youtube.com/@creator/shorts'),
+      'shorts',
+    );
+    expect(
+      youtubeChannelTab('https://www.youtube.com/@creator/live'),
+      'streams',
+    );
     expect(youtubeChannelTab('https://www.youtube.com/@creator'), isNull);
     expect(
       youtubeChannelTabUrl('https://www.youtube.com/@creator', 'shorts'),
@@ -57,12 +104,20 @@ void main() {
     final calls = <String>[];
     final out = await expandChannelSections(
       const [
-        PlaylistEntry(title: 'Videos', url: 'https://www.youtube.com/@c/videos'),
-        PlaylistEntry(title: 'Shorts', url: 'https://www.youtube.com/@c/shorts'),
+        PlaylistEntry(
+          title: 'Videos',
+          url: 'https://www.youtube.com/@c/videos',
+        ),
+        PlaylistEntry(
+          title: 'Shorts',
+          url: 'https://www.youtube.com/@c/shorts',
+        ),
       ],
       (url) async {
         calls.add(url);
-        return const [PlaylistEntry(title: 'S', url: 'https://www.youtube.com/shorts/bbb')];
+        return const [
+          PlaylistEntry(title: 'S', url: 'https://www.youtube.com/shorts/bbb'),
+        ];
       },
       onlyTab: 'shorts',
     );
@@ -74,20 +129,35 @@ void main() {
     final calls = <String>[];
     final out = await expandChannelSections(
       [
-        const PlaylistEntry(title: 'Shorts', url: 'https://www.youtube.com/@c/shorts'),
-        const PlaylistEntry(title: 'Videos', url: 'https://www.youtube.com/@c/videos'),
+        const PlaylistEntry(
+          title: 'Shorts',
+          url: 'https://www.youtube.com/@c/shorts',
+        ),
+        const PlaylistEntry(
+          title: 'Videos',
+          url: 'https://www.youtube.com/@c/videos',
+        ),
       ],
       (url) async {
         calls.add(url);
         if (url.endsWith('/videos')) {
           return const [
-            PlaylistEntry(title: 'A', url: 'https://www.youtube.com/watch?v=aaa'),
-            PlaylistEntry(title: 'tab again', url: 'https://www.youtube.com/@c/streams'),
+            PlaylistEntry(
+              title: 'A',
+              url: 'https://www.youtube.com/watch?v=aaa',
+            ),
+            PlaylistEntry(
+              title: 'tab again',
+              url: 'https://www.youtube.com/@c/streams',
+            ),
           ];
         }
         return const [
           PlaylistEntry(title: 'S', url: 'https://www.youtube.com/shorts/bbb'),
-          PlaylistEntry(title: 'A again', url: 'https://www.youtube.com/watch?v=aaa'),
+          PlaylistEntry(
+            title: 'A again',
+            url: 'https://www.youtube.com/watch?v=aaa',
+          ),
         ];
       },
     );
@@ -104,7 +174,9 @@ void main() {
   test('a channel page opens its video tabs once', () async {
     final calls = <String>[];
     final out = await expandChannelSections(
-      const [PlaylistEntry(title: 'Channel', url: 'https://www.youtube.com/@c')],
+      const [
+        PlaylistEntry(title: 'Channel', url: 'https://www.youtube.com/@c'),
+      ],
       (url) async {
         calls.add(url);
         if (url.endsWith('/videos')) {
@@ -123,7 +195,8 @@ void main() {
 
   test('a normal playlist is left as it is', () async {
     final items = [
-      for (var i = 0; i < 3; i++) PlaylistEntry(title: '$i', url: 'https://www.youtube.com/watch?v=v$i'),
+      for (var i = 0; i < 3; i++)
+        PlaylistEntry(title: '$i', url: 'https://www.youtube.com/watch?v=v$i'),
     ];
     var calls = 0;
     final out = await expandChannelSections(items, (url) async {
@@ -136,18 +209,67 @@ void main() {
 
   test('expanded videos stop at 40 and a silent tab is skipped', () async {
     final capped = await expandChannelSections(
-      const [PlaylistEntry(title: 'Videos', url: 'https://www.youtube.com/@c/videos')],
+      const [
+        PlaylistEntry(
+          title: 'Videos',
+          url: 'https://www.youtube.com/@c/videos',
+        ),
+      ],
       (url) async => [
-        for (var i = 0; i < 50; i++) PlaylistEntry(title: '$i', url: 'https://www.youtube.com/watch?v=$i'),
+        for (var i = 0; i < 50; i++)
+          PlaylistEntry(title: '$i', url: 'https://www.youtube.com/watch?v=$i'),
       ],
     );
     expect(capped, hasLength(40));
 
     final empty = await expandChannelSections(
-      const [PlaylistEntry(title: 'Videos', url: 'https://www.youtube.com/@c/videos')],
+      const [
+        PlaylistEntry(
+          title: 'Videos',
+          url: 'https://www.youtube.com/@c/videos',
+        ),
+      ],
       (url) => Completer<List<PlaylistEntry>>().future,
       tabTimeout: const Duration(milliseconds: 30),
     );
     expect(empty, isEmpty);
+  });
+
+  test('a creator home is the channel root or a TikTok profile', () {
+    expect(
+      creatorHome('https://www.youtube.com/@creator/shorts'),
+      'https://www.youtube.com/@creator',
+    );
+    expect(
+      creatorHome('https://www.youtube.com/@creator/videos'),
+      'https://www.youtube.com/@creator',
+    );
+    expect(
+      creatorHome('https://www.tiktok.com/@creator'),
+      'https://www.tiktok.com/@creator',
+    );
+    expect(
+      creatorHome('https://www.tiktok.com/@creator?lang=en'),
+      'https://www.tiktok.com/@creator',
+    );
+    expect(creatorHome('https://www.youtube.com/watch?v=abcdefghijk'), isNull);
+    expect(creatorHome('https://www.youtube.com/playlist?list=PLtest'), isNull);
+    expect(creatorHome('https://www.tiktok.com/@creator/video/123'), isNull);
+    expect(creatorHandleName('https://www.youtube.com/@Ada/shorts'), 'Ada');
+    expect(
+      creatorHandleName('https://www.youtube.com/channel/UCabcdefghijklmnop'),
+      'UCabcdefghijklmnop',
+    );
+    expect(creatorDisplayName('Ada - Videos'), 'Ada');
+    expect(creatorDisplayName('Videos'), isNull);
+    expect(
+      isCreatorPortrait('https://i.ytimg.com/vi/abc/hqdefault.jpg'),
+      isFalse,
+    );
+    expect(isCreatorPortrait('https://yt3.ggpht.com/avatar=s176'), isTrue);
+    expect(
+      isCreatorPortrait('https://p16-sign.tiktokcdn.com/avatar.jpeg'),
+      isTrue,
+    );
   });
 }

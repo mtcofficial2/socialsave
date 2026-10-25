@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"net/url"
 	"strings"
 	"time"
 
@@ -9,12 +10,19 @@ import (
 	"github.com/aviation256444-boop/socialsave/backend/internal/models"
 )
 
+// ListedPlaylist is the public rows plus the channel name and portrait when known.
+type ListedPlaylist struct {
+	Items   []models.PlaylistEntry
+	Channel string
+	Avatar  string
+}
+
 const playlistLimit = 40
 
 // FlatPlaylist lists public playlist entries without downloading media.
-func (r *Runner) FlatPlaylist(ctx context.Context, rawURL string) ([]models.PlaylistEntry, error) {
+func (r *Runner) FlatPlaylist(ctx context.Context, rawURL string) (ListedPlaylist, error) {
 	if err := r.available(); err != nil {
-		return nil, err
+		return ListedPlaylist{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
@@ -33,16 +41,33 @@ func (r *Runner) FlatPlaylist(ctx context.Context, rawURL string) ([]models.Play
 	args = append(args, "--", rawURL)
 	stdout, stderr, err := r.run(ctx, args, "")
 	if err != nil {
-		return nil, MapExtractorError(stderr+"\n"+err.Error(), rawURL)
+		return ListedPlaylist{}, MapExtractorError(stderr+"\n"+err.Error(), rawURL)
 	}
-	return decodePlaylist(stdout, rawURL)
+	return decodeListed(stdout, rawURL)
 }
 
 func decodePlaylist(stdout, pageURL string) ([]models.PlaylistEntry, error) {
-	info, err := decodeInfo(stdout)
+	listed, err := decodeListed(stdout, pageURL)
 	if err != nil {
 		return nil, err
 	}
+	return listed.Items, nil
+}
+
+func decodeListed(stdout, pageURL string) (ListedPlaylist, error) {
+	info, err := decodeInfo(stdout)
+	if err != nil {
+		return ListedPlaylist{}, err
+	}
+	items, err := playlistEntries(info, pageURL)
+	if err != nil {
+		return ListedPlaylist{}, err
+	}
+	channel, avatar := playlistMeta(info)
+	return ListedPlaylist{Items: items, Channel: channel, Avatar: avatar}, nil
+}
+
+func playlistEntries(info mediaInfo, pageURL string) ([]models.PlaylistEntry, error) {
 	if len(info.Entries) == 0 {
 		title := strings.TrimSpace(info.Title)
 		if title == "" {
@@ -81,6 +106,73 @@ func decodePlaylist(stdout, pageURL string) ([]models.PlaylistEntry, error) {
 		return nil, errs.RemovedVideo()
 	}
 	return items, nil
+}
+
+func playlistMeta(info mediaInfo) (channel, avatar string) {
+	for _, value := range []string{info.Channel, info.Uploader, info.Creator, info.Title} {
+		if label := creatorLabel(value); label != "" {
+			channel = label
+			break
+		}
+	}
+	return channel, creatorAvatar(info)
+}
+
+func creatorLabel(raw string) string {
+	name := strings.TrimSpace(raw)
+	lower := strings.ToLower(name)
+	for _, suffix := range []string{" - videos", " - shorts", " - live", " - streams"} {
+		if strings.HasSuffix(lower, suffix) {
+			name = strings.TrimSpace(name[:len(name)-len(suffix)])
+			lower = strings.ToLower(name)
+		}
+	}
+	switch lower {
+	case "", "videos", "shorts", "live", "streams":
+		return ""
+	}
+	return name
+}
+
+func creatorAvatar(info mediaInfo) string {
+	var fallback string
+	for _, thumb := range info.Thumbnails {
+		page := strings.TrimSpace(thumb.URL)
+		id := strings.ToLower(strings.TrimSpace(thumb.ID))
+		if strings.Contains(id, "banner") || !portraitURL(page) {
+			continue
+		}
+		if strings.Contains(id, "avatar") {
+			return page
+		}
+		if fallback == "" {
+			fallback = page
+		}
+	}
+	if portraitURL(info.Thumbnail) {
+		return strings.TrimSpace(info.Thumbnail)
+	}
+	return fallback
+}
+
+func portraitURL(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
+		return false
+	}
+	host := strings.ToLower(raw)
+	if parsed, err := url.Parse(raw); err == nil && parsed.Host != "" {
+		host = strings.ToLower(parsed.Host)
+	}
+	if strings.Contains(host, "i.ytimg.com") || strings.Contains(host, "img.youtube.com") {
+		return false
+	}
+	for _, part := range []string{"yt3.", "ggpht.com", "googleusercontent.com", "tiktokcdn", "fbcdn", "cdninstagram", "twimg.com"} {
+		if strings.Contains(host, part) {
+			return true
+		}
+	}
+	return false
 }
 
 func firstHTTP(values ...string) string {

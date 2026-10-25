@@ -17,6 +17,8 @@ abstract class MediaRepository {
 
   Future<List<PlaylistEntry>> playlist(String url);
 
+  Future<PlaylistPage> playlistPage(String url);
+
   Future<String> summarize({
     required String title,
     String? author,

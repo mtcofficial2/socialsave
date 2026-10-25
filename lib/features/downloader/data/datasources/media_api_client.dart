@@ -70,6 +70,10 @@ class MediaApiClient {
   }
 
   Future<List<PlaylistEntry>> playlist(String url) async {
+    return (await playlistPage(url)).items;
+  }
+
+  Future<PlaylistPage> playlistPage(String url) async {
     final response = await _client.post<Map<String, dynamic>>(
       ApiEndpoints.playlist,
       data: {'url': url},
@@ -77,12 +81,20 @@ class MediaApiClient {
     final data = _requireMap(response.data);
     _ensureSuccess(data);
     final items = data['items'];
-    if (items is! List) return const [];
-    return items
-        .whereType<Map>()
-        .map((item) => PlaylistEntry.fromJson(Map<String, dynamic>.from(item)))
-        .where((item) => item.url.isNotEmpty)
-        .toList();
+    final parsed = items is! List
+        ? const <PlaylistEntry>[]
+        : items
+            .whereType<Map>()
+            .map((item) => PlaylistEntry.fromJson(Map<String, dynamic>.from(item)))
+            .where((item) => item.url.isNotEmpty)
+            .toList();
+    final name = data['channel'];
+    final avatar = data['avatar'];
+    return PlaylistPage(
+      items: parsed,
+      name: name is String && name.trim().isNotEmpty ? name.trim() : null,
+      avatarUrl: avatar is String && avatar.trim().isNotEmpty ? avatar.trim() : null,
+    );
   }
 
   Future<String> summarize({

@@ -30,21 +30,34 @@ bool isPublicSet(String raw) {
   final host = uri.host.toLowerCase();
   final path = uri.path;
   final segs = path.split('/').where((part) => part.isNotEmpty).toList();
-  const blocked = {'login', 'accounts', 'challenge', 'checkpoint', 'recover', 'signup'};
+  const blocked = {
+    'login',
+    'accounts',
+    'challenge',
+    'checkpoint',
+    'recover',
+    'signup',
+  };
   if (segs.any(blocked.contains)) return false;
 
   if (platform == SocialPlatform.youtube) {
     if (path == '/playlist' || path.endsWith('/playlist')) return true;
     final list = uri.queryParameters['list'];
     final video = uri.queryParameters['v'];
-    if (list != null && list.isNotEmpty && (video == null || video.isEmpty) && !path.startsWith('/shorts/')) {
+    if (list != null &&
+        list.isNotEmpty &&
+        (video == null || video.isEmpty) &&
+        !path.startsWith('/shorts/')) {
       return true;
     }
     // A public channel, including the Videos or Shorts tab.
     // /@name/shorts/id is one video and stays one video.
-    if (segs.isNotEmpty && segs.first.startsWith('@') && segs.first.length > 1) {
+    if (segs.isNotEmpty &&
+        segs.first.startsWith('@') &&
+        segs.first.length > 1) {
       if (segs.length == 1) return true;
-      if (segs.length == 2 && _youtubeTabs.contains(segs[1].toLowerCase())) return true;
+      if (segs.length == 2 && _youtubeTabs.contains(segs[1].toLowerCase()))
+        return true;
     }
     if (segs.length >= 2 &&
         (segs[0] == 'channel' || segs[0] == 'c' || segs[0] == 'user') &&
@@ -55,15 +68,23 @@ bool isPublicSet(String raw) {
   }
   if (platform == SocialPlatform.tiktok) {
     // A profile, not one post. Short links (vm.tiktok.com) stay single videos.
-    if (host.contains('vm.tiktok.com') || host.contains('vt.tiktok.com')) return false;
-    return segs.length == 1 && segs.first.startsWith('@') && segs.first.length > 1;
+    if (host.contains('vm.tiktok.com') || host.contains('vt.tiktok.com'))
+      return false;
+    return segs.length == 1 &&
+        segs.first.startsWith('@') &&
+        segs.first.length > 1;
   }
   if (platform == SocialPlatform.instagram) {
-    return segs.length >= 3 && segs[0] == 'stories' && segs[1] == 'highlights' && segs[2].isNotEmpty;
+    return segs.length >= 3 &&
+        segs[0] == 'stories' &&
+        segs[1] == 'highlights' &&
+        segs[2].isNotEmpty;
   }
   if (platform == SocialPlatform.facebook) {
     final lower = path.toLowerCase();
-    if (lower.contains('/media/set') || lower.contains('/albums/') || lower.contains('/album/')) {
+    if (lower.contains('/media/set') ||
+        lower.contains('/albums/') ||
+        lower.contains('/album/')) {
       return true;
     }
     final set = uri.queryParameters['set'];
@@ -129,6 +150,76 @@ String? youtubeChannelTab(String raw) {
   return tab;
 }
 
+/// YouTube channel root, or a TikTok profile. A tab such as /shorts uses the channel root.
+/// Null for one video, a playlist, or a login page. Query strings are dropped.
+String? creatorHome(String raw) {
+  final base = youtubeChannelBase(raw);
+  if (base != null) return base;
+  final trimmed = raw.trim();
+  if (!isPublicSet(trimmed)) return null;
+  final uri = Uri.tryParse(trimmed);
+  if (uri == null) return null;
+  if (const PlatformDetector().detectUri(uri) != SocialPlatform.tiktok)
+    return null;
+  final segs = _pathSegs(uri);
+  if (segs.length != 1 || !segs.first.startsWith('@')) return null;
+  return '${uri.scheme}://${uri.host}/${segs.first}';
+}
+
+/// The @name on a channel or profile, without the @. Falls back to "Creator".
+String creatorHandleName(String raw) {
+  final uri = Uri.tryParse(raw.trim());
+  final segs = uri == null ? const <String>[] : _pathSegs(uri);
+  for (final part in segs) {
+    if (part.startsWith('@') && part.length > 1) {
+      return part.substring(1);
+    }
+  }
+  if (segs.isNotEmpty) {
+    final last = segs.last;
+    if (last.isNotEmpty && !_youtubeTabs.contains(last.toLowerCase()))
+      return last;
+  }
+  return 'Creator';
+}
+
+/// Drops tab suffixes such as " - Videos" so a channel title can be the person's name.
+String? creatorDisplayName(String? raw) {
+  var name = raw?.trim() ?? '';
+  if (name.isEmpty) return null;
+  const suffixes = [' - Videos', ' - Shorts', ' - Live', ' - Streams'];
+  for (final suffix in suffixes) {
+    if (name.toLowerCase().endsWith(suffix.toLowerCase())) {
+      name = name.substring(0, name.length - suffix.length).trim();
+    }
+  }
+  final lower = name.toLowerCase();
+  if (name.isEmpty ||
+      lower == 'videos' ||
+      lower == 'shorts' ||
+      lower == 'live' ||
+      lower == 'streams') {
+    return null;
+  }
+  return name;
+}
+
+/// A channel portrait, not a video thumbnail.
+bool isCreatorPortrait(String? raw) {
+  final url = raw?.trim() ?? '';
+  if (!url.startsWith('http')) return false;
+  final host = Uri.tryParse(url)?.host.toLowerCase() ?? '';
+  if (host.contains('i.ytimg.com') || host.contains('img.youtube.com'))
+    return false;
+  return host.contains('yt3.') ||
+      host.contains('ggpht.com') ||
+      host.contains('googleusercontent.com') ||
+      host.contains('tiktokcdn') ||
+      host.contains('fbcdn') ||
+      host.contains('cdninstagram') ||
+      host.contains('twimg.com');
+}
+
 /// https://www.youtube.com/@name/videos or the same channel's Shorts tab.
 String? youtubeChannelTabUrl(String raw, String tab) {
   final base = youtubeChannelBase(raw);
@@ -179,7 +270,9 @@ Future<List<PlaylistEntry>> expandChannelSections(
     }
     final root = youtubeChannelRoot(url);
     if (root != null) {
-      final tabs = wanted == null ? const ['videos', 'shorts', 'streams'] : [wanted];
+      final tabs = wanted == null
+          ? const ['videos', 'shorts', 'streams']
+          : [wanted];
       for (final tab in tabs) {
         final next = '$root/$tab';
         if (!targets.contains(next)) targets.add(next);
@@ -219,11 +312,13 @@ Future<List<PlaylistEntry>> expandChannelSections(
 Uri? _youtubeUri(String raw) {
   final uri = Uri.tryParse(raw.trim());
   if (uri == null || uri.host.isEmpty) return null;
-  if (const PlatformDetector().detectUri(uri) != SocialPlatform.youtube) return null;
+  if (const PlatformDetector().detectUri(uri) != SocialPlatform.youtube)
+    return null;
   return uri;
 }
 
-List<String> _pathSegs(Uri uri) => uri.path.split('/').where((part) => part.isNotEmpty).toList();
+List<String> _pathSegs(Uri uri) =>
+    uri.path.split('/').where((part) => part.isNotEmpty).toList();
 
 int _tabRank(String url) {
   final uri = Uri.tryParse(url);

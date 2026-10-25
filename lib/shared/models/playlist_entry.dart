@@ -20,3 +20,16 @@ class PlaylistEntry {
     );
   }
 }
+
+/// A playlist response, plus the channel name and portrait when the server sends them.
+class PlaylistPage {
+  const PlaylistPage({
+    required this.items,
+    this.name,
+    this.avatarUrl,
+  });
+
+  final List<PlaylistEntry> items;
+  final String? name;
+  final String? avatarUrl;
+}

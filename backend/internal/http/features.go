@@ -28,13 +28,18 @@ func (s *Server) playlist(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	items, err := s.Registry.Playlist(r.Context(), raw)
+	listed, err := s.Registry.Playlist(r.Context(), raw)
 	if err != nil {
 		slog.Info("playlist failed", "message", err.Error())
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, models.PlaylistResponse{Success: true, Items: items})
+	writeJSON(w, http.StatusOK, models.PlaylistResponse{
+		Success: true,
+		Items:   listed.Items,
+		Channel: listed.Channel,
+		Avatar:  listed.Avatar,
+	})
 }
 
 func (s *Server) summarize(w http.ResponseWriter, r *http.Request) {

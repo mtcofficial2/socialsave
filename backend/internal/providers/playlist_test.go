@@ -29,3 +29,41 @@ func TestDecodePlaylistSingleVideo(t *testing.T) {
 		t.Fatalf("items=%#v err=%v", items, err)
 	}
 }
+
+func TestPlaylistMetaKeepsAvatarAndStripsTab(t *testing.T) {
+	channel, avatar := playlistMeta(mediaInfo{
+		Title:     "Ada - Videos",
+		Channel:   "Ada - Videos",
+		Thumbnail: "https://i.ytimg.com/vi/abc/hqdefault.jpg",
+		Thumbnails: []thumbInfo{
+			{ID: "0", URL: "https://i.ytimg.com/vi/abc/hqdefault.jpg"},
+			{ID: "banner_uncropped", URL: "https://yt3.googleusercontent.com/banner"},
+			{ID: "avatar_uncropped", URL: "https://yt3.ggpht.com/ada=s900"},
+		},
+	})
+	if channel != "Ada" || avatar != "https://yt3.ggpht.com/ada=s900" {
+		t.Fatalf("channel=%q avatar=%q", channel, avatar)
+	}
+}
+
+func TestPlaylistMetaSkipsVideoThumb(t *testing.T) {
+	channel, avatar := playlistMeta(mediaInfo{
+		Uploader:  "Ada",
+		Thumbnail: "https://i.ytimg.com/vi/abc/maxresdefault.jpg",
+	})
+	if channel != "Ada" || avatar != "" {
+		t.Fatalf("channel=%q avatar=%q", channel, avatar)
+	}
+}
+
+func TestPlaylistMetaSkipsBannerAlone(t *testing.T) {
+	_, avatar := playlistMeta(mediaInfo{
+		Channel: "Ada",
+		Thumbnails: []thumbInfo{
+			{ID: "banner_uncropped", URL: "https://yt3.googleusercontent.com/banner"},
+		},
+	})
+	if avatar != "" {
+		t.Fatalf("avatar=%q", avatar)
+	}
+}

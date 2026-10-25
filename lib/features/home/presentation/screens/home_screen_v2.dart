@@ -14,6 +14,7 @@ import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/core/storage/storage_migration.dart';
 import 'package:social_save/core/storage/vault_recovery.dart';
 import 'package:social_save/features/downloader/follow_creator.dart';
+import 'package:social_save/features/home/favorite_creators_row.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
 import 'package:social_save/features/downloads/presentation/providers/downloads_controller.dart';
 import 'package:social_save/features/home/presentation/providers/home_controller.dart';
@@ -266,6 +267,8 @@ class _HomeScreenV2State extends ConsumerState<HomeScreenV2> with WidgetsBinding
     final scheme = Theme.of(context).colorScheme;
     return [
       _Reveal(index: 1, child: UrlInputCard(onAnalyze: _analyze, onPaste: _paste)),
+      const SizedBox(height: 16),
+      const FavoriteCreatorsRow(),
       _wakingRow(scheme),
       const SizedBox(height: 14),
       _Reveal(index: 2, child: _SendReceiveCard(onTap: () => context.push('/share'))),

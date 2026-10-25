@@ -6,7 +6,6 @@ import (
 
 	"github.com/aviation256444-boop/socialsave/backend/internal/config"
 	"github.com/aviation256444-boop/socialsave/backend/internal/errs"
-	"github.com/aviation256444-boop/socialsave/backend/internal/models"
 	"github.com/aviation256444-boop/socialsave/backend/internal/security"
 )
 
@@ -80,7 +79,7 @@ func (r *Registry) Resolve(rawURL string) (Provider, error) {
 }
 
 // Playlist lists public entries on a playlist page without downloading them.
-func (r *Registry) Playlist(ctx context.Context, rawURL string) ([]models.PlaylistEntry, error) {
+func (r *Registry) Playlist(ctx context.Context, rawURL string) (ListedPlaylist, error) {
 	return r.runner.FlatPlaylist(ctx, rawURL)
 }
 

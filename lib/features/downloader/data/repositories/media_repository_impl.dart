@@ -73,9 +73,14 @@ class MediaRepositoryImpl implements MediaRepository {
 
   @override
   Future<List<PlaylistEntry>> playlist(String url) async {
+    return (await playlistPage(url)).items;
+  }
+
+  @override
+  Future<PlaylistPage> playlistPage(String url) async {
     final normalized = _requireValidUrl(url);
     await _requireNetwork();
-    return _apiClient.playlist(normalized);
+    return _apiClient.playlistPage(normalized);
   }
 
   @override

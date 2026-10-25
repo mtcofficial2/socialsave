@@ -157,10 +157,16 @@ func dashFirst(height int) string {
 		"b[height<=" + limit + "]/b"
 }
 
+type thumbInfo struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
+}
+
 type mediaInfo struct {
 	Type        string         `json:"_type"`
 	Title       string         `json:"title"`
 	Thumbnail   string         `json:"thumbnail"`
+	Thumbnails  []thumbInfo    `json:"thumbnails"`
 	Duration    flexInt        `json:"duration"`
 	Uploader    string         `json:"uploader"`
 	Creator     string         `json:"creator"`

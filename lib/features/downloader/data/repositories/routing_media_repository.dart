@@ -76,6 +76,9 @@ class RoutingMediaRepository implements MediaRepository {
   Future<List<PlaylistEntry>> playlist(String url) => hosted.playlist(url);
 
   @override
+  Future<PlaylistPage> playlistPage(String url) => hosted.playlistPage(url);
+
+  @override
   Future<String> summarize({required String title, String? author, String? sourceUrl}) =>
       hosted.summarize(title: title, author: author, sourceUrl: sourceUrl);
 

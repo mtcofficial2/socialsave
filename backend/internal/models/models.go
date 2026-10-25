@@ -112,9 +112,12 @@ type PlaylistEntry struct {
 }
 
 // PlaylistResponse is POST /api/v1/playlist.
+// Channel and Avatar are set when the page is a creator. Older clients ignore them.
 type PlaylistResponse struct {
 	Success bool            `json:"success"`
 	Items   []PlaylistEntry `json:"items"`
+	Channel string          `json:"channel,omitempty"`
+	Avatar  string          `json:"avatar,omitempty"`
 }
 
 // SummarizeRequest is metadata for a video the phone already saved.
