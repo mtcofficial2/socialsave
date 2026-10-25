@@ -19,7 +19,16 @@ class LibrarySync {
   LibrarySync._();
 
   static const idPrefix = 'sync:';
+  static const _dismissedKey = 'socialsave_dismissed_sync';
   static ProviderContainer? Function()? containerOf;
+
+  /// A title from the other device is offered only when this device does not
+  /// already have it and the user has not cancelled that suggestion.
+  static bool acceptsSuggestion(String url, Set<String> have, Set<String> dismissed) {
+    final clean = url.trim();
+    if (clean.isEmpty) return false;
+    return !have.contains(clean) && !dismissed.contains(clean);
+  }
 
   static String idFor(String url) {
     final digest = sha1.convert(utf8.encode(url.trim())).toString();
@@ -85,11 +94,12 @@ class LibrarySync {
     final incoming = body['items'];
     if (incoming is List) {
       final mine = await _records();
-      final have = {for (final record in mine) record.sourceUrl};
+      final have = {for (final record in mine) record.sourceUrl.trim()};
+      final skipped = await _dismissed();
       for (final raw in incoming) {
         if (raw is! Map) continue;
         final url = '${raw['sourceUrl'] ?? ''}'.trim();
-        if (url.isEmpty || have.contains(url)) continue;
+        if (!acceptsSuggestion(url, have, skipped)) continue;
         final title = '${raw['title'] ?? ''}'.trim();
         final record = DownloadRecord(
           id: idFor(url),
@@ -138,6 +148,59 @@ class LibrarySync {
     }
     records.sort((a, b) => b.downloadedAt.compareTo(a.downloadedAt));
     return records;
+  }
+
+  /// Forgets these suggestions and keeps them from coming back on the next pair.
+  /// Real downloads on this device are left where they are.
+  static Future<void> dismiss(Iterable<String> urls) async {
+    final clean = <String>[];
+    final seen = <String>{};
+    for (final raw in urls) {
+      final url = raw.trim();
+      if (url.isEmpty || !seen.add(url)) continue;
+      clean.add(url);
+    }
+    if (clean.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    final kept = [...?prefs.getStringList(_dismissedKey)];
+    final known = kept.toSet();
+    for (final url in clean) {
+      if (known.add(url)) kept.add(url);
+    }
+    final trimmed = kept.length > 500 ? kept.sublist(kept.length - 500) : kept;
+    await prefs.setStringList(_dismissedKey, trimmed);
+    final drop = clean.toSet();
+    for (final record in await _records()) {
+      if (!record.id.startsWith(idPrefix)) continue;
+      if (!drop.contains(record.sourceUrl.trim())) continue;
+      await _remove(record.id);
+    }
+    containerOf?.call()?.invalidate(downloadsControllerProvider);
+  }
+
+  /// Cancels every video the other device suggested.
+  static Future<int> dismissAll() async {
+    final urls = <String>[
+      for (final record in await _records())
+        if (record.id.startsWith(idPrefix) && record.sourceUrl.trim().isNotEmpty) record.sourceUrl.trim(),
+    ];
+    await dismiss(urls);
+    return urls.length;
+  }
+
+  static Future<Set<String>> _dismissed() async {
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getStringList(_dismissedKey) ?? const <String>[]).map((url) => url.trim()).toSet();
+  }
+
+  static Future<void> _remove(String id) async {
+    final container = containerOf?.call();
+    if (container != null) {
+      await container.read(downloadsRepositoryProvider).delete(id);
+      return;
+    }
+    if (!Hive.isBoxOpen(AppConstants.downloadsBoxName)) return;
+    await Hive.box<String>(AppConstants.downloadsBoxName).delete(id);
   }
 
   static Future<void> _put(DownloadRecord record) async {

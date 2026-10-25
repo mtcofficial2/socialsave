@@ -14,6 +14,7 @@ import 'package:social_save/features/downloads/domain/entities/download_record.d
 import 'package:social_save/features/downloads/presentation/providers/downloads_controller.dart';
 import 'package:social_save/features/home/presentation/providers/home_controller.dart';
 import 'package:social_save/features/home/presentation/widgets/link_offer.dart';
+import 'package:social_save/features/library/library_sync.dart';
 import 'package:social_save/features/library/image_device_stamp.dart';
 import 'package:social_save/features/library/vault_actions.dart';
 import 'package:social_save/features/player/open_player.dart';
@@ -346,6 +347,31 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                                 );
                               }),
                             ...problems.map((task) => _FailedCard(task: task)),
+                            if (records.any((record) => record.id.startsWith(LibrarySync.idPrefix)))
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: TextButton.icon(
+                                  onPressed: () async {
+                                    final count = records.where((record) => record.id.startsWith(LibrarySync.idPrefix)).length;
+                                    final ok = await showDialog<bool>(
+                                      context: context,
+                                      builder: (context) => AlertDialog(
+                                        title: Text(count == 1 ? 'Cancel this suggestion?' : 'Cancel all $count suggestions?'),
+                                        content: const Text(
+                                          'These videos stay on the other device. They will not be suggested here again. Videos already saved on this device stay.',
+                                        ),
+                                        actions: [
+                                          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Keep')),
+                                          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Cancel all')),
+                                        ],
+                                      ),
+                                    );
+                                    if (ok == true) await LibrarySync.dismissAll();
+                                  },
+                                  icon: const Icon(Icons.close_rounded),
+                                  label: const Text('Cancel all suggestions'),
+                                ),
+                              ),
                             ...filtered.map((record) => _HistoryCard(record: record)),
                           ],
                         ),
@@ -538,10 +564,19 @@ class _HistoryCard extends ConsumerWidget {
         child: Dismissible(
           key: ValueKey('swipe-${record.id}'),
           background: _swipeBg(context, Icons.share_rounded, 'Share', Alignment.centerLeft),
-          secondaryBackground: _swipeBg(context, Icons.delete_outline_rounded, 'Delete', Alignment.centerRight),
+          secondaryBackground: _swipeBg(
+            context,
+            Icons.delete_outline_rounded,
+            _onOtherDevice ? 'Cancel' : 'Delete',
+            Alignment.centerRight,
+          ),
           confirmDismiss: (dir) async {
             if (dir == DismissDirection.startToEnd) {
               await _handle(context, ref, 'share');
+              return false;
+            }
+            if (_onOtherDevice) {
+              await LibrarySync.dismiss([record.sourceUrl]);
               return false;
             }
             final messenger = ScaffoldMessenger.of(context);
@@ -684,7 +719,7 @@ class _HistoryCard extends ConsumerWidget {
                       if (!_onOtherDevice) const PopupMenuItem(value: 'vault', child: Text('Move to vault')),
                       if (!_onOtherDevice) const PopupMenuItem(value: 'share', child: Text('Share')),
                       const PopupMenuItem(value: 'redownload', child: Text('Download again')),
-                      const PopupMenuItem(value: 'delete', child: Text('Delete')),
+                      PopupMenuItem(value: 'delete', child: Text(_onOtherDevice ? 'Cancel suggestion' : 'Delete')),
                     ],
                   ),
                 ],
@@ -764,7 +799,11 @@ class _HistoryCard extends ConsumerWidget {
           ref.read(homeControllerProvider.notifier).setUrl(record.sourceUrl);
           if (context.mounted) context.go('/');
         case 'delete':
-          await controller.delete(record.id, deleteFile: true);
+          if (_onOtherDevice) {
+            await LibrarySync.dismiss([record.sourceUrl]);
+          } else {
+            await controller.delete(record.id, deleteFile: true);
+          }
       }
     } on AppException catch (error) {
       if (context.mounted) {

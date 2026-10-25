@@ -15,13 +15,17 @@ const windowsVideoExtensions = {
 const _skipDirs = {
   'node_modules', 'build', '.git', 'appdata', '\$recycle.bin',
   'system volume information', 'my music', 'my pictures', 'my videos',
+  '.dart_tool', '.gradle', '.idea', '.vs', '__pycache__', '.venv', 'venv',
+  'site-packages', 'bower_components', 'pods',
 };
 
 const _minBytes = 100 * 1024;
 const _hidden = 0x2;
 const _system = 0x4;
 const _reparse = 0x400;
+const _directory = 0x10;
 const _driveFixed = 3;
+const _fileTimeEpoch = 116444736000000000;
 
 /// The default folders, plus `X:\Videos` on other fixed drives.
 List<String> windowsDefaultVideoRoots() {
@@ -50,63 +54,143 @@ List<String> windowsDefaultVideoRoots() {
   return roots.where((dir) => Directory(dir).existsSync()).toList();
 }
 
-int _attributes(String path) {
+int _fileTicks(w.FILETIME time) {
+  final low = time.dwLowDateTime.toUnsigned(32);
+  final high = time.dwHighDateTime.toUnsigned(32);
+  return (high << 32) | low;
+}
+
+int _ticksToMillis(int ticks) {
+  if (ticks < _fileTimeEpoch) return 0;
+  return (ticks - _fileTimeEpoch) ~/ 10000;
+}
+
+/// Last-write time of [path] in Windows FILETIME ticks, or 0.
+int _dirTicks(String path) {
   final native = path.toNativeUtf16();
+  final data = calloc<w.WIN32_FILE_ATTRIBUTE_DATA>();
   try {
-    return w.GetFileAttributes(native) & 0xFFFFFFFF;
+    if (w.GetFileAttributesEx(native, w.GetFileExInfoStandard, data) == 0) return 0;
+    return _fileTicks(data.ref.ftLastWriteTime);
   } finally {
     calloc.free(native);
+    calloc.free(data);
   }
 }
 
-bool _skipDirectory(String path) {
-  final name = p.basename(path).toLowerCase();
-  if (name.startsWith('.') || name.startsWith('\$') || _skipDirs.contains(name)) {
-    return true;
-  }
-  final attrs = _attributes(path);
-  if (attrs == 0xFFFFFFFF) return true;
-  return attrs & (_hidden | _system | _reparse) != 0;
+bool _skipDirectoryName(String name, int attrs) {
+  final lower = name.toLowerCase();
+  if (lower == '.' || lower == '..') return true;
+  if (lower.startsWith('.') || lower.startsWith('\$') || _skipDirs.contains(lower)) return true;
+  return (attrs & (_hidden | _system | _reparse)) != 0;
 }
 
-/// Scans one root folder recursively. Returns the same map shape as the
-/// Android `listVideos` call, plus a `folder` entry.
-List<Map<String, Object?>> scanWindowsVideoRoot(String root) {
-  final out = <Map<String, Object?>>[];
+Map<String, Object?>? _asDir(Object? raw) {
+  if (raw is! Map) return null;
+  return Map<String, Object?>.from(raw.map((key, value) => MapEntry('$key', value)));
+}
+
+/// One folder via FindFirstFileEx. Size and time come from the listing,
+/// so each video does not need its own stat.
+({int before, int after, List<Map<String, Object?>> videos, List<String> children}) _listDir(String dir) {
+  final videos = <Map<String, Object?>>[];
+  final children = <String>[];
+  final before = _dirTicks(dir);
+  final pattern = p.join(dir, '*').toNativeUtf16();
+  final data = calloc<w.WIN32_FIND_DATA>();
+  final handle = w.FindFirstFileEx(
+    pattern,
+    w.FindExInfoBasic,
+    data,
+    w.FindExSearchNameMatch,
+    nullptr,
+    w.FIND_FIRST_EX_LARGE_FETCH,
+  );
+  calloc.free(pattern);
+  if (handle == w.INVALID_HANDLE_VALUE) {
+    calloc.free(data);
+    return (before: before, after: before, videos: videos, children: children);
+  }
+  try {
+    while (true) {
+      final name = data.ref.cFileName;
+      final attrs = data.ref.dwFileAttributes;
+      final isDir = (attrs & _directory) != 0;
+      if (isDir) {
+        if (!_skipDirectoryName(name, attrs)) children.add(p.join(dir, name));
+      } else if (name != '.' && name != '..') {
+        final ext = p.extension(name).replaceAll('.', '').toLowerCase();
+        if (windowsVideoExtensions.contains(ext)) {
+          final size = (data.ref.nFileSizeHigh.toUnsigned(32) << 32) |
+              data.ref.nFileSizeLow.toUnsigned(32);
+          if (size >= _minBytes) {
+            final child = p.join(dir, name);
+            videos.add({
+              'id': child,
+              'title': p.basenameWithoutExtension(name),
+              'path': child,
+              'uri': null,
+              'durationMs': 0,
+              'size': size,
+              'addedAt': _ticksToMillis(_fileTicks(data.ref.ftLastWriteTime)),
+              'folder': dir,
+            });
+          }
+        }
+      }
+      if (w.FindNextFile(handle, data) == 0) break;
+    }
+  } finally {
+    w.FindClose(handle);
+    calloc.free(data);
+  }
+  return (before: before, after: _dirTicks(dir), videos: videos, children: children);
+}
+
+/// Scans one root. [remembered] is the last index for folders under this root
+/// (`m` last-write ticks as a string, `v` videos, `c` child folders). A folder
+/// whose time has not changed is reused, so the next search does not walk it.
+({List<Map<String, Object?>> videos, Map<String, Object?> dirs}) scanWindowsVideoRoot(
+  String root, [
+  Map<String, Object?> remembered = const {},
+]) {
+  final videos = <Map<String, Object?>>[];
+  final dirs = <String, Object?>{};
   final pending = <String>[root];
   while (pending.isNotEmpty) {
     final dir = pending.removeLast();
-    List<FileSystemEntity> entries;
-    try {
-      entries = Directory(dir).listSync(followLinks: false);
-    } catch (_) {
+    final cached = _asDir(remembered[dir]);
+    final cachedMark = cached == null ? '' : '${cached['m'] ?? ''}';
+    final now = cachedMark.isEmpty ? 0 : _dirTicks(dir);
+    if (cached != null && cachedMark.isNotEmpty && '$now' == cachedMark) {
+      final files = cached['v'];
+      if (files is List) {
+        for (final raw in files) {
+          final item = _asDir(raw);
+          if (item != null) videos.add(item);
+        }
+      }
+      final children = cached['c'];
+      if (children is List) {
+        for (final child in children) {
+          final path = '$child';
+          if (path.isNotEmpty) pending.add(path);
+        }
+      }
+      dirs[dir] = cached;
       continue;
     }
-    for (final entity in entries) {
-      if (entity is Directory) {
-        if (!_skipDirectory(entity.path)) pending.add(entity.path);
-        continue;
-      }
-      if (entity is! File) continue;
-      final ext = p.extension(entity.path).replaceAll('.', '').toLowerCase();
-      if (!windowsVideoExtensions.contains(ext)) continue;
-      try {
-        final stat = entity.statSync();
-        if (stat.size < _minBytes) continue;
-        out.add({
-          'id': entity.path,
-          'title': p.basenameWithoutExtension(entity.path),
-          'path': entity.path,
-          'uri': null,
-          'durationMs': 0,
-          'size': stat.size,
-          'addedAt': stat.modified.millisecondsSinceEpoch,
-          'folder': p.dirname(entity.path),
-        });
-      } catch (_) {}
-    }
+    final listed = _listDir(dir);
+    videos.addAll(listed.videos);
+    final stable = listed.before != 0 && listed.before == listed.after;
+    dirs[dir] = {
+      'm': stable ? '${listed.before}' : '',
+      'v': listed.videos,
+      'c': listed.children,
+    };
+    pending.addAll(listed.children);
   }
-  return out;
+  return (videos: videos, dirs: dirs);
 }
 
 /// Asks the Windows shell (Explorer's thumbnail cache) for a frame of the

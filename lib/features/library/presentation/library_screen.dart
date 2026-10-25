@@ -16,6 +16,7 @@ import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/platform/desktop_support.dart';
 import 'package:social_save/core/platform/phone_body.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
+import 'package:social_save/features/downloads/presentation/providers/downloads_controller.dart';
 import 'package:social_save/features/library/bundle_ui.dart';
 import 'package:social_save/features/library/device_media.dart';
 import 'package:social_save/features/library/library_catalog.dart';
@@ -82,6 +83,18 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   /// Saved resume spots, keyed like the player's resume_position keys.
   Map<String, int> _resume = const {};
 
+  /// Lowercase title, path, and folder for each video, so typing a search
+  /// does not rebuild those strings.
+  Map<String, String> _blob = const {};
+
+  void _useDevice(List<DeviceVideo> videos) {
+    _device = _sorted(videos);
+    _blob = {
+      for (final video in _device)
+        video.id: '${video.title}\n${video.path ?? ''}\n${video.folder ?? ''}'.toLowerCase(),
+    };
+  }
+
   @override
   void initState() {
     super.initState();
@@ -97,14 +110,14 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     if (!mounted || saved == null || saved == _sort) return;
     setState(() {
       _sort = saved;
-      _device = _sorted(_device);
+      _useDevice(_device);
     });
   }
 
   Future<void> _setSort(String value) async {
     setState(() {
       _sort = value;
-      _device = _sorted(_device);
+      _useDevice(_device);
     });
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_sortKey, value);
@@ -204,7 +217,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
       }
       if (!mounted) return;
       setState(() {
-        _device = _sorted(device);
+        _useDevice(device);
         _vault = vault;
         _vaultPaths
           ..clear()
@@ -229,11 +242,13 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   /// folder finishes. The finished list is cached until Refresh.
   Future<void> _reloadWindows({bool rescan = false}) async {
     final media = DeviceMediaService();
+    if (media.cachedWindows == null) await media.savedWindows();
     final cached = media.cachedWindows;
+    if (!mounted) return;
     setState(() {
       _error = null;
-      if (cached != null && !rescan) {
-        _device = _sorted(cached);
+      if (cached != null && cached.isNotEmpty) {
+        _useDevice(cached);
         _loading = false;
       } else if (_device.isEmpty) {
         _loading = true;
@@ -254,7 +269,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
           ..addAll(vaultPaths);
       });
     } catch (_) {}
-    if (cached != null && !rescan) return;
+    if (cached != null && cached.isNotEmpty && !rescan && DesktopSupport.scanFinished) return;
     await _scanSub?.cancel();
     if (!mounted) return;
     setState(() => _scanning = true);
@@ -262,7 +277,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
       (batch) {
         if (!mounted) return;
         setState(() {
-          _device = _sorted(batch);
+          _useDevice(batch);
           _loading = false;
         });
         // Screenshot hook (`--open-menu`): open the first video's menu once.
@@ -1221,7 +1236,11 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   }
 
   bool _matchesVideo(DeviceVideo video) {
-    if (!_matchesText('${video.title} ${video.path ?? ''}')) return false;
+    final blob = _blob[video.id] ??
+        '${video.title} ${video.path ?? ''} ${video.folder ?? ''}'.toLowerCase();
+    final query = _query.trim().toLowerCase();
+    if (query.isNotEmpty && !blob.contains(query)) return false;
+    if (_platform != 'All' && !blob.contains(_platform.toLowerCase())) return false;
     final catalog = ref.read(libraryCatalogProvider);
     final key = 'device:${video.id}';
     if (_favoritesOnly && !catalog.isFavorite(key)) return false;
@@ -1884,9 +1903,22 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
       }
     } catch (_) {}
     if (!mounted) return;
+    final goneIds = <String>{
+      for (final video in videos)
+        if (video.path != null && video.path!.isNotEmpty && !File(video.path!).existsSync()) video.id,
+    };
+    if (goneIds.isEmpty && deleted > 0) {
+      for (final video in videos) {
+        if (goneIds.length >= deleted) break;
+        goneIds.add(video.id);
+      }
+    }
     setState(() {
-      _selected.clear();
-      _selectMode = false;
+      if (goneIds.isNotEmpty) {
+        _useDevice([for (final video in _device) if (!goneIds.contains(video.id)) video]);
+      }
+      _selected.removeWhere(goneIds.contains);
+      if (_selected.isEmpty) _selectMode = false;
     });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -1899,7 +1931,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
         ),
       ),
     );
-    await _reload(rescan: DesktopSupport.isWindows);
+    ref.invalidate(downloadsControllerProvider);
   }
 
   Future<void> _renameDevice(DeviceVideo video) async {
@@ -2128,6 +2160,7 @@ class _DeviceList extends StatelessWidget {
       );
     }
     final grid = GridView.builder(
+      key: const PageStorageKey<String>('socialsave-library-device'),
       // Always scrollable so pull-to-refresh works with only a few videos.
       physics: const AlwaysScrollableScrollPhysics(),
       padding: EdgeInsets.fromLTRB(

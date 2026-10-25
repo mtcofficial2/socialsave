@@ -255,7 +255,7 @@ class PhonePlayerChrome extends StatelessWidget {
               'Picture in picture',
             ),
           if (showCast)
-            _iconButton(Icons.cast_rounded, onCast ?? () {}, 'Play on TV'),
+            _iconButton(Icons.cast_rounded, onCast ?? () {}, 'Play on computer'),
           ?moreMenu,
         ],
       ],

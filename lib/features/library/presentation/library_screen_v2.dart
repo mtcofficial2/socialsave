@@ -18,6 +18,7 @@ import 'package:social_save/core/platform/phone_body.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
 import 'package:social_save/features/downloads/presentation/providers/downloads_controller.dart';
 import 'package:social_save/features/home/presentation/widgets/link_offer.dart';
+import 'package:social_save/features/library/lan_mirror.dart';
 import 'package:social_save/features/library/library_sync.dart';
 import 'package:social_save/features/library/bundle_ui.dart';
 import 'package:social_save/features/library/device_media.dart';
@@ -98,6 +99,18 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
   /// Saved resume spots, keyed like the player's resume_position keys.
   Map<String, int> _resume = const {};
 
+  /// Lowercase title, path, and folder for each video, so typing a search
+  /// does not rebuild those strings.
+  Map<String, String> _blob = const {};
+
+  void _useDevice(List<DeviceVideo> videos) {
+    _device = _sorted(videos);
+    _blob = {
+      for (final video in _device)
+        video.id: '${video.title}\n${video.path ?? ''}\n${video.folder ?? ''}'.toLowerCase(),
+    };
+  }
+
   @override
   void initState() {
     super.initState();
@@ -113,14 +126,14 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
     if (!mounted || saved == null || saved == _sort) return;
     setState(() {
       _sort = saved;
-      _device = _sorted(_device);
+      _useDevice(_device);
     });
   }
 
   Future<void> _setSort(String value) async {
     setState(() {
       _sort = value;
-      _device = _sorted(_device);
+      _useDevice(_device);
     });
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_sortKey, value);
@@ -220,7 +233,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
       }
       if (!mounted) return;
       setState(() {
-        _device = _sorted(device);
+        _useDevice(device);
         _vault = vault;
         _vaultPaths
           ..clear()
@@ -245,11 +258,13 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
   /// folder finishes. The finished list is cached until Refresh.
   Future<void> _reloadWindows({bool rescan = false}) async {
     final media = DeviceMediaService();
+    if (media.cachedWindows == null) await media.savedWindows();
     final cached = media.cachedWindows;
+    if (!mounted) return;
     setState(() {
       _error = null;
-      if (cached != null && !rescan) {
-        _device = _sorted(cached);
+      if (cached != null && cached.isNotEmpty) {
+        _useDevice(cached);
         _loading = false;
       } else if (_device.isEmpty) {
         _loading = true;
@@ -270,7 +285,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
           ..addAll(vaultPaths);
       });
     } catch (_) {}
-    if (cached != null && !rescan) return;
+    if (cached != null && cached.isNotEmpty && !rescan && DesktopSupport.scanFinished) return;
     await _scanSub?.cancel();
     if (!mounted) return;
     setState(() => _scanning = true);
@@ -278,7 +293,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
       (batch) {
         if (!mounted) return;
         setState(() {
-          _device = _sorted(batch);
+          _useDevice(batch);
           _loading = false;
         });
         // Screenshot hook (`--open-menu`): open the first video's menu once.
@@ -1072,19 +1087,41 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
         onActions: _deviceActions,
         onSend: _sendDevice,
       );
-      if (later.isEmpty && sync.isEmpty) return list;
       return Column(
         children: [
-          _SavedElsewhere(
-            later: later,
-            sync: sync,
-            onOpen: (url) {
-              offerLink(url);
-            },
-            onRemoveLater: (url) {
-              ref.read(libraryCatalogProvider.notifier).removeLater(url);
-            },
-          ),
+          if (later.isNotEmpty || sync.isNotEmpty)
+            _SavedElsewhere(
+              later: later,
+              sync: sync,
+              onOpen: (url) {
+                offerLink(url);
+              },
+              onRemoveLater: (url) {
+                ref.read(libraryCatalogProvider.notifier).removeLater(url);
+              },
+              onDismiss: (url) {
+                unawaited(LibrarySync.dismiss([url]));
+              },
+              onDismissAll: () async {
+                final count = sync.length;
+                final ok = await showDialog<bool>(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: Text(count == 1 ? 'Cancel this suggestion?' : 'Cancel all $count suggestions?'),
+                    content: const Text(
+                      'These videos stay on the other device. They will not be suggested here again. Videos already saved on this device stay.',
+                    ),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Keep')),
+                      FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Cancel all')),
+                    ],
+                  ),
+                );
+                if (ok == true) await LibrarySync.dismissAll();
+              },
+            )
+          else
+            const SizedBox.shrink(),
           Expanded(child: list),
         ],
       );
@@ -1101,7 +1138,11 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
   }
 
   bool _matchesVideo(DeviceVideo video) {
-    if (!_matchesText('${video.title} ${video.path ?? ''}')) return false;
+    final blob = _blob[video.id] ??
+        '${video.title} ${video.path ?? ''} ${video.folder ?? ''}'.toLowerCase();
+    final query = _query.trim().toLowerCase();
+    if (query.isNotEmpty && !blob.contains(query)) return false;
+    if (_platform != 'All' && !blob.contains(_platform.toLowerCase())) return false;
     final catalog = ref.read(libraryCatalogProvider);
     final key = 'device:${video.id}';
     if (_favoritesOnly && !catalog.isFavorite(key)) return false;
@@ -1456,8 +1497,8 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
         if (!DesktopSupport.isWindows)
           ListTile(
             leading: const Icon(Icons.tv_rounded),
-            title: const Text('Play on TV'),
-            subtitle: const Text('Opens the video already on this phone'),
+            title: const Text('Play on computer'),
+            subtitle: const Text('A Social Save computer on this Wi-Fi'),
             onTap: () => Navigator.pop(context, 'tv'),
           ),
         ListTile(
@@ -1569,12 +1610,14 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
         return;
       }
       if (action == 'tv') {
+        final outcome = await LanMirror.cast(context, path: path, title: video.title);
+        if (!mounted || outcome != MirrorOutcome.none) return;
         final ok = await PhoneBody.playOnTv(path: path, title: video.title);
         if (!mounted) return;
         if (!ok) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('No TV app on this phone could open the video.'),
+              content: Text('No computer is on this Wi-Fi, and no TV app could open the video.'),
             ),
           );
         }
@@ -1764,9 +1807,22 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
       }
     } catch (_) {}
     if (!mounted) return;
+    final goneIds = <String>{
+      for (final video in videos)
+        if (video.path != null && video.path!.isNotEmpty && !File(video.path!).existsSync()) video.id,
+    };
+    if (goneIds.isEmpty && deleted > 0) {
+      for (final video in videos) {
+        if (goneIds.length >= deleted) break;
+        goneIds.add(video.id);
+      }
+    }
     setState(() {
-      _selected.clear();
-      _selectMode = false;
+      if (goneIds.isNotEmpty) {
+        _useDevice([for (final video in _device) if (!goneIds.contains(video.id)) video]);
+      }
+      _selected.removeWhere(goneIds.contains);
+      if (_selected.isEmpty) _selectMode = false;
     });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -1779,7 +1835,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
         ),
       ),
     );
-    await _reload(rescan: DesktopSupport.isWindows);
+    ref.invalidate(downloadsControllerProvider);
   }
 
   Future<void> _renameDevice(DeviceVideo video) async {
@@ -2011,6 +2067,7 @@ class _DeviceList extends StatelessWidget {
       );
     }
     final grid = GridView.builder(
+      key: const PageStorageKey<String>('socialsave-library-device'),
       // Always scrollable so pull-to-refresh works with only a few videos.
       physics: const AlwaysScrollableScrollPhysics(),
       padding: EdgeInsets.fromLTRB(
@@ -2074,12 +2131,16 @@ class _SavedElsewhere extends StatelessWidget {
     required this.sync,
     required this.onOpen,
     required this.onRemoveLater,
+    required this.onDismiss,
+    required this.onDismissAll,
   });
 
   final List<WatchLaterItem> later;
   final List<DownloadRecord> sync;
   final ValueChanged<String> onOpen;
   final ValueChanged<String> onRemoveLater;
+  final ValueChanged<String> onDismiss;
+  final VoidCallback onDismissAll;
 
   @override
   Widget build(BuildContext context) {
@@ -2099,13 +2160,15 @@ class _SavedElsewhere extends StatelessWidget {
       }
     }
     if (sync.isNotEmpty) {
-      children.add(_heading(look, 'On your other device'));
-      for (final record in sync.take(12)) {
+      children.add(_syncHeading(look));
+      for (final record in sync) {
         children.add(_line(
           look,
           title: record.title,
           caption: 'Tap to download it here',
           onTap: () => onOpen(record.sourceUrl),
+          onClose: () => onDismiss(record.sourceUrl),
+          closeTip: 'Cancel',
         ));
       }
     }
@@ -2129,12 +2192,36 @@ class _SavedElsewhere extends StatelessWidget {
     );
   }
 
+  Widget _syncHeading(LibraryPalette look) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 6, 0, 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              'On your other device',
+              style: TextStyle(color: look.ink, fontSize: 13, fontWeight: FontWeight.w800),
+            ),
+          ),
+          TextButton(
+            onPressed: onDismissAll,
+            child: Text(
+              'Cancel all',
+              style: TextStyle(color: look.accent, fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _line(
     LibraryPalette look, {
     required String title,
     required String caption,
     required VoidCallback onTap,
     VoidCallback? onClose,
+    String closeTip = 'Remove',
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
@@ -2169,7 +2256,7 @@ class _SavedElsewhere extends StatelessWidget {
                   ),
                   if (onClose != null)
                     IconButton(
-                      tooltip: 'Remove',
+                      tooltip: closeTip,
                       onPressed: onClose,
                       icon: Icon(Icons.close_rounded, color: look.muted, size: 18),
                     )

@@ -66,7 +66,15 @@ class DesktopSupport {
 
   /// Last full scan, kept for the life of the app.
   static List<Map<String, Object?>>? cachedVideos;
+
+  /// True after a scan has finished in this session. A saved index can be
+  /// shown before that, so search works while the folders are checked.
+  static bool scanFinished = false;
   static int _scanGeneration = 0;
+  static bool _indexLoaded = false;
+  static Map<String, Object?> _savedDirs = {};
+  static final Set<String> _gone = {};
+  static File? _indexFile;
 
   static Future<List<String>> extraFolders() async {
     final prefs = await SharedPreferences.getInstance();
@@ -81,66 +89,210 @@ class DesktopSupport {
   static Future<List<String>> defaultFolders() =>
       Isolate.run(windowsDefaultVideoRoots);
 
+  /// The last saved index, if this PC has been scanned before.
+  static Future<List<Map<String, Object?>>?> savedVideos() async {
+    await _loadIndex();
+    final cached = cachedVideos;
+    if (cached == null || cached.isEmpty) return null;
+    return cached;
+  }
+
   /// Scans the default folders and the user's added folders, one root at a
-  /// time in a background isolate. Each event is the full list so far,
-  /// newest first. The last event is the complete list.
+  /// time in a background isolate. When a saved index already exists, only
+  /// the finished list is emitted so the library does not jump. Otherwise
+  /// each event is the full list so far, newest first.
   static Stream<List<Map<String, Object?>>> scanVideos() async* {
     final generation = ++_scanGeneration;
+    scanFinished = false;
+    await _loadIndex();
     final roots = <String>[
       ...await defaultFolders(),
       ...await extraFolders(),
     ];
+    final showPartials = cachedVideos == null || cachedVideos!.isEmpty;
     final seen = <String>{};
     final found = <Map<String, Object?>>[];
+    final nextDirs = <String, Object?>{};
     for (final root in roots) {
       if (generation != _scanGeneration) return;
       if (!Directory(root).existsSync()) continue;
-      List<Map<String, Object?>> batch;
+      ({List<Map<String, Object?>> videos, Map<String, Object?> dirs}) piece;
       try {
-        batch = await _scanRootInIsolate(root);
+        piece = await _scanRootInIsolate(root, _dirsForRoot(root));
       } catch (_) {
         continue;
       }
       if (generation != _scanGeneration) return;
-      for (final item in batch) {
-        if (seen.add('${item['path']}'.toLowerCase())) found.add(item);
+      nextDirs.addAll(piece.dirs);
+      for (final item in piece.videos) {
+        final path = '${item['path']}'.toLowerCase();
+        if (path.isEmpty || _gone.contains(path) || !seen.add(path)) continue;
+        found.add(item);
       }
-      found.sort((a, b) => (b['addedAt'] as int).compareTo(a['addedAt'] as int));
-      yield List.unmodifiable(found);
+      if (showPartials) {
+        found.sort(_byAdded);
+        yield List.unmodifiable(found);
+      }
     }
-    cachedVideos = List.unmodifiable(found);
-    if (roots.isEmpty) yield const [];
+    if (generation != _scanGeneration) return;
+    found.sort(_byAdded);
+    final done = List<Map<String, Object?>>.unmodifiable(found);
+    cachedVideos = done;
+    _savedDirs = nextDirs;
+    await _storeIndex();
+    if (generation != _scanGeneration) return;
+    scanFinished = true;
+    yield done;
   }
 
   /// Cached list if a scan already finished, otherwise a fresh scan.
   static Future<List<Map<String, Object?>>> listVideos() async {
     final cached = cachedVideos;
-    if (cached != null) return cached;
-    List<Map<String, Object?>> last = const [];
+    if (cached != null && scanFinished) return cached;
+    await _loadIndex();
+    if (cachedVideos != null && scanFinished) return cachedVideos!;
+    List<Map<String, Object?>> last = cachedVideos ?? const [];
     await for (final batch in scanVideos()) {
       last = batch;
     }
     return last;
   }
 
-  static void _updateCache(String oldPath, String? newPath) {
-    final cached = cachedVideos;
-    if (cached == null) return;
-    final next = <Map<String, Object?>>[];
-    for (final item in cached) {
-      if ('${item['path']}'.toLowerCase() != oldPath.toLowerCase()) {
-        next.add(item);
-        continue;
+  static int _byAdded(Map<String, Object?> a, Map<String, Object?> b) {
+    final left = a['addedAt'];
+    final right = b['addedAt'];
+    final av = left is num ? left.toInt() : 0;
+    final bv = right is num ? right.toInt() : 0;
+    return bv.compareTo(av);
+  }
+
+  static Map<String, Object?> _dirsForRoot(String root) {
+    final prefix = root.toLowerCase();
+    final out = <String, Object?>{};
+    for (final entry in _savedDirs.entries) {
+      final key = entry.key.toLowerCase();
+      if (key == prefix || key.startsWith('$prefix\\') || key.startsWith('$prefix/')) {
+        out[entry.key] = entry.value;
       }
-      if (newPath == null) continue;
-      next.add({
-        ...item,
-        'id': newPath,
-        'path': newPath,
-        'title': p.basenameWithoutExtension(newPath),
-      });
     }
-    cachedVideos = List.unmodifiable(next);
+    return out;
+  }
+
+  static Future<File> _indexPath() async {
+    final ready = _indexFile;
+    if (ready != null) return ready;
+    final dir = await getApplicationSupportDirectory();
+    final file = File(p.join(dir.path, 'socialsave_video_index.json'));
+    _indexFile = file;
+    return file;
+  }
+
+  static Future<void> _loadIndex() async {
+    if (_indexLoaded) return;
+    _indexLoaded = true;
+    try {
+      final file = await _indexPath();
+      if (!file.existsSync()) return;
+      final data = jsonDecode(await file.readAsString());
+      if (data is! Map) return;
+      final dirs = data['dirs'];
+      if (dirs is! Map) return;
+      final parsed = <String, Object?>{};
+      final videos = <Map<String, Object?>>[];
+      for (final entry in dirs.entries) {
+        final value = entry.value;
+        if (value is! Map) continue;
+        parsed['${entry.key}'] = value;
+        final files = value['v'];
+        if (files is! List) continue;
+        for (final raw in files) {
+          if (raw is! Map) continue;
+          final path = '${raw['path'] ?? ''}'.toLowerCase();
+          if (path.isEmpty || _gone.contains(path)) continue;
+          videos.add(Map<String, Object?>.from(raw.map((key, item) => MapEntry('$key', item))));
+        }
+      }
+      _savedDirs = parsed;
+      if (videos.isEmpty) return;
+      videos.sort(_byAdded);
+      cachedVideos ??= List.unmodifiable(videos);
+    } catch (_) {}
+  }
+
+  static Future<void> _storeIndex() async {
+    try {
+      final file = await _indexPath();
+      if (!file.parent.existsSync()) file.parent.createSync(recursive: true);
+      final tmp = File('${file.path}.tmp');
+      await tmp.writeAsString(jsonEncode({'dirs': _savedDirs}), flush: true);
+      if (file.existsSync()) await file.delete();
+      await tmp.rename(file.path);
+    } catch (_) {}
+  }
+
+  static Future<void> _persistCacheEdit(String oldPath, String? newPath) async {
+    try {
+      await _loadIndex();
+      final oldKey = oldPath.toLowerCase();
+      var changed = false;
+      for (final entry in _savedDirs.entries) {
+        final dir = entry.value;
+        if (dir is! Map) continue;
+        final files = dir['v'];
+        if (files is! List) continue;
+        final next = <Object?>[];
+        var edited = false;
+        for (final raw in files) {
+          if (raw is! Map) {
+            next.add(raw);
+            continue;
+          }
+          if ('${raw['path'] ?? ''}'.toLowerCase() != oldKey) {
+            next.add(raw);
+            continue;
+          }
+          edited = true;
+          if (newPath == null) continue;
+          next.add({
+            ...Map<String, Object?>.from(raw.map((key, item) => MapEntry('$key', item))),
+            'id': newPath,
+            'path': newPath,
+            'title': p.basenameWithoutExtension(newPath),
+            'folder': p.dirname(newPath),
+          });
+        }
+        if (!edited) continue;
+        changed = true;
+        dir['v'] = next;
+        dir['m'] = '';
+      }
+      if (changed) await _storeIndex();
+    } catch (_) {}
+  }
+
+  static void _updateCache(String oldPath, String? newPath) {
+    final key = oldPath.toLowerCase();
+    if (newPath == null) _gone.add(key);
+    final cached = cachedVideos;
+    if (cached != null) {
+      final next = <Map<String, Object?>>[];
+      for (final item in cached) {
+        if ('${item['path']}'.toLowerCase() != key) {
+          next.add(item);
+          continue;
+        }
+        if (newPath == null) continue;
+        next.add({
+          ...item,
+          'id': newPath,
+          'path': newPath,
+          'title': p.basenameWithoutExtension(newPath),
+          'folder': p.dirname(newPath),
+        });
+      }
+      cachedVideos = List.unmodifiable(next);
+    }
+    unawaited(_persistCacheEdit(oldPath, newPath));
   }
 
   // Thumbnails from the Windows shell, at most two at a time, cached on disk.
@@ -248,8 +400,11 @@ foreach ($p in [IO.File]::ReadAllLines($list, [Text.Encoding]::UTF8)) {
 }
 
 // Top-level so the isolate closures capture only their arguments.
-Future<List<Map<String, Object?>>> _scanRootInIsolate(String root) =>
-    Isolate.run(() => scanWindowsVideoRoot(root));
+Future<({List<Map<String, Object?>> videos, Map<String, Object?> dirs})> _scanRootInIsolate(
+  String root,
+  Map<String, Object?> remembered,
+) =>
+    Isolate.run(() => scanWindowsVideoRoot(root, remembered));
 
 Future<String?> _thumbInIsolate(String path, String out) =>
     Isolate.run(() => windowsShellThumbnail(path, out, 320));

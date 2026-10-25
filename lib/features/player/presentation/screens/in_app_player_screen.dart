@@ -8,6 +8,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/material.dart';
+import 'package:social_save/features/library/lan_mirror.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -228,6 +229,13 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         hwdec: DesktopSupport.isWindows ? 'no' : null,
       ),
     );
+    if ((_session.networkUrl ?? '').contains('/m/')) {
+      final waiting = LanMirror.pending;
+      if (waiting != null) unawaited(_applyMirror(waiting));
+      _subs.add(LanMirror.commands.stream.listen((command) {
+        unawaited(_applyMirror(command));
+      }));
+    }
     _subs.add(
       _player.stream.error.listen((message) {
         if (!mounted || message.trim().isEmpty) return;
@@ -631,6 +639,25 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     setState(() => _sleepMinutes = null);
   }
 
+  Future<void> _applyMirror(MirrorCommand command) async {
+    if (!mounted) return;
+    if (command.action == 'stop') {
+      Navigator.of(context).maybePop();
+      return;
+    }
+    if (command.action == 'pause') {
+      await _player.pause();
+      return;
+    }
+    if (command.action == 'play') {
+      await _player.play();
+      return;
+    }
+    if (command.action == 'seek') {
+      await _player.seek(Duration(milliseconds: command.positionMs));
+    }
+  }
+
   Future<void> _playOnTv() async {
     final path = _session.filePath;
     if (path == null || !File(path).existsSync()) {
@@ -638,13 +665,25 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Save the video on this phone before playing it on a TV.',
+              'Save the video on this phone before playing it on a computer.',
             ),
           ),
         );
       }
       return;
     }
+    final outcome = await LanMirror.cast(
+      context,
+      path: path,
+      title: _session.title,
+      positionMs: _player.state.position.inMilliseconds,
+      durationMs: _player.state.duration.inMilliseconds,
+    );
+    if (outcome == MirrorOutcome.started) {
+      await _player.pause();
+      return;
+    }
+    if (outcome != MirrorOutcome.none || !mounted) return;
     final ok = await PhoneBody.playOnTv(path: path, title: _session.title);
     if (!ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -730,9 +769,10 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         }).catchError((_) {}));
       }
       final startAt = widget.startAt;
-      final start = startAt == null ? await _savedStart() : null;
+      final mirrorAt = LanMirror.claimStart(uri);
+      final start = startAt == null ? (mirrorAt ?? await _savedStart()) : null;
       await _player.open(
-        Media(uri, httpHeaders: headers, start: startAt),
+        Media(uri, httpHeaders: headers, start: startAt ?? mirrorAt),
         play: widget.autoPlay,
       );
       if (session.filePath != null) await _attachSidecar(session.filePath!);
@@ -2697,7 +2737,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
             PopupMenuItem(value: 'session', child: Text('Send to ${ShareSession.peer.value!.name}', style: t)),
           if (share) ...[
             PopupMenuItem(value: 'send', child: Text('Send to another device', style: t)),
-            PopupMenuItem(value: 'tv', child: Text('Play on TV', style: t)),
+            PopupMenuItem(value: 'tv', child: Text('Play on computer', style: t)),
             PopupMenuItem(value: 'open', child: Text('Open in another app', style: t)),
           ],
           PopupMenuItem(value: 'keys', child: Text('Keyboard shortcuts', style: t)),
@@ -2918,7 +2958,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                   ),
                   PopupMenuItem(
                     value: 'tv',
-                    child: Text('Play on TV'),
+                    child: Text('Play on computer'),
                   ),
                   PopupMenuItem(
                     value: 'open',
@@ -2969,7 +3009,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
               _session.filePath != null &&
               !_session.isVault)
             IconButton(
-              tooltip: 'Play on TV',
+              tooltip: 'Play on computer',
               onPressed: () => unawaited(_playOnTv()),
               icon: Icon(
                 Icons.tv_rounded,

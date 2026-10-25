@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:social_save/features/library/bundle_transfer.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
 import 'package:flutter/material.dart';
+import 'package:social_save/features/library/lan_mirror.dart';
 import 'package:social_save/features/library/nearby_service.dart';
 import 'package:social_save/features/library/session_ui.dart';
 import 'package:social_save/features/library/share_hub.dart';
@@ -15,6 +16,7 @@ import 'package:social_save/features/player/player_session.dart';
 import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
 import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/routing/app_router.dart';
+import 'package:window_manager/window_manager.dart';
 
 String _size(int bytes) {
   if (bytes <= 0) return '';
@@ -26,6 +28,23 @@ String _size(int bytes) {
 /// Hooks the receiving side to the UI. Call once after runApp.
 void installNearbyUi() {
   installSessionUi();
+  LanMirror.install();
+  LanMirror.onOpen = (play) {
+    final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
+    if (ctx == null || !ctx.mounted) return;
+    if (Plat.isWindows) {
+      unawaited(windowManager.show());
+      unawaited(windowManager.focus());
+    }
+    appRouter.push(
+      '/player',
+      extra: PlayerSession(
+        title: play.title,
+        platform: SocialPlatform.direct,
+        networkUrl: play.url,
+      ),
+    );
+  };
   NearbyService.incomingText.addListener(() {
     final text = NearbyService.incomingText.value;
     final ctx = appRouter.routerDelegate.navigatorKey.currentContext;

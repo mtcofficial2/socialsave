@@ -80,6 +80,15 @@ class DeviceMediaService {
     return cached == null ? null : _fromRaw(cached);
   }
 
+  /// Windows only: the index saved from the last session, so search can
+  /// start before this session walks the folders again.
+  Future<List<DeviceVideo>?> savedWindows() async {
+    if (!DesktopSupport.isWindows) return null;
+    final saved = await DesktopSupport.savedVideos();
+    if (saved == null) return null;
+    return _fromRaw(saved);
+  }
+
   Future<String?> resolvePlayablePath(DeviceVideo video) async {
     final path = video.path;
     if (path != null && path.isNotEmpty && File(path).existsSync()) {
