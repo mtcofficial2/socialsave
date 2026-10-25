@@ -122,9 +122,12 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
       }
       setState(() {
         _items = items;
-        _selected
-          ..clear()
-          ..addAll(List.generate(items.length, (index) => index));
+        _selected.clear();
+        // A creator profile starts with nothing ticked. A playlist still
+        // arrives ready to save.
+        if (creatorHome(widget.url) == null) {
+          _selected.addAll(List.generate(items.length, (index) => index));
+        }
         _loading = false;
       });
     } on AppException catch (error) {
@@ -394,11 +397,13 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
         Padding(
           padding: pagePadding(context, top: 8, bottom: 8),
           child: Text(
-            _channelBase == null
+            creatorHome(widget.url) != null && _channelBase == null
+                ? 'Tick the videos you want. Private and login-only items are skipped.'
+                : _channelBase == null
                 ? 'Choose public videos to save. Private and login-only items are skipped.'
                 : _tab == 'shorts'
-                ? 'The 40 newest Shorts. Older Shorts are not listed.'
-                : 'The 40 newest videos. Open Shorts for shorts only.',
+                ? 'The 40 newest Shorts. Tick the ones you want.'
+                : 'The 40 newest videos. Tick the ones you want, or open Shorts for shorts only.',
             style: TextStyle(
               color: Theme.of(context).colorScheme.onSurfaceVariant,
               height: 1.4,
