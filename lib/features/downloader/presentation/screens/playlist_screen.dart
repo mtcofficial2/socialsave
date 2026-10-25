@@ -14,6 +14,7 @@ import 'package:social_save/shared/models/media_format.dart';
 import 'package:social_save/shared/models/playlist_entry.dart';
 import 'package:social_save/shared/widgets/empty_state.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
+import 'package:social_save/shared/widgets/video_thumbnail.dart';
 
 class PlaylistScreen extends ConsumerStatefulWidget {
   const PlaylistScreen({super.key, required this.url});
@@ -398,12 +399,12 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
           padding: pagePadding(context, top: 8, bottom: 8),
           child: Text(
             creatorHome(widget.url) != null && _channelBase == null
-                ? 'Tick the videos you want. Private and login-only items are skipped.'
+                ? 'Tap a picture to choose it. Private and login-only items are skipped.'
                 : _channelBase == null
                 ? 'Choose public videos to save. Private and login-only items are skipped.'
                 : _tab == 'shorts'
-                ? 'The 40 newest Shorts. Tick the ones you want.'
-                : 'The 40 newest videos. Tick the ones you want, or open Shorts for shorts only.',
+                ? 'The 40 newest Shorts. Tap a picture to choose it.'
+                : 'The 40 newest videos. Tap a picture to choose it, or open Shorts for shorts only.',
             style: TextStyle(
               color: Theme.of(context).colorScheme.onSurfaceVariant,
               height: 1.4,
@@ -426,31 +427,25 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
             ),
           ),
         Expanded(
-          child: ListView.builder(
+          child: ListView.separated(
             padding: pagePadding(context, top: 0, bottom: 8),
             itemCount: _items.length,
+            separatorBuilder: (_, _) => const SizedBox(height: 12),
             itemBuilder: (context, index) {
-              final item = _items[index];
-              final seconds = item.durationSeconds;
-              return CheckboxListTile(
-                value: _selected.contains(index),
-                onChanged: _saving
+              return _VideoTile(
+                item: _items[index],
+                picked: _selected.contains(index),
+                onPick: _saving
                     ? null
-                    : (value) {
+                    : (picked) {
                         setState(() {
-                          if (value == true) {
+                          if (picked) {
                             _selected.add(index);
                           } else {
                             _selected.remove(index);
                           }
                         });
                       },
-                title: Text(
-                  item.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                subtitle: Text(seconds == null ? item.url : '${seconds}s'),
               );
             },
           ),
@@ -518,6 +513,103 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _VideoTile extends StatelessWidget {
+  const _VideoTile({
+    required this.item,
+    required this.picked,
+    required this.onPick,
+  });
+
+  final PlaylistEntry item;
+  final bool picked;
+  final ValueChanged<bool>? onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: picked ? scheme.primary : scheme.outlineVariant,
+          width: picked ? 2 : 1,
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            onTap: onPick == null ? null : () => onPick!(!picked),
+            child: Stack(
+              children: [
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final height = constraints.maxWidth * 9 / 16;
+                    return VideoThumbnail(
+                      url: videoStillUrl(item),
+                      durationSeconds: item.durationSeconds,
+                      height: height,
+                      borderRadius: 0,
+                    );
+                  },
+                ),
+                if (picked)
+                  Positioned(
+                    top: 10,
+                    left: 10,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: scheme.primary,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Padding(
+                        padding: EdgeInsets.all(4),
+                        child: Icon(
+                          Icons.check_rounded,
+                          size: 18,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 4, 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    onTap: onPick == null ? null : () => onPick!(!picked),
+                    child: Text(
+                      item.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                        height: 1.25,
+                      ),
+                    ),
+                  ),
+                ),
+                Checkbox(
+                  value: picked,
+                  onChanged: onPick == null
+                      ? null
+                      : (value) => onPick!(value == true),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

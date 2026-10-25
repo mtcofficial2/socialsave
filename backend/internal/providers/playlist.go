@@ -78,9 +78,10 @@ func playlistEntries(info mediaInfo, pageURL string) ([]models.PlaylistEntry, er
 			return nil, errs.RemovedVideo()
 		}
 		return []models.PlaylistEntry{{
-			Title:    title,
-			URL:      page,
-			Duration: positiveDuration(info.Duration.N),
+			Title:     title,
+			URL:       page,
+			Duration:  positiveDuration(info.Duration.N),
+			Thumbnail: entryThumbnail(info),
 		}}, nil
 	}
 	items := make([]models.PlaylistEntry, 0, len(info.Entries))
@@ -97,9 +98,10 @@ func playlistEntries(info mediaInfo, pageURL string) ([]models.PlaylistEntry, er
 			title = "Video"
 		}
 		items = append(items, models.PlaylistEntry{
-			Title:    title,
-			URL:      page,
-			Duration: positiveDuration(entry.Duration.N),
+			Title:     title,
+			URL:       page,
+			Duration:  positiveDuration(entry.Duration.N),
+			Thumbnail: entryThumbnail(entry),
 		})
 	}
 	if len(items) == 0 {
@@ -173,6 +175,30 @@ func portraitURL(raw string) bool {
 		}
 	}
 	return false
+}
+
+func entryThumbnail(info mediaInfo) string {
+	if page := httpURL(info.Thumbnail); page != "" {
+		return page
+	}
+	for _, thumb := range info.Thumbnails {
+		id := strings.ToLower(strings.TrimSpace(thumb.ID))
+		if strings.Contains(id, "avatar") || strings.Contains(id, "banner") {
+			continue
+		}
+		if page := httpURL(thumb.URL); page != "" {
+			return page
+		}
+	}
+	return ""
+}
+
+func httpURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") {
+		return raw
+	}
+	return ""
 }
 
 func firstHTTP(values ...string) string {

@@ -23,6 +23,33 @@ func TestDecodePlaylistUsesEntryURLs(t *testing.T) {
 	}
 }
 
+func TestDecodePlaylistKeepsVideoThumbnail(t *testing.T) {
+	raw := `{
+		"entries": [
+			{
+				"title": "One",
+				"webpage_url": "https://www.youtube.com/watch?v=abcdefghijk",
+				"thumbnail": "https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg",
+				"thumbnails": [{"id": "avatar_uncropped", "url": "https://yt3.ggpht.com/face"}]
+			},
+			{"title": "Bare", "url": "https://example.com/v", "thumbnail": "not-a-url"}
+		]
+	}`
+	items, err := decodePlaylist(raw, "https://example.com/playlist")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("len=%d", len(items))
+	}
+	if items[0].Thumbnail != "https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg" {
+		t.Fatalf("thumb=%q", items[0].Thumbnail)
+	}
+	if items[1].Thumbnail != "" {
+		t.Fatalf("bare thumb=%q", items[1].Thumbnail)
+	}
+}
+
 func TestDecodePlaylistSingleVideo(t *testing.T) {
 	items, err := decodePlaylist(`{"title":"Flower"}`, "https://example.com/flower.mp4")
 	if err != nil || len(items) != 1 || items[0].URL != "https://example.com/flower.mp4" {

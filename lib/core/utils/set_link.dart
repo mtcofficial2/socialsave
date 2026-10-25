@@ -150,6 +150,29 @@ String? youtubeChannelTab(String raw) {
   return tab;
 }
 
+final _youtubeVideoId = RegExp(
+  r'(?:youtu\.be/|[?&]v=|/(?:shorts|embed|live|v)/)([A-Za-z0-9_-]{11})',
+);
+
+/// The 11-character id in a public YouTube watch or Shorts link.
+String? youtubeVideoId(String raw) {
+  if (!raw.contains('youtu')) return null;
+  return _youtubeVideoId.firstMatch(raw)?.group(1);
+}
+
+/// Picture for a listed video. Uses the one the page sent, or the public
+/// YouTube still built from the video id.
+String? videoStillUrl(PlaylistEntry entry) {
+  final given = entry.thumbnailUrl?.trim();
+  if (given != null &&
+      (given.startsWith('https://') || given.startsWith('http://'))) {
+    return given;
+  }
+  final id = youtubeVideoId(entry.url);
+  if (id == null) return null;
+  return 'https://i.ytimg.com/vi/$id/hqdefault.jpg';
+}
+
 /// YouTube channel root, or a TikTok profile. A tab such as /shorts uses the channel root.
 /// Null for one video, a playlist, or a login page. Query strings are dropped.
 String? creatorHome(String raw) {

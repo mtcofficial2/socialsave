@@ -263,6 +263,35 @@ void main() {
     expect(creatorDisplayName('Ada - Videos'), 'Ada');
     expect(creatorDisplayName('Videos'), isNull);
     expect(
+      youtubeVideoId('https://www.youtube.com/watch?v=abcdefghijk'),
+      'abcdefghijk',
+    );
+    expect(
+      youtubeVideoId('https://www.youtube.com/shorts/abcdefghijk'),
+      'abcdefghijk',
+    );
+    expect(youtubeVideoId('https://youtu.be/abcdefghijk'), 'abcdefghijk');
+    expect(youtubeVideoId('https://www.tiktok.com/@creator'), isNull);
+    expect(
+      videoStillUrl(
+        const PlaylistEntry(
+          title: 'A',
+          url: 'https://www.youtube.com/shorts/abcdefghijk',
+        ),
+      ),
+      'https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg',
+    );
+    expect(
+      videoStillUrl(
+        const PlaylistEntry(
+          title: 'A',
+          url: 'https://www.tiktok.com/@a/video/1',
+          thumbnailUrl: 'https://p16.tiktokcdn.com/a.jpeg',
+        ),
+      ),
+      'https://p16.tiktokcdn.com/a.jpeg',
+    );
+    expect(
       isCreatorPortrait('https://i.ytimg.com/vi/abc/hqdefault.jpg'),
       isFalse,
     );

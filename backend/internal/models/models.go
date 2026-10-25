@@ -106,9 +106,10 @@ type HealthResponse struct {
 
 // PlaylistEntry is one public item from a playlist page.
 type PlaylistEntry struct {
-	Title    string `json:"title"`
-	URL      string `json:"url"`
-	Duration *int   `json:"duration"`
+	Title     string `json:"title"`
+	URL       string `json:"url"`
+	Duration  *int   `json:"duration"`
+	Thumbnail string `json:"thumbnail,omitempty"`
 }
 
 // PlaylistResponse is POST /api/v1/playlist.
