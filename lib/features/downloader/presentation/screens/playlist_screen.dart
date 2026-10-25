@@ -2,19 +2,20 @@ import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/errors/exceptions.dart';
 import 'package:social_save/core/utils/set_link.dart';
 import 'package:social_save/features/downloader/follow_creator.dart';
 import 'package:social_save/features/home/favorite_creators.dart';
+import 'package:social_save/features/library/presentation/library_look.dart';
 import 'package:social_save/features/downloader/presentation/providers/download_manager.dart';
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
 import 'package:social_save/shared/models/media_format.dart';
 import 'package:social_save/shared/models/playlist_entry.dart';
 import 'package:social_save/shared/widgets/empty_state.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
-import 'package:social_save/shared/widgets/video_thumbnail.dart';
 
 class PlaylistScreen extends ConsumerStatefulWidget {
   const PlaylistScreen({super.key, required this.url});
@@ -427,10 +428,15 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
             ),
           ),
         Expanded(
-          child: ListView.separated(
+          child: GridView.builder(
             padding: pagePadding(context, top: 0, bottom: 8),
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 240,
+              mainAxisSpacing: 14,
+              crossAxisSpacing: 14,
+              childAspectRatio: 0.74,
+            ),
             itemCount: _items.length,
-            separatorBuilder: (_, _) => const SizedBox(height: 12),
             itemBuilder: (context, index) {
               return _VideoTile(
                 item: _items[index],
@@ -530,85 +536,133 @@ class _VideoTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Material(
-      color: scheme.surfaceContainerLow,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(
-          color: picked ? scheme.primary : scheme.outlineVariant,
-          width: picked ? 2 : 1,
+    final look = LibraryPalette.of(context);
+    final still = videoStillUrl(item);
+    final seconds = item.durationSeconds;
+    return Semantics(
+      button: true,
+      selected: picked,
+      label: item.title,
+      child: Material(
+        color: look.card,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+          side: BorderSide(
+            color: picked ? look.accent : look.border.withValues(alpha: 0.45),
+            width: picked ? 2 : 1,
+          ),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onPick == null
+              ? null
+              : () {
+                  HapticFeedback.selectionClick();
+                  onPick!(!picked);
+                },
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(18),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        _still(look, still),
+                        const DecoratedBox(
+                          decoration: BoxDecoration(color: Color(0x1F000000)),
+                        ),
+                        if (seconds != null && seconds > 0)
+                          Positioned(
+                            right: 8,
+                            bottom: 8,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: const Color(0xCC000000),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 5,
+                                  vertical: 2,
+                                ),
+                                child: Text(
+                                  libraryClock(seconds),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        if (picked)
+                          Positioned(
+                            top: 8,
+                            right: 8,
+                            child: Container(
+                              width: 22,
+                              height: 22,
+                              decoration: BoxDecoration(
+                                color: look.accent,
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: 0.35),
+                                ),
+                              ),
+                              child: Icon(
+                                Icons.check_rounded,
+                                color: look.onAccent,
+                                size: 16,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                child: Text(
+                  item.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: look.ink,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13.5,
+                    height: 1.25,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          InkWell(
-            onTap: onPick == null ? null : () => onPick!(!picked),
-            child: Stack(
-              children: [
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final height = constraints.maxWidth * 9 / 16;
-                    return VideoThumbnail(
-                      url: videoStillUrl(item),
-                      durationSeconds: item.durationSeconds,
-                      height: height,
-                      borderRadius: 0,
-                    );
-                  },
-                ),
-                if (picked)
-                  Positioned(
-                    top: 10,
-                    left: 10,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: scheme.primary,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Padding(
-                        padding: EdgeInsets.all(4),
-                        child: Icon(
-                          Icons.check_rounded,
-                          size: 18,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 4, 4),
-            child: Row(
-              children: [
-                Expanded(
-                  child: InkWell(
-                    onTap: onPick == null ? null : () => onPick!(!picked),
-                    child: Text(
-                      item.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        height: 1.25,
-                      ),
-                    ),
-                  ),
-                ),
-                Checkbox(
-                  value: picked,
-                  onChanged: onPick == null
-                      ? null
-                      : (value) => onPick!(value == true),
-                ),
-              ],
-            ),
-          ),
-        ],
+    );
+  }
+
+  Widget _still(LibraryPalette look, String? url) {
+    if (url == null || url.isEmpty) {
+      return ColoredBox(
+        color: look.raised,
+        child: Icon(Icons.videocam_outlined, color: look.muted, size: 28),
+      );
+    }
+    return CachedNetworkImage(
+      imageUrl: url,
+      fit: BoxFit.cover,
+      fadeInDuration: Duration.zero,
+      fadeOutDuration: Duration.zero,
+      placeholder: (_, _) => ColoredBox(color: look.raised),
+      errorWidget: (_, _, _) => ColoredBox(
+        color: look.raised,
+        child: Icon(Icons.broken_image_outlined, color: look.muted, size: 28),
       ),
     );
   }
