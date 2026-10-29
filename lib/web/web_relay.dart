@@ -3,6 +3,7 @@
 // code or opening the QR link. Files expire after 30 minutes or 3 downloads.
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -24,8 +25,21 @@ String get _api {
   return base.endsWith('/') ? base.substring(0, base.length - 1) : base;
 }
 
-/// Web relay links always point at the hosted site (web build only).
-String relayReceiveLink(String code) => '${HostedApi.origin}/?receive=$code';
+/// Web relay links point at the site that is serving this page.
+String relayReceiveLink(String code) {
+  final compiled = HostedApi.origin;
+  final origin = compiled.isNotEmpty
+      ? compiled
+      : (kIsWeb && Uri.base.host.isNotEmpty ? Uri.base.origin : '');
+  if (origin.isEmpty) return '/?receive=$code';
+  return '$origin/?receive=$code';
+}
+
+String _relayHost() {
+  if (HostedApi.displayHost.isNotEmpty) return HostedApi.displayHost;
+  if (kIsWeb && Uri.base.host.isNotEmpty) return Uri.base.host;
+  return 'this website';
+}
 
 String _size(int bytes) {
   if (bytes >= 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
@@ -291,7 +305,7 @@ class _UploadDialogState extends State<_UploadDialog> {
               ),
               const SizedBox(height: 10),
               Text(
-                'On the other device open ${HostedApi.displayHost}, tap Receive and enter the code, or scan the QR.',
+                'On the other device open ${_relayHost()}, tap Receive and enter the code, or scan the QR.',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
               ),

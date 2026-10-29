@@ -25,6 +25,7 @@ cloudflare/.wrangler/
 .DS_Store
 *.pyc
 .env
+dart_defines.json
 
 # local junk
 /dist/

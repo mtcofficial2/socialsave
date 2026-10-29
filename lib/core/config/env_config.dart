@@ -40,9 +40,10 @@ class EnvConfig {
     defaultValue: 2147483648, // 2 GiB
   );
 
-  /// Live API used by Android and web release builds. A debug build still
-  /// uses the local computer unless API_BASE_URL is passed at compile time.
-  /// The desktop build has no hosted API: it talks to its bundled engine.
+  /// Live API used by Android and web release builds. Pass it with
+  /// `--dart-define=API_BASE_URL=https://your-api.example`. A debug build
+  /// still uses the local computer unless that define is set. The desktop
+  /// build has no hosted API: it talks to its bundled engine.
   static String get productionApiBaseUrl => HostedApi.origin;
 
   static String get apiBaseUrl {
@@ -50,9 +51,20 @@ class EnvConfig {
       // Windows: the bundled engine on this PC (yt-dlp + ffmpeg + deno).
       return LocalEngine.baseUrl;
     }
-    // Web build served by the API itself: talk to the same origin.
-    if (kIsWeb && HostedApi.matches(Uri.base.host)) {
-      return Uri.base.origin;
+    // A website served by the API talks to that same site. A local
+    // `flutter run` in Chrome still uses the computer on port 8000.
+    if (kIsWeb) {
+      final page = Uri.base;
+      final localDev = page.host == 'localhost' ||
+          page.host == '127.0.0.1' ||
+          page.host == '10.0.2.2';
+      if (HostedApi.matches(page.host) ||
+          (!kDebugMode &&
+              !localDev &&
+              page.host.isNotEmpty &&
+              HostedApi.origin.isEmpty)) {
+        return page.origin;
+      }
     }
     if (_apiBaseUrlDefine.isNotEmpty) {
       return _stripTrailingSlash(_apiBaseUrlDefine);

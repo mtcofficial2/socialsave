@@ -2,7 +2,7 @@ name: Keep the API awake
 
 on:
   schedule:
-    # Render's free plan sleeps after 15 minutes with no requests.
+    # Free hosts often sleep after a few minutes with no requests.
     - cron: "*/10 * * * *"
   workflow_dispatch:
 
@@ -12,4 +12,11 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Request the health check
-        run: curl --fail --silent --show-error --retry 2 --retry-delay 15 --retry-all-errors --max-time 90 "https://socialsave-api-p2tm.onrender.com/health"
+        env:
+          HEALTH_URL: ${{ secrets.HEALTH_URL }}
+        run: |
+          if [ -z "$HEALTH_URL" ]; then
+            echo "HEALTH_URL is not set. Skipping."
+            exit 0
+          fi
+          curl --fail --silent --show-error --retry 2 --retry-delay 15 --retry-all-errors --max-time 90 "$HEALTH_URL"

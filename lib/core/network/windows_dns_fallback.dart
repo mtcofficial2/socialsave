@@ -3,18 +3,18 @@ import 'package:social_save/core/platform/plat.dart';
 import 'dart:convert';
 import 'dart:io';
 
-/// Windows only. Some routers' DNS (this PC uses 192.168.100.1) refuses to
-/// resolve hosts like `*.onrender.com`, so every request fails with
-/// "offline". When the system lookup fails we ask Cloudflare / Google
-/// DNS-over-HTTPS (reached by IP) and connect straight to that address,
-/// keeping the real host name for TLS so certificates are still checked.
+/// Windows only. Some routers' DNS refuses to resolve a public host, so
+/// every request fails with "offline". When the system lookup fails we ask
+/// Cloudflare / Google DNS-over-HTTPS (reached by IP) and connect straight
+/// to that address, keeping the real host name for TLS so certificates are
+/// still checked.
 class WindowsDnsFallback {
   WindowsDnsFallback._();
 
   static final Map<String, List<InternetAddress>> _cache = {};
 
   static void install() {
-    // Android too: some ISPs, routers and VPNs block *.onrender.com in DNS.
+    // Android too: some ISPs, routers and VPNs block public hosts in DNS.
     if (!Plat.isWindows && !Plat.isAndroid) return;
     HttpOverrides.global = _FallbackOverrides();
   }

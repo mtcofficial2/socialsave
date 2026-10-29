@@ -6,7 +6,6 @@ export class SocialSaveContainer extends Container {
   envVars = {
     ENVIRONMENT: 'production',
     REQUIRE_API_KEY: 'false',
-    SECRET_KEY: 'socialsave-cloudflare-hmac-change-me',
   };
 }
 

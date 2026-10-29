@@ -7,9 +7,8 @@
   const HISTORY_KEY = "socialsave.history";
   const SETTINGS_KEY = "socialsave.settings";
   const RING = 2 * Math.PI * 64;
-  const API_BASE = window.location.hostname.endsWith("onrender.com")
-    ? ""
-    : "https://socialsave-api.onrender.com";
+  // Same server that served this page. Do not hardcode a deployed host.
+  const API_BASE = "";
 
   const PLATFORMS = [
     { id: "tiktok", name: "TikTok", color: "#000000" },

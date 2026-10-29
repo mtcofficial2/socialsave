@@ -7,7 +7,7 @@ Get the newest build from [Releases](https://github.com/aviation256444-boop/soci
 - **Android:** `SocialSave.apk`. Open it on the phone and allow installing from unknown sources when asked.
 - **Windows:** `SocialSave-Windows-1.0.6.zip`. Unzip it, run `SocialSave.exe`, and if SmartScreen appears click **More info > Run anyway**.
 
-Use SocialSave in a PC browser at [https://socialsave-api-p2tm.onrender.com](https://socialsave-api-p2tm.onrender.com).
+The browser app is served by the API you run. Open that API's address in a PC browser. Keep the server address, API keys, and `.env` off the public repo.
 
 The latest Android app is on [GitHub Releases](https://github.com/mtcofficial2/socialsave/releases/latest). Download `SocialSave.apk` from that page and install it.
 
@@ -92,7 +92,7 @@ flutter run --dart-define=API_BASE_URL=http://192.168.1.10:8000
 flutter run --dart-define-from-file=dart_defines.json
 ```
 
-Copy `dart_defines.example.json` to `dart_defines.json` (gitignored if you add secrets). **Do not put provider API secrets in the Flutter app.** An optional public client token may be passed as `API_KEY`; real YouTube/Instagram/X credentials stay on the server.
+Copy `dart_defines.example.json` to `dart_defines.json`. That file is gitignored. **Do not commit a server address or provider API secrets.** An optional public client token may be passed as `API_KEY`; real YouTube/Instagram/X credentials stay on the server.
 
 ### Android
 
