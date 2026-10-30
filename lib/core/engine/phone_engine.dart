@@ -19,7 +19,9 @@ class PhoneEngineFailure {
 
 /// Android "Download on this phone (no server)": yt-dlp, Python, ffmpeg and
 /// QuickJS run on the phone (youtubedl-android, as in Seal) through the
-/// `socialsave/phone_engine` channel. Off by default; when off, nothing here runs.
+/// `socialsave/phone_engine` channel. Off by default. Ordinary downloads stay
+/// on the server. A TikTok-ready yes on a 64-bit phone uses this engine
+/// without turning the switch on, and falls back to the server if it fails.
 class PhoneEngine {
   PhoneEngine._();
 
@@ -64,6 +66,15 @@ class PhoneEngine {
   /// Links the user chose "Try with server" for: their next analyze and
   /// save go to the server once, even with the switch on.
   static final Set<String> serverFor = <String>{};
+
+  /// TikTok-ready saves that already failed on this phone during this
+  /// session. The next try of that link goes straight to the server.
+  static final Set<String> fastGaveUp = <String>{};
+
+  static void noteFastGaveUp(String url) {
+    final trimmed = url.trim();
+    if (trimmed.isNotEmpty) fastGaveUp.add(trimmed);
+  }
 
   static void useServerFor(String url) => serverFor.add(url.trim());
 
@@ -116,6 +127,13 @@ class PhoneEngine {
     );
   }
 
+  /// True on a 64-bit ARM phone that has the bundled engine.
+  static Future<bool> canRunOnThisPhone() async {
+    if (!Plat.isAndroid) return false;
+    final info = await status();
+    return info['supported'] == true;
+  }
+
   /// {supported, ready, version}
   static Future<Map<String, dynamic>> status() async {
     try {
@@ -137,12 +155,27 @@ class PhoneEngine {
   }
 
   /// Unpacks the engine and loads Python in the background so the first
-  /// paste doesn't wait for it. Safe to call often; does nothing when off.
-  static Future<void> warm() async {
-    if (!await isEnabled()) return;
+  /// paste doesn't wait for it. Safe to call often; does nothing when off
+  /// unless [evenIfOff] (a TikTok-ready save that has not turned the switch on).
+  static Future<void> warm({bool evenIfOff = false}) async {
+    if (!Plat.isAndroid) return;
+    if (!evenIfOff && !await isEnabled()) return;
     try {
       await _channel.invokeMethod<bool>('warm');
     } catch (_) {}
+  }
+
+  static bool _tiktokWarmStarted = false;
+
+  /// Unpacks Python while a TikTok-ready download is starting, so the first
+  /// save does not pay for it. No-op when the switch is already on, or when
+  /// this phone cannot run the engine. Later calls in the same session do nothing.
+  static Future<void> warmForTikTok() async {
+    if (_tiktokWarmStarted || !Plat.isAndroid) return;
+    if (await isEnabled()) return;
+    if (!await canRunOnThisPhone()) return;
+    _tiktokWarmStarted = true;
+    await warm(evenIfOff: true);
   }
 
   /// yt-dlp self-update (stable channel). Returns {status, version}.

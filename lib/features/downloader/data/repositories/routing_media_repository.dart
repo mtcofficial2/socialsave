@@ -11,8 +11,13 @@ import 'package:social_save/shared/models/playlist_entry.dart';
 /// Android: analyze and save go to the on-phone engine while "Download on
 /// this phone (no server)" is on, and to the hosted API otherwise. Job
 /// status follows the job id, so a save keeps its engine if the switch
-/// changes mid-way. There is no silent fallback: an engine error is shown
-/// with "Try with server", which calls [hosted] explicitly.
+/// changes mid-way. While the switch is on there is no silent fallback: an
+/// engine error is shown with "Try with server", which calls [hosted]
+/// explicitly. A TikTok-ready yes while the switch is off uses the phone
+/// engine on a 64-bit phone. Auto, Best, and Original then pick H.264 at
+/// 1080p and 30 fps, so the prep step is a repack. If that engine cannot
+/// start, or the phone job fails later, the save uses [hosted] once.
+/// YouTube's bot check stays on the phone.
 class RoutingMediaRepository implements MediaRepository {
   RoutingMediaRepository({required this.hosted, required UrlValidator urlValidator})
       : _urlValidator = urlValidator;
@@ -31,13 +36,16 @@ class RoutingMediaRepository implements MediaRepository {
     return result.normalized.toString();
   }
 
-  bool _serverOnce(String url) {
-    final set = PhoneEngine.serverFor;
+  bool _marked(Set<String> set, String url) {
     if (set.isEmpty) return false;
     if (set.contains(url.trim())) return true;
     final result = _urlValidator.validate(url);
     return result.normalized != null && set.contains(result.normalized.toString());
   }
+
+  bool _serverOnce(String url) => _marked(PhoneEngine.serverFor, url);
+
+  bool _gaveUp(String url) => _marked(PhoneEngine.fastGaveUp, url);
 
   @override
   Future<MediaInfo> analyze(String url) async {
@@ -56,6 +64,26 @@ class RoutingMediaRepository implements MediaRepository {
         ..remove(url.trim())
         ..remove(_urlValidator.validate(url).normalized?.toString());
       return ticket;
+    }
+    // Switch stays off. A TikTok-ready yes still saves on this phone when it
+    // can, so the file arrives already H.264 / 30 fps and the prep step is a
+    // repack. A start failure uses the same hosted file as before.
+    if (tiktokPhoneFastPath(
+          formatId: formatId,
+          supported: true,
+          gaveUp: _gaveUp(url),
+          serverOnce: _serverOnce(url),
+        ) &&
+        await PhoneEngine.canRunOnThisPhone()) {
+      try {
+        return await PhoneEngine.start(url: _valid(url), formatId: formatId);
+      } catch (error) {
+        final message = error is AppException ? error.message : '$error';
+        if (PhoneEngine.isBotCheck(message)) rethrow;
+        PhoneEngine.noteFastGaveUp(url);
+        final normalized = _urlValidator.validate(url).normalized?.toString();
+        if (normalized != null) PhoneEngine.noteFastGaveUp(normalized);
+      }
     }
     return hosted.requestDownload(url: url, formatId: hostedFormatId(formatId));
   }
@@ -81,6 +109,17 @@ class RoutingMediaRepository implements MediaRepository {
 
   @override
   Future<String> createPair(List<Map<String, String>> items) => hosted.createPair(items);
+}
+
+/// True when a TikTok-ready save should try the on-phone engine while the
+/// Settings switch stays off. The switch-on path is decided separately.
+bool tiktokPhoneFastPath({
+  required String formatId,
+  required bool supported,
+  required bool gaveUp,
+  required bool serverOnce,
+}) {
+  return formatId.endsWith('+tt') && supported && !gaveUp && !serverOnce;
 }
 
 /// Format id for the hosted API. That API has no TikTok-ready flag.

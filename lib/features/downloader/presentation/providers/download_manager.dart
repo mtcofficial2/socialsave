@@ -17,6 +17,7 @@ import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/core/platform/phone_body.dart';
 import 'package:social_save/core/platform/phone_power.dart';
 import 'package:social_save/core/di/providers.dart';
+import 'package:social_save/features/downloader/data/repositories/routing_media_repository.dart';
 import 'package:social_save/core/storage/download_path_service.dart';
 import 'package:social_save/core/storage/media_store_service.dart';
 import 'package:social_save/core/errors/error_mapper.dart';
@@ -172,6 +173,11 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     // A bubble download asks on the bubble. The in-app dialog is behind
     // whatever app the person is using, and waiting on it leaves the
     // bubble spinning before the download has started.
+    // Unpack the on-phone engine while the question is on screen, so a
+    // TikTok-ready yes does not wait for Python. The switch stays off.
+    if (askExport && Plat.isAndroid && _videoFormat(format.id)) {
+      unawaited(PhoneEngine.warmForTikTok());
+    }
     final tiktok = askExport &&
         Plat.isAndroid &&
         _videoFormat(format.id) &&
@@ -310,23 +316,22 @@ class DownloadManager extends Notifier<DownloadManagerState> {
         state = state.copyWithTask(task);
       }
       if (task.downloadUrl.isEmpty && (task.jobId ?? '').isNotEmpty) {
-        final ready = await _waitIfNeeded(
-          DownloadTicket(
-            downloadUrl: '',
-            jobId: task.jobId,
-            state: DownloadJobState.processing,
-          ),
-          taskId: task.id,
-        );
-        final engineDone = state.byId(task.id)?.prepareFraction;
-        task = (state.byId(task.id) ?? task).copyWith(
+        final waited = await _waitLettingPhoneFallBack(task);
+        final ready = waited.ticket;
+        final latest = state.byId(task.id) ?? task;
+        // A phone-engine file is already on the device, so the bar finishes
+        // that copy. A server fallback is a normal download and starts again.
+        final engineDone = waited.fellBack ? null : latest.prepareFraction;
+        task = latest.copyWith(
           downloadUrl: ready.downloadUrl,
-          directUrl: ready.directUrl ?? task.directUrl,
-          totalBytes: ready.filesize ?? task.totalBytes,
-          // The local copy finishes the same bar (no reset to 0%).
+          jobId: waited.fellBack ? (ready.jobId ?? '') : (ready.jobId ?? latest.jobId),
+          directUrl: ready.directUrl ?? latest.directUrl,
+          requestHeaders: waited.fellBack ? (ready.requestHeaders ?? latest.requestHeaders) : latest.requestHeaders,
+          totalBytes: ready.filesize ?? latest.totalBytes,
+          clearPhase: engineDone == null && waited.fellBack,
           phase: engineDone == null ? null : 'saving',
           prepareFraction: engineDone == null ? null : 0.99,
-          receivedBytes: engineDone == null ? null : 0,
+          receivedBytes: engineDone == null ? (waited.fellBack ? 0 : null) : 0,
           bytesPerSecond: 0,
         );
         state = state.copyWithTask(task);
@@ -771,6 +776,79 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       ),
     );
     await start(id);
+  }
+
+  /// Waits for the ticket. A TikTok-ready save that used the phone engine
+  /// while the Settings switch is off, and that engine then fails, is asked
+  /// of the server once. The switch-on path still fails so "Try with server"
+  /// stays an explicit choice. YouTube's bot check is not sent to the server.
+  Future<({DownloadTicket ticket, bool fellBack})> _waitLettingPhoneFallBack(DownloadTask task) async {
+    final first = DownloadTicket(
+      downloadUrl: '',
+      jobId: task.jobId,
+      state: DownloadJobState.processing,
+    );
+    try {
+      return (ticket: await _waitIfNeeded(first, taskId: task.id), fellBack: false);
+    } catch (error) {
+      if (!await _shouldLeavePhone(error, task)) rethrow;
+      final job = task.jobId ?? '';
+      if (job.startsWith(PhoneEngine.jobPrefix)) {
+        unawaited(PhoneEngine.cancel(job));
+        unawaited(PhoneEngine.cleanup(job));
+      }
+      PhoneEngine.noteFastGaveUp(task.sourceUrl);
+      final current = state.byId(task.id);
+      if (current != null && current.status == DownloadStatus.running) {
+        final reset = current.copyWith(
+          jobId: '',
+          downloadUrl: '',
+          phase: 'preparing',
+          prepareFraction: 0.02,
+          receivedBytes: 0,
+          bytesPerSecond: 0,
+          clearError: true,
+        );
+        state = state.copyWithTask(reset);
+        unawaited(_signal(reset));
+      }
+      final hosted = await ref.read(hostedMediaRepositoryProvider).requestDownload(
+            url: task.sourceUrl,
+            formatId: hostedFormatId(_fid(task)),
+          );
+      final still = state.byId(task.id);
+      if ((_tokens[task.id]?.isCancelled ?? false) ||
+          still == null ||
+          still.status != DownloadStatus.running) {
+        throw const AppException(code: AppErrorCode.unknown, message: 'Download cancelled.');
+      }
+      if (hosted.isReady && hosted.downloadUrl.isNotEmpty) {
+        return (ticket: hosted, fellBack: true);
+      }
+      if ((hosted.jobId ?? '').isEmpty) {
+        throw const AppException(
+          code: AppErrorCode.serverError,
+          message: ErrorMessages.serverError,
+        );
+      }
+      return (ticket: await _waitIfNeeded(hosted, taskId: task.id), fellBack: true);
+    }
+  }
+
+  Future<bool> _shouldLeavePhone(Object error, DownloadTask task) async {
+    if (kIsWeb) return false;
+    final job = task.jobId ?? '';
+    if (!job.startsWith(PhoneEngine.jobPrefix)) return false;
+    if (!_tiktokTasks.contains(task.id)) return false;
+    if (await PhoneEngine.isEnabled()) return false;
+    if (_tokens[task.id]?.isCancelled ?? false) return false;
+    final live = state.byId(task.id);
+    if (live == null || live.status != DownloadStatus.running) return false;
+    final message = error is AppException ? error.message : '$error';
+    final lower = message.toLowerCase();
+    if (lower.contains('cancelled') || lower.contains('canceled')) return false;
+    if (PhoneEngine.isBotCheck(message)) return false;
+    return true;
   }
 
   Future<DownloadTicket> _waitIfNeeded(DownloadTicket ticket, {String? taskId}) async {

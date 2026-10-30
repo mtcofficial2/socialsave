@@ -461,7 +461,9 @@ object PhoneEngine {
                     .addOption("--retries", 3)
                     .addOption("--fragment-retries", 3)
                     .addOption("--socket-timeout", 25)
-                    .addOption("--concurrent-fragments", 8)
+                    // TikTok-ready YouTube is DASH. 16 fragments matches the server.
+                    // Other on-phone downloads stay at 8.
+                    .addOption("--concurrent-fragments", if (formatId == "tiktok") 16 else 8)
                     // Fixed 256 KB reads so progress arrives in steady steps
                     // (yt-dlp otherwise doubles its read size: 1, 2, 4 MB...).
                     .addOption("--buffer-size", "256K")

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:social_save/shared/models/download_task.dart';
 import 'package:social_save/core/di/providers.dart';
+import 'package:social_save/core/engine/phone_engine.dart';
 import 'package:social_save/features/downloader/presentation/providers/download_manager.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/core/platform/media_events.dart';
@@ -3063,6 +3064,8 @@ Future<void> runBgDownload(ProviderContainer c, String pref, String url, {bool f
   bgActiveAt = DateTime.now();
   final gen = ++_bubbleGen;
   _bubbleOwnsUi = true;
+  // Overlap the Python unpack with the page read and the TikTok question.
+  if (pref != 'audio') unawaited(PhoneEngine.warmForTikTok());
   try {
     MediaInfo? media = _bgMedia.remove(url);
     for (var attempt = 0; attempt < 3 && media == null; attempt++) {
