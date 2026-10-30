@@ -2822,47 +2822,120 @@ String _speedText(DownloadTask t) {
   }
   return s;
 }
+
+/// True while a floating-bubble download owns the TikTok question and the
+/// encode progress. The in-app dialog stays closed so it cannot sit unseen
+/// behind another app.
+bool _bubbleOwnsUi = false;
+int _bubbleGen = 0;
+
+/// Encode fraction already shown on the bubble. It only moves forward.
+double _prepShown = 0;
+bool _prepLive = false;
+
+/// Same numbers as the in-app TikTok dialog: fraction, Nx, and time left.
+/// A repack has no frame clock, so the ring creeps instead of sitting at 0.
+(double, String) _prepRead(Map<String, Object?> p) {
+  final f = (p['fraction'] as num?)?.toDouble() ?? -1;
+  final repack = p['repack'] == true;
+  if (f > _prepShown) _prepShown = f;
+  if (repack && _prepShown < 0.9) {
+    final next = _prepShown + 0.06;
+    _prepShown = next > 0.9 ? 0.9 : next;
+  }
+  if (_prepShown < 0.02) _prepShown = 0.02;
+  if (_prepShown > 1) _prepShown = 1;
+  final rate = (p['speed'] as num?)?.toDouble() ?? 0;
+  if (rate > 0.05) return (_prepShown, '${rate.toStringAsFixed(1)}x');
+  final eta = (p['etaMs'] as num?)?.toInt() ?? -1;
+  if (!repack && eta >= 2000) {
+    final s = (eta / 1000).ceil();
+    if (s < 60) return (_prepShown, '${s}s');
+    final m = s ~/ 60;
+    final r = s % 60;
+    return (_prepShown, r == 0 ? '${m}m' : '${m}m${r}s');
+  }
+  return (_prepShown, repack ? 'Ready' : 'Prep');
+}
+
 /// Streams the download's progress to the floating card (Android overlay).
-void _pumpOverlay(ProviderContainer c, String id) {
+void _pumpOverlay(ProviderContainer c, String id, int gen) {
   _overlayTaskId = id;
+  _bubbleOwnsUi = true;
   _overlayTimer?.cancel();
+  _prepShown = 0;
+  _prepLive = false;
   final started = DateTime.now();
+  var pushing = false;
   void stop() {
+    if (gen != _bubbleGen) return;
     _overlayTimer?.cancel();
     _overlayTimer = null;
+    _bubbleOwnsUi = false;
+    _prepLive = false;
+    _prepShown = 0;
   }
 
   Future<void> push() async {
-    final t = c.read(downloadManagerProvider).byId(id);
-    // Task gone, or a safety cap: never leave this timer running.
-    if (t == null || DateTime.now().difference(started) > const Duration(hours: 3)) {
-      stop();
-      return;
-    }
-    final st = t.status;
-    final asking = t.phase == 'askTiktok';
-    final preparing = t.phase == 'shareable';
-    final state = asking
-        ? 'ask'
-        : st == DownloadStatus.completed
-        ? 'done'
-        : st == DownloadStatus.failed
-            ? 'failed'
-            : st == DownloadStatus.cancelled
-                ? 'cancelled'
-                : 'running';
+    if (pushing) return;
+    pushing = true;
     try {
-      await MediaEvents.channel.invokeMethod<void>('overlayProgress', {
-        'id': id,
-        'title': t.title,
-        'percent': preparing ? 0.0 : t.progress,
-        'speed': preparing ? '' : _speedText(t),
-        'state': state,
-      });
-    } catch (_) {}
-    // The TikTok question and the rewrite still need this timer.
-    // done, failed, and cancelled are the last frame.
-    if (state != 'running' && state != 'ask') stop();
+      final t = c.read(downloadManagerProvider).byId(id);
+      // Task gone, or a safety cap: never leave this timer running.
+      if (t == null || DateTime.now().difference(started) > const Duration(hours: 3)) {
+        stop();
+        return;
+      }
+      final st = t.status;
+      final asking = t.phase == 'askTiktok';
+      final preparing = t.phase == 'shareable';
+      final state = asking
+          ? 'ask'
+          : st == DownloadStatus.completed
+          ? 'done'
+          : st == DownloadStatus.failed
+              ? 'failed'
+              : st == DownloadStatus.cancelled
+                  ? 'cancelled'
+                  : 'running';
+      var percent = t.progress;
+      var speed = _speedText(t);
+      if (preparing) {
+        if (!_prepLive) {
+          _prepLive = true;
+          _prepShown = 0;
+        }
+        Map<String, Object?> prep = const {};
+        try {
+          prep = await MediaStoreService().uploadPrepProgress();
+        } catch (_) {}
+        final read = _prepRead(prep);
+        percent = read.$1;
+        speed = read.$2;
+      } else {
+        _prepLive = false;
+        _prepShown = 0;
+        // An empty speed makes the ring spin on "…". The in-app screen
+        // says the save is preparing, so the bubble says that too.
+        if (speed.isEmpty && state == 'running' && !asking) {
+          speed = t.receivedBytes <= 0 ? 'Preparing' : 'Starting';
+        }
+      }
+      try {
+        await MediaEvents.channel.invokeMethod<void>('overlayProgress', {
+          'id': id,
+          'title': t.title,
+          'percent': percent,
+          'speed': speed,
+          'state': state,
+        });
+      } catch (_) {}
+      // The TikTok question and the rewrite still need this timer.
+      // done, failed, and cancelled are the last frame.
+      if (state != 'running' && state != 'ask') stop();
+    } finally {
+      pushing = false;
+    }
   }
 
   _overlayTimer = Timer.periodic(const Duration(milliseconds: 400), (_) => unawaited(push()));
@@ -2927,6 +3000,14 @@ void installOverlayHandlers(ProviderContainer? Function() container) {
   inAppTiktokAsk = _askTiktokInApp;
   inAppTiktokChoice = (_) => tiktokChoiceDialog();
   inAppPrepProgress = () {
+    // The bubble is already drawing this encode. A second dialog on a
+    // backgrounded activity would cover it and hide the speed.
+    final id = _overlayTaskId;
+    final c = container();
+    if (_bubbleOwnsUi && id != null && c != null &&
+        c.read(downloadManagerProvider).byId(id)?.phase == 'shareable') {
+      return null;
+    }
     final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
     if (ctx == null || !ctx.mounted) return null;
     return showTiktokPrepProgress(ctx);
@@ -2980,6 +3061,8 @@ Future<MediaInfo> _bgAnalyze(ProviderContainer c, String url) {
 Future<void> runBgDownload(ProviderContainer c, String pref, String url, {bool foreground = false}) async {
   bgHandledLinks.add(url);
   bgActiveAt = DateTime.now();
+  final gen = ++_bubbleGen;
+  _bubbleOwnsUi = true;
   try {
     MediaInfo? media = _bgMedia.remove(url);
     for (var attempt = 0; attempt < 3 && media == null; attempt++) {
@@ -2991,8 +3074,12 @@ Future<void> runBgDownload(ProviderContainer c, String pref, String url, {bool f
     }
     final format = media == null ? null : pickFormat(media, pref);
     if (media != null && format != null && media.canDownload) {
-      final task = await c.read(downloadManagerProvider.notifier).enqueue(media: media, format: format);
-      _pumpOverlay(c, task.id);
+      final task = await c.read(downloadManagerProvider.notifier).enqueue(
+            media: media,
+            format: format,
+            preferBubble: true,
+          );
+      _pumpOverlay(c, task.id, gen);
       if (foreground) {
         await Future<void>.delayed(const Duration(milliseconds: 600));
         try {
@@ -3002,6 +3089,7 @@ Future<void> runBgDownload(ProviderContainer c, String pref, String url, {bool f
       return;
     }
   } catch (e) {
+    if (gen == _bubbleGen) _bubbleOwnsUi = false;
     if (e.toString().contains('Already saved')) {
       try {
         await MediaEvents.channel.invokeMethod<void>('overlayProgress', {'id': '', 'title': 'Already saved on this phone', 'percent': 1.0, 'speed': '', 'state': 'done'});
@@ -3010,6 +3098,7 @@ Future<void> runBgDownload(ProviderContainer c, String pref, String url, {bool f
       return;
     }
   }
+  if (gen == _bubbleGen) _bubbleOwnsUi = false;
   try {
     await MediaEvents.channel.invokeMethod<void>('overlayProgress', {'id': '', 'title': '', 'percent': 0.0, 'speed': '', 'state': 'failed'});
   } catch (_) {}

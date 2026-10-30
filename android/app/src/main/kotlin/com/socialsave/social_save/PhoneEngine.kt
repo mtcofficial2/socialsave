@@ -71,10 +71,16 @@ object PhoneEngine {
                 "start" -> {
                     val id = call.argument<String>("id") ?: ""
                     val url = call.argument<String>("url") ?: ""
-                    // "<id>+tt" asks for the TikTok-ready pick. Only "auto" changes:
-                    // "tiktok" is capped at 1080p/30fps H.264, plain "auto" keeps the best.
+                    // "<id>+tt" is a yes to TikTok-ready. Auto, Best, and Original
+                    // then use the 1080p/30fps H.264 pick. An explicit height stays.
+                    // The same ids without +tt stay uncapped.
                     val raw = call.argument<String>("formatId") ?: "auto"
-                    val formatId = if (raw.endsWith("+tt")) raw.removeSuffix("+tt").let { if (it == "auto") "tiktok" else it } else raw
+                    val formatId = if (raw.endsWith("+tt")) {
+                        when (val base = raw.removeSuffix("+tt")) {
+                            "", "auto", "best", "original", "default" -> "tiktok"
+                            else -> base
+                        }
+                    } else raw
                     try { start(id, url, formatId); result.success(true) }
                     catch (e: Exception) { result.error("engine", e.message ?: "Could not start", null) }
                 }

@@ -222,6 +222,7 @@ object HeadlessEngine {
                     main.post { result.success(out) }
                 }.start()
             }
+            "uploadPrepProgress" -> result.success(UploadPrep.progress())
             "cancelUploadPrep" -> {
                 UploadPrep.cancel()
                 result.success(true)

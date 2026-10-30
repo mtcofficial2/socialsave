@@ -157,8 +157,9 @@ object ProgressCard {
                 }
                 else -> {
                     if (finished) return@post
-                    val spinning = p < 0.02f && (speed ?: "").isEmpty()
-                    ring?.setFraction(p, spinning)
+                    val label = (speed ?: "").trim()
+                    val spinning = p < 0.02f && label.isEmpty()
+                    ring?.setFraction(p, spinning, label)
                 }
             }
         }
@@ -303,6 +304,7 @@ object ProgressCard {
                 restoreRing()
                 reply(true)
             } else if (no != null && hit(no, x, y)) {
+                restoreRing()
                 reply(false)
             }
             return
@@ -391,8 +393,8 @@ object ProgressCard {
     fun busyAsking(): Boolean = answer != null
 
     /**
-     * Ask on the bubble. Calls [onAnswer] once. Yes puts the ring back so the
-     * rewrite can show progress. No leaves the question until the next update.
+     * Ask on the bubble. Calls [onAnswer] once. Either answer puts the ring
+     * back so the download can show its percent and speed.
      */
     fun ask(title: String, onAnswer: (Boolean) -> Unit) {
         val run = Runnable {
@@ -424,7 +426,7 @@ object ProgressCard {
             setPadding(dp(context, 14), dp(context, 6), dp(context, 8), dp(context, 6))
         }
         val label = TextView(context).apply {
-            text = "TikTok?"
+            text = "TikTok-ready?"
             setTextColor(ink)
             textSize = 15f
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
@@ -614,6 +616,7 @@ object ProgressCard {
     ) : View(context) {
         private var fraction = 0f
         private var spinning = true
+        private var caption = ""
         private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
             strokeCap = Paint.Cap.ROUND
@@ -631,9 +634,11 @@ object ProgressCard {
         }
         private val oval = RectF()
 
-        fun setFraction(value: Float, spinning: Boolean) {
+        fun setFraction(value: Float, spinning: Boolean, caption: String = "") {
             fraction = value.coerceIn(0f, 1f)
             this.spinning = spinning
+            val short = caption.substringBefore(" · ").trim()
+            this.caption = if (spinning || short.length !in 1..12) "" else short
             invalidate()
         }
 
@@ -652,9 +657,17 @@ object ProgressCard {
                 canvas.drawArc(oval, -90f, 360f * fraction.coerceAtLeast(0.02f), false, arcPaint)
             }
             val shown = if (spinning) "…" else "${(fraction * 100).toInt()}"
-            textPaint.textSize = width * 0.2f
-            val y = height / 2f - (textPaint.descent() + textPaint.ascent()) / 2f
+            val showCaption = caption.isNotEmpty()
+            textPaint.textSize = width * if (showCaption) 0.18f else 0.2f
+            val base = height / 2f - (textPaint.descent() + textPaint.ascent()) / 2f
+            val y = if (showCaption) base - textPaint.textSize * 0.35f else base
             canvas.drawText(shown, width / 2f, y, textPaint)
+            if (showCaption) {
+                val percentSize = textPaint.textSize
+                textPaint.textSize = width * 0.11f
+                val cy = y + percentSize * 0.95f
+                canvas.drawText(caption, width / 2f, cy, textPaint)
+            }
         }
     }
 }

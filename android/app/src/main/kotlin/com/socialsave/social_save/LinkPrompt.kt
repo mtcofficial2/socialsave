@@ -326,15 +326,18 @@ object LinkPrompt {
         }
     }
 
-    /** Floating card when it can show, otherwise the bubble, otherwise null. */
+    /** The bubble when it is already on screen, otherwise the card, otherwise null. */
     fun presentTiktokAsk(context: Context, title: String, deliver: (Boolean?) -> Unit) {
         val run = Runnable {
-            if (ask(context, title) { yes -> deliver(yes) }) return@Runnable
+            // A bubble download is already showing the round progress. Ask on
+            // that bubble so the person is not waiting on a dialog behind
+            // another app, and the ring is not left spinning at nothing.
             if (ProgressCard.active && !ProgressCard.busyAsking()) {
                 ProgressCard.ask(title) { yes -> deliver(yes) }
-            } else {
-                deliver(null)
+                return@Runnable
             }
+            if (ask(context, title) { yes -> deliver(yes) }) return@Runnable
+            deliver(null)
         }
         if (Looper.myLooper() == Looper.getMainLooper()) run.run() else handler.post(run)
     }

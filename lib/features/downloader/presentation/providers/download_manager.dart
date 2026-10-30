@@ -136,6 +136,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     required MediaFormat format,
     bool start = true,
     bool askExport = true,
+    bool preferBubble = false,
   }) async {
     final settings = ref.read(settingsControllerProvider);
     await _assertNetwork(settings);
@@ -168,7 +169,13 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       );
     }
 
-    final tiktok = askExport && Plat.isAndroid && _videoFormat(format.id) && await _chooseTiktok(media.title);
+    // A bubble download asks on the bubble. The in-app dialog is behind
+    // whatever app the person is using, and waiting on it leaves the
+    // bubble spinning before the download has started.
+    final tiktok = askExport &&
+        Plat.isAndroid &&
+        _videoFormat(format.id) &&
+        await (preferBubble ? _askTiktok(media.title) : _chooseTiktok(media.title));
     final ticket = await ref.read(mediaRepositoryProvider).requestDownload(
           url: media.sourceUrl,
           formatId: tiktok ? '${format.id}+tt' : format.id,
