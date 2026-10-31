@@ -1,7 +1,9 @@
 import 'dart:ui' as ui;
 
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:image/image.dart' as im;
 import 'package:flutter/services.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_format.dart';
@@ -31,7 +33,9 @@ Future<void> showChatProfile(
         lastSeen,
         online,
         DateTime.now(),
-        lastSeen == null ? '' : TimeOfDay.fromDateTime(lastSeen.toLocal()).format(context),
+        lastSeen == null
+            ? ''
+            : TimeOfDay.fromDateTime(lastSeen.toLocal()).format(context),
       );
       return StatefulBuilder(
         builder: (context, setSheet) {
@@ -41,19 +45,30 @@ Future<void> showChatProfile(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  ChatFace(name: name.isEmpty ? '?' : name, size: 96, photoRev: rev, online: !mine && online),
+                  ChatFace(
+                    name: name.isEmpty ? '?' : name,
+                    size: 96,
+                    photoRev: rev,
+                    online: !mine && online,
+                  ),
                   const SizedBox(height: 16),
                   Text(
                     name.isEmpty ? 'Chat' : name,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, letterSpacing: -0.3),
+                    style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.3,
+                    ),
                   ),
                   if (!mine && presence.isNotEmpty) ...[
                     const SizedBox(height: 6),
                     Text(
                       presence,
                       style: TextStyle(
-                        color: online ? const Color(0xFF25D366) : scheme.onSurfaceVariant,
+                        color: online
+                            ? const Color(0xFF25D366)
+                            : scheme.onSurfaceVariant,
                         fontWeight: FontWeight.w600,
                         height: 1.35,
                       ),
@@ -61,15 +76,23 @@ Future<void> showChatProfile(
                   ],
                   const SizedBox(height: 6),
                   Text(
-                    mine ? 'This is your Social Save profile' : 'Social Save profile',
-                    style: TextStyle(color: scheme.onSurfaceVariant, height: 1.35),
+                    mine
+                        ? 'This is your Social Save profile'
+                        : 'Social Save profile',
+                    style: TextStyle(
+                      color: scheme.onSurfaceVariant,
+                      height: 1.35,
+                    ),
                   ),
                   if (mine) ...[
                     const SizedBox(height: 8),
                     Text(
                       'Registered with ${contact.trim()}',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: scheme.onSurfaceVariant, height: 1.35),
+                      style: TextStyle(
+                        color: scheme.onSurfaceVariant,
+                        height: 1.35,
+                      ),
                     ),
                   ],
                   const SizedBox(height: 18),
@@ -94,12 +117,18 @@ Future<void> showChatProfile(
                                 if (!context.mounted) return;
                                 setSheet(() {
                                   busy = false;
-                                  problem = error is StateError ? 'Choose a JPEG or PNG photo.' : chatErrorText(error);
+                                  problem = error is StateError
+                                      ? 'Choose a JPEG or PNG photo.'
+                                      : chatErrorText(error);
                                 });
                               }
                             },
                       icon: busy
-                          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
                           : const Icon(Icons.photo_camera_rounded),
                       label: const Text('Change photo'),
                     ),
@@ -108,14 +137,20 @@ Future<void> showChatProfile(
                     onPressed: () async {
                       await Clipboard.setData(ClipboardData(text: '@$name'));
                       if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Username copied')));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Username copied')),
+                      );
                     },
                     icon: const Icon(Icons.copy_rounded),
                     label: const Text('Copy username'),
                   ),
                   if (problem != null) ...[
                     const SizedBox(height: 12),
-                    Text(problem!, textAlign: TextAlign.center, style: TextStyle(color: scheme.error, height: 1.35)),
+                    Text(
+                      problem!,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: scheme.error, height: 1.35),
+                    ),
                   ],
                 ],
               ),
@@ -141,8 +176,37 @@ Future<int?> _pickChatPhoto(String username) async {
   return rev;
 }
 
-/// A conversation photo, still small enough for the chat server.
+bool _jpegOrPng(Uint8List raw) {
+  if (raw.length >= 3 && raw[0] == 0xFF && raw[1] == 0xD8 && raw[2] == 0xFF) {
+    return true;
+  }
+  return raw.length >= 8 &&
+      raw[0] == 0x89 &&
+      raw[1] == 0x50 &&
+      raw[2] == 0x4E &&
+      raw[3] == 0x47;
+}
+
+Uint8List _fitChatJpeg(Uint8List raw) {
+  final decoded = im.decodeImage(raw);
+  if (decoded == null) throw StateError('Choose a JPEG or PNG photo.');
+  var current = decoded;
+  for (final width in [1280, 960, 640, 480]) {
+    if (current.width > width) current = im.copyResize(current, width: width);
+    final jpg = Uint8List.fromList(im.encodeJpg(current, quality: 74));
+    if (jpg.length <= 512 * 1024) return jpg;
+  }
+  throw StateError('Choose a JPEG or PNG photo.');
+}
+
+/// A conversation photo, small enough to hand to the other phone.
 Future<Uint8List> fitChatImage(Uint8List raw) async {
+  if (raw.length <= 512 * 1024 && _jpegOrPng(raw)) return raw;
+  try {
+    return await compute(_fitChatJpeg, raw);
+  } catch (error) {
+    if (error is StateError) rethrow;
+  }
   Object? last;
   for (final width in [1280, 960, 640, 256]) {
     try {

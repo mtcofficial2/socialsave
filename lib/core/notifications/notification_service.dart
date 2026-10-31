@@ -3,7 +3,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 class NotificationService {
   NotificationService({FlutterLocalNotificationsPlugin? plugin})
-      : _plugin = plugin ?? FlutterLocalNotificationsPlugin();
+    : _plugin = plugin ?? FlutterLocalNotificationsPlugin();
 
   final FlutterLocalNotificationsPlugin _plugin;
   bool _initialized = false;
@@ -28,7 +28,9 @@ class NotificationService {
         'Share files both ways over the cable.',
         const NotificationDetails(
           windows: WindowsNotificationDetails(
-            actions: [WindowsAction(content: 'Share files', arguments: 'usbshare|open')],
+            actions: [
+              WindowsAction(content: 'Share files', arguments: 'usbshare|open'),
+            ],
           ),
         ),
         payload: 'usbshare|open',
@@ -37,7 +39,10 @@ class NotificationService {
   }
 
   /// Windows toast with Download / Dismiss buttons for a copied video link.
-  Future<void> showLinkOffer({required String url, required String subtitle}) async {
+  Future<void> showLinkOffer({
+    required String url,
+    required String subtitle,
+  }) async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.windows) return;
     if (!_initialized) await init();
     try {
@@ -77,9 +82,15 @@ class NotificationService {
     try {
       await _plugin
           .initialize(
-            const InitializationSettings(android: android, iOS: ios, windows: windows),
+            const InitializationSettings(
+              android: android,
+              iOS: ios,
+              windows: windows,
+            ),
             onDidReceiveNotificationResponse: (r) {
-              final probe = (r.actionId ?? '').isNotEmpty ? r.actionId! : (r.payload ?? '');
+              final probe = (r.actionId ?? '').isNotEmpty
+                  ? r.actionId!
+                  : (r.payload ?? '');
               if (probe.startsWith('usbshare')) {
                 onUsbShare?.call();
                 return;
@@ -102,11 +113,15 @@ class NotificationService {
   Future<void> requestPermission() async {
     if (kIsWeb) return; // The browser build shows no system notifications.
     await init();
-    final android = _plugin.resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>();
+    final android = _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
     await android?.requestNotificationsPermission();
-    final ios = _plugin.resolvePlatformSpecificImplementation<
-        IOSFlutterLocalNotificationsPlugin>();
+    final ios = _plugin
+        .resolvePlatformSpecificImplementation<
+          IOSFlutterLocalNotificationsPlugin
+        >();
     await ios?.requestPermissions(alert: true, badge: true, sound: true);
   }
 
@@ -114,6 +129,7 @@ class NotificationService {
     required String threadId,
     required String title,
     required String body,
+    bool sound = true,
   }) async {
     if (kIsWeb || threadId.isEmpty) return;
     if (!_initialized) await init();
@@ -129,15 +145,17 @@ class NotificationService {
       id,
       title,
       body,
-      const NotificationDetails(
+      NotificationDetails(
         android: AndroidNotificationDetails(
-          'chats',
+          sound ? 'chats_v2' : 'chats_quiet',
           'Chats',
           channelDescription: 'New messages',
           importance: Importance.high,
           priority: Priority.high,
+          playSound: sound,
+          enableVibration: sound,
         ),
-        iOS: DarwinNotificationDetails(),
+        iOS: DarwinNotificationDetails(presentSound: sound, presentAlert: true),
       ),
       payload: payload,
     );

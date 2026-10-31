@@ -1,14 +1,18 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -342,9 +346,16 @@ func TestChatReplyAndPicture(t *testing.T) {
 	if err := json.Unmarshal(photo.Body.Bytes(), &picture); err != nil || picture.Message.Photo == "" {
 		t.Fatalf("photo id %s", photo.Body.String())
 	}
+	saved, err := os.ReadFile(app.chat.file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(saved, png) {
+		t.Fatal("picture bytes were stored")
+	}
 	got := getChat(app, "/api/v1/chat/images/"+picture.Message.Photo, ben.token)
-	if got.Code != http.StatusOK || got.Header().Get("Content-Type") != "image/png" || !bytes.Equal(got.Body.Bytes(), png) {
-		t.Fatalf("image %d %s", got.Code, got.Header().Get("Content-Type"))
+	if got.Code != http.StatusNotFound {
+		t.Fatalf("image %d %s", got.Code, got.Body.String())
 	}
 	cara := registerChat(t, app, `{"phone":"15550003333","username":"cara"}`)
 	hidden := getChat(app, "/api/v1/chat/images/"+picture.Message.Photo, cara.token)
@@ -355,6 +366,93 @@ func TestChatReplyAndPicture(t *testing.T) {
 	if bad.Code != http.StatusBadRequest {
 		t.Fatalf("bad photo %d %s", bad.Code, bad.Body.String())
 	}
+}
+
+func TestChatPhotoReachesTheOtherPhoneWithoutBeingStored(t *testing.T) {
+	app := testApp(t)
+	dir := t.TempDir()
+	app.chat.file = filepath.Join(dir, "accounts.json")
+	ada := registerChat(t, app, `{"phone":"256700000444","username":"ada3"}`)
+	ben := registerChat(t, app, `{"email":"ben3@example.com","username":"ben3"}`)
+	opened := postChat(app, "/api/v1/chat/threads", ada.token, `{"username":"ben3"}`)
+	var thread struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(opened.Body.Bytes(), &thread); err != nil || thread.ID == "" {
+		t.Fatalf("open %d %s", opened.Code, opened.Body.String())
+	}
+	srv := httptest.NewServer(app.Router())
+	defer srv.Close()
+	conn, reader := dialChatSocket(t, srv.URL, ben.token)
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if op, payload := readClientFrame(t, reader); op != 0x1 || !bytes.Contains(payload, []byte(`"ready"`)) {
+		t.Fatalf("ready %d %s", op, payload)
+	}
+	png := []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x02}
+	photo := postChatRaw(app, "/api/v1/chat/threads/"+thread.ID+"/photo", ada.token, png, "", "")
+	if photo.Code != http.StatusOK || bytes.Contains(photo.Body.Bytes(), png) {
+		t.Fatalf("photo %d", photo.Code)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	var got []byte
+	for i := 0; i < 6; i++ {
+		op, payload := readClientFrame(t, reader)
+		if op == 0x2 && bytes.Contains(payload, png) {
+			got = payload
+			break
+		}
+	}
+	if !bytes.Contains(got, png) {
+		t.Fatal("the other phone did not receive the picture")
+	}
+	saved, err := os.ReadFile(app.chat.file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(saved, png) {
+		t.Fatal("picture bytes were stored")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "chat", "images")); err == nil {
+		t.Fatal("picture file was stored")
+	}
+}
+
+func dialChatSocket(t *testing.T, rawURL, token string) (net.Conn, *bufio.Reader) {
+	t.Helper()
+	host := strings.TrimPrefix(rawURL, "http://")
+	conn, err := net.Dial("tcp", host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := "GET /api/v1/chat/live HTTP/1.1\r\nHost: " + host + "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nX-Chat-Token: " + token + "\r\n\r\n"
+	if _, err := io.WriteString(conn, req); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(conn)
+	status, err := reader.ReadString('\n')
+	if err != nil || !strings.Contains(status, "101") {
+		t.Fatalf("upgrade %q %v", status, err)
+	}
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if line == "\r\n" {
+			break
+		}
+	}
+	return conn, reader
+}
+
+func readClientFrame(t *testing.T, r *bufio.Reader) (byte, []byte) {
+	t.Helper()
+	op, payload, err := readFrame(r, chatPhotoMax+512)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return op, payload
 }
 
 func getChat(app *Server, path, token string) *httptest.ResponseRecorder {

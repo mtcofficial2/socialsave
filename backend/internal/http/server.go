@@ -141,7 +141,19 @@ func (s *Server) Router() http.Handler {
 	r.Get("/relay/{code}/file", s.relayFile)
 	r.Head("/relay/{code}/file", s.relayFile)
 	r.NotFound(s.serveWeb)
-	return r
+	return s.withChatLive(r)
+}
+
+// withChatLive serves the socket on the raw writer. The other middleware wraps
+// the response, and that wrapper cannot be upgraded.
+func (s *Server) withChatLive(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/chat/live" && r.Method == http.MethodGet {
+			s.chatLive(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {

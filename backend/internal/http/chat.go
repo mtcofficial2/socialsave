@@ -146,6 +146,7 @@ type chatRoom struct {
 	seenSaved map[string]int64
 	blob      chatBlob
 	file      string
+	live      *chatHub
 }
 
 func newChatRoom(up storage.Uploader) *chatRoom {
@@ -160,6 +161,7 @@ func newChatRoom(up storage.Uploader) *chatRoom {
 		seenSaved: map[string]int64{},
 		blob:      blob,
 		file:      filepath.Join(os.TempDir(), "socialsave-chat-accounts.json"),
+		live:      newChatHub(),
 	}
 }
 
@@ -389,8 +391,15 @@ func (c *chatRoom) markRead(ctx context.Context, userID, threadID string, id int
 		cur.Delivered = cur.Read
 	}
 	thread.Seen[userID] = cur
+	other := thread.A
+	if other == userID {
+		other = thread.B
+	}
+	threadID = thread.ID
+	readAt := cur.Read
 	c.mu.Unlock()
 	c.persist(ctx)
+	c.announceRead(other, threadID, readAt)
 	return nil
 }
 
@@ -423,9 +432,11 @@ func (c *chatRoom) post(ctx context.Context, user chatUser, threadID, text strin
 		Reply: reply, ReplyName: replyName, ReplyText: replyText,
 	})
 	c.last[user.ID] = clean
+	a, b := thread.A, thread.B
 	c.mu.Unlock()
 	c.persist(ctx)
 	item.Status = "sent"
+	c.announce(ctx, a, b, threadID, item)
 	return item, nil
 }
 
@@ -476,9 +487,11 @@ func (c *chatRoom) postVoice(ctx context.Context, user chatUser, threadID string
 		Reply: reply, ReplyName: replyName, ReplyText: replyText,
 		Voice: id, VoiceMs: ms, VoiceType: kind,
 	})
+	a, b := thread.A, thread.B
 	c.mu.Unlock()
 	c.persist(ctx)
 	item.Status = "sent"
+	c.announce(ctx, a, b, threadID, item)
 	return item, nil
 }
 
@@ -509,22 +522,6 @@ func (c *chatRoom) postPhoto(ctx context.Context, user chatUser, threadID string
 		c.mu.Unlock()
 		return chatMessage{}, chatRejected("That chat was not found.")
 	}
-	if _, _, err := replyOf(thread, reply); err != nil {
-		c.mu.Unlock()
-		return chatMessage{}, err
-	}
-	c.mu.Unlock()
-	id := newChatID("p")
-	if err := c.putBlob(ctx, "chat/images/"+id, body); err != nil {
-		slog.Info("chat image save failed")
-		return chatMessage{}, chatRejected("That photo could not be sent.")
-	}
-	c.mu.Lock()
-	thread = c.threadLocked(threadID)
-	if thread == nil || (thread.A != user.ID && thread.B != user.ID) {
-		c.mu.Unlock()
-		return chatMessage{}, chatRejected("That chat was not found.")
-	}
 	replyName, replyText, err := replyOf(thread, reply)
 	if err != nil {
 		c.mu.Unlock()
@@ -534,13 +531,17 @@ func (c *chatRoom) postPhoto(ctx context.Context, user chatUser, threadID string
 	if kind == "image/jpeg" {
 		photoType = "jpeg"
 	}
+	// The bytes are not stored. They are handed to the other phone, then dropped.
+	id := newChatID("p")
 	item := c.appendMessageLocked(thread, user, text, chatExtra{
 		Reply: reply, ReplyName: replyName, ReplyText: replyText,
 		Photo: id, PhotoType: photoType,
 	})
+	a, b := thread.A, thread.B
 	c.mu.Unlock()
 	c.persist(ctx)
 	item.Status = "sent"
+	c.announce(ctx, a, b, threadID, item)
 	return item, nil
 }
 
@@ -666,39 +667,8 @@ func (c *chatRoom) voiceFor(ctx context.Context, userID, voiceID string) ([]byte
 }
 
 func (c *chatRoom) imageFor(ctx context.Context, userID, imageID string) ([]byte, string, error) {
-	key, err := chatBlobKey("chat/images/", imageID)
-	if err != nil {
-		return nil, "", os.ErrNotExist
-	}
-	c.ensure(ctx)
-	c.mu.Lock()
-	kind := ""
-	for _, thread := range c.data.Threads {
-		if thread.A != userID && thread.B != userID {
-			continue
-		}
-		for _, message := range thread.Messages {
-			if message.Photo == imageID {
-				kind = message.PhotoType
-				break
-			}
-		}
-		if kind != "" {
-			break
-		}
-	}
-	c.mu.Unlock()
-	if kind == "" {
-		return nil, "", os.ErrNotExist
-	}
-	body, err := c.getBlob(ctx, key)
-	if err != nil || len(body) == 0 {
-		return nil, "", os.ErrNotExist
-	}
-	if kind == "jpeg" {
-		return body, "image/jpeg", nil
-	}
-	return body, "image/png", nil
+	// Conversation photos are not kept on the server.
+	return nil, "", os.ErrNotExist
 }
 
 func (c *chatRoom) presence(ctx context.Context, username string) (int64, bool, int64) {
@@ -1410,12 +1380,14 @@ func (s *Server) chatThreadPhoto(w http.ResponseWriter, r *http.Request) {
 		writeChatError(w, http.StatusBadRequest, "That photo could not be sent.")
 		return
 	}
-	item, err := s.chat.postPhoto(r.Context(), user, chi.URLParam(r, "id"), body, chatHeaderCaption(r), chatHeaderReply(r))
+	threadID := chi.URLParam(r, "id")
+	item, err := s.chat.postPhoto(r.Context(), user, threadID, body, chatHeaderCaption(r), chatHeaderReply(r))
 	if err != nil {
 		writeChatFailure(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": item})
+	held := !s.chat.relayPhoto(user.ID, threadID, item.Photo, body)
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": item, "held": held})
 }
 
 func (s *Server) chatImageGet(w http.ResponseWriter, r *http.Request) {

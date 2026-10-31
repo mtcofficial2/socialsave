@@ -1,10 +1,32 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:social_save/core/notifications/notification_service.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_format.dart';
+import 'package:social_save/features/chat/chat_live.dart';
 import 'package:social_save/shared/routing/app_router.dart';
+
+/// A sound plus a notification. In the foreground the notification stays quiet
+/// so the alert sound is not played twice. In the background the channel sounds.
+void chatAlertNow({
+  required String threadId,
+  required String title,
+  required String body,
+}) {
+  final life = WidgetsBinding.instance.lifecycleState;
+  final resumed = life == null || life == AppLifecycleState.resumed;
+  if (resumed) SystemSound.play(SystemSoundType.alert);
+  unawaited(
+    NotificationService().showChat(
+      threadId: threadId,
+      title: title,
+      body: body,
+      sound: !resumed,
+    ),
+  );
+}
 
 /// One inbox check for the whole app. The open chat list skips its own fetch
 /// when this one just ran, so there is still a single poll.
@@ -19,6 +41,7 @@ class ChatAlerts {
     seeded = false;
     seen.clear();
     openThread = '';
+    ChatLive.instance.stop();
   }
 
   static void holdThread(String threadId) {
@@ -40,7 +63,8 @@ class ChatAlerts {
     if (!seeded) {
       for (final item in items) {
         if (item.id.isEmpty) continue;
-        seen[item.id] = item.lastId;
+        final prev = seen[item.id] ?? 0;
+        seen[item.id] = item.lastId > prev ? item.lastId : prev;
       }
       seeded = true;
       return;
@@ -49,7 +73,7 @@ class ChatAlerts {
       if (item.id.isEmpty) continue;
       final prev = seen[item.id] ?? 0;
       final grew = item.lastId > prev && item.lastId > 0;
-      seen[item.id] = item.lastId;
+      seen[item.id] = item.lastId > prev ? item.lastId : prev;
       if (!notify || !grew || alert == null) continue;
       if (item.lastFrom.isEmpty || item.lastFrom == me) continue;
       if (item.id == openThread) continue;
@@ -66,18 +90,26 @@ class ChatAlertHost extends StatefulWidget {
   State<ChatAlertHost> createState() => _ChatAlertHostState();
 }
 
-class _ChatAlertHostState extends State<ChatAlertHost> with WidgetsBindingObserver {
+class _ChatAlertHostState extends State<ChatAlertHost>
+    with WidgetsBindingObserver {
   final ChatApi _api = ChatApi();
   Timer? _poll;
+  StreamSubscription<ChatLiveEvent>? _live;
   bool _busy = false;
   bool _asked = false;
+  String _me = '';
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     NotificationService.onChatOpen = _open;
-    _poll = Timer.periodic(const Duration(seconds: 12), (_) => unawaited(_check()));
+    ChatLive.instance.start();
+    _live = ChatLive.instance.events.listen(_onLive);
+    _poll = Timer.periodic(
+      const Duration(seconds: 12),
+      (_) => unawaited(_check()),
+    );
     unawaited(_check());
   }
 
@@ -85,7 +117,10 @@ class _ChatAlertHostState extends State<ChatAlertHost> with WidgetsBindingObserv
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _poll?.cancel();
-    if (NotificationService.onChatOpen == _open) NotificationService.onChatOpen = null;
+    _live?.cancel();
+    if (NotificationService.onChatOpen == _open) {
+      NotificationService.onChatOpen = null;
+    }
     super.dispose();
   }
 
@@ -94,9 +129,35 @@ class _ChatAlertHostState extends State<ChatAlertHost> with WidgetsBindingObserv
     _poll?.cancel();
     _poll = null;
     if (state == AppLifecycleState.resumed) {
-      _poll = Timer.periodic(const Duration(seconds: 12), (_) => unawaited(_check()));
+      _poll = Timer.periodic(
+        const Duration(seconds: 12),
+        (_) => unawaited(_check()),
+      );
       unawaited(_check());
     }
+  }
+
+  void _onLive(ChatLiveEvent event) {
+    if (event.type != 'message') return;
+    final message = event.message;
+    if (message == null || message.id <= 0 || event.threadId.isEmpty) return;
+    final prev = ChatAlerts.seen[event.threadId] ?? 0;
+    if (message.id <= prev) return;
+    ChatAlerts.seen[event.threadId] = message.id;
+    unawaited(_alertLive(event.threadId, message));
+  }
+
+  Future<void> _alertLive(String threadId, ChatMessage message) async {
+    if (_me.isEmpty) _me = await ChatSession.username();
+    if (!mounted) return;
+    if (_me.isNotEmpty && message.name == _me) return;
+    if (threadId == ChatAlerts.openThread) return;
+    final title = message.name.isEmpty ? 'New message' : message.name;
+    chatAlertNow(
+      threadId: threadId,
+      title: title,
+      body: chatAlertBody(message.text),
+    );
   }
 
   void _open(String payload) {
@@ -108,23 +169,22 @@ class _ChatAlertHostState extends State<ChatAlertHost> with WidgetsBindingObserv
     appRouter.push('/chat/$id', extra: name);
   }
 
-  bool _listIsOpen() {
-    final path = appRouter.routeInformationProvider.value.uri.path;
-    return path == '/chat' || path == '/chat/';
-  }
-
   Future<void> _check() async {
     if (_busy || !mounted) return;
     final life = WidgetsBinding.instance.lifecycleState;
     if (life != null && life != AppLifecycleState.resumed) return;
     final fresh = ChatAlerts.lastInbox;
-    if (fresh != null && DateTime.now().difference(fresh) < const Duration(seconds: 10)) return;
+    if (fresh != null &&
+        DateTime.now().difference(fresh) < const Duration(seconds: 10)) {
+      return;
+    }
     final token = await ChatSession.token();
     if (!mounted) return;
     if (token == null) {
       ChatAlerts.reset();
       return;
     }
+    ChatLive.instance.start();
     _busy = true;
     try {
       if (!_asked) {
@@ -133,15 +193,14 @@ class _ChatAlertHostState extends State<ChatAlertHost> with WidgetsBindingObserv
       }
       final items = await _api.threads();
       if (!mounted) return;
-      final me = await ChatSession.username();
-      final listOpen = _listIsOpen();
+      _me = await ChatSession.username();
       ChatAlerts.observe(
         items,
-        me: me,
-        notify: !listOpen,
+        me: _me,
+        notify: true,
         alert: (item, body) {
           final title = item.username.isEmpty ? 'New message' : item.username;
-          unawaited(NotificationService().showChat(threadId: item.id, title: title, body: body));
+          chatAlertNow(threadId: item.id, title: title, body: body);
         },
       );
     } catch (_) {

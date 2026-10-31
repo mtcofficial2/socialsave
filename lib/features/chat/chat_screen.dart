@@ -6,6 +6,7 @@ import 'package:social_save/features/chat/chat_alerts.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_drafts.dart';
 import 'package:social_save/features/chat/chat_format.dart';
+import 'package:social_save/features/chat/chat_live.dart';
 import 'package:social_save/features/chat/chat_profile.dart';
 import 'package:social_save/features/chat/chat_thread_screen.dart';
 import 'package:social_save/shared/widgets/app_logo.dart';
@@ -27,6 +28,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final TextEditingController _username = TextEditingController();
   final TextEditingController _find = TextEditingController();
   Timer? _poll;
+  Timer? _typingClock;
+  StreamSubscription<ChatLiveEvent>? _live;
   ChatUser? _user;
   List<ChatThreadSummary> _threads = const [];
   _ContactKind _kind = _ContactKind.phone;
@@ -50,6 +53,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     ChatDrafts.revision.addListener(_onDrafts);
+    ChatLive.revision.addListener(_onLiveRevision);
+    _live = ChatLive.instance.events.listen(_onLiveEvent);
     unawaited(ChatDrafts.ensure());
     unawaited(_boot());
   }
@@ -58,6 +63,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     ChatDrafts.revision.removeListener(_onDrafts);
+    ChatLive.revision.removeListener(_onLiveRevision);
+    _live?.cancel();
+    _typingClock?.cancel();
     _poll?.cancel();
     _contact.dispose();
     _username.dispose();
@@ -99,12 +107,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     try {
       final user = await _api.me();
       if (!mounted) return;
-      await ChatSession.save(token: token, username: user.username, contact: user.contact);
+      await ChatSession.save(
+        token: token,
+        username: user.username,
+        contact: user.contact,
+      );
       if (!mounted) return;
       setState(() {
         _user = user;
         _booting = false;
       });
+      ChatLive.instance.start();
       _startPoll();
       await _loadThreads();
     } catch (error) {
@@ -141,9 +154,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (_refreshing || _user == null) return;
     _refreshing = true;
     try {
-      final items = await _api.threads();
+      final items = _mergeThreads(await _api.threads());
       if (!mounted) return;
-      ChatAlerts.observe(items, me: _user!.username, notify: false);
+      ChatAlerts.observe(
+        items,
+        me: _user!.username,
+        notify: true,
+        alert: (item, body) {
+          final title = item.username.isEmpty ? 'New message' : item.username;
+          chatAlertNow(threadId: item.id, title: title, body: body);
+        },
+      );
       setState(() {
         _threads = items;
         _error = null;
@@ -204,6 +225,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _step = 0;
         _threads = const [];
       });
+      ChatLive.instance.start();
       _startPoll();
       await _loadThreads();
     } catch (error) {
@@ -223,7 +245,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       }
     } else {
       final email = contact.toLowerCase();
-      final ok = RegExp(r'^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$').hasMatch(email);
+      final ok = RegExp(
+        r'^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$',
+      ).hasMatch(email);
       if (email.length > 80 || !ok) return 'Enter a valid email address.';
     }
     final name = username.toLowerCase().replaceFirst(RegExp(r'^@'), '');
@@ -243,7 +267,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       }
     } else {
       final email = contact.toLowerCase();
-      final ok = RegExp(r'^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$').hasMatch(email);
+      final ok = RegExp(
+        r'^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$',
+      ).hasMatch(email);
       if (email.length > 80 || !ok) {
         setState(() => _error = 'Enter a valid email address.');
         return;
@@ -306,12 +332,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       showDragHandle: true,
       builder: (context) {
         return Padding(
-          padding: EdgeInsets.fromLTRB(20, 4, 20, 16 + MediaQuery.viewInsetsOf(context).bottom),
+          padding: EdgeInsets.fromLTRB(
+            20,
+            4,
+            20,
+            16 + MediaQuery.viewInsetsOf(context).bottom,
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text('New chat', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+              const Text(
+                'New chat',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+              ),
               const SizedBox(height: 12),
               TextField(
                 controller: controller,
@@ -339,19 +373,158 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     await _openName(name);
   }
 
+  void _onLiveRevision() {
+    if (!mounted) return;
+    setState(() {});
+    _typingClock?.cancel();
+    final typing = _threads.any((item) => ChatLive.isTyping(item.id));
+    if (!typing) return;
+    _typingClock = Timer(const Duration(seconds: 4), () {
+      if (mounted) setState(() {});
+    });
+  }
+
+  void _onLiveEvent(ChatLiveEvent event) {
+    if (!mounted) return;
+    if (event.type == 'presence') {
+      final name = event.from.trim().toLowerCase();
+      if (name.isEmpty) return;
+      setState(() {
+        _threads = [
+          for (final item in _threads)
+            if (item.username.toLowerCase() == name)
+              item.copyWith(
+                online: event.on,
+                lastSeen: event.at > 0
+                    ? DateTime.fromMillisecondsSinceEpoch(event.at)
+                    : item.lastSeen,
+              )
+            else
+              item,
+        ];
+      });
+      return;
+    }
+    if (event.threadId.isEmpty) return;
+    if (event.type == 'message' && event.message != null) {
+      final message = event.message!;
+      if (message.id <= 0) return;
+      final me = _user?.username ?? '';
+      final open =
+          event.threadId == ChatAlerts.openThread ||
+          event.threadId == _selectedId;
+      final incoming = me.isEmpty || message.name != me;
+      final exists = _threads.any((item) => item.id == event.threadId);
+      if (!exists) {
+        if (!incoming || message.name.isEmpty) return;
+        setState(() {
+          _threads = [
+            ChatThreadSummary(
+              id: event.threadId,
+              username: message.name,
+              lastText: message.text,
+              lastAt: message.at,
+              lastId: message.id,
+              lastFrom: message.name,
+              lastStatus: message.status,
+              unread: open ? 0 : 1,
+            ),
+            ..._threads,
+          ];
+        });
+        return;
+      }
+      _patchThread(event.threadId, (item) {
+        if (message.id <= item.lastId) return item;
+        return item.copyWith(
+          lastText: message.text,
+          lastAt: message.at,
+          lastId: message.id,
+          lastFrom: message.name,
+          lastStatus: message.status.isEmpty ? item.lastStatus : message.status,
+          unread: !incoming || open ? item.unread : item.unread + 1,
+        );
+      }, lift: true);
+      return;
+    }
+    if (event.type == 'delivered' || event.type == 'read') {
+      final me = _user?.username ?? '';
+      _patchThread(event.threadId, (item) {
+        if (me.isEmpty ||
+            item.lastFrom != me ||
+            event.id <= 0 ||
+            item.lastId > event.id) {
+          return item;
+        }
+        if (event.type == 'read') return item.copyWith(lastStatus: 'read');
+        if (item.lastStatus == 'read') return item;
+        return item.copyWith(lastStatus: 'delivered');
+      });
+    }
+  }
+
+  void _patchThread(
+    String id,
+    ChatThreadSummary Function(ChatThreadSummary item) patch, {
+    bool lift = false,
+  }) {
+    ChatThreadSummary? next;
+    final rest = <ChatThreadSummary>[];
+    for (final item in _threads) {
+      if (item.id == id) {
+        next = patch(item);
+      } else {
+        rest.add(item);
+      }
+    }
+    if (next == null || !mounted) return;
+    final updated = next;
+    setState(() {
+      _threads = lift
+          ? [updated, ...rest]
+          : [
+              for (final item in _threads)
+                if (item.id == id) updated else item,
+            ];
+    });
+  }
+
+  List<ChatThreadSummary> _mergeThreads(List<ChatThreadSummary> items) {
+    final local = {for (final item in _threads) item.id: item};
+    return [for (final item in items) _preferThread(item, local[item.id])];
+  }
+
+  ChatThreadSummary _preferThread(
+    ChatThreadSummary server,
+    ChatThreadSummary? current,
+  ) {
+    if (current == null) return server;
+    var next = server;
+    if (current.lastId > server.lastId) {
+      next = next.copyWith(
+        lastText: current.lastText,
+        lastAt: current.lastAt,
+        lastId: current.lastId,
+        lastFrom: current.lastFrom,
+        lastStatus: current.lastStatus,
+        unread: current.unread > server.unread ? current.unread : server.unread,
+      );
+    }
+    final seen = current.lastSeen;
+    if (seen != null &&
+        (server.lastSeen == null || seen.isAfter(server.lastSeen!))) {
+      next = next.copyWith(lastSeen: seen, online: current.online);
+    }
+    return next;
+  }
+
   void _onRead(String id, int lastId) {
     setState(() {
       _threads = [
         for (final item in _threads)
           if (item.id == id)
-            ChatThreadSummary(
-              id: item.id,
-              username: item.username,
-              lastText: item.lastText,
-              lastAt: item.lastAt,
+            item.copyWith(
               lastId: item.lastId < lastId ? lastId : item.lastId,
-              lastFrom: item.lastFrom,
-              lastStatus: item.lastStatus,
               unread: 0,
             )
           else
@@ -363,7 +536,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     if (_booting) {
-      return const Scaffold(body: _Waiting(text: 'Opening chats. The first open can take a moment.'));
+      return const Scaffold(
+        body: _Waiting(
+          text: 'Opening chats. The first open can take a moment.',
+        ),
+      );
     }
     if (!_signedIn) return _registerScaffold();
     if (_user == null) return _retryScaffold();
@@ -411,30 +588,42 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               step
                   ? 'People will not see this. Social Save does not send a code. This device keeps the account.'
                   : 'This is the name people message. You cannot change it later.',
-              style: TextStyle(fontSize: 14, height: 1.4, color: scheme.onSurfaceVariant),
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.4,
+                color: scheme.onSurfaceVariant,
+              ),
             ),
             const SizedBox(height: 24),
             if (step) ...[
               SegmentedButton<_ContactKind>(
                 segments: const [
-                  ButtonSegment(value: _ContactKind.phone, label: Text('Phone')),
-                  ButtonSegment(value: _ContactKind.email, label: Text('Email')),
+                  ButtonSegment(
+                    value: _ContactKind.phone,
+                    label: Text('Phone'),
+                  ),
+                  ButtonSegment(
+                    value: _ContactKind.email,
+                    label: Text('Email'),
+                  ),
                 ],
                 selected: {_kind},
                 onSelectionChanged: _busy
                     ? null
                     : (next) => setState(() {
-                          _kind = next.first;
-                          _contact.clear();
-                          _error = null;
-                        }),
+                        _kind = next.first;
+                        _contact.clear();
+                        _error = null;
+                      }),
               ),
               const SizedBox(height: 16),
               TextField(
                 controller: _contact,
                 enabled: !_busy,
                 autofocus: true,
-                keyboardType: phone ? TextInputType.phone : TextInputType.emailAddress,
+                keyboardType: phone
+                    ? TextInputType.phone
+                    : TextInputType.emailAddress,
                 textInputAction: TextInputAction.done,
                 autocorrect: false,
                 onSubmitted: (_) => _nextStep(),
@@ -460,13 +649,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               ),
             if (_error != null) ...[
               const SizedBox(height: 8),
-              Text(_error!, style: TextStyle(color: scheme.error, height: 1.35)),
+              Text(
+                _error!,
+                style: TextStyle(color: scheme.error, height: 1.35),
+              ),
             ],
             const SizedBox(height: 20),
             FilledButton(
-              onPressed: _busy ? null : () => step ? _nextStep() : unawaited(_register()),
+              onPressed: _busy
+                  ? null
+                  : () => step ? _nextStep() : unawaited(_register()),
               child: _busy
-                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
                   : Text(step ? 'Next' : 'Done'),
             ),
             if (!step)
@@ -479,7 +677,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 padding: const EdgeInsets.only(top: 12),
                 child: Text(
                   'The first open can take a moment.',
-                  style: TextStyle(fontSize: 13, height: 1.35, color: scheme.onSurfaceVariant),
+                  style: TextStyle(
+                    fontSize: 13,
+                    height: 1.35,
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
               ),
           ],
@@ -495,9 +697,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       body: ListView(
         padding: pagePadding(context, top: 24, bottom: 24),
         children: [
-          Text(_error ?? 'Chat is not reachable right now.', style: TextStyle(color: scheme.error, height: 1.4)),
+          Text(
+            _error ?? 'Chat is not reachable right now.',
+            style: TextStyle(color: scheme.error, height: 1.4),
+          ),
           const SizedBox(height: 16),
-          FilledButton(onPressed: () => unawaited(_boot()), child: const Text('Try again')),
+          FilledButton(
+            onPressed: () => unawaited(_boot()),
+            child: const Text('Try again'),
+          ),
         ],
       ),
     );
@@ -506,7 +714,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Widget _inbox(bool wide) {
     final scheme = Theme.of(context).colorScheme;
     final user = _user!;
-    final query = _find.text.trim().toLowerCase().replaceFirst(RegExp(r'^@'), '');
+    final query = _find.text.trim().toLowerCase().replaceFirst(
+      RegExp(r'^@'),
+      '',
+    );
     final shown = [
       for (final item in _threads)
         if (query.isEmpty ||
@@ -515,7 +726,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             ChatDrafts.peek(item.id).toLowerCase().contains(query))
           item,
     ];
-    final canStart = query.isNotEmpty && RegExp(r'^[a-z0-9_]{1,20}$').hasMatch(query) && shown.every((item) => item.username != query);
+    final canStart =
+        query.isNotEmpty &&
+        RegExp(r'^[a-z0-9_]{1,20}$').hasMatch(query) &&
+        shown.every((item) => item.username != query);
     return Scaffold(
       appBar: AppBar(
         title: const Text('Chats'),
@@ -535,7 +749,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 },
               ),
             ),
-            icon: ChatFace(name: user.username, size: 32, photoRev: user.photoRev),
+            icon: ChatFace(
+              name: user.username,
+              size: 32,
+              photoRev: user.photoRev,
+            ),
           ),
         ],
       ),
@@ -560,14 +778,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 filled: true,
                 isDense: true,
                 fillColor: scheme.surfaceContainerHighest,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(24),
+                  borderSide: BorderSide.none,
+                ),
               ),
             ),
           ),
           if (_error != null)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: Text(_error!, style: TextStyle(color: scheme.error, height: 1.35)),
+              child: Text(
+                _error!,
+                style: TextStyle(color: scheme.error, height: 1.35),
+              ),
             ),
           Expanded(
             child: RefreshIndicator(
@@ -585,26 +809,32 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     Padding(
                       padding: const EdgeInsets.fromLTRB(24, 48, 24, 24),
                       child: Text(
-                        _threads.isEmpty ? 'No chats yet. Start one with a username.' : 'No chats match that search.',
+                        _threads.isEmpty
+                            ? 'No chats yet. Start one with a username.'
+                            : 'No chats match that search.',
                         textAlign: TextAlign.center,
-                        style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4),
+                        style: TextStyle(
+                          color: scheme.onSurfaceVariant,
+                          height: 1.4,
+                        ),
                       ),
                     ),
-                  for (final item in shown) _ChatRow(
-                    item: item,
-                    me: user.username,
-                    selected: wide && item.id == _selectedId,
-                    onOpen: () => unawaited(_openSaved(item)),
-                    onProfile: () => unawaited(
-                      showChatProfile(
-                        context,
-                        username: item.username,
-                        photoRev: item.photoRev,
-                        lastSeen: item.lastSeen,
-                        online: item.online,
+                  for (final item in shown)
+                    _ChatRow(
+                      item: item,
+                      me: user.username,
+                      selected: wide && item.id == _selectedId,
+                      onOpen: () => unawaited(_openSaved(item)),
+                      onProfile: () => unawaited(
+                        showChatProfile(
+                          context,
+                          username: item.username,
+                          photoRev: item.photoRev,
+                          lastSeen: item.lastSeen,
+                          online: item.online,
+                        ),
                       ),
                     ),
-                  ),
                 ],
               ),
             ),
@@ -634,13 +864,22 @@ class _ChatRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final unread = item.unread > 0;
-    final stamp = item.lastAt == null ? '' : chatListStamp(item.lastAt!, DateTime.now(), TimeOfDay.fromDateTime(item.lastAt!.toLocal()).format(context));
+    final stamp = item.lastAt == null
+        ? ''
+        : chatListStamp(
+            item.lastAt!,
+            DateTime.now(),
+            TimeOfDay.fromDateTime(item.lastAt!.toLocal()).format(context),
+          );
     final draft = ChatDrafts.peek(item.id).trim();
+    final typing = ChatLive.isTyping(item.id);
     final preview = chatPreview(item.lastText, item.lastFrom, me);
     final voice = draft.isEmpty && item.lastText.trim() == 'Voice message';
     final photo = draft.isEmpty && item.lastText.trim() == 'Photo';
     return Material(
-      color: selected ? scheme.primary.withValues(alpha: 0.10) : Colors.transparent,
+      color: selected
+          ? scheme.primary.withValues(alpha: 0.10)
+          : Colors.transparent,
       child: InkWell(
         onTap: onOpen,
         child: Padding(
@@ -649,7 +888,11 @@ class _ChatRow extends StatelessWidget {
             children: [
               GestureDetector(
                 onTap: onProfile,
-                child: ChatFace(name: item.username, photoRev: item.photoRev, online: item.online),
+                child: ChatFace(
+                  name: item.username,
+                  photoRev: item.photoRev,
+                  online: item.online,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -660,20 +903,41 @@ class _ChatRow extends StatelessWidget {
                       item.username,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 16, fontWeight: unread ? FontWeight.w800 : FontWeight.w600),
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: unread ? FontWeight.w800 : FontWeight.w600,
+                      ),
                     ),
                     const SizedBox(height: 2),
-                    if (draft.isNotEmpty)
+                    if (typing)
+                      const Text(
+                        'typing…',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Color(0xFF25D366),
+                          fontStyle: FontStyle.italic,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      )
+                    else if (draft.isNotEmpty)
                       Text.rich(
                         TextSpan(
                           children: [
                             const TextSpan(
                               text: 'Draft: ',
-                              style: TextStyle(color: Color(0xFF25D366), fontStyle: FontStyle.italic, fontWeight: FontWeight.w700),
+                              style: TextStyle(
+                                color: Color(0xFF25D366),
+                                fontStyle: FontStyle.italic,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
                             TextSpan(
                               text: draft,
-                              style: TextStyle(fontStyle: FontStyle.italic, color: scheme.onSurfaceVariant),
+                              style: TextStyle(
+                                fontStyle: FontStyle.italic,
+                                color: scheme.onSurfaceVariant,
+                              ),
                             ),
                           ],
                         ),
@@ -683,16 +947,29 @@ class _ChatRow extends StatelessWidget {
                     else
                       Row(
                         children: [
-                          if (item.lastFrom == me && item.lastStatus.isNotEmpty) ...[
+                          if (item.lastFrom == me &&
+                              item.lastStatus.isNotEmpty) ...[
                             _Tick(status: item.lastStatus),
                             const SizedBox(width: 4),
                           ],
                           if (voice) ...[
-                            Icon(Icons.mic_rounded, size: 16, color: unread ? scheme.onSurface : scheme.onSurfaceVariant),
+                            Icon(
+                              Icons.mic_rounded,
+                              size: 16,
+                              color: unread
+                                  ? scheme.onSurface
+                                  : scheme.onSurfaceVariant,
+                            ),
                             const SizedBox(width: 4),
                           ],
                           if (photo) ...[
-                            Icon(Icons.photo_outlined, size: 16, color: unread ? scheme.onSurface : scheme.onSurfaceVariant),
+                            Icon(
+                              Icons.photo_outlined,
+                              size: 16,
+                              color: unread
+                                  ? scheme.onSurface
+                                  : scheme.onSurfaceVariant,
+                            ),
                             const SizedBox(width: 4),
                           ],
                           Expanded(
@@ -701,8 +978,12 @@ class _ChatRow extends StatelessWidget {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                color: unread ? scheme.onSurface : scheme.onSurfaceVariant,
-                                fontWeight: unread ? FontWeight.w700 : FontWeight.w400,
+                                color: unread
+                                    ? scheme.onSurface
+                                    : scheme.onSurfaceVariant,
+                                fontWeight: unread
+                                    ? FontWeight.w700
+                                    : FontWeight.w400,
                               ),
                             ),
                           ),
@@ -721,7 +1002,9 @@ class _ChatRow extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: unread ? FontWeight.w700 : FontWeight.w500,
-                        color: unread ? const Color(0xFF25D366) : scheme.onSurfaceVariant,
+                        color: unread
+                            ? const Color(0xFF25D366)
+                            : scheme.onSurfaceVariant,
                       ),
                     ),
                   if (unread) ...[
@@ -748,7 +1031,10 @@ class _Tick extends StatelessWidget {
     return Icon(
       status == 'sent' ? Icons.done_rounded : Icons.done_all_rounded,
       size: 16,
-      color: chatTickColor(status, dark: Theme.of(context).brightness == Brightness.dark),
+      color: chatTickColor(
+        status,
+        dark: Theme.of(context).brightness == Brightness.dark,
+      ),
     );
   }
 }
@@ -765,8 +1051,18 @@ class _Badge extends StatelessWidget {
       constraints: const BoxConstraints(minWidth: 20, minHeight: 20),
       padding: const EdgeInsets.symmetric(horizontal: 6),
       alignment: Alignment.center,
-      decoration: const BoxDecoration(color: Color(0xFF25D366), borderRadius: BorderRadius.all(Radius.circular(12))),
-      child: Text(label, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w800)),
+      decoration: const BoxDecoration(
+        color: Color(0xFF25D366),
+        borderRadius: BorderRadius.all(Radius.circular(12)),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
     );
   }
 }
@@ -783,7 +1079,10 @@ class _EmptyPane extends StatelessWidget {
         children: [
           Icon(Icons.forum_rounded, size: 48, color: scheme.onSurfaceVariant),
           const SizedBox(height: 12),
-          Text('Select a chat to start messaging', style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4)),
+          Text(
+            'Select a chat to start messaging',
+            style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4),
+          ),
         ],
       ),
     );
@@ -806,7 +1105,11 @@ class _Waiting extends StatelessWidget {
           children: [
             const CircularProgressIndicator(),
             const SizedBox(height: 16),
-            Text(text, textAlign: TextAlign.center, style: TextStyle(height: 1.4, color: scheme.onSurfaceVariant)),
+            Text(
+              text,
+              textAlign: TextAlign.center,
+              style: TextStyle(height: 1.4, color: scheme.onSurfaceVariant),
+            ),
           ],
         ),
       ),
