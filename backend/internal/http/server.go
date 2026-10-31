@@ -105,7 +105,7 @@ func (s *Server) Router() http.Handler {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins: []string{"*"},
 		AllowedMethods: []string{http.MethodGet, http.MethodPost, http.MethodOptions},
-		AllowedHeaders: []string{"Authorization", "Content-Type", "X-API-Key", "X-Chat-Token"},
+		AllowedHeaders: []string{"Authorization", "Content-Type", "X-API-Key", "X-Chat-Token", "X-Voice-Ms", "X-Reply-Id", "X-Chat-Caption"},
 		MaxAge:         300,
 	}))
 	r.Use(s.limit)
@@ -129,6 +129,8 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requireKey).Post("/chat/threads/{id}", s.chatThreadPost)
 		r.With(s.requireKey).Post("/chat/threads/{id}/read", s.chatThreadRead)
 		r.With(s.requireKey).Post("/chat/threads/{id}/voice", s.chatThreadVoice)
+		r.With(s.requireKey).Post("/chat/threads/{id}/photo", s.chatThreadPhoto)
+		r.With(s.requireKey).Get("/chat/images/{id}", s.chatImageGet)
 		r.Get("/pair/{code}", s.readPair)
 		r.Get("/download/{job_id}", s.jobStatus)
 		r.Get("/files/{token}", s.file)

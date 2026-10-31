@@ -93,7 +93,7 @@ bool chatThreadUnread({
   return lastId > seenId;
 }
 
-/// Tick for one of your messages: sent, delivered, or read.
+/// Tick for one of your messages: sending, failed, sent, delivered, or read.
 String chatTick({
   required bool mine,
   required int id,
@@ -101,11 +101,32 @@ String chatTick({
   required int peerRead,
   String status = '',
 }) {
-  if (!mine || id <= 0) return '';
+  if (!mine) return '';
+  if (status == 'failed' || status == 'sending') return status;
+  if (id <= 0) return '';
   if (peerRead >= id) return 'read';
   if (peerDelivered >= id) return 'delivered';
   if (status == 'read' || status == 'delivered' || status == 'sent') return status;
   return 'sent';
+}
+
+/// The line quoted above a reply. Voice and photo keep a short label.
+String chatQuoteLabel(String text, {required bool voice, required bool photo}) {
+  if (voice) return 'Voice message';
+  var label = text.trim();
+  if (photo && (label.isEmpty || label == 'Photo')) return 'Photo';
+  final runes = label.runes;
+  if (runes.length <= 80) return label;
+  return String.fromCharCodes(runes.take(80));
+}
+
+/// What a notification says when this chat is not the one on screen.
+String chatAlertBody(String lastText) {
+  final text = lastText.trim();
+  if (text.isEmpty) return 'New message';
+  if (text == 'Voice message') return 'Voice message';
+  if (text == 'Photo') return 'Photo';
+  return text;
 }
 
 String chatPreview(String lastText, String lastFrom, String me) {

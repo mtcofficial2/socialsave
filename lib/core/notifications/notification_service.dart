@@ -14,6 +14,9 @@ class NotificationService {
   /// 1.0.46: the "Phone connected by USB" toast was tapped.
   static void Function()? onUsbShare;
 
+  /// A chat toast was tapped. The payload is chat|threadId|username.
+  static void Function(String payload)? onChatOpen;
+
   /// Windows toast: a phone was plugged in by USB; "Share files" opens the session screen.
   Future<void> showUsbShare(String name) async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.windows) return;
@@ -76,8 +79,13 @@ class NotificationService {
           .initialize(
             const InitializationSettings(android: android, iOS: ios, windows: windows),
             onDidReceiveNotificationResponse: (r) {
-              if ((r.actionId ?? r.payload ?? '').startsWith('usbshare')) {
+              final probe = (r.actionId ?? '').isNotEmpty ? r.actionId! : (r.payload ?? '');
+              if (probe.startsWith('usbshare')) {
                 onUsbShare?.call();
+                return;
+              }
+              if (probe.startsWith('chat|')) {
+                onChatOpen?.call(probe);
                 return;
               }
               onResponse?.call(r.actionId, r.payload);
@@ -100,6 +108,39 @@ class NotificationService {
     final ios = _plugin.resolvePlatformSpecificImplementation<
         IOSFlutterLocalNotificationsPlugin>();
     await ios?.requestPermissions(alert: true, badge: true, sound: true);
+  }
+
+  Future<void> showChat({
+    required String threadId,
+    required String title,
+    required String body,
+  }) async {
+    if (kIsWeb || threadId.isEmpty) return;
+    if (!_initialized) await init();
+    final payload = 'chat|$threadId|$title';
+    final id = threadId.hashCode & 0x7fffffff;
+    if (defaultTargetPlatform == TargetPlatform.windows) {
+      try {
+        await _plugin.show(id, title, body, null, payload: payload);
+      } catch (_) {}
+      return;
+    }
+    await _plugin.show(
+      id,
+      title,
+      body,
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          'chats',
+          'Chats',
+          channelDescription: 'New messages',
+          importance: Importance.high,
+          priority: Priority.high,
+        ),
+        iOS: DarwinNotificationDetails(),
+      ),
+      payload: payload,
+    );
   }
 
   Future<void> showDownloadComplete({

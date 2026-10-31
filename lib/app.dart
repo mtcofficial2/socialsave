@@ -1,3 +1,4 @@
+import 'package:social_save/features/chat/chat_alerts.dart';
 import 'package:social_save/features/library/session_ui.dart';
 import 'package:social_save/web/web_pages.dart';
 import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
@@ -52,6 +53,7 @@ class SocialSaveApp extends ConsumerWidget {
               if (child != null) Positioned.fill(child: _desktopKeys(child)),
               if (!kIsWeb) const NearbyIncomingCard(),
               if (!kIsWeb) const SessionPill(),
+              if (!kIsWeb) const ChatAlertHost(),
             ],
           ),
         );

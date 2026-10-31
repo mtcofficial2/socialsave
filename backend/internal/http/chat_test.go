@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -291,6 +292,71 @@ func TestChatPhotoVoiceAndPresence(t *testing.T) {
 	}
 }
 
+func TestChatReplyAndPicture(t *testing.T) {
+	app := testApp(t)
+	app.chat.file = filepath.Join(t.TempDir(), "accounts.json")
+	ada := registerChat(t, app, `{"phone":"256700000333","username":"ada"}`)
+	ben := registerChat(t, app, `{"email":"ben2@example.com","username":"ben"}`)
+	opened := postChat(app, "/api/v1/chat/threads", ada.token, `{"username":"ben"}`)
+	var thread struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(opened.Body.Bytes(), &thread); err != nil || opened.Code != http.StatusOK || thread.ID == "" {
+		t.Fatalf("open %d %s", opened.Code, opened.Body.String())
+	}
+	sent := postChat(app, "/api/v1/chat/threads/"+thread.ID, ada.token, `{"text":"hello there"}`)
+	var created struct {
+		Message struct {
+			ID int64 `json:"id"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(sent.Body.Bytes(), &created); err != nil || sent.Code != http.StatusOK || created.Message.ID == 0 {
+		t.Fatalf("sent %d %s", sent.Code, sent.Body.String())
+	}
+	reply := postChat(app, "/api/v1/chat/threads/"+thread.ID, ben.token, `{"text":"got it","reply":`+strconv.FormatInt(created.Message.ID, 10)+`}`)
+	if reply.Code != http.StatusOK || !bytes.Contains(reply.Body.Bytes(), []byte(`"replyText":"hello there"`)) || !bytes.Contains(reply.Body.Bytes(), []byte(`"replyName":"ada"`)) {
+		t.Fatalf("reply %d %s", reply.Code, reply.Body.String())
+	}
+	missing := postChat(app, "/api/v1/chat/threads/"+thread.ID, ada.token, `{"text":"nope","reply":99999}`)
+	if missing.Code != http.StatusBadRequest || !bytes.Contains(missing.Body.Bytes(), []byte("no longer in this chat")) {
+		t.Fatalf("missing reply %d %s", missing.Code, missing.Body.String())
+	}
+	empty := postChat(app, "/api/v1/chat/threads/"+thread.ID, ada.token, `{"text":" "}`)
+	if empty.Code != http.StatusBadRequest {
+		t.Fatalf("empty %d %s", empty.Code, empty.Body.String())
+	}
+
+	png := []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x01}
+	photo := postChatHeaders(app, "/api/v1/chat/threads/"+thread.ID+"/photo", ada.token, png, map[string]string{
+		"X-Chat-Caption": "look%20here",
+		"X-Reply-Id":     strconv.FormatInt(created.Message.ID, 10),
+	})
+	if photo.Code != http.StatusOK || !bytes.Contains(photo.Body.Bytes(), []byte(`"text":"look here"`)) || !bytes.Contains(photo.Body.Bytes(), []byte(`"replyText":"hello there"`)) {
+		t.Fatalf("photo %d %s", photo.Code, photo.Body.String())
+	}
+	var picture struct {
+		Message struct {
+			Photo string `json:"photo"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(photo.Body.Bytes(), &picture); err != nil || picture.Message.Photo == "" {
+		t.Fatalf("photo id %s", photo.Body.String())
+	}
+	got := getChat(app, "/api/v1/chat/images/"+picture.Message.Photo, ben.token)
+	if got.Code != http.StatusOK || got.Header().Get("Content-Type") != "image/png" || !bytes.Equal(got.Body.Bytes(), png) {
+		t.Fatalf("image %d %s", got.Code, got.Header().Get("Content-Type"))
+	}
+	cara := registerChat(t, app, `{"phone":"15550003333","username":"cara"}`)
+	hidden := getChat(app, "/api/v1/chat/images/"+picture.Message.Photo, cara.token)
+	if hidden.Code != http.StatusNotFound {
+		t.Fatalf("hidden image %d %s", hidden.Code, hidden.Body.String())
+	}
+	bad := postChatRaw(app, "/api/v1/chat/threads/"+thread.ID+"/photo", ada.token, []byte("not a photo"), "", "")
+	if bad.Code != http.StatusBadRequest {
+		t.Fatalf("bad photo %d %s", bad.Code, bad.Body.String())
+	}
+}
+
 func getChat(app *Server, path, token string) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(http.MethodGet, path, nil)
 	request.Header.Set("X-Chat-Token", token)
@@ -307,6 +373,20 @@ func postChatRaw(app *Server, path, token string, body []byte, header, value str
 	request.Header.Set("Content-Type", "application/octet-stream")
 	if header != "" {
 		request.Header.Set(header, value)
+	}
+	response := httptest.NewRecorder()
+	app.Router().ServeHTTP(response, request)
+	return response
+}
+
+func postChatHeaders(app *Server, path, token string, body []byte, headers map[string]string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+	if token != "" {
+		request.Header.Set("X-Chat-Token", token)
+	}
+	request.Header.Set("Content-Type", "application/octet-stream")
+	for key, value := range headers {
+		request.Header.Set(key, value)
 	}
 	response := httptest.NewRecorder()
 	app.Router().ServeHTTP(response, request)

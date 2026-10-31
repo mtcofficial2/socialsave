@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -70,6 +71,24 @@ type chatMessage struct {
 	Voice     string   `json:"voice,omitempty"`
 	VoiceMs   int      `json:"voiceMs,omitempty"`
 	VoiceType string   `json:"voiceType,omitempty"`
+	Reply     int64    `json:"reply,omitempty"`
+	ReplyName string   `json:"replyName,omitempty"`
+	ReplyText string   `json:"replyText,omitempty"`
+	Photo     string   `json:"photo,omitempty"`
+	PhotoType string   `json:"photoType,omitempty"`
+}
+
+// chatExtra is everything a message carries besides its text. ReplyName and
+// ReplyText are a snapshot, so the quote stays after older messages are trimmed.
+type chatExtra struct {
+	Reply     int64
+	ReplyName string
+	ReplyText string
+	Voice     string
+	VoiceMs   int
+	VoiceType string
+	Photo     string
+	PhotoType string
 }
 
 // chatSeen is how far this person has received or opened the conversation.
@@ -375,7 +394,7 @@ func (c *chatRoom) markRead(ctx context.Context, userID, threadID string, id int
 	return nil
 }
 
-func (c *chatRoom) post(ctx context.Context, user chatUser, threadID, text string) (chatMessage, error) {
+func (c *chatRoom) post(ctx context.Context, user chatUser, threadID, text string, reply int64) (chatMessage, error) {
 	c.ensure(ctx)
 	clean, err := cleanChatText(text)
 	if err != nil {
@@ -395,7 +414,14 @@ func (c *chatRoom) post(ctx context.Context, user chatUser, threadID, text strin
 		c.mu.Unlock()
 		return chatMessage{}, chatRejected("That chat was not found.")
 	}
-	item := c.appendMessageLocked(thread, user, clean, "", 0, "")
+	replyName, replyText, err := replyOf(thread, reply)
+	if err != nil {
+		c.mu.Unlock()
+		return chatMessage{}, err
+	}
+	item := c.appendMessageLocked(thread, user, clean, chatExtra{
+		Reply: reply, ReplyName: replyName, ReplyText: replyText,
+	})
 	c.last[user.ID] = clean
 	c.mu.Unlock()
 	c.persist(ctx)
@@ -403,7 +429,7 @@ func (c *chatRoom) post(ctx context.Context, user chatUser, threadID, text strin
 	return item, nil
 }
 
-func (c *chatRoom) postVoice(ctx context.Context, user chatUser, threadID string, body []byte, ms int) (chatMessage, error) {
+func (c *chatRoom) postVoice(ctx context.Context, user chatUser, threadID string, body []byte, ms int, reply int64) (chatMessage, error) {
 	if len(body) == 0 || len(body) > chatVoiceMax {
 		return chatMessage{}, chatRejected("That voice note is too large.")
 	}
@@ -425,6 +451,10 @@ func (c *chatRoom) postVoice(ctx context.Context, user chatUser, threadID string
 		c.mu.Unlock()
 		return chatMessage{}, chatRejected("That chat was not found.")
 	}
+	if _, _, err := replyOf(thread, reply); err != nil {
+		c.mu.Unlock()
+		return chatMessage{}, err
+	}
 	c.mu.Unlock()
 	id := newChatID("v")
 	if err := c.putBlob(ctx, "chat/voices/"+id, body); err != nil {
@@ -437,14 +467,84 @@ func (c *chatRoom) postVoice(ctx context.Context, user chatUser, threadID string
 		c.mu.Unlock()
 		return chatMessage{}, chatRejected("That chat was not found.")
 	}
-	item := c.appendMessageLocked(thread, user, "Voice message", id, ms, kind)
+	replyName, replyText, err := replyOf(thread, reply)
+	if err != nil {
+		c.mu.Unlock()
+		return chatMessage{}, err
+	}
+	item := c.appendMessageLocked(thread, user, "Voice message", chatExtra{
+		Reply: reply, ReplyName: replyName, ReplyText: replyText,
+		Voice: id, VoiceMs: ms, VoiceType: kind,
+	})
 	c.mu.Unlock()
 	c.persist(ctx)
 	item.Status = "sent"
 	return item, nil
 }
 
-func (c *chatRoom) appendMessageLocked(thread *chatThread, user chatUser, text, voice string, voiceMs int, voiceType string) chatMessage {
+func (c *chatRoom) postPhoto(ctx context.Context, user chatUser, threadID string, body []byte, caption string, reply int64) (chatMessage, error) {
+	if len(body) == 0 || len(body) > chatPhotoMax {
+		return chatMessage{}, chatRejected("That photo is too large.")
+	}
+	kind := imageKind(body)
+	if kind == "" {
+		return chatMessage{}, chatRejected("Choose a JPEG or PNG photo.")
+	}
+	text := "Photo"
+	if strings.TrimSpace(caption) != "" {
+		clean, err := cleanChatText(caption)
+		if err != nil {
+			return chatMessage{}, err
+		}
+		text = clean
+	}
+	c.ensure(ctx)
+	c.mu.Lock()
+	if !c.allowLocked(c.posts, user.ID, chatPostRate) {
+		c.mu.Unlock()
+		return chatMessage{}, errs.RateLimited()
+	}
+	thread := c.threadLocked(threadID)
+	if thread == nil || (thread.A != user.ID && thread.B != user.ID) {
+		c.mu.Unlock()
+		return chatMessage{}, chatRejected("That chat was not found.")
+	}
+	if _, _, err := replyOf(thread, reply); err != nil {
+		c.mu.Unlock()
+		return chatMessage{}, err
+	}
+	c.mu.Unlock()
+	id := newChatID("p")
+	if err := c.putBlob(ctx, "chat/images/"+id, body); err != nil {
+		slog.Info("chat image save failed")
+		return chatMessage{}, chatRejected("That photo could not be sent.")
+	}
+	c.mu.Lock()
+	thread = c.threadLocked(threadID)
+	if thread == nil || (thread.A != user.ID && thread.B != user.ID) {
+		c.mu.Unlock()
+		return chatMessage{}, chatRejected("That chat was not found.")
+	}
+	replyName, replyText, err := replyOf(thread, reply)
+	if err != nil {
+		c.mu.Unlock()
+		return chatMessage{}, err
+	}
+	photoType := "png"
+	if kind == "image/jpeg" {
+		photoType = "jpeg"
+	}
+	item := c.appendMessageLocked(thread, user, text, chatExtra{
+		Reply: reply, ReplyName: replyName, ReplyText: replyText,
+		Photo: id, PhotoType: photoType,
+	})
+	c.mu.Unlock()
+	c.persist(ctx)
+	item.Status = "sent"
+	return item, nil
+}
+
+func (c *chatRoom) appendMessageLocked(thread *chatThread, user chatUser, text string, extra chatExtra) chatMessage {
 	if thread.Next < 1 {
 		thread.Next = 1
 	}
@@ -454,11 +554,16 @@ func (c *chatRoom) appendMessageLocked(thread *chatThread, user chatUser, text, 
 		Name:      user.Username,
 		Text:      text,
 		At:        time.Now().UnixMilli(),
-		Voice:     voice,
-		VoiceMs:   voiceMs,
-		VoiceType: voiceType,
+		Voice:     extra.Voice,
+		VoiceMs:   extra.VoiceMs,
+		VoiceType: extra.VoiceType,
+		Reply:     extra.Reply,
+		ReplyName: extra.ReplyName,
+		ReplyText: extra.ReplyText,
+		Photo:     extra.Photo,
+		PhotoType: extra.PhotoType,
 	}
-	if voice == "" {
+	if extra.Voice == "" && extra.Photo == "" {
 		item.Links = chatLinks(text)
 	}
 	thread.Next++
@@ -558,6 +663,42 @@ func (c *chatRoom) voiceFor(ctx context.Context, userID, voiceID string) ([]byte
 		return nil, "", os.ErrNotExist
 	}
 	return body, voiceContentType(kind), nil
+}
+
+func (c *chatRoom) imageFor(ctx context.Context, userID, imageID string) ([]byte, string, error) {
+	key, err := chatBlobKey("chat/images/", imageID)
+	if err != nil {
+		return nil, "", os.ErrNotExist
+	}
+	c.ensure(ctx)
+	c.mu.Lock()
+	kind := ""
+	for _, thread := range c.data.Threads {
+		if thread.A != userID && thread.B != userID {
+			continue
+		}
+		for _, message := range thread.Messages {
+			if message.Photo == imageID {
+				kind = message.PhotoType
+				break
+			}
+		}
+		if kind != "" {
+			break
+		}
+	}
+	c.mu.Unlock()
+	if kind == "" {
+		return nil, "", os.ErrNotExist
+	}
+	body, err := c.getBlob(ctx, key)
+	if err != nil || len(body) == 0 {
+		return nil, "", os.ErrNotExist
+	}
+	if kind == "jpeg" {
+		return body, "image/jpeg", nil
+	}
+	return body, "image/png", nil
 }
 
 func (c *chatRoom) presence(ctx context.Context, username string) (int64, bool, int64) {
@@ -713,7 +854,7 @@ func (c *chatRoom) recentSameLocked(userID, text string) bool {
 		}
 		if n := len(thread.Messages); n > 0 {
 			last := thread.Messages[n-1]
-			if last.Voice != "" {
+			if last.Voice != "" || last.Photo != "" {
 				continue
 			}
 			if last.From == userID && last.Text == text && time.Since(time.UnixMilli(last.At)) < 15*time.Second {
@@ -722,6 +863,30 @@ func (c *chatRoom) recentSameLocked(userID, text string) bool {
 		}
 	}
 	return false
+}
+
+func replyOf(thread *chatThread, id int64) (string, string, error) {
+	if id <= 0 {
+		return "", "", nil
+	}
+	for i := len(thread.Messages) - 1; i >= 0; i-- {
+		item := thread.Messages[i]
+		if item.ID != id {
+			continue
+		}
+		label := strings.TrimSpace(item.Text)
+		if item.Voice != "" {
+			label = "Voice message"
+		} else if item.Photo != "" && (label == "" || label == "Photo") {
+			label = "Photo"
+		}
+		runes := []rune(label)
+		if len(runes) > 80 {
+			label = string(runes[:80])
+		}
+		return item.Name, label, nil
+	}
+	return "", "", chatRejected("That message is no longer in this chat.")
 }
 
 func (c *chatRoom) threadLocked(id string) *chatThread {
@@ -1195,7 +1360,7 @@ func (s *Server) chatThreadVoice(w http.ResponseWriter, r *http.Request) {
 		writeChatError(w, http.StatusBadRequest, "That voice note could not be sent.")
 		return
 	}
-	item, err := s.chat.postVoice(r.Context(), user, chi.URLParam(r, "id"), body, ms)
+	item, err := s.chat.postVoice(r.Context(), user, chi.URLParam(r, "id"), body, ms, chatHeaderReply(r))
 	if err != nil {
 		writeChatFailure(w, err)
 		return
@@ -1235,19 +1400,71 @@ func (s *Server) chatThreadRead(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
+func (s *Server) chatThreadPhoto(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.chatActor(w, r)
+	if !ok {
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, chatPhotoMax+1))
+	if err != nil {
+		writeChatError(w, http.StatusBadRequest, "That photo could not be sent.")
+		return
+	}
+	item, err := s.chat.postPhoto(r.Context(), user, chi.URLParam(r, "id"), body, chatHeaderCaption(r), chatHeaderReply(r))
+	if err != nil {
+		writeChatFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": item})
+}
+
+func (s *Server) chatImageGet(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.chatActor(w, r)
+	if !ok {
+		return
+	}
+	body, contentType, err := s.chat.imageFor(r.Context(), user.ID, chi.URLParam(r, "id"))
+	if err != nil {
+		writeChatFailure(w, err)
+		return
+	}
+	writeChatBytes(w, contentType, body)
+}
+
+func chatHeaderReply(r *http.Request) int64 {
+	id, _ := strconv.ParseInt(strings.TrimSpace(r.Header.Get("X-Reply-Id")), 10, 64)
+	if id < 0 {
+		return 0
+	}
+	return id
+}
+
+func chatHeaderCaption(r *http.Request) string {
+	raw := strings.TrimSpace(r.Header.Get("X-Chat-Caption"))
+	if raw == "" {
+		return ""
+	}
+	decoded, err := url.QueryUnescape(raw)
+	if err != nil {
+		return raw
+	}
+	return decoded
+}
+
 func (s *Server) chatThreadPost(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.chatActor(w, r)
 	if !ok {
 		return
 	}
 	var body struct {
-		Text string `json:"text"`
+		Text  string `json:"text"`
+		Reply int64  `json:"reply"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&body); err != nil {
 		writeChatError(w, http.StatusBadRequest, "Write a message first.")
 		return
 	}
-	item, err := s.chat.post(r.Context(), user, chi.URLParam(r, "id"), body.Text)
+	item, err := s.chat.post(r.Context(), user, chi.URLParam(r, "id"), body.Text, body.Reply)
 	if err != nil {
 		writeChatFailure(w, err)
 		return

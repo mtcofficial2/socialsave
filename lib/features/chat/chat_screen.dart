@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:social_save/features/chat/chat_alerts.dart';
 import 'package:social_save/features/chat/chat_api.dart';
+import 'package:social_save/features/chat/chat_drafts.dart';
 import 'package:social_save/features/chat/chat_format.dart';
 import 'package:social_save/features/chat/chat_profile.dart';
 import 'package:social_save/features/chat/chat_thread_screen.dart';
@@ -39,16 +41,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   bool _wide(BuildContext context) => MediaQuery.sizeOf(context).width >= 840;
 
+  void _onDrafts() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    ChatDrafts.revision.addListener(_onDrafts);
+    unawaited(ChatDrafts.ensure());
     unawaited(_boot());
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    ChatDrafts.revision.removeListener(_onDrafts);
     _poll?.cancel();
     _contact.dispose();
     _username.dispose();
@@ -74,6 +83,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final token = await ChatSession.token();
     if (!mounted) return;
     if (token == null) {
+      ChatAlerts.reset();
       setState(() {
         _signedIn = false;
         _user = null;
@@ -101,6 +111,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (!mounted) return;
       if (chatNeedsRegister(error)) {
         await ChatSession.clear();
+        ChatAlerts.reset();
         if (!mounted) return;
         setState(() {
           _signedIn = false;
@@ -132,6 +143,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     try {
       final items = await _api.threads();
       if (!mounted) return;
+      ChatAlerts.observe(items, me: _user!.username, notify: false);
       setState(() {
         _threads = items;
         _error = null;
@@ -140,6 +152,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (!mounted) return;
       if (chatNeedsRegister(error)) {
         await ChatSession.clear();
+        ChatAlerts.reset();
         if (!mounted) return;
         _poll?.cancel();
         _poll = null;
@@ -496,7 +509,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final query = _find.text.trim().toLowerCase().replaceFirst(RegExp(r'^@'), '');
     final shown = [
       for (final item in _threads)
-        if (query.isEmpty || item.username.contains(query) || item.lastText.toLowerCase().contains(query)) item,
+        if (query.isEmpty ||
+            item.username.contains(query) ||
+            item.lastText.toLowerCase().contains(query) ||
+            ChatDrafts.peek(item.id).toLowerCase().contains(query))
+          item,
     ];
     final canStart = query.isNotEmpty && RegExp(r'^[a-z0-9_]{1,20}$').hasMatch(query) && shown.every((item) => item.username != query);
     return Scaffold(
@@ -618,8 +635,10 @@ class _ChatRow extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final unread = item.unread > 0;
     final stamp = item.lastAt == null ? '' : chatListStamp(item.lastAt!, DateTime.now(), TimeOfDay.fromDateTime(item.lastAt!.toLocal()).format(context));
+    final draft = ChatDrafts.peek(item.id).trim();
     final preview = chatPreview(item.lastText, item.lastFrom, me);
-    final voice = item.lastText.trim() == 'Voice message';
+    final voice = draft.isEmpty && item.lastText.trim() == 'Voice message';
+    final photo = draft.isEmpty && item.lastText.trim() == 'Photo';
     return Material(
       color: selected ? scheme.primary.withValues(alpha: 0.10) : Colors.transparent,
       child: InkWell(
@@ -644,29 +663,51 @@ class _ChatRow extends StatelessWidget {
                       style: TextStyle(fontSize: 16, fontWeight: unread ? FontWeight.w800 : FontWeight.w600),
                     ),
                     const SizedBox(height: 2),
-                    Row(
-                      children: [
-                        if (item.lastFrom == me && item.lastStatus.isNotEmpty) ...[
-                          _Tick(status: item.lastStatus),
-                          const SizedBox(width: 4),
-                        ],
-                        if (voice) ...[
-                          Icon(Icons.mic_rounded, size: 16, color: unread ? scheme.onSurface : scheme.onSurfaceVariant),
-                          const SizedBox(width: 4),
-                        ],
-                        Expanded(
-                          child: Text(
-                            preview,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: unread ? scheme.onSurface : scheme.onSurfaceVariant,
-                              fontWeight: unread ? FontWeight.w700 : FontWeight.w400,
+                    if (draft.isNotEmpty)
+                      Text.rich(
+                        TextSpan(
+                          children: [
+                            const TextSpan(
+                              text: 'Draft: ',
+                              style: TextStyle(color: Color(0xFF25D366), fontStyle: FontStyle.italic, fontWeight: FontWeight.w700),
+                            ),
+                            TextSpan(
+                              text: draft,
+                              style: TextStyle(fontStyle: FontStyle.italic, color: scheme.onSurfaceVariant),
+                            ),
+                          ],
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      )
+                    else
+                      Row(
+                        children: [
+                          if (item.lastFrom == me && item.lastStatus.isNotEmpty) ...[
+                            _Tick(status: item.lastStatus),
+                            const SizedBox(width: 4),
+                          ],
+                          if (voice) ...[
+                            Icon(Icons.mic_rounded, size: 16, color: unread ? scheme.onSurface : scheme.onSurfaceVariant),
+                            const SizedBox(width: 4),
+                          ],
+                          if (photo) ...[
+                            Icon(Icons.photo_outlined, size: 16, color: unread ? scheme.onSurface : scheme.onSurfaceVariant),
+                            const SizedBox(width: 4),
+                          ],
+                          Expanded(
+                            child: Text(
+                              preview,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: unread ? scheme.onSurface : scheme.onSurfaceVariant,
+                                fontWeight: unread ? FontWeight.w700 : FontWeight.w400,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
+                        ],
+                      ),
                   ],
                 ),
               ),

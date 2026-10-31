@@ -141,6 +141,26 @@ Future<int?> _pickChatPhoto(String username) async {
   return rev;
 }
 
+/// A conversation photo, still small enough for the chat server.
+Future<Uint8List> fitChatImage(Uint8List raw) async {
+  Object? last;
+  for (final width in [1280, 960, 640, 256]) {
+    try {
+      final codec = await ui.instantiateImageCodec(raw, targetWidth: width);
+      final frame = await codec.getNextFrame();
+      final data = await frame.image.toByteData(format: ui.ImageByteFormat.png);
+      frame.image.dispose();
+      codec.dispose();
+      if (data == null) continue;
+      final bytes = data.buffer.asUint8List();
+      if (bytes.length <= 512 * 1024) return bytes;
+    } catch (error) {
+      last = error;
+    }
+  }
+  throw last ?? StateError('Choose a JPEG or PNG photo.');
+}
+
 /// A small PNG the chat server will accept.
 Future<Uint8List> fitChatPhoto(Uint8List raw) async {
   Object? last;

@@ -202,6 +202,13 @@ class ChatMessage {
     this.voice = '',
     this.voiceMs = 0,
     this.voiceType = '',
+    this.reply = 0,
+    this.replyName = '',
+    this.replyText = '',
+    this.photo = '',
+    this.photoType = '',
+    this.localBytes,
+    this.pendingKind = '',
   });
 
   final int id;
@@ -214,8 +221,38 @@ class ChatMessage {
   final String voice;
   final int voiceMs;
   final String voiceType;
+  final int reply;
+  final String replyName;
+  final String replyText;
+  final String photo;
+  final String photoType;
+  final Uint8List? localBytes;
+  final String pendingKind;
 
-  bool get isVoice => voice.isNotEmpty;
+  bool get isVoice => voice.isNotEmpty || pendingKind == 'voice';
+  bool get isPhoto => photo.isNotEmpty || pendingKind == 'photo';
+
+  ChatMessage copyWith({String? status}) {
+    return ChatMessage(
+      id: id,
+      from: from,
+      name: name,
+      text: text,
+      links: links,
+      at: at,
+      status: status ?? this.status,
+      voice: voice,
+      voiceMs: voiceMs,
+      voiceType: voiceType,
+      reply: reply,
+      replyName: replyName,
+      replyText: replyText,
+      photo: photo,
+      photoType: photoType,
+      localBytes: localBytes,
+      pendingKind: pendingKind,
+    );
+  }
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
     final links = json['links'];
@@ -230,6 +267,11 @@ class ChatMessage {
       voice: (json['voice'] as String?)?.trim() ?? '',
       voiceMs: (json['voiceMs'] as num?)?.toInt() ?? 0,
       voiceType: (json['voiceType'] as String?)?.trim() ?? '',
+      reply: (json['reply'] as num?)?.toInt() ?? 0,
+      replyName: (json['replyName'] as String?)?.trim() ?? '',
+      replyText: (json['replyText'] as String?)?.trim() ?? '',
+      photo: (json['photo'] as String?)?.trim() ?? '',
+      photoType: (json['photoType'] as String?)?.trim() ?? '',
     );
   }
 }
@@ -377,10 +419,13 @@ class ChatApi {
     );
   }
 
-  Future<ChatMessage> send(String id, String text) async {
+  Future<ChatMessage> send(String id, String text, {int reply = 0}) async {
     final response = await _dio.post<dynamic>(
       '/api/v1/chat/threads/$id',
-      data: {'text': text},
+      data: {
+        'text': text,
+        if (reply > 0) 'reply': reply,
+      },
       options: await _auth(),
     );
     final message = _object(response)['message'];
@@ -433,11 +478,57 @@ class ChatApi {
     }
   }
 
-  Future<ChatMessage> sendVoice(String id, Uint8List bytes, int milliseconds) async {
+  Future<ChatMessage> sendPhoto(String id, Uint8List bytes, {String caption = '', int reply = 0}) async {
+    final auth = await _auth();
+    final headers = Map<String, dynamic>.from(auth.headers ?? {});
+    headers['Content-Type'] = 'application/octet-stream';
+    final clean = caption.trim();
+    if (clean.isNotEmpty) headers['X-Chat-Caption'] = Uri.encodeComponent(clean);
+    if (reply > 0) headers['X-Reply-Id'] = '$reply';
+    final response = await _dio.post<dynamic>(
+      '/api/v1/chat/threads/$id/photo',
+      data: bytes,
+      options: auth.copyWith(
+        headers: headers,
+        contentType: 'application/octet-stream',
+        sendTimeout: const Duration(seconds: 40),
+        receiveTimeout: const Duration(seconds: 40),
+      ),
+    );
+    final message = _object(response)['message'];
+    if (message is! Map) {
+      throw DioException(
+        requestOptions: response.requestOptions,
+        message: 'The chat server did not return the photo.',
+      );
+    }
+    return ChatMessage.fromJson(Map<String, dynamic>.from(message));
+  }
+
+  Future<Uint8List?> image(String id) async {
+    if (id.isEmpty) return null;
+    try {
+      final auth = await _auth();
+      final response = await _dio.get<dynamic>(
+        '/api/v1/chat/images/$id',
+        options: auth.copyWith(responseType: ResponseType.bytes, receiveTimeout: const Duration(seconds: 40)),
+      );
+      final data = response.data;
+      if (data is Uint8List && data.isNotEmpty) return data;
+      if (data is List<int> && data.isNotEmpty) return Uint8List.fromList(data);
+      return null;
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
+  Future<ChatMessage> sendVoice(String id, Uint8List bytes, int milliseconds, {int reply = 0}) async {
     final auth = await _auth();
     final headers = Map<String, dynamic>.from(auth.headers ?? {});
     headers['Content-Type'] = 'application/octet-stream';
     headers['X-Voice-Ms'] = '$milliseconds';
+    if (reply > 0) headers['X-Reply-Id'] = '$reply';
     final response = await _dio.post<dynamic>(
       '/api/v1/chat/threads/$id/voice',
       data: bytes,
@@ -519,6 +610,41 @@ String chatErrorText(Object error) {
     }
   }
   return 'Chat is not reachable right now.';
+}
+
+/// Pictures sent inside a conversation, kept for this visit.
+class ChatImages {
+  static final ChatApi _api = ChatApi();
+  static final Map<String, Uint8List> _bytes = {};
+  static final Map<String, Future<Uint8List?>> _loading = {};
+
+  static Future<Uint8List?> fetch(String id) {
+    if (id.isEmpty) return Future<Uint8List?>.value(null);
+    final pending = _loading[id];
+    if (pending != null) return pending;
+    final hit = _bytes[id];
+    if (hit != null) {
+      final done = Future<Uint8List?>.value(hit);
+      _loading[id] = done;
+      return done;
+    }
+    final future = _load(id);
+    _loading[id] = future;
+    return future;
+  }
+
+  static Future<Uint8List?> _load(String id) async {
+    try {
+      final bytes = await _api.image(id);
+      if (bytes != null && bytes.isNotEmpty) {
+        _bytes[id] = bytes;
+        return bytes;
+      }
+    } catch (_) {}
+    final pending = _loading.remove(id);
+    if (pending != null) unawaited(pending);
+    return null;
+  }
 }
 
 /// Profile photos stay in memory for this visit, keyed by username and revision.

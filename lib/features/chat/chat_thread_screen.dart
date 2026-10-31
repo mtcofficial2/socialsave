@@ -1,14 +1,19 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:social_save/core/platform/plat.dart';
+import 'package:social_save/features/chat/chat_alerts.dart';
 import 'package:social_save/features/chat/chat_api.dart';
+import 'package:social_save/features/chat/chat_drafts.dart';
 import 'package:social_save/features/chat/chat_format.dart';
+import 'package:social_save/features/chat/chat_link.dart';
 import 'package:social_save/features/chat/chat_profile.dart';
 import 'package:social_save/features/chat/chat_voice.dart';
+import 'package:social_save/features/chat/chat_wallpaper.dart';
 
 /// A direct chat. On a phone this is its own page. On a wide window it sits
 /// beside the chat list.
@@ -53,7 +58,6 @@ class _ChatThreadViewState extends State<ChatThreadView> with WidgetsBindingObse
   String _me = '';
   String? _error;
   bool _starting = true;
-  bool _sending = false;
   bool _refreshing = false;
   bool _stickToEnd = true;
   bool _recording = false;
@@ -68,6 +72,11 @@ class _ChatThreadViewState extends State<ChatThreadView> with WidgetsBindingObse
   int _readSent = 0;
   DateTime? _peerSeen;
   bool _peerOnline = false;
+  Timer? _draftTimer;
+  int _localSeq = 0;
+  int? _replyId;
+  String _replyName = '';
+  String _replyText = '';
 
   bool get _enterSends {
     switch (Theme.of(context).platform) {
@@ -86,7 +95,9 @@ class _ChatThreadViewState extends State<ChatThreadView> with WidgetsBindingObse
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    ChatAlerts.holdThread(widget.threadId);
     _scroll.addListener(_onScroll);
+    _text.addListener(_onDraftChanged);
     _recorder.onLimit = () {
       if (!mounted) return;
       unawaited(_finishVoice(send: true));
@@ -97,7 +108,13 @@ class _ChatThreadViewState extends State<ChatThreadView> with WidgetsBindingObse
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    ChatAlerts.releaseThread(widget.threadId);
     _poll?.cancel();
+    _draftTimer?.cancel();
+    _text.removeListener(_onDraftChanged);
+    final pendingDraft = _text.text;
+    final threadId = widget.threadId;
+    unawaited(ChatDrafts.write(threadId, pendingDraft));
     unawaited(_recorder.dispose());
     _scroll.removeListener(_onScroll);
     _text.dispose();
@@ -128,8 +145,22 @@ class _ChatThreadViewState extends State<ChatThreadView> with WidgetsBindingObse
     });
   }
 
+  void _onDraftChanged() {
+    _draftTimer?.cancel();
+    final threadId = widget.threadId;
+    final text = _text.text;
+    _draftTimer = Timer(const Duration(milliseconds: 300), () {
+      unawaited(ChatDrafts.write(threadId, text));
+    });
+  }
+
   Future<void> _open() async {
     _me = await ChatSession.username();
+    final saved = await ChatDrafts.read(widget.threadId);
+    if (!mounted) return;
+    if (saved.isNotEmpty && _text.text.isEmpty) {
+      _text.value = TextEditingValue(text: saved, selection: TextSelection.collapsed(offset: saved.length));
+    }
     final seen = await ChatReads.load();
     _seenAtOpen = seen[widget.threadId] ?? 0;
     if (!mounted) return;
@@ -157,13 +188,11 @@ class _ChatThreadViewState extends State<ChatThreadView> with WidgetsBindingObse
   }
 
   Future<void> _refresh() async {
-    if (_sending || _refreshing || widget.threadId.isEmpty) return;
+    if (_refreshing || widget.threadId.isEmpty) return;
     _refreshing = true;
     try {
       final sync = await _api.messages(widget.threadId, _after);
       if (!mounted) return;
-      final known = _messages.map((item) => item.id).toSet();
-      final fresh = [for (final item in sync.messages) if (!known.contains(item.id)) item];
       final presenceChanged = sync.peerDelivered != _peerDelivered ||
           sync.peerRead != _peerRead ||
           sync.peerOnline != _peerOnline ||
@@ -174,14 +203,34 @@ class _ChatThreadViewState extends State<ChatThreadView> with WidgetsBindingObse
       _peerOnline = sync.peerOnline;
       _peerSeen = sync.peerLastSeen;
       _peerPhoto = sync.peerPhotoRev;
-      if (fresh.isEmpty && !_starting) {
-        if (presenceChanged || _error != null) setState(() => _error = null);
-        unawaited(_noteRead());
-        return;
+      final incoming = sync.messages;
+      final keptLocal = <int>{};
+      final consumed = <int>{};
+      for (final local in _messages) {
+        if (local.id >= 0) continue;
+        var matched = false;
+        for (final server in incoming) {
+          if (consumed.contains(server.id)) continue;
+          if (_sameOutgoing(local, server)) {
+            consumed.add(server.id);
+            matched = true;
+            break;
+          }
+        }
+        if (!matched) keptLocal.add(local.id);
       }
+      final known = {for (final item in _messages) if (item.id >= 0) item.id};
+      final fresh = [for (final item in incoming) if (!known.contains(item.id)) item];
+      final base = [for (final item in _messages) if (item.id >= 0 || keptLocal.contains(item.id)) item];
       var next = _after;
       for (final item in fresh) {
         if (item.id > next) next = item.id;
+      }
+      final changed = fresh.isNotEmpty || base.length != _messages.length;
+      if (!changed && !_starting) {
+        if (presenceChanged || _error != null) setState(() => _error = null);
+        unawaited(_noteRead());
+        return;
       }
       final wasStarting = _starting;
       final stick = _stickToEnd || wasStarting;
@@ -190,11 +239,11 @@ class _ChatThreadViewState extends State<ChatThreadView> with WidgetsBindingObse
         _bannerAfter = hasUnread ? _seenAtOpen : -1;
       }
       setState(() {
-        _messages = [..._messages, ...fresh];
+        _messages = [...base, ...fresh];
         _after = next;
         _error = null;
         _starting = false;
-        if (!stick) _below += fresh.where((item) => item.name != _me).length;
+        if (!stick) _below += fresh.where((item) => item.name != _me && item.id > 0).length;
       });
       if (stick) _jump(animate: !wasStarting && fresh.isNotEmpty);
       unawaited(_noteRead());
@@ -209,13 +258,20 @@ class _ChatThreadViewState extends State<ChatThreadView> with WidgetsBindingObse
     }
   }
 
+  bool _sameOutgoing(ChatMessage local, ChatMessage server) {
+    if (_me.isEmpty || server.name != _me || local.name != _me) return false;
+    if (local.pendingKind == 'voice') return server.isVoice && server.voiceMs == local.voiceMs;
+    if (local.pendingKind == 'photo') return server.isPhoto && server.text == local.text;
+    return !server.isVoice && !server.isPhoto && server.text == local.text;
+  }
+
   Future<void> _noteRead() async {
     if (_messages.isEmpty) return;
     var last = 0;
     for (final message in _messages) {
       if (message.id > last) last = message.id;
     }
-    if (last <= _readSent) return;
+    if (last <= 0 || last <= _readSent) return;
     await ChatReads.mark(widget.threadId, last);
     widget.onRead?.call(widget.threadId, last);
     try {
@@ -240,23 +296,157 @@ class _ChatThreadViewState extends State<ChatThreadView> with WidgetsBindingObse
 
   Future<void> _send() async {
     final text = _text.text.trim();
-    if (text.isEmpty || _sending || widget.threadId.isEmpty) return;
-    setState(() {
-      _sending = true;
-      _error = null;
-    });
+    if (text.isEmpty || _recording || widget.threadId.isEmpty) return;
+    final reply = _replyId ?? 0;
+    final replyName = _replyName;
+    final replyText = _replyText;
+    final local = _pending(text: text, reply: reply, replyName: replyName, replyText: replyText);
+    _clearComposer();
+    _accept(local);
     try {
-      final message = await _api.send(widget.threadId, text);
+      final message = await _api.send(widget.threadId, text, reply: reply);
       if (!mounted) return;
-      _text.clear();
-      _accept(message);
+      _replaceLocal(local.id, message);
+    } catch (_) {
+      _mark(local.id, 'failed');
+    }
+  }
+
+  Future<void> _pickPhoto() async {
+    if (_recording || widget.threadId.isEmpty) return;
+    int? localId;
+    try {
+      final picked = await openFile(
+        acceptedTypeGroups: const [
+          XTypeGroup(label: 'Photos', extensions: ['jpg', 'jpeg', 'png']),
+        ],
+      );
+      if (picked == null || !mounted) return;
+      final raw = await picked.readAsBytes();
+      final fitted = await fitChatImage(raw);
+      if (!mounted) return;
+      final caption = _text.text.trim();
+      final reply = _replyId ?? 0;
+      final replyName = _replyName;
+      final replyText = _replyText;
+      final stored = caption.isEmpty ? 'Photo' : caption;
+      final local = _pending(
+        text: stored,
+        kind: 'photo',
+        bytes: fitted,
+        reply: reply,
+        replyName: replyName,
+        replyText: replyText,
+      );
+      localId = local.id;
+      _clearComposer();
+      _accept(local);
+      final message = await _api.sendPhoto(widget.threadId, fitted, caption: caption, reply: reply);
+      if (!mounted) return;
+      _replaceLocal(local.id, message);
     } catch (error) {
       if (!mounted) return;
-      setState(() {
-        _sending = false;
-        _error = chatErrorText(error);
-      });
+      if (localId != null) {
+        _mark(localId, 'failed');
+        return;
+      }
+      setState(() => _error = error is StateError ? error.message : chatErrorText(error));
     }
+  }
+
+  Future<void> _retry(ChatMessage message) async {
+    if (message.id >= 0 || message.status == 'sending') return;
+    _mark(message.id, 'sending');
+    try {
+      final ChatMessage sent;
+      if (message.pendingKind == 'voice' && message.localBytes != null) {
+        sent = await _api.sendVoice(widget.threadId, message.localBytes!, message.voiceMs, reply: message.reply);
+      } else if (message.pendingKind == 'photo' && message.localBytes != null) {
+        final caption = message.text == 'Photo' ? '' : message.text;
+        sent = await _api.sendPhoto(widget.threadId, message.localBytes!, caption: caption, reply: message.reply);
+      } else {
+        sent = await _api.send(widget.threadId, message.text, reply: message.reply);
+      }
+      if (!mounted) return;
+      _replaceLocal(message.id, sent);
+    } catch (_) {
+      _mark(message.id, 'failed');
+    }
+  }
+
+  ChatMessage _pending({
+    required String text,
+    String kind = '',
+    Uint8List? bytes,
+    int voiceMs = 0,
+    int reply = 0,
+    String replyName = '',
+    String replyText = '',
+  }) {
+    _localSeq -= 1;
+    return ChatMessage(
+      id: _localSeq,
+      from: _me,
+      name: _me,
+      text: text,
+      links: const [],
+      at: DateTime.now(),
+      status: 'sending',
+      voiceMs: voiceMs,
+      reply: reply,
+      replyName: replyName,
+      replyText: replyText,
+      localBytes: bytes,
+      pendingKind: kind,
+    );
+  }
+
+  void _clearComposer() {
+    _text.clear();
+    _replyId = null;
+    _replyName = '';
+    _replyText = '';
+    unawaited(ChatDrafts.write(widget.threadId, ''));
+  }
+
+  void _mark(int id, String status) {
+    if (!mounted) return;
+    setState(() {
+      _messages = [
+        for (final item in _messages)
+          if (item.id == id) item.copyWith(status: status) else item,
+      ];
+    });
+  }
+
+  void _replaceLocal(int localId, ChatMessage message) {
+    if (!mounted) return;
+    final next = <ChatMessage>[];
+    for (final item in _messages) {
+      if (item.id == message.id) continue;
+      next.add(item.id == localId ? message : item);
+    }
+    if (!next.any((item) => item.id == message.id)) next.add(message);
+    setState(() {
+      _messages = next;
+      if (message.id > _after) _after = message.id;
+      _error = null;
+      _stickToEnd = true;
+      _below = 0;
+    });
+    _jump(animate: true);
+    unawaited(_noteRead());
+  }
+
+  void _replyTo(ChatMessage message) {
+    if (message.id <= 0) return;
+    unawaited(HapticFeedback.selectionClick());
+    setState(() {
+      _replyId = message.id;
+      _replyName = message.name;
+      _replyText = chatQuoteLabel(message.text, voice: message.isVoice, photo: message.isPhoto);
+    });
+    _focus.requestFocus();
   }
 
   void _accept(ChatMessage message) {
@@ -265,7 +455,6 @@ class _ChatThreadViewState extends State<ChatThreadView> with WidgetsBindingObse
         _messages = [..._messages, message];
       }
       if (message.id > _after) _after = message.id;
-      _sending = false;
       _stickToEnd = true;
       _below = 0;
       _error = null;
@@ -275,7 +464,7 @@ class _ChatThreadViewState extends State<ChatThreadView> with WidgetsBindingObse
   }
 
   Future<void> _startVoice() async {
-    if (_sending || _recording || widget.threadId.isEmpty || Plat.isWeb) return;
+    if (_recording || widget.threadId.isEmpty || Plat.isWeb) return;
     final problem = await _recorder.begin();
     if (!mounted) return;
     if (problem != null) {
@@ -308,18 +497,35 @@ class _ChatThreadViewState extends State<ChatThreadView> with WidgetsBindingObse
         setState(() => _error = 'That voice note could not be sent.');
         return;
       }
-      setState(() => _sending = true);
       final ms = taken.ms > 60000 ? 60000 : taken.ms;
-      final message = await _api.sendVoice(widget.threadId, bytes, ms);
+      final reply = _replyId ?? 0;
+      final replyName = _replyName;
+      final replyText = _replyText;
+      final local = _pending(
+        text: 'Voice message',
+        kind: 'voice',
+        bytes: bytes,
+        voiceMs: ms,
+        reply: reply,
+        replyName: replyName,
+        replyText: replyText,
+      );
+      _replyId = null;
+      _replyName = '';
+      _replyText = '';
+      _accept(local);
+      final message = await _api.sendVoice(widget.threadId, bytes, ms, reply: reply);
       if (!mounted) return;
-      _accept(message);
+      _replaceLocal(local.id, message);
     } catch (error) {
       if (!mounted) return;
-      setState(() {
-        _sending = false;
-        _recording = false;
-        _error = chatErrorText(error);
-      });
+      setState(() => _recording = false);
+      final pending = _messages.where((item) => item.pendingKind == 'voice' && item.status == 'sending');
+      if (pending.isEmpty) {
+        setState(() => _error = chatErrorText(error));
+      } else {
+        _mark(pending.last.id, 'failed');
+      }
     } finally {
       _finishingVoice = false;
     }
@@ -347,11 +553,16 @@ class _ChatThreadViewState extends State<ChatThreadView> with WidgetsBindingObse
         Offset.zero & box.size,
       ),
       items: [
+        if (message.id > 0) const PopupMenuItem(value: 'reply', child: Text('Reply')),
         const PopupMenuItem(value: 'copy', child: Text('Copy')),
         if (message.links.isNotEmpty) const PopupMenuItem(value: 'save', child: Text('Save link')),
       ],
     );
     if (!mounted || selected == null) return;
+    if (selected == 'reply') {
+      _replyTo(message);
+      return;
+    }
     if (selected == 'copy') {
       await Clipboard.setData(ClipboardData(text: message.text));
       if (!mounted) return;
@@ -426,12 +637,13 @@ class _ChatThreadViewState extends State<ChatThreadView> with WidgetsBindingObse
         Expanded(
           child: ColoredBox(
             color: canvas,
-            child: _starting
-                ? const Center(child: CircularProgressIndicator())
-                : Stack(
+            child: Stack(
                     children: [
-                      _messages.isEmpty
-                          ? Center(
+                      Positioned.fill(child: ChatWallpaper(dark: scheme.brightness == Brightness.dark)),
+                      if (_starting)
+                        const Center(child: CircularProgressIndicator())
+                      else if (_messages.isEmpty)
+                          Center(
                               child: Padding(
                                 padding: const EdgeInsets.all(32),
                                 child: Text(
@@ -441,7 +653,7 @@ class _ChatThreadViewState extends State<ChatThreadView> with WidgetsBindingObse
                                 ),
                               ),
                             )
-                          : Builder(
+                          else Builder(
                               builder: (context) {
                                 final rows = _rows();
                                 return ListView.builder(
@@ -454,7 +666,7 @@ class _ChatThreadViewState extends State<ChatThreadView> with WidgetsBindingObse
                                 if (row.day != null) return _DayChip(label: row.day!);
                                 final message = row.message!;
                                 final mine = message.name == _me && _me.isNotEmpty;
-                                return _Bubble(
+                                final bubble = _Bubble(
                                   message: message,
                                   mine: mine,
                                   api: _api,
@@ -466,8 +678,11 @@ class _ChatThreadViewState extends State<ChatThreadView> with WidgetsBindingObse
                                     status: message.status,
                                   ),
                                   onLink: _openLink,
-                                  onLongPress: message.isVoice ? null : (details) => unawaited(_menu(message, details)),
+                                  onRetry: message.status == 'failed' ? () => unawaited(_retry(message)) : null,
+                                  onLongPress: message.id <= 0 ? null : (details) => unawaited(_menu(message, details)),
                                 );
+                                if (message.id <= 0) return bubble;
+                                return _SwipeReply(onReply: () => _replyTo(message), child: bubble);
                               },
                             );
                               },
@@ -509,43 +724,85 @@ class _ChatThreadViewState extends State<ChatThreadView> with WidgetsBindingObse
                   : ValueListenableBuilder<TextEditingValue>(
                       valueListenable: _text,
                       builder: (context, value, _) {
-                        final canSend = value.text.trim().isNotEmpty && !_sending;
-                        return Row(
-                          crossAxisAlignment: CrossAxisAlignment.end,
+                        final canSend = value.text.trim().isNotEmpty;
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            Expanded(
-                              child: Focus(
-                                onKeyEvent: _onKey,
-                                child: TextField(
-                                  controller: _text,
-                                  focusNode: _focus,
-                                  minLines: 1,
-                                  maxLines: 5,
-                                  textInputAction: _enterSends ? TextInputAction.newline : TextInputAction.send,
-                                  onSubmitted: _enterSends ? null : (_) => unawaited(_send()),
-                                  decoration: InputDecoration(
-                                    hintText: 'Message',
-                                    filled: true,
-                                    fillColor: scheme.surfaceContainerHighest,
-                                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(24),
-                                      borderSide: BorderSide.none,
+                            if (_replyText.isNotEmpty)
+                              Container(
+                                margin: const EdgeInsets.only(bottom: 6),
+                                padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
+                                decoration: BoxDecoration(
+                                  color: scheme.surfaceContainerHighest,
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: const Border(left: BorderSide(color: Color(0xFF25D366), width: 3)),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            _replyName,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(color: Color(0xFF25D366), fontWeight: FontWeight.w700, fontSize: 13),
+                                          ),
+                                          Text(_replyText, maxLines: 1, overflow: TextOverflow.ellipsis),
+                                        ],
+                                      ),
+                                    ),
+                                    IconButton(
+                                      tooltip: 'Cancel reply',
+                                      onPressed: () => setState(() {
+                                        _replyId = null;
+                                        _replyName = '';
+                                        _replyText = '';
+                                      }),
+                                      icon: const Icon(Icons.close_rounded),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                IconButton(
+                                  tooltip: 'Photo',
+                                  onPressed: () => unawaited(_pickPhoto()),
+                                  icon: const Icon(Icons.image_outlined),
+                                ),
+                                Expanded(
+                                  child: Focus(
+                                    onKeyEvent: _onKey,
+                                    child: TextField(
+                                      controller: _text,
+                                      focusNode: _focus,
+                                      minLines: 1,
+                                      maxLines: 5,
+                                      textInputAction: _enterSends ? TextInputAction.newline : TextInputAction.send,
+                                      onSubmitted: _enterSends ? null : (_) => unawaited(_send()),
+                                      decoration: InputDecoration(
+                                        hintText: 'Message',
+                                        filled: true,
+                                        fillColor: scheme.surfaceContainerHighest,
+                                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                                        border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(24),
+                                          borderSide: BorderSide.none,
+                                        ),
+                                      ),
                                     ),
                                   ),
                                 ),
-                              ),
+                                const SizedBox(width: 6),
+                                if (canSend)
+                                  _roundButton(tooltip: 'Send', icon: Icons.send_rounded, onPressed: () => unawaited(_send()))
+                                else if (!Plat.isWeb)
+                                  _roundButton(tooltip: 'Voice note', icon: Icons.mic_rounded, onPressed: () => unawaited(_startVoice())),
+                              ],
                             ),
-                            const SizedBox(width: 6),
-                            if (_sending)
-                              const Padding(
-                                padding: EdgeInsets.all(12),
-                                child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
-                              )
-                            else if (canSend)
-                              _roundButton(tooltip: 'Send', icon: Icons.send_rounded, onPressed: () => unawaited(_send()))
-                            else if (!Plat.isWeb)
-                              _roundButton(tooltip: 'Voice note', icon: Icons.mic_rounded, onPressed: () => unawaited(_startVoice())),
                           ],
                         );
                       },
@@ -734,6 +991,7 @@ class _Bubble extends StatelessWidget {
     required this.tick,
     required this.onLink,
     required this.onLongPress,
+    this.onRetry,
   });
 
   final ChatMessage message;
@@ -742,18 +1000,18 @@ class _Bubble extends StatelessWidget {
   final String tick;
   final ValueChanged<String> onLink;
   final ValueChanged<LongPressStartDetails>? onLongPress;
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final dark = scheme.brightness == Brightness.dark;
+    final dark = Theme.of(context).brightness == Brightness.dark;
     final bg = mine
         ? (dark ? const Color(0xFF005C4B) : const Color(0xFFD9FDD3))
         : (dark ? const Color(0xFF202C33) : Colors.white);
     final fg = dark ? const Color(0xFFE9EDEF) : const Color(0xFF111B21);
     final link = dark ? const Color(0xFF53BDEB) : const Color(0xFF027EB5);
     final time = TimeOfDay.fromDateTime(message.at.toLocal()).format(context);
-    final stamp = chatTickColor(tick, dark: dark);
+    final tickColor = chatTickColor(tick, dark: dark);
     return Align(
       alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
       child: LayoutBuilder(
@@ -762,6 +1020,72 @@ class _Bubble extends StatelessWidget {
           final max = cap > 420 ? 420.0 : cap;
           final inner = max - 16;
           final voiceWidth = inner > 328 ? 328.0 : (inner < 0 ? 0.0 : inner);
+          final cardWidth = inner > 260 ? 260.0 : (inner < 0 ? 0.0 : inner);
+          final quote = message.replyText.isEmpty ? null : _Quote(name: message.replyName, text: message.replyText, dark: dark);
+          final stamp = _stamp(time, tickColor, tick, onRetry: onRetry);
+          final Widget body;
+          if (message.isVoice) {
+            body = SizedBox(
+              width: voiceWidth,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ?quote,
+                  ChatVoiceBubble(message: message, api: api, mine: mine, dark: dark),
+                  const SizedBox(height: 1),
+                  stamp,
+                ],
+              ),
+            );
+          } else if (message.isPhoto) {
+            final caption = message.text.trim();
+            body = SizedBox(
+              width: cardWidth,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ?quote,
+                  _ChatPicture(message: message),
+                  if (caption.isNotEmpty && caption != 'Photo') ...[
+                    const SizedBox(height: 4),
+                    _LinkText(text: message.text, links: message.links, color: fg, linkColor: link, onLink: onLink),
+                  ],
+                  const SizedBox(height: 1),
+                  stamp,
+                ],
+              ),
+            );
+          } else if (message.links.isNotEmpty) {
+            body = SizedBox(
+              width: cardWidth,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ?quote,
+                  ChatLinkCard(url: message.links.first, onOpen: onLink),
+                  _LinkText(text: message.text, links: message.links, color: fg, linkColor: link, onLink: onLink),
+                  const SizedBox(height: 1),
+                  stamp,
+                ],
+              ),
+            );
+          } else {
+            body = IntrinsicWidth(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ?quote,
+                  _LinkText(text: message.text, links: message.links, color: fg, linkColor: link, onLink: onLink),
+                  const SizedBox(height: 1),
+                  stamp,
+                ],
+              ),
+            );
+          }
           return GestureDetector(
             onLongPressStart: onLongPress,
             child: Container(
@@ -778,30 +1102,7 @@ class _Bubble extends StatelessWidget {
                 ),
                 boxShadow: dark ? null : const [BoxShadow(color: Color(0x14000000), blurRadius: 0.5, offset: Offset(0, 1))],
               ),
-              child: message.isVoice
-                  ? SizedBox(
-                      width: voiceWidth,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          ChatVoiceBubble(message: message, api: api, mine: mine, dark: dark),
-                          const SizedBox(height: 1),
-                          _stamp(time, stamp, tick),
-                        ],
-                      ),
-                    )
-                  : IntrinsicWidth(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          _LinkText(text: message.text, links: message.links, color: fg, linkColor: link, onLink: onLink),
-                          const SizedBox(height: 1),
-                          _stamp(time, stamp, tick),
-                        ],
-                      ),
-                    ),
+              child: body,
             ),
           );
         },
@@ -810,20 +1111,163 @@ class _Bubble extends StatelessWidget {
   }
 }
 
-Widget _stamp(String time, Color color, String tick) {
+Widget _stamp(String time, Color color, String tick, {VoidCallback? onRetry}) {
+  final IconData? icon;
+  var iconColor = color;
+  var size = 16.0;
+  if (tick == 'failed') {
+    icon = Icons.error_outline;
+    iconColor = const Color(0xFFEF5350);
+  } else if (tick == 'sending') {
+    icon = Icons.schedule_rounded;
+    size = 14;
+  } else if (tick == 'sent') {
+    icon = Icons.done_rounded;
+  } else if (tick == 'delivered' || tick == 'read') {
+    icon = Icons.done_all_rounded;
+  } else {
+    icon = null;
+  }
+  final mark = icon == null
+      ? const SizedBox.shrink()
+      : tick == 'failed' && onRetry != null
+          ? IconButton(
+              tooltip: 'Tap to retry',
+              onPressed: onRetry,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 20, minHeight: 20),
+              icon: Icon(icon, size: size, color: iconColor),
+            )
+          : Icon(icon, size: size, color: iconColor);
   return Align(
     alignment: Alignment.centerRight,
     child: Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(time, style: TextStyle(fontSize: 11, color: color)),
-        if (tick.isNotEmpty) ...[
+        if (icon != null) ...[
           const SizedBox(width: 2),
-          Icon(tick == 'sent' ? Icons.done_rounded : Icons.done_all_rounded, size: 16, color: color),
+          mark,
         ],
       ],
     ),
   );
+}
+
+class _Quote extends StatelessWidget {
+  const _Quote({required this.name, required this.text, required this.dark});
+
+  final String name;
+  final String text;
+  final bool dark;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+      decoration: BoxDecoration(
+        color: dark ? const Color(0x33000000) : const Color(0x14000000),
+        borderRadius: BorderRadius.circular(6),
+        border: const Border(left: BorderSide(color: Color(0xFF25D366), width: 3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Color(0xFF25D366)),
+          ),
+          Text(
+            text,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 13, color: dark ? const Color(0xFFE9EDEF) : const Color(0xFF111B21)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChatPicture extends StatelessWidget {
+  const _ChatPicture({required this.message});
+
+  final ChatMessage message;
+
+  @override
+  Widget build(BuildContext context) {
+    final local = message.localBytes;
+    if (local != null && local.isNotEmpty) return _frame(Image.memory(local, fit: BoxFit.cover, cacheWidth: 640));
+    return FutureBuilder<Uint8List?>(
+      future: ChatImages.fetch(message.photo),
+      builder: (context, snapshot) {
+        final bytes = snapshot.data;
+        if (bytes == null || bytes.isEmpty) {
+          return _frame(const SizedBox(height: 120, child: Center(child: Icon(Icons.image_outlined))));
+        }
+        return _frame(Image.memory(bytes, fit: BoxFit.cover, cacheWidth: 640));
+      },
+    );
+  }
+
+  Widget _frame(Widget child) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 2),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(6),
+        child: SizedBox(height: 180, width: double.infinity, child: child),
+      ),
+    );
+  }
+}
+
+class _SwipeReply extends StatefulWidget {
+  const _SwipeReply({required this.onReply, required this.child});
+
+  final VoidCallback onReply;
+  final Widget child;
+
+  @override
+  State<_SwipeReply> createState() => _SwipeReplyState();
+}
+
+class _SwipeReplyState extends State<_SwipeReply> {
+  double _dx = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final shown = _dx.clamp(0.0, 64.0);
+    return GestureDetector(
+      onHorizontalDragUpdate: (details) {
+        final next = (_dx + details.delta.dx).clamp(0.0, 64.0);
+        if (next == _dx) return;
+        setState(() => _dx = next);
+      },
+      onHorizontalDragEnd: (_) {
+        final fire = _dx >= 48;
+        setState(() => _dx = 0);
+        if (fire) widget.onReply();
+      },
+      onHorizontalDragCancel: () => setState(() => _dx = 0),
+      child: Stack(
+        alignment: Alignment.centerLeft,
+        children: [
+          if (shown > 8)
+            Padding(
+              padding: const EdgeInsets.only(left: 6, bottom: 4),
+              child: Icon(
+                Icons.reply_rounded,
+                color: shown >= 48 ? const Color(0xFF25D366) : const Color(0xFF8696A0),
+              ),
+            ),
+          Transform.translate(offset: Offset(shown, 0), child: widget.child),
+        ],
+      ),
+    );
+  }
 }
 
 class _LinkText extends StatelessWidget {

@@ -496,7 +496,20 @@ class _ChatVoiceBubbleState extends State<ChatVoiceBubble> {
   }
 
   Future<String?> _file() async {
+    final local = widget.message.localBytes;
+    if (local != null && local.isNotEmpty) {
+      final key = 'local-${widget.message.id}';
+      final cached = _files[key];
+      if (cached != null && File(cached).existsSync()) return cached;
+      final dir = await getTemporaryDirectory();
+      final ext = local.length >= 12 && String.fromCharCodes(local.take(4)) == 'RIFF' ? 'wav' : 'm4a';
+      final path = '${dir.path}${Platform.pathSeparator}ss-play-$key.$ext';
+      await File(path).writeAsBytes(local, flush: true);
+      _files[key] = path;
+      return path;
+    }
     final id = widget.message.voice;
+    if (id.isEmpty) return null;
     final cached = _files[id];
     if (cached != null && File(cached).existsSync()) return cached;
     final bytes = await widget.api.voice(id);
@@ -559,7 +572,10 @@ class _ChatVoiceBubbleState extends State<ChatVoiceBubble> {
                               onHorizontalDragUpdate: width <= 0 ? null : (details) => unawaited(_seekTo(details.localPosition.dx / width)),
                               child: CustomPaint(
                                 painter: _BarsPainter(
-                                  levels: voiceBars(widget.message.voice, count),
+                                  levels: voiceBars(
+                                    widget.message.voice.isEmpty ? '${widget.message.id}' : widget.message.voice,
+                                    count,
+                                  ),
                                   progress: progress,
                                   played: paint.played,
                                   rest: paint.rest,
