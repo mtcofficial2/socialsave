@@ -77,6 +77,18 @@ func TestChatRegisterPhoneOrEmailAndMessage(t *testing.T) {
 	if seen.Code != http.StatusOK || !bytes.Contains(seen.Body.Bytes(), []byte("abcdefghijk")) {
 		t.Fatalf("seen %d %s", seen.Code, seen.Body.String())
 	}
+	delivered := getChat(app, "/api/v1/chat/threads/"+thread.ID+"?after=0", ada.token)
+	if !bytes.Contains(delivered.Body.Bytes(), []byte(`"status":"delivered"`)) {
+		t.Fatalf("delivered %s", delivered.Body.String())
+	}
+	marked := postChat(app, "/api/v1/chat/threads/"+thread.ID+"/read", ben.token, `{"id":1}`)
+	if marked.Code != http.StatusOK {
+		t.Fatalf("read %d %s", marked.Code, marked.Body.String())
+	}
+	read := getChat(app, "/api/v1/chat/threads/"+thread.ID+"?after=0", ada.token)
+	if !bytes.Contains(read.Body.Bytes(), []byte(`"status":"read"`)) {
+		t.Fatalf("read ticks %s", read.Body.String())
+	}
 	stranger := registerChat(t, app, `{"phone":"15550001111","username":"cara"}`)
 	hidden := getChat(app, "/api/v1/chat/threads/"+thread.ID+"?after=0", stranger.token)
 	if hidden.Code != http.StatusBadRequest {
@@ -84,7 +96,7 @@ func TestChatRegisterPhoneOrEmailAndMessage(t *testing.T) {
 	}
 
 	inbox := getChat(app, "/api/v1/chat/threads", ben.token)
-	if !bytes.Contains(inbox.Body.Bytes(), []byte(`"username":"ada"`)) {
+	if !bytes.Contains(inbox.Body.Bytes(), []byte(`"username":"ada"`)) || !bytes.Contains(inbox.Body.Bytes(), []byte(`"lastFrom":"ada"`)) || bytes.Contains(inbox.Body.Bytes(), []byte(`"unread"`)) {
 		t.Fatalf("inbox %s", inbox.Body.String())
 	}
 	again := postChat(app, "/api/v1/chat/threads", ben.token, `{"username":"ada"}`)

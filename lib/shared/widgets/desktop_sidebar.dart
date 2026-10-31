@@ -66,7 +66,7 @@ class DesktopSidebar extends StatelessWidget {
                   key: const ValueKey('sidebar-chat'),
                   onPressed: onChat,
                   icon: const Icon(Icons.forum_rounded),
-                  label: const Text('Chat'),
+                  label: const Text('Chats'),
                 ),
               ],
               if (onMusic != null) ...[

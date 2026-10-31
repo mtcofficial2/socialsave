@@ -53,20 +53,29 @@ type chatUser struct {
 }
 
 type chatMessage struct {
-	ID    int64    `json:"id"`
-	From  string   `json:"from"`
-	Name  string   `json:"name"`
-	Text  string   `json:"text"`
-	Links []string `json:"links,omitempty"`
-	At    int64    `json:"at"`
+	ID     int64    `json:"id"`
+	From   string   `json:"from"`
+	Name   string   `json:"name"`
+	Text   string   `json:"text"`
+	Links  []string `json:"links,omitempty"`
+	At     int64    `json:"at"`
+	Status string   `json:"status,omitempty"`
+}
+
+// chatSeen is how far this person has received or opened the conversation.
+// Delivered is two gray ticks. Read is two blue ticks.
+type chatSeen struct {
+	Delivered int64 `json:"delivered,omitempty"`
+	Read      int64 `json:"read,omitempty"`
 }
 
 type chatThread struct {
-	ID       string        `json:"id"`
-	A        string        `json:"a"`
-	B        string        `json:"b"`
-	Next     int64         `json:"next"`
-	Messages []chatMessage `json:"messages"`
+	ID       string              `json:"id"`
+	A        string              `json:"a"`
+	B        string              `json:"b"`
+	Next     int64               `json:"next"`
+	Messages []chatMessage       `json:"messages"`
+	Seen     map[string]chatSeen `json:"seen,omitempty"`
 }
 
 type chatData struct {
@@ -75,10 +84,14 @@ type chatData struct {
 }
 
 type chatInboxItem struct {
-	ID       string `json:"id"`
-	Username string `json:"username"`
-	LastText string `json:"lastText,omitempty"`
-	LastAt   int64  `json:"lastAt,omitempty"`
+	ID         string `json:"id"`
+	Username   string `json:"username"`
+	LastText   string `json:"lastText,omitempty"`
+	LastAt     int64  `json:"lastAt,omitempty"`
+	LastID     int64  `json:"lastId,omitempty"`
+	LastFrom   string `json:"lastFrom,omitempty"`
+	LastStatus string `json:"lastStatus,omitempty"`
+	Unread     int    `json:"unread,omitempty"`
 }
 
 type chatRoom struct {
@@ -182,9 +195,10 @@ func (c *chatRoom) lookup(ctx context.Context, username string) (string, bool) {
 func (c *chatRoom) inbox(ctx context.Context, userID string) []chatInboxItem {
 	c.ensure(ctx)
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	dirty := false
 	out := make([]chatInboxItem, 0)
-	for _, thread := range c.data.Threads {
+	for i := range c.data.Threads {
+		thread := &c.data.Threads[i]
 		otherID := ""
 		switch userID {
 		case thread.A:
@@ -194,11 +208,17 @@ func (c *chatRoom) inbox(ctx context.Context, userID string) []chatInboxItem {
 		default:
 			continue
 		}
-		item := chatInboxItem{ID: thread.ID, Username: c.usernameLocked(otherID)}
+		if noteDelivered(thread, userID) {
+			dirty = true
+		}
+		item := chatInboxItem{ID: thread.ID, Username: c.usernameLocked(otherID), Unread: unreadCount(thread, userID)}
 		if n := len(thread.Messages); n > 0 {
 			last := thread.Messages[n-1]
 			item.LastText = last.Text
 			item.LastAt = last.At
+			item.LastID = last.ID
+			item.LastFrom = last.Name
+			item.LastStatus = chatStatus(thread, userID, last)
 		}
 		out = append(out, item)
 	}
@@ -206,6 +226,10 @@ func (c *chatRoom) inbox(ctx context.Context, userID string) []chatInboxItem {
 		for j := i; j > 0 && out[j].LastAt > out[j-1].LastAt; j-- {
 			out[j], out[j-1] = out[j-1], out[j]
 		}
+	}
+	c.mu.Unlock()
+	if dirty {
+		c.persist(ctx)
 	}
 	return out
 }
@@ -244,21 +268,63 @@ func (c *chatRoom) open(ctx context.Context, userID, username string) (chatThrea
 	return thread, other.Username, nil
 }
 
-func (c *chatRoom) since(ctx context.Context, userID, threadID string, after int64) ([]chatMessage, error) {
+func (c *chatRoom) since(ctx context.Context, userID, threadID string, after int64) ([]chatMessage, chatSeen, error) {
 	c.ensure(ctx)
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	thread := c.threadLocked(threadID)
 	if thread == nil || (thread.A != userID && thread.B != userID) {
-		return nil, chatRejected("That chat was not found.")
+		c.mu.Unlock()
+		return nil, chatSeen{}, chatRejected("That chat was not found.")
 	}
+	dirty := noteDelivered(thread, userID)
 	out := make([]chatMessage, 0)
 	for _, item := range thread.Messages {
 		if item.ID > after {
+			item.Status = chatStatus(thread, userID, item)
 			out = append(out, item)
 		}
 	}
-	return out, nil
+	peer := peerSeen(thread, userID)
+	c.mu.Unlock()
+	if dirty {
+		c.persist(ctx)
+	}
+	return out, peer, nil
+}
+
+func (c *chatRoom) markRead(ctx context.Context, userID, threadID string, id int64) error {
+	c.ensure(ctx)
+	c.mu.Lock()
+	thread := c.threadLocked(threadID)
+	if thread == nil || (thread.A != userID && thread.B != userID) {
+		c.mu.Unlock()
+		return chatRejected("That chat was not found.")
+	}
+	last := int64(0)
+	if n := len(thread.Messages); n > 0 {
+		last = thread.Messages[n-1].ID
+	}
+	if id <= 0 || id > last {
+		id = last
+	}
+	if thread.Seen == nil {
+		thread.Seen = map[string]chatSeen{}
+	}
+	cur := thread.Seen[userID]
+	if cur.Read >= id && cur.Delivered >= id {
+		c.mu.Unlock()
+		return nil
+	}
+	if id > cur.Read {
+		cur.Read = id
+	}
+	if cur.Delivered < cur.Read {
+		cur.Delivered = cur.Read
+	}
+	thread.Seen[userID] = cur
+	c.mu.Unlock()
+	c.persist(ctx)
+	return nil
 }
 
 func (c *chatRoom) post(ctx context.Context, user chatUser, threadID, text string) (chatMessage, error) {
@@ -300,7 +366,70 @@ func (c *chatRoom) post(ctx context.Context, user chatUser, threadID, text strin
 	c.last[user.ID] = clean
 	c.mu.Unlock()
 	c.persist(ctx)
+	item.Status = "sent"
 	return item, nil
+}
+
+func noteDelivered(thread *chatThread, userID string) bool {
+	last := int64(0)
+	if n := len(thread.Messages); n > 0 {
+		last = thread.Messages[n-1].ID
+	}
+	if last == 0 {
+		return false
+	}
+	if thread.Seen == nil {
+		thread.Seen = map[string]chatSeen{}
+	}
+	cur := thread.Seen[userID]
+	if cur.Delivered >= last {
+		return false
+	}
+	cur.Delivered = last
+	if cur.Delivered < cur.Read {
+		cur.Delivered = cur.Read
+	}
+	thread.Seen[userID] = cur
+	return true
+}
+
+func unreadCount(thread *chatThread, userID string) int {
+	seen := int64(0)
+	if thread.Seen != nil {
+		seen = thread.Seen[userID].Read
+	}
+	count := 0
+	for _, message := range thread.Messages {
+		if message.ID > seen && message.From != userID {
+			count++
+		}
+	}
+	return count
+}
+
+func peerSeen(thread *chatThread, userID string) chatSeen {
+	other := thread.A
+	if other == userID {
+		other = thread.B
+	}
+	if thread.Seen == nil {
+		return chatSeen{}
+	}
+	return thread.Seen[other]
+}
+
+func chatStatus(thread *chatThread, viewerID string, message chatMessage) string {
+	if message.From != viewerID || message.ID == 0 {
+		return ""
+	}
+	seen := peerSeen(thread, viewerID)
+	if seen.Read >= message.ID {
+		return "read"
+	}
+	if seen.Delivered >= message.ID {
+		return "delivered"
+	}
+	return "sent"
 }
 
 func (c *chatRoom) recentSameLocked(userID, text string) bool {
@@ -659,12 +788,38 @@ func (s *Server) chatThreadList(w http.ResponseWriter, r *http.Request) {
 	if after < 0 {
 		after = 0
 	}
-	items, err := s.chat.since(r.Context(), user.ID, chi.URLParam(r, "id"), after)
+	items, peer, err := s.chat.since(r.Context(), user.ID, chi.URLParam(r, "id"), after)
 	if err != nil {
 		writeChatFailure(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "messages": items})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":  true,
+		"messages": items,
+		"peer": map[string]any{
+			"delivered": peer.Delivered,
+			"read":      peer.Read,
+		},
+	})
+}
+
+func (s *Server) chatThreadRead(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.chatActor(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 256)).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		writeChatError(w, http.StatusBadRequest, "That chat was not found.")
+		return
+	}
+	if err := s.chat.markRead(r.Context(), user.ID, chi.URLParam(r, "id"), body.ID); err != nil {
+		writeChatFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
 func (s *Server) chatThreadPost(w http.ResponseWriter, r *http.Request) {

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/config/build_flags.dart';
@@ -6,6 +8,35 @@ import 'package:social_save/core/config/env_config.dart';
 const chatTokenKey = 'chat.token.v1';
 const chatUsernameKey = 'chat.username.v1';
 const chatContactKey = 'chat.contact.v1';
+const chatReadKey = 'chat.read.v1';
+
+/// Last message id this device has opened, per conversation.
+class ChatReads {
+  static Future<Map<String, int>> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(chatReadKey);
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return {};
+      return {
+        for (final entry in decoded.entries)
+          if (entry.key is String && entry.value is num) entry.key as String: (entry.value as num).toInt(),
+      };
+    } catch (_) {
+      return {};
+    }
+  }
+
+  static Future<void> mark(String threadId, int messageId) async {
+    if (threadId.isEmpty || messageId <= 0) return;
+    final prefs = await SharedPreferences.getInstance();
+    final current = await load();
+    if ((current[threadId] ?? 0) >= messageId) return;
+    current[threadId] = messageId;
+    await prefs.setString(chatReadKey, jsonEncode(current));
+  }
+}
 
 /// This device's chat account. The token is the login. It is not a code.
 class ChatSession {
@@ -18,6 +49,11 @@ class ChatSession {
   static Future<String> username() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(chatUsernameKey)?.trim() ?? '';
+  }
+
+  static Future<String> contact() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(chatContactKey)?.trim() ?? '';
   }
 
   static Future<void> save({
@@ -78,14 +114,22 @@ class ChatThreadSummary {
   const ChatThreadSummary({
     required this.id,
     required this.username,
-    required this.lastText,
-    required this.lastAt,
+    this.lastText = '',
+    this.lastAt,
+    this.lastId = 0,
+    this.lastFrom = '',
+    this.lastStatus = '',
+    this.unread = 0,
   });
 
   final String id;
   final String username;
   final String lastText;
   final DateTime? lastAt;
+  final int lastId;
+  final String lastFrom;
+  final String lastStatus;
+  final int unread;
 
   factory ChatThreadSummary.fromJson(Map<String, dynamic> json) {
     final at = (json['lastAt'] as num?)?.toInt() ?? 0;
@@ -94,11 +138,23 @@ class ChatThreadSummary {
       username: (json['username'] as String?)?.trim() ?? '',
       lastText: (json['lastText'] as String?)?.trim() ?? '',
       lastAt: at > 0 ? DateTime.fromMillisecondsSinceEpoch(at) : null,
+      lastId: (json['lastId'] as num?)?.toInt() ?? 0,
+      lastFrom: (json['lastFrom'] as String?)?.trim() ?? '',
+      lastStatus: (json['lastStatus'] as String?)?.trim() ?? '',
+      unread: (json['unread'] as num?)?.toInt() ?? 0,
     );
   }
 }
 
 /// One direct message. [name] is the sender's username.
+class ChatSync {
+  const ChatSync({required this.messages, this.peerDelivered = 0, this.peerRead = 0});
+
+  final List<ChatMessage> messages;
+  final int peerDelivered;
+  final int peerRead;
+}
+
 class ChatMessage {
   const ChatMessage({
     required this.id,
@@ -107,6 +163,7 @@ class ChatMessage {
     required this.text,
     required this.links,
     required this.at,
+    this.status = '',
   });
 
   final int id;
@@ -115,6 +172,7 @@ class ChatMessage {
   final String text;
   final List<String> links;
   final DateTime at;
+  final String status;
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
     final links = json['links'];
@@ -125,6 +183,7 @@ class ChatMessage {
       text: (json['text'] as String?)?.trim() ?? '',
       links: links is List ? links.whereType<String>().where((item) => item.startsWith('http')).toList() : const [],
       at: DateTime.fromMillisecondsSinceEpoch((json['at'] as num?)?.toInt() ?? 0),
+      status: (json['status'] as String?)?.trim() ?? '',
     );
   }
 }
@@ -228,18 +287,38 @@ class ChatApi {
     return ChatThreadSummary(id: id, username: name, lastText: '', lastAt: null);
   }
 
-  Future<List<ChatMessage>> messages(String id, int after) async {
+  Future<ChatSync> messages(String id, int after) async {
     final response = await _dio.get<dynamic>(
       '/api/v1/chat/threads/$id',
       queryParameters: {'after': after},
       options: await _auth(),
     );
-    final items = _object(response)['messages'];
-    if (items is! List) return const [];
-    return [
-      for (final item in items)
-        if (item is Map) ChatMessage.fromJson(Map<String, dynamic>.from(item)),
-    ];
+    final body = _object(response);
+    final items = body['messages'];
+    final peer = body['peer'];
+    var delivered = 0;
+    var read = 0;
+    if (peer is Map) {
+      delivered = (peer['delivered'] as num?)?.toInt() ?? 0;
+      read = (peer['read'] as num?)?.toInt() ?? 0;
+    }
+    return ChatSync(
+      peerDelivered: delivered,
+      peerRead: read,
+      messages: [
+        if (items is List)
+          for (final item in items)
+            if (item is Map) ChatMessage.fromJson(Map<String, dynamic>.from(item)),
+      ],
+    );
+  }
+
+  Future<void> markRead(String id, int messageId) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/threads/$id/read',
+      data: {'id': messageId},
+      options: await _auth(),
+    );
   }
 
   Future<ChatMessage> send(String id, String text) async {

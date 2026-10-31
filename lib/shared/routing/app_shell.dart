@@ -143,7 +143,7 @@ class AppShell extends ConsumerWidget {
                 FloatingActionButton.small(
                   key: const ValueKey('chat-fab'),
                   heroTag: 'chat-fab',
-                  tooltip: 'Chat',
+                  tooltip: 'Chats',
                   onPressed: () => context.push('/chat'),
                   child: const Icon(Icons.forum_rounded),
                 ),

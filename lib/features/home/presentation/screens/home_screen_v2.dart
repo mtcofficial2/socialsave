@@ -378,7 +378,7 @@ class _HomeTools extends ConsumerWidget {
     final scan = HotspotShare.supported ? 'Scan QR' : 'Receive';
     final items = <_QuickItem>[
       _QuickItem(Icons.swap_horiz_rounded, 'Send', 'Send files to a nearby phone or PC', () => context.push('/share')),
-      _QuickItem(Icons.forum_rounded, 'Chat', 'Message people by username', () => context.push('/chat')),
+      _QuickItem(Icons.forum_rounded, 'Chats', 'Message people by username', () => context.push('/chat')),
       _QuickItem(Icons.movie_filter_rounded, 'Status', 'Prepare an HD WhatsApp status', () => context.push('/status')),
       if (HotspotShare.hostSupported)
         _QuickItem(Icons.wifi_tethering_rounded, 'Hotspot', 'Hotspot share', () => showHotspotQuickShare(context)),

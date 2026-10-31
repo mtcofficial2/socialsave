@@ -124,6 +124,7 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requireKey).Post("/chat/threads", s.chatOpen)
 		r.With(s.requireKey).Get("/chat/threads/{id}", s.chatThreadList)
 		r.With(s.requireKey).Post("/chat/threads/{id}", s.chatThreadPost)
+		r.With(s.requireKey).Post("/chat/threads/{id}/read", s.chatThreadRead)
 		r.Get("/pair/{code}", s.readPair)
 		r.Get("/download/{job_id}", s.jobStatus)
 		r.Get("/files/{token}", s.file)
