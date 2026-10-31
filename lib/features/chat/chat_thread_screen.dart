@@ -87,10 +87,9 @@ class _ChatThreadViewState extends State<ChatThreadView> with WidgetsBindingObse
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _scroll.addListener(_onScroll);
-    _recorder.onTick = () {
+    _recorder.onLimit = () {
       if (!mounted) return;
-      setState(() {});
-      if (_recorder.shownMs >= 60000) unawaited(_finishVoice(send: true));
+      unawaited(_finishVoice(send: true));
     };
     unawaited(_open());
   }
@@ -501,23 +500,11 @@ class _ChatThreadViewState extends State<ChatThreadView> with WidgetsBindingObse
             child: Padding(
               padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
               child: _recording
-                  ? Row(
-                      children: [
-                        IconButton(
-                          tooltip: 'Delete',
-                          onPressed: () => unawaited(_finishVoice(send: false)),
-                          icon: const Icon(Icons.delete_outline_rounded),
-                        ),
-                        const Icon(Icons.fiber_manual_record, size: 12, color: Color(0xFFE53935)),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            chatClock(_recorder.shownMs),
-                            style: const TextStyle(fontWeight: FontWeight.w700, color: Color(0xFFE53935)),
-                          ),
-                        ),
-                        _roundButton(tooltip: 'Send voice note', icon: Icons.send_rounded, onPressed: () => unawaited(_finishVoice(send: true))),
-                      ],
+                  ? ChatRecordingBar(
+                      view: _recorder.view,
+                      onDelete: () => unawaited(_finishVoice(send: false)),
+                      onSend: () => unawaited(_finishVoice(send: true)),
+                      onPause: () => unawaited(_recorder.togglePause()),
                     )
                   : ValueListenableBuilder<TextEditingValue>(
                       valueListenable: _text,
@@ -773,6 +760,8 @@ class _Bubble extends StatelessWidget {
         builder: (context, constraints) {
           final cap = constraints.maxWidth * 0.78;
           final max = cap > 420 ? 420.0 : cap;
+          final inner = max - 16;
+          final voiceWidth = inner > 328 ? 328.0 : (inner < 0 ? 0.0 : inner);
           return GestureDetector(
             onLongPressStart: onLongPress,
             child: Container(
@@ -789,42 +778,52 @@ class _Bubble extends StatelessWidget {
                 ),
                 boxShadow: dark ? null : const [BoxShadow(color: Color(0x14000000), blurRadius: 0.5, offset: Offset(0, 1))],
               ),
-              child: IntrinsicWidth(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    if (message.isVoice)
-                      ChatVoiceBubble(message: message, color: fg, api: api)
-                    else
-                      _LinkText(text: message.text, links: message.links, color: fg, linkColor: link, onLink: onLink),
-                    const SizedBox(height: 1),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: Row(
+              child: message.isVoice
+                  ? SizedBox(
+                      width: voiceWidth,
+                      child: Column(
                         mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          Text(time, style: TextStyle(fontSize: 11, color: stamp)),
-                          if (tick.isNotEmpty) ...[
-                            const SizedBox(width: 2),
-                            Icon(
-                              tick == 'sent' ? Icons.done_rounded : Icons.done_all_rounded,
-                              size: 16,
-                              color: stamp,
-                            ),
-                          ],
+                          ChatVoiceBubble(message: message, api: api, mine: mine, dark: dark),
+                          const SizedBox(height: 1),
+                          _stamp(time, stamp, tick),
+                        ],
+                      ),
+                    )
+                  : IntrinsicWidth(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _LinkText(text: message.text, links: message.links, color: fg, linkColor: link, onLink: onLink),
+                          const SizedBox(height: 1),
+                          _stamp(time, stamp, tick),
                         ],
                       ),
                     ),
-                  ],
-                ),
-              ),
             ),
           );
         },
       ),
     );
   }
+}
+
+Widget _stamp(String time, Color color, String tick) {
+  return Align(
+    alignment: Alignment.centerRight,
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(time, style: TextStyle(fontSize: 11, color: color)),
+        if (tick.isNotEmpty) ...[
+          const SizedBox(width: 2),
+          Icon(tick == 'sent' ? Icons.done_rounded : Icons.done_all_rounded, size: 16, color: color),
+        ],
+      ],
+    ),
+  );
 }
 
 class _LinkText extends StatelessWidget {
