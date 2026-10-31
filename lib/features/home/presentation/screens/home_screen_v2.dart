@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:social_save/core/config/build_flags.dart';
 import 'package:social_save/core/constants/app_constants.dart';
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/network/dio_client.dart';
@@ -30,10 +31,8 @@ import 'package:social_save/features/library/presentation/library_screen.dart'
     show vaultServiceProvider;
 import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
-import 'package:social_save/features/status/hd_status_screen.dart';
 import 'package:social_save/features/updates/update_card.dart';
 import 'package:social_save/shared/widgets/compliance_notice.dart';
-import 'package:social_save/shared/widgets/liquid_glass.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
 import 'package:social_save/shared/widgets/video_thumbnail.dart';
@@ -266,16 +265,10 @@ class _HomeScreenV2State extends ConsumerState<HomeScreenV2> with WidgetsBinding
   List<Widget> _primary(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return [
-      _Reveal(index: 1, child: UrlInputCard(onAnalyze: _analyze, onPaste: _paste)),
+      UrlInputCard(onAnalyze: _analyze, onPaste: _paste),
       const SizedBox(height: 16),
       const FavoriteCreatorsRow(),
       _wakingRow(scheme),
-      const SizedBox(height: 14),
-      _Reveal(index: 2, child: _SendReceiveCard(onTap: () => context.push('/share'))),
-      const SizedBox(height: 14),
-      _Reveal(index: 3, child: const HdStatusEntry()),
-      const SizedBox(height: 14),
-      _Reveal(index: 4, child: _QuickActions(onLibrary: () => context.go('/library'))),
     ];
   }
 
@@ -288,12 +281,14 @@ class _HomeScreenV2State extends ConsumerState<HomeScreenV2> with WidgetsBinding
           // Clears the floating nav pill plus the system inset.
           padding: EdgeInsets.fromLTRB(20, 0, 20, math.max(120, 32 + MediaQuery.paddingOf(context).bottom)),
           children: [
-            _Reveal(index: 0, child: _header(context)),
+            _header(context),
             const UpdateCard(),
             ..._primary(context),
             const SaveQueueSection(),
             const SizedBox(height: 28),
-            _Reveal(index: 4, child: const _RecentSection()),
+            const _RecentSection(),
+            const SizedBox(height: 20),
+            const _HomeTools(),
             const SizedBox(height: 28),
             const SupportedPlatformsSection(),
             const SizedBox(height: 16),
@@ -317,7 +312,7 @@ class _HomeScreenV2State extends ConsumerState<HomeScreenV2> with WidgetsBinding
             child: ListView(
               padding: const EdgeInsets.only(right: 8, bottom: 16),
               children: [
-                _Reveal(index: 0, child: _header(context)),
+                _header(context),
                 const UpdateCard(),
                 ..._primary(context),
                 const SaveQueueSection(),
@@ -332,7 +327,9 @@ class _HomeScreenV2State extends ConsumerState<HomeScreenV2> with WidgetsBinding
             child: ListView(
               padding: const EdgeInsets.only(top: 28, bottom: 16),
               children: [
-                _Reveal(index: 4, child: const _RecentSection()),
+                const _RecentSection(),
+                const SizedBox(height: 20),
+                const _HomeTools(),
                 const SizedBox(height: 28),
                 const SupportedPlatformsSection(),
                 SizedBox(height: scheme.brightness == Brightness.dark ? 8 : 4),
@@ -357,7 +354,9 @@ class _HomeScreenV2State extends ConsumerState<HomeScreenV2> with WidgetsBinding
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      'Getting the download engine ready. This can take a moment.',
+                      kLocalEngine
+                          ? 'Starting the download engine on this PC…'
+                          : 'Starting the SocialSave server. The first save through the server can take a moment.',
                       style: TextStyle(color: scheme.onSurfaceVariant, height: 1.35),
                     ),
                   ),
@@ -368,195 +367,53 @@ class _HomeScreenV2State extends ConsumerState<HomeScreenV2> with WidgetsBinding
   }
 }
 
-/// Fade + slide-up entrance, staggered by [index].
-class _Reveal extends StatefulWidget {
-  const _Reveal({required this.index, required this.child});
-  final int index;
-  final Widget child;
-
-  @override
-  State<_Reveal> createState() => _RevealState();
-}
-
-class _RevealState extends State<_Reveal> with SingleTickerProviderStateMixin {
-  late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 420));
-  Timer? _t;
-
-  @override
-  void initState() {
-    super.initState();
-    _t = Timer(Duration(milliseconds: 60 * widget.index), () {
-      if (mounted) unawaited(_c.forward());
-    });
-  }
-
-  @override
-  void dispose() {
-    _t?.cancel();
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final curve = CurvedAnimation(parent: _c, curve: Curves.easeOutCubic);
-    return FadeTransition(
-      opacity: curve,
-      child: SlideTransition(
-        position: Tween<Offset>(begin: const Offset(0, 0.06), end: Offset.zero).animate(curve),
-        child: widget.child,
-      ),
-    );
-  }
-}
-
-/// The one prominent entry for nearby sharing.
-class _SendReceiveCard extends StatelessWidget {
-  const _SendReceiveCard({required this.onTap});
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    if (LiquidGlassScope.of(context)) {
-      final dark = scheme.brightness == Brightness.dark;
-      return GlassPress(
-        key: const ValueKey('home-send-receive'),
-        semanticLabel: 'Send or receive files with a nearby phone or PC',
-        onTap: () {
-          HapticFeedback.selectionClick();
-          onTap();
-        },
-        child: IosGlassPlate(
-          dark: dark,
-          radius: 28,
-          shadow: true,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-            child: Row(
-              children: [
-                Container(
-                  width: 52,
-                  height: 52,
-                  decoration: BoxDecoration(
-                    color: scheme.primary.withValues(alpha: 0.16),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(Icons.swap_horiz_rounded, size: 28, color: scheme.primary),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Send / Receive',
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, letterSpacing: -0.3, color: scheme.onSurface),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'Share files with a phone or PC nearby',
-                        style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant),
-                      ),
-                    ],
-                  ),
-                ),
-                Icon(Icons.arrow_forward_rounded, color: scheme.primary),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-    return Semantics(
-      button: true,
-      label: 'Send or receive files with a nearby phone or PC',
-      excludeSemantics: true,
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(28),
-        child: InkWell(
-          key: const ValueKey('home-send-receive'),
-          borderRadius: BorderRadius.circular(28),
-          onTap: () {
-            HapticFeedback.selectionClick();
-            onTap();
-          },
-          child: Ink(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(28),
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [scheme.primaryContainer, Color.lerp(scheme.primaryContainer, scheme.tertiaryContainer, 0.75)!],
-              ),
-              border: Border.all(color: scheme.primary.withValues(alpha: 0.25)),
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-            child: Row(
-              children: [
-                Container(
-                  width: 52,
-                  height: 52,
-                  decoration: BoxDecoration(color: scheme.primary.withValues(alpha: 0.18), shape: BoxShape.circle),
-                  child: Icon(Icons.swap_horiz_rounded, size: 28, color: scheme.onPrimaryContainer),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Send / Receive',
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, letterSpacing: -0.3, color: scheme.onPrimaryContainer),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'Share files with a phone or PC nearby',
-                        style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onPrimaryContainer.withValues(alpha: 0.75)),
-                      ),
-                    ],
-                  ),
-                ),
-                Icon(Icons.arrow_forward_rounded, color: scheme.onPrimaryContainer),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _QuickActions extends ConsumerWidget {
-  const _QuickActions({required this.onLibrary});
-  final VoidCallback onLibrary;
+/// Quiet tools under Recent. The paste field stays the only large control.
+class _HomeTools extends ConsumerWidget {
+  const _HomeTools();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final scheme = Theme.of(context).colorScheme;
     final minimal = ref.watch(settingsControllerProvider.select((s) => s.minimalShortcuts));
     final scan = HotspotShare.supported ? 'Scan QR' : 'Receive';
     final items = <_QuickItem>[
+      _QuickItem(Icons.swap_horiz_rounded, 'Send', 'Send files to a nearby phone or PC', () => context.push('/share')),
+      _QuickItem(Icons.forum_rounded, 'Chat', 'Message people by username', () => context.push('/chat')),
+      _QuickItem(Icons.movie_filter_rounded, 'Status', 'Prepare an HD WhatsApp status', () => context.push('/status')),
       if (HotspotShare.hostSupported)
         _QuickItem(Icons.wifi_tethering_rounded, 'Hotspot', 'Hotspot share', () => showHotspotQuickShare(context)),
       _QuickItem(Icons.public_rounded, 'Browse', 'Browse sites and download videos', () => context.push('/browse')),
       _QuickItem(Icons.library_music_rounded, 'Music', 'Open music player', () => context.push('/music')),
-      _QuickItem(Icons.video_library_rounded, 'Library', 'Open library', onLibrary),
-      _QuickItem(Icons.qr_code_scanner_rounded, scan, 'Scan a QR code to join', () async {
-        await showReceiveFromPhone(context);
-      }),
+      _QuickItem(Icons.video_library_rounded, 'Library', 'Open library', () => context.go('/library')),
+      _QuickItem(Icons.qr_code_scanner_rounded, scan, 'Scan a QR code to join', () => showReceiveFromPhone(context)),
     ];
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 220),
-      child: Row(
-        key: ValueKey(minimal),
-        children: [
-          for (var i = 0; i < items.length; i++) ...[
-            if (i > 0) SizedBox(width: minimal ? 4 : 10),
-            Expanded(child: minimal ? _MinimalQuickTile(item: items[i]) : _QuickTile(item: items[i])),
-          ],
-        ],
-      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Semantics(
+          header: true,
+          child: Text(
+            'Tools',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, letterSpacing: -0.4, color: scheme.onSurface),
+          ),
+        ),
+        const SizedBox(height: 4),
+        SizedBox(
+          height: minimal ? 84 : 112,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: items.length,
+            separatorBuilder: (_, _) => const SizedBox(width: 4),
+            itemBuilder: (context, index) {
+              final item = items[index];
+              return SizedBox(
+                width: minimal ? 76 : 96,
+                child: minimal ? _MinimalQuickTile(item: item) : _QuickTile(item: item),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }

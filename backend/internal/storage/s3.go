@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -131,6 +132,93 @@ func (s *S3) Put(ctx context.Context, path, name, mime string) (string, error) {
 		return s.PublicBase + "/" + escapeKey(key), nil
 	}
 	return s.presignGet(key), nil
+}
+
+// PutBytes stores a small object at a fixed key. It does not use the video
+// name rules in objectKey.
+func (s *S3) PutBytes(ctx context.Context, key string, body []byte) error {
+	if !s.Enabled() {
+		return fmt.Errorf("object storage disabled")
+	}
+	key, err := fixedKey(key)
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(body)
+	hash := hex.EncodeToString(sum[:])
+	target, err := s.objectURL(key)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, target.String(), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.ContentLength = int64(len(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-amz-content-sha256", hash)
+	s.sign(req, hash, s.now().UTC())
+	return s.do(req, nil)
+}
+
+// GetBytes reads a small object. A missing object returns os.ErrNotExist.
+func (s *S3) GetBytes(ctx context.Context, key string) ([]byte, error) {
+	if !s.Enabled() {
+		return nil, fmt.Errorf("object storage disabled")
+	}
+	key, err := fixedKey(key)
+	if err != nil {
+		return nil, err
+	}
+	target, err := s.objectURL(key)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("x-amz-content-sha256", emptySHA256)
+	s.sign(req, emptySHA256, s.now().UTC())
+	var buf bytes.Buffer
+	if err := s.do(req, &buf); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func fixedKey(key string) (string, error) {
+	key = strings.Trim(strings.TrimSpace(key), "/")
+	if key == "" || strings.Contains(key, "..") {
+		return "", fmt.Errorf("bad object key")
+	}
+	return key, nil
+}
+
+func (s *S3) do(req *http.Request, dest *bytes.Buffer) error {
+	client := s.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+		return os.ErrNotExist
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+		return fmt.Errorf("object storage status %d", resp.StatusCode)
+	}
+	if dest == nil {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+		return nil
+	}
+	_, err = io.Copy(dest, io.LimitReader(resp.Body, 1<<20))
+	return err
 }
 
 func (s *S3) head(ctx context.Context, key string) error {

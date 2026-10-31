@@ -47,6 +47,7 @@ type Server struct {
 	limiter   *rateLimiter
 	pairs     pairStore
 	relay     *relayStore
+	chat      *chatRoom
 }
 
 // New wires the handlers. jobs may be nil and will be created from config.
@@ -77,7 +78,7 @@ func New(cfg config.Config, validator *security.Validator, store *jobs.Store) *S
 			return err
 		},
 	}
-	return &Server{
+	s := &Server{
 		Config:    cfg,
 		Tokens:    tokens.New(cfg.SecretKey, cfg.TokenTTL),
 		Jobs:      store,
@@ -92,6 +93,8 @@ func New(cfg config.Config, validator *security.Validator, store *jobs.Store) *S
 			hits:     map[string][]time.Time{},
 		},
 	}
+	s.chat = newChatRoom(s.Objects)
+	return s
 }
 
 // Router is the public HTTP handler.
@@ -102,7 +105,7 @@ func (s *Server) Router() http.Handler {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins: []string{"*"},
 		AllowedMethods: []string{http.MethodGet, http.MethodPost, http.MethodOptions},
-		AllowedHeaders: []string{"Authorization", "Content-Type", "X-API-Key"},
+		AllowedHeaders: []string{"Authorization", "Content-Type", "X-API-Key", "X-Chat-Token"},
 		MaxAge:         300,
 	}))
 	r.Use(s.limit)
@@ -114,6 +117,13 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requireKey).Post("/playlist", s.playlist)
 		r.With(s.requireKey).Post("/summarize", s.summarize)
 		r.With(s.requireKey).Post("/pair", s.createPair)
+		r.With(s.requireKey).Post("/chat/register", s.chatRegister)
+		r.With(s.requireKey).Get("/chat/me", s.chatMe)
+		r.With(s.requireKey).Get("/chat/lookup", s.chatLookup)
+		r.With(s.requireKey).Get("/chat/threads", s.chatThreads)
+		r.With(s.requireKey).Post("/chat/threads", s.chatOpen)
+		r.With(s.requireKey).Get("/chat/threads/{id}", s.chatThreadList)
+		r.With(s.requireKey).Post("/chat/threads/{id}", s.chatThreadPost)
 		r.Get("/pair/{code}", s.readPair)
 		r.Get("/download/{job_id}", s.jobStatus)
 		r.Get("/files/{token}", s.file)

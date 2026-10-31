@@ -1,5 +1,7 @@
 import 'package:animations/animations.dart';
 import 'package:social_save/features/audio/music_screen.dart';
+import 'package:social_save/features/chat/chat_screen.dart';
+import 'package:social_save/features/chat/chat_thread_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:social_save/features/home/presentation/screens/browse_screen.dart';
 import 'package:social_save/features/status/hd_status_screen.dart';
@@ -163,6 +165,23 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/music',
       pageBuilder: (context, state) => _page(state, const MusicScreen()),
+    ),
+    GoRoute(
+      path: '/chat',
+      pageBuilder: (context, state) => _page(state, const ChatScreen()),
+    ),
+    GoRoute(
+      path: '/chat/:id',
+      pageBuilder: (context, state) {
+        final extra = state.extra;
+        return _page(
+          state,
+          ChatThreadScreen(
+            threadId: state.pathParameters['id'] ?? '',
+            username: extra is String ? extra : '',
+          ),
+        );
+      },
     ),
     GoRoute(
       path: '/share',

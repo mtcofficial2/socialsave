@@ -14,7 +14,10 @@ class DesktopSidebar extends StatelessWidget {
     this.downloadBadge = 0,
     this.onShare,
     this.onMusic,
+    this.onChat,
   });
+
+  final VoidCallback? onChat;
 
   final VoidCallback? onMusic;
 
@@ -57,6 +60,15 @@ class DesktopSidebar extends StatelessWidget {
                 downloadBadge: downloadBadge,
                 onSelect: onSelect,
               ),
+              if (onChat != null) ...[
+                const SizedBox(height: 10),
+                TextButton.icon(
+                  key: const ValueKey('sidebar-chat'),
+                  onPressed: onChat,
+                  icon: const Icon(Icons.forum_rounded),
+                  label: const Text('Chat'),
+                ),
+              ],
               if (onMusic != null) ...[
                 const SizedBox(height: 10),
                 TextButton.icon(

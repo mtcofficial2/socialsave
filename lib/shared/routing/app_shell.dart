@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:social_save/features/audio/music_screen.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -91,6 +92,7 @@ class AppShell extends ConsumerWidget {
               onSelect: selectTab,
               onShare: () => context.push('/share'),
               onMusic: () => context.push('/music'),
+              onChat: () => context.push('/chat'),
             ),
             Expanded(
               child: DesktopChrome(
@@ -138,6 +140,14 @@ class AppShell extends ConsumerWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
+                FloatingActionButton.small(
+                  key: const ValueKey('chat-fab'),
+                  heroTag: 'chat-fab',
+                  tooltip: 'Chat',
+                  onPressed: () => context.push('/chat'),
+                  child: const Icon(Icons.forum_rounded),
+                ),
+                const SizedBox(height: 10),
                 FloatingActionButton.small(
                   key: const ValueKey('music-fab'),
                   heroTag: 'music-fab',
@@ -204,7 +214,14 @@ class _MiniProgress extends StatelessWidget {
                     height: 40,
                     child: thumbnail == null || thumbnail!.isEmpty
                         ? ColoredBox(color: scheme.surfaceContainerHigh)
-                        : Image.network(thumbnail!, fit: BoxFit.cover),
+                        : CachedNetworkImage(
+                            imageUrl: thumbnail!,
+                            fit: BoxFit.cover,
+                            memCacheWidth: 120,
+                            fadeInDuration: Duration.zero,
+                            fadeOutDuration: Duration.zero,
+                            errorWidget: (_, _, _) => ColoredBox(color: scheme.surfaceContainerHigh),
+                          ),
                   ),
                 ),
                 const SizedBox(width: 10),
