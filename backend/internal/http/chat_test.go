@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestChatRegisterPhoneOrEmailAndMessage(t *testing.T) {
@@ -163,9 +165,149 @@ func postChat(app *Server, path, token, body string) *httptest.ResponseRecorder 
 	return response
 }
 
+func TestChatPhotoVoiceAndPresence(t *testing.T) {
+	app := testApp(t)
+	app.chat.file = filepath.Join(t.TempDir(), "accounts.json")
+	ada := registerChat(t, app, `{"phone":"256700000222","username":"ada"}`)
+	ben := registerChat(t, app, `{"email":"ben@example.com","username":"ben"}`)
+	opened := postChat(app, "/api/v1/chat/threads", ada.token, `{"username":"ben"}`)
+	var thread struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(opened.Body.Bytes(), &thread); err != nil || opened.Code != http.StatusOK || thread.ID == "" {
+		t.Fatalf("open %d %s", opened.Code, opened.Body.String())
+	}
+
+	png := []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x01}
+	posted := postChatRaw(app, "/api/v1/chat/photo", ada.token, png, "", "")
+	if posted.Code != http.StatusOK || !bytes.Contains(posted.Body.Bytes(), []byte(`"photoRev"`)) {
+		t.Fatalf("photo %d %s", posted.Code, posted.Body.String())
+	}
+	got := getChat(app, "/api/v1/chat/photo?username=ada", ben.token)
+	if got.Code != http.StatusOK || got.Header().Get("Content-Type") != "image/png" || !bytes.Equal(got.Body.Bytes(), png) {
+		t.Fatalf("get photo %d %s body %d", got.Code, got.Header().Get("Content-Type"), got.Body.Len())
+	}
+	reject := postChatRaw(app, "/api/v1/chat/photo", ada.token, []byte("not a photo"), "", "")
+	if reject.Code != http.StatusBadRequest {
+		t.Fatalf("bad photo %d %s", reject.Code, reject.Body.String())
+	}
+	missing := getChat(app, "/api/v1/chat/photo?username=nobody", ada.token)
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing photo %d %s", missing.Code, missing.Body.String())
+	}
+
+	wav := []byte("RIFF\x24\x00\x00\x00WAVEfmt ")
+	voice := postChatRaw(app, "/api/v1/chat/threads/"+thread.ID+"/voice", ada.token, wav, "X-Voice-Ms", "1200")
+	if voice.Code != http.StatusOK || !bytes.Contains(voice.Body.Bytes(), []byte(`"text":"Voice message"`)) {
+		t.Fatalf("voice %d %s", voice.Code, voice.Body.String())
+	}
+	var created struct {
+		Message struct {
+			Voice string `json:"voice"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(voice.Body.Bytes(), &created); err != nil || created.Message.Voice == "" {
+		t.Fatalf("voice id %s", voice.Body.String())
+	}
+	again := postChatRaw(app, "/api/v1/chat/threads/"+thread.ID+"/voice", ada.token, wav, "X-Voice-Ms", "1500")
+	if again.Code != http.StatusOK {
+		t.Fatalf("second voice %d %s", again.Code, again.Body.String())
+	}
+	heard := getChat(app, "/api/v1/chat/voice/"+created.Message.Voice, ben.token)
+	if heard.Code != http.StatusOK || heard.Header().Get("Content-Type") != "audio/wav" || !bytes.Equal(heard.Body.Bytes(), wav) {
+		t.Fatalf("heard %d %s", heard.Code, heard.Header().Get("Content-Type"))
+	}
+	cara := registerChat(t, app, `{"phone":"15550002222","username":"cara"}`)
+	hidden := getChat(app, "/api/v1/chat/voice/"+created.Message.Voice, cara.token)
+	if hidden.Code != http.StatusNotFound {
+		t.Fatalf("hidden voice %d %s", hidden.Code, hidden.Body.String())
+	}
+	empty := postChat(app, "/api/v1/chat/threads/"+thread.ID, ada.token, `{"text":" "}`)
+	if empty.Code != http.StatusBadRequest {
+		t.Fatalf("empty %d %s", empty.Code, empty.Body.String())
+	}
+
+	first := getChat(app, "/api/v1/chat/threads", ben.token)
+	if first.Code != http.StatusOK {
+		t.Fatalf("inbox %d %s", first.Code, first.Body.String())
+	}
+	stored, err := os.ReadFile(app.chat.file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snap struct {
+		Users []struct {
+			Username string `json:"username"`
+			LastSeen int64  `json:"lastSeen"`
+		} `json:"users"`
+	}
+	if err := json.Unmarshal(stored, &snap); err != nil {
+		t.Fatal(err)
+	}
+	var saved int64
+	for _, user := range snap.Users {
+		if user.Username == "ben" {
+			saved = user.LastSeen
+		}
+	}
+	if saved == 0 {
+		t.Fatal("ben last seen was not stored")
+	}
+	time.Sleep(30 * time.Millisecond)
+	if second := getChat(app, "/api/v1/chat/threads", ben.token); second.Code != http.StatusOK {
+		t.Fatalf("second inbox %d", second.Code)
+	}
+	stored2, err := os.ReadFile(app.chat.file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(stored, stored2) {
+		t.Fatal("presence was written again")
+	}
+	live := getChat(app, "/api/v1/chat/threads/"+thread.ID+"?after=0", ada.token)
+	var peerBody struct {
+		Peer struct {
+			LastSeen int64 `json:"lastSeen"`
+			Online   bool  `json:"online"`
+		} `json:"peer"`
+	}
+	if err := json.Unmarshal(live.Body.Bytes(), &peerBody); err != nil {
+		t.Fatal(err)
+	}
+	if !peerBody.Peer.Online || peerBody.Peer.LastSeen < saved {
+		t.Fatalf("peer presence %s", live.Body.String())
+	}
+
+	app.chat.mu.Lock()
+	for i := range app.chat.data.Users {
+		if app.chat.data.Users[i].Username == "ben" {
+			app.chat.data.Users[i].LastSeen = time.Now().Add(-2 * time.Minute).UnixMilli()
+		}
+	}
+	app.chat.mu.Unlock()
+	stale := getChat(app, "/api/v1/chat/threads", ada.token)
+	if bytes.Contains(stale.Body.Bytes(), []byte(`"online"`)) || !bytes.Contains(stale.Body.Bytes(), []byte(`"lastSeen"`)) {
+		t.Fatalf("stale %s", stale.Body.String())
+	}
+}
+
 func getChat(app *Server, path, token string) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(http.MethodGet, path, nil)
 	request.Header.Set("X-Chat-Token", token)
+	response := httptest.NewRecorder()
+	app.Router().ServeHTTP(response, request)
+	return response
+}
+
+func postChatRaw(app *Server, path, token string, body []byte, header, value string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+	if token != "" {
+		request.Header.Set("X-Chat-Token", token)
+	}
+	request.Header.Set("Content-Type", "application/octet-stream")
+	if header != "" {
+		request.Header.Set(header, value)
+	}
 	response := httptest.NewRecorder()
 	app.Router().ServeHTTP(response, request)
 	return response

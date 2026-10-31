@@ -48,4 +48,23 @@ void main() {
     expect(chatAvatarColor('ada'), chatAvatarColor('ada'));
     expect(chatAvatarColor('ada'), isNot(chatAvatarColor('ben_1')));
   });
+
+  test('presence and voice clocks', () {
+    expect(chatPresenceLabel(null, true, now, '6:41 PM'), '');
+    expect(chatPresenceLabel(now, true, now, '6:05 PM'), 'online');
+    expect(
+      chatPresenceLabel(DateTime(2026, 10, 31, 18, 1), false, now, '6:01 PM'),
+      'last seen today at 6:01 PM',
+    );
+    expect(
+      chatPresenceLabel(DateTime(2026, 10, 30, 22), false, now, '10:00 PM'),
+      'last seen yesterday',
+    );
+    expect(
+      chatPresenceLabel(DateTime(2026, 10, 2, 8), false, now, '8:00 AM'),
+      'last seen 2 Oct',
+    );
+    expect(chatClock(0), '0:00');
+    expect(chatClock(61000), '1:01');
+  });
 }

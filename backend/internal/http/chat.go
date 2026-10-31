@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -32,6 +33,10 @@ const (
 	chatTextMax     = 400
 	chatPostRate    = 20
 	chatJoinRate    = 8
+	chatPhotoMax    = 512 * 1024
+	chatVoiceMax    = 900 * 1024
+	chatOnlineFor   = 35 * time.Second
+	chatSeenPersist = 45 * time.Second
 	chatKey         = "chat/accounts.json"
 	chatTokenHeader = "X-Chat-Token"
 )
@@ -50,16 +55,21 @@ type chatUser struct {
 	Username  string `json:"username"`
 	TokenHash string `json:"tokenHash"`
 	Created   int64  `json:"created"`
+	PhotoRev  int64  `json:"photoRev,omitempty"`
+	LastSeen  int64  `json:"lastSeen,omitempty"`
 }
 
 type chatMessage struct {
-	ID     int64    `json:"id"`
-	From   string   `json:"from"`
-	Name   string   `json:"name"`
-	Text   string   `json:"text"`
-	Links  []string `json:"links,omitempty"`
-	At     int64    `json:"at"`
-	Status string   `json:"status,omitempty"`
+	ID        int64    `json:"id"`
+	From      string   `json:"from"`
+	Name      string   `json:"name"`
+	Text      string   `json:"text"`
+	Links     []string `json:"links,omitempty"`
+	At        int64    `json:"at"`
+	Status    string   `json:"status,omitempty"`
+	Voice     string   `json:"voice,omitempty"`
+	VoiceMs   int      `json:"voiceMs,omitempty"`
+	VoiceType string   `json:"voiceType,omitempty"`
 }
 
 // chatSeen is how far this person has received or opened the conversation.
@@ -92,18 +102,31 @@ type chatInboxItem struct {
 	LastFrom   string `json:"lastFrom,omitempty"`
 	LastStatus string `json:"lastStatus,omitempty"`
 	Unread     int    `json:"unread,omitempty"`
+	LastSeen   int64  `json:"lastSeen,omitempty"`
+	Online     bool   `json:"online,omitempty"`
+	PhotoRev   int64  `json:"photoRev,omitempty"`
+}
+
+// chatPeerView is the other person, as far as ticks, presence, and photo go.
+type chatPeerView struct {
+	Delivered int64
+	Read      int64
+	LastSeen  int64
+	Online    bool
+	PhotoRev  int64
 }
 
 type chatRoom struct {
-	mu     sync.Mutex
-	saveMu sync.Mutex
-	load   sync.Once
-	data   chatData
-	posts  map[string][]time.Time
-	joins  map[string][]time.Time
-	last   map[string]string
-	blob   chatBlob
-	file   string
+	mu        sync.Mutex
+	saveMu    sync.Mutex
+	load      sync.Once
+	data      chatData
+	posts     map[string][]time.Time
+	joins     map[string][]time.Time
+	last      map[string]string
+	seenSaved map[string]int64
+	blob      chatBlob
+	file      string
 }
 
 func newChatRoom(up storage.Uploader) *chatRoom {
@@ -112,11 +135,12 @@ func newChatRoom(up storage.Uploader) *chatRoom {
 		blob = value
 	}
 	return &chatRoom{
-		posts: map[string][]time.Time{},
-		joins: map[string][]time.Time{},
-		last:  map[string]string{},
-		blob:  blob,
-		file:  filepath.Join(os.TempDir(), "socialsave-chat-accounts.json"),
+		posts:     map[string][]time.Time{},
+		joins:     map[string][]time.Time{},
+		last:      map[string]string{},
+		seenSaved: map[string]int64{},
+		blob:      blob,
+		file:      filepath.Join(os.TempDir(), "socialsave-chat-accounts.json"),
 	}
 }
 
@@ -195,8 +219,9 @@ func (c *chatRoom) lookup(ctx context.Context, username string) (string, bool) {
 func (c *chatRoom) inbox(ctx context.Context, userID string) []chatInboxItem {
 	c.ensure(ctx)
 	c.mu.Lock()
-	dirty := false
+	dirty := c.touchLocked(userID)
 	out := make([]chatInboxItem, 0)
+	now := time.Now()
 	for i := range c.data.Threads {
 		thread := &c.data.Threads[i]
 		otherID := ""
@@ -211,7 +236,15 @@ func (c *chatRoom) inbox(ctx context.Context, userID string) []chatInboxItem {
 		if noteDelivered(thread, userID) {
 			dirty = true
 		}
-		item := chatInboxItem{ID: thread.ID, Username: c.usernameLocked(otherID), Unread: unreadCount(thread, userID)}
+		other, _ := c.userLocked(otherID)
+		item := chatInboxItem{
+			ID:       thread.ID,
+			Username: other.Username,
+			Unread:   unreadCount(thread, userID),
+			LastSeen: other.LastSeen,
+			Online:   chatOnline(other.LastSeen, now),
+			PhotoRev: other.PhotoRev,
+		}
 		if n := len(thread.Messages); n > 0 {
 			last := thread.Messages[n-1]
 			item.LastText = last.Text
@@ -268,15 +301,18 @@ func (c *chatRoom) open(ctx context.Context, userID, username string) (chatThrea
 	return thread, other.Username, nil
 }
 
-func (c *chatRoom) since(ctx context.Context, userID, threadID string, after int64) ([]chatMessage, chatSeen, error) {
+func (c *chatRoom) since(ctx context.Context, userID, threadID string, after int64) ([]chatMessage, chatPeerView, error) {
 	c.ensure(ctx)
 	c.mu.Lock()
 	thread := c.threadLocked(threadID)
 	if thread == nil || (thread.A != userID && thread.B != userID) {
 		c.mu.Unlock()
-		return nil, chatSeen{}, chatRejected("That chat was not found.")
+		return nil, chatPeerView{}, chatRejected("That chat was not found.")
 	}
-	dirty := noteDelivered(thread, userID)
+	dirty := c.touchLocked(userID)
+	if noteDelivered(thread, userID) {
+		dirty = true
+	}
 	out := make([]chatMessage, 0)
 	for _, item := range thread.Messages {
 		if item.ID > after {
@@ -284,7 +320,19 @@ func (c *chatRoom) since(ctx context.Context, userID, threadID string, after int
 			out = append(out, item)
 		}
 	}
-	peer := peerSeen(thread, userID)
+	seen := peerSeen(thread, userID)
+	otherID := thread.B
+	if otherID == userID {
+		otherID = thread.A
+	}
+	other, _ := c.userLocked(otherID)
+	peer := chatPeerView{
+		Delivered: seen.Delivered,
+		Read:      seen.Read,
+		LastSeen:  other.LastSeen,
+		Online:    chatOnline(other.LastSeen, time.Now()),
+		PhotoRev:  other.PhotoRev,
+	}
 	c.mu.Unlock()
 	if dirty {
 		c.persist(ctx)
@@ -347,27 +395,253 @@ func (c *chatRoom) post(ctx context.Context, user chatUser, threadID, text strin
 		c.mu.Unlock()
 		return chatMessage{}, chatRejected("That chat was not found.")
 	}
+	item := c.appendMessageLocked(thread, user, clean, "", 0, "")
+	c.last[user.ID] = clean
+	c.mu.Unlock()
+	c.persist(ctx)
+	item.Status = "sent"
+	return item, nil
+}
+
+func (c *chatRoom) postVoice(ctx context.Context, user chatUser, threadID string, body []byte, ms int) (chatMessage, error) {
+	if len(body) == 0 || len(body) > chatVoiceMax {
+		return chatMessage{}, chatRejected("That voice note is too large.")
+	}
+	if ms < 400 || ms > 65000 {
+		return chatMessage{}, chatRejected("Voice notes can be up to one minute.")
+	}
+	kind, _ := voiceKind(body)
+	if kind == "" {
+		return chatMessage{}, chatRejected("That voice note could not be played.")
+	}
+	c.ensure(ctx)
+	c.mu.Lock()
+	if !c.allowLocked(c.posts, user.ID, chatPostRate) {
+		c.mu.Unlock()
+		return chatMessage{}, errs.RateLimited()
+	}
+	thread := c.threadLocked(threadID)
+	if thread == nil || (thread.A != user.ID && thread.B != user.ID) {
+		c.mu.Unlock()
+		return chatMessage{}, chatRejected("That chat was not found.")
+	}
+	c.mu.Unlock()
+	id := newChatID("v")
+	if err := c.putBlob(ctx, "chat/voices/"+id, body); err != nil {
+		slog.Info("chat voice save failed")
+		return chatMessage{}, chatRejected("That voice note could not be sent.")
+	}
+	c.mu.Lock()
+	thread = c.threadLocked(threadID)
+	if thread == nil || (thread.A != user.ID && thread.B != user.ID) {
+		c.mu.Unlock()
+		return chatMessage{}, chatRejected("That chat was not found.")
+	}
+	item := c.appendMessageLocked(thread, user, "Voice message", id, ms, kind)
+	c.mu.Unlock()
+	c.persist(ctx)
+	item.Status = "sent"
+	return item, nil
+}
+
+func (c *chatRoom) appendMessageLocked(thread *chatThread, user chatUser, text, voice string, voiceMs int, voiceType string) chatMessage {
 	if thread.Next < 1 {
 		thread.Next = 1
 	}
 	item := chatMessage{
-		ID:    thread.Next,
-		From:  user.ID,
-		Name:  user.Username,
-		Text:  clean,
-		Links: chatLinks(clean),
-		At:    time.Now().UnixMilli(),
+		ID:        thread.Next,
+		From:      user.ID,
+		Name:      user.Username,
+		Text:      text,
+		At:        time.Now().UnixMilli(),
+		Voice:     voice,
+		VoiceMs:   voiceMs,
+		VoiceType: voiceType,
+	}
+	if voice == "" {
+		item.Links = chatLinks(text)
 	}
 	thread.Next++
 	thread.Messages = append(thread.Messages, item)
 	if len(thread.Messages) > chatKeep {
 		thread.Messages = append([]chatMessage(nil), thread.Messages[len(thread.Messages)-chatKeep:]...)
 	}
-	c.last[user.ID] = clean
+	return item
+}
+
+func (c *chatRoom) setPhoto(ctx context.Context, userID string, body []byte) (int64, error) {
+	if len(body) == 0 || len(body) > chatPhotoMax {
+		return 0, chatRejected("That photo is too large.")
+	}
+	if imageKind(body) == "" {
+		return 0, chatRejected("Choose a JPEG or PNG photo.")
+	}
+	c.ensure(ctx)
+	if err := c.putBlob(ctx, "chat/avatars/"+userID, body); err != nil {
+		slog.Info("chat photo save failed")
+		return 0, chatRejected("That photo could not be saved.")
+	}
+	rev := time.Now().UnixMilli()
+	c.mu.Lock()
+	found := false
+	for i := range c.data.Users {
+		if c.data.Users[i].ID == userID {
+			c.data.Users[i].PhotoRev = rev
+			found = true
+			break
+		}
+	}
 	c.mu.Unlock()
+	if !found {
+		return 0, chatRejected("Register a phone number or email to use chat.")
+	}
 	c.persist(ctx)
-	item.Status = "sent"
-	return item, nil
+	return rev, nil
+}
+
+func (c *chatRoom) photo(ctx context.Context, username string) ([]byte, string, error) {
+	c.ensure(ctx)
+	name := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(username, "@")))
+	c.mu.Lock()
+	var id string
+	var rev int64
+	for _, user := range c.data.Users {
+		if user.Username == name {
+			id = user.ID
+			rev = user.PhotoRev
+			break
+		}
+	}
+	c.mu.Unlock()
+	if id == "" || rev == 0 {
+		return nil, "", os.ErrNotExist
+	}
+	body, err := c.getBlob(ctx, "chat/avatars/"+id)
+	if err != nil {
+		return nil, "", os.ErrNotExist
+	}
+	kind := imageKind(body)
+	if kind == "" {
+		return nil, "", os.ErrNotExist
+	}
+	return body, kind, nil
+}
+
+func (c *chatRoom) voiceFor(ctx context.Context, userID, voiceID string) ([]byte, string, error) {
+	key, err := chatBlobKey("chat/voices/", voiceID)
+	if err != nil {
+		return nil, "", os.ErrNotExist
+	}
+	c.ensure(ctx)
+	c.mu.Lock()
+	kind := ""
+	for _, thread := range c.data.Threads {
+		if thread.A != userID && thread.B != userID {
+			continue
+		}
+		for _, message := range thread.Messages {
+			if message.Voice == voiceID {
+				kind = message.VoiceType
+				break
+			}
+		}
+		if kind != "" {
+			break
+		}
+	}
+	c.mu.Unlock()
+	if kind == "" {
+		return nil, "", os.ErrNotExist
+	}
+	body, err := c.getBlob(ctx, key)
+	if err != nil || len(body) == 0 {
+		return nil, "", os.ErrNotExist
+	}
+	return body, voiceContentType(kind), nil
+}
+
+func (c *chatRoom) presence(ctx context.Context, username string) (int64, bool, int64) {
+	c.ensure(ctx)
+	name := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(username, "@")))
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, user := range c.data.Users {
+		if user.Username == name {
+			return user.LastSeen, chatOnline(user.LastSeen, time.Now()), user.PhotoRev
+		}
+	}
+	return 0, false, 0
+}
+
+// touchLocked records that this account is in the chat. It writes that time
+// to storage at most once a minute, so a poll does not save the bucket.
+func (c *chatRoom) touchLocked(userID string) bool {
+	now := time.Now().UnixMilli()
+	if c.seenSaved == nil {
+		c.seenSaved = map[string]int64{}
+	}
+	for i := range c.data.Users {
+		if c.data.Users[i].ID != userID {
+			continue
+		}
+		c.data.Users[i].LastSeen = now
+		if now-c.seenSaved[userID] < chatSeenPersist.Milliseconds() {
+			return false
+		}
+		c.seenSaved[userID] = now
+		return true
+	}
+	return false
+}
+
+func (c *chatRoom) userLocked(id string) (chatUser, bool) {
+	for _, user := range c.data.Users {
+		if user.ID == id {
+			user.TokenHash = ""
+			return user, true
+		}
+	}
+	return chatUser{}, false
+}
+
+func (c *chatRoom) putBlob(ctx context.Context, key string, body []byte) error {
+	if strings.Contains(key, "..") || strings.Trim(key, "/") == "" {
+		return errors.New("bad object key")
+	}
+	if c.blob != nil {
+		saveCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+		defer cancel()
+		return c.blob.PutBytes(saveCtx, key, body)
+	}
+	path, err := c.localBlob(key)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, body, 0o600)
+}
+
+func (c *chatRoom) getBlob(ctx context.Context, key string) ([]byte, error) {
+	if c.blob != nil {
+		loadCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+		defer cancel()
+		return c.blob.GetBytes(loadCtx, key)
+	}
+	path, err := c.localBlob(key)
+	if err != nil {
+		return nil, err
+	}
+	return os.ReadFile(path)
+}
+
+func (c *chatRoom) localBlob(key string) (string, error) {
+	key = strings.Trim(key, "/")
+	if key == "" || strings.Contains(key, "..") {
+		return "", errors.New("bad object key")
+	}
+	return filepath.Join(filepath.Dir(c.file), filepath.FromSlash(key)), nil
 }
 
 func noteDelivered(thread *chatThread, userID string) bool {
@@ -439,6 +713,9 @@ func (c *chatRoom) recentSameLocked(userID, text string) bool {
 		}
 		if n := len(thread.Messages); n > 0 {
 			last := thread.Messages[n-1]
+			if last.Voice != "" {
+				continue
+			}
 			if last.From == userID && last.Text == text && time.Since(time.UnixMilli(last.At)) < 15*time.Second {
 				return true
 			}
@@ -456,13 +733,63 @@ func (c *chatRoom) threadLocked(id string) *chatThread {
 	return nil
 }
 
-func (c *chatRoom) usernameLocked(id string) string {
-	for _, user := range c.data.Users {
-		if user.ID == id {
-			return user.Username
+func chatOnline(lastSeen int64, now time.Time) bool {
+	if lastSeen <= 0 {
+		return false
+	}
+	age := now.UnixMilli() - lastSeen
+	return age >= 0 && age < chatOnlineFor.Milliseconds()
+}
+
+func chatBlobKey(prefix, id string) (string, error) {
+	if id == "" || len(id) > 40 || strings.Contains(id, "..") {
+		return "", os.ErrNotExist
+	}
+	for _, r := range id {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') {
+			return "", os.ErrNotExist
 		}
 	}
+	return prefix + id, nil
+}
+
+func imageKind(body []byte) string {
+	if len(body) >= 8 && bytes.Equal(body[:8], []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A}) {
+		return "image/png"
+	}
+	if len(body) >= 3 && body[0] == 0xFF && body[1] == 0xD8 && body[2] == 0xFF {
+		return "image/jpeg"
+	}
 	return ""
+}
+
+func voiceKind(body []byte) (string, string) {
+	if len(body) >= 12 && string(body[4:8]) == "ftyp" {
+		return "m4a", "audio/mp4"
+	}
+	if len(body) >= 12 && string(body[:4]) == "RIFF" && string(body[8:12]) == "WAVE" {
+		return "wav", "audio/wav"
+	}
+	if len(body) >= 4 && string(body[:4]) == "OggS" {
+		return "ogg", "audio/ogg"
+	}
+	if len(body) >= 4 && body[0] == 0x1A && body[1] == 0x45 && body[2] == 0xDF && body[3] == 0xA3 {
+		return "webm", "audio/webm"
+	}
+	return "", ""
+}
+
+func voiceContentType(kind string) string {
+	switch kind {
+	case "wav":
+		return "audio/wav"
+	case "ogg":
+		return "audio/ogg"
+	case "webm":
+		return "audio/webm"
+	default:
+		return "audio/mp4"
+	}
 }
 
 func threadPairs(thread chatThread, a, b string) bool {
@@ -711,12 +1038,7 @@ func (s *Server) chatRegister(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"token":   token,
-		"user": map[string]any{
-			"id":       user.ID,
-			"username": user.Username,
-			"phone":    user.Phone,
-			"email":    user.Email,
-		},
+		"user":    chatPublicUser(user, true),
 	})
 }
 
@@ -727,13 +1049,51 @@ func (s *Server) chatMe(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
-		"user": map[string]any{
-			"id":       user.ID,
-			"username": user.Username,
-			"phone":    user.Phone,
-			"email":    user.Email,
-		},
+		"user":    chatPublicUser(user, true),
 	})
+}
+
+func (s *Server) chatPhotoPost(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.chatActor(w, r)
+	if !ok {
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, chatPhotoMax+1))
+	if err != nil {
+		writeChatError(w, http.StatusBadRequest, "Choose a photo.")
+		return
+	}
+	rev, err := s.chat.setPhoto(r.Context(), user.ID, body)
+	if err != nil {
+		writeChatFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "photoRev": rev})
+}
+
+func (s *Server) chatPhotoGet(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.chatActor(w, r); !ok {
+		return
+	}
+	body, contentType, err := s.chat.photo(r.Context(), r.URL.Query().Get("username"))
+	if err != nil {
+		writeChatFailure(w, err)
+		return
+	}
+	writeChatBytes(w, contentType, body)
+}
+
+func chatPublicUser(user chatUser, withContact bool) map[string]any {
+	out := map[string]any{
+		"id":       user.ID,
+		"username": user.Username,
+		"photoRev": user.PhotoRev,
+	}
+	if withContact {
+		out["phone"] = user.Phone
+		out["email"] = user.Email
+	}
+	return out
 }
 
 func (s *Server) chatLookup(w http.ResponseWriter, r *http.Request) {
@@ -772,11 +1132,22 @@ func (s *Server) chatOpen(w http.ResponseWriter, r *http.Request) {
 		writeChatFailure(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	lastSeen, online, photoRev := s.chat.presence(r.Context(), name)
+	payload := map[string]any{
 		"success":  true,
 		"id":       thread.ID,
 		"username": name,
-	})
+	}
+	if lastSeen > 0 {
+		payload["lastSeen"] = lastSeen
+	}
+	if online {
+		payload["online"] = true
+	}
+	if photoRev > 0 {
+		payload["photoRev"] = photoRev
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func (s *Server) chatThreadList(w http.ResponseWriter, r *http.Request) {
@@ -793,14 +1164,56 @@ func (s *Server) chatThreadList(w http.ResponseWriter, r *http.Request) {
 		writeChatFailure(w, err)
 		return
 	}
+	peerJSON := map[string]any{
+		"delivered": peer.Delivered,
+		"read":      peer.Read,
+	}
+	if peer.LastSeen > 0 {
+		peerJSON["lastSeen"] = peer.LastSeen
+	}
+	if peer.Online {
+		peerJSON["online"] = true
+	}
+	if peer.PhotoRev > 0 {
+		peerJSON["photoRev"] = peer.PhotoRev
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success":  true,
 		"messages": items,
-		"peer": map[string]any{
-			"delivered": peer.Delivered,
-			"read":      peer.Read,
-		},
+		"peer":     peerJSON,
 	})
+}
+
+func (s *Server) chatThreadVoice(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.chatActor(w, r)
+	if !ok {
+		return
+	}
+	ms, _ := strconv.Atoi(r.Header.Get("X-Voice-Ms"))
+	body, err := io.ReadAll(io.LimitReader(r.Body, chatVoiceMax+1))
+	if err != nil {
+		writeChatError(w, http.StatusBadRequest, "That voice note could not be sent.")
+		return
+	}
+	item, err := s.chat.postVoice(r.Context(), user, chi.URLParam(r, "id"), body, ms)
+	if err != nil {
+		writeChatFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": item})
+}
+
+func (s *Server) chatVoiceGet(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.chatActor(w, r)
+	if !ok {
+		return
+	}
+	body, contentType, err := s.chat.voiceFor(r.Context(), user.ID, chi.URLParam(r, "id"))
+	if err != nil {
+		writeChatFailure(w, err)
+		return
+	}
+	writeChatBytes(w, contentType, body)
 }
 
 func (s *Server) chatThreadRead(w http.ResponseWriter, r *http.Request) {
@@ -852,12 +1265,23 @@ func (s *Server) chatActor(w http.ResponseWriter, r *http.Request) (chatUser, bo
 }
 
 func writeChatFailure(w http.ResponseWriter, err error) {
+	if errors.Is(err, os.ErrNotExist) {
+		writeChatError(w, http.StatusNotFound, "That file was not found.")
+		return
+	}
 	var rejected *chatClientError
 	if errors.As(err, &rejected) {
 		writeChatError(w, http.StatusBadRequest, rejected.message)
 		return
 	}
 	writeError(w, err)
+}
+
+func writeChatBytes(w http.ResponseWriter, contentType string, body []byte) {
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
 }
 
 func writeChatError(w http.ResponseWriter, status int, message string) {

@@ -1,11 +1,14 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
+import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_format.dart';
 import 'package:social_save/features/chat/chat_profile.dart';
+import 'package:social_save/features/chat/chat_voice.dart';
 
 /// A direct chat. On a phone this is its own page. On a wide window it sits
 /// beside the chat list.
@@ -39,8 +42,9 @@ class ChatThreadView extends StatefulWidget {
   State<ChatThreadView> createState() => _ChatThreadViewState();
 }
 
-class _ChatThreadViewState extends State<ChatThreadView> {
+class _ChatThreadViewState extends State<ChatThreadView> with WidgetsBindingObserver {
   final ChatApi _api = ChatApi();
+  final ChatRecorder _recorder = ChatRecorder();
   final TextEditingController _text = TextEditingController();
   final ScrollController _scroll = ScrollController();
   final FocusNode _focus = FocusNode();
@@ -52,12 +56,18 @@ class _ChatThreadViewState extends State<ChatThreadView> {
   bool _sending = false;
   bool _refreshing = false;
   bool _stickToEnd = true;
+  bool _recording = false;
+  bool _finishingVoice = false;
   int _below = 0;
   int _after = 0;
   int _peerDelivered = 0;
   int _peerRead = 0;
+  int _peerPhoto = 0;
   int _seenAtOpen = 0;
   int _bannerAfter = -1;
+  int _readSent = 0;
+  DateTime? _peerSeen;
+  bool _peerOnline = false;
 
   bool get _enterSends {
     switch (Theme.of(context).platform) {
@@ -75,18 +85,37 @@ class _ChatThreadViewState extends State<ChatThreadView> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _scroll.addListener(_onScroll);
+    _recorder.onTick = () {
+      if (!mounted) return;
+      setState(() {});
+      if (_recorder.shownMs >= 60000) unawaited(_finishVoice(send: true));
+    };
     unawaited(_open());
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _poll?.cancel();
+    unawaited(_recorder.dispose());
     _scroll.removeListener(_onScroll);
     _text.dispose();
     _scroll.dispose();
     _focus.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _startPoll();
+      unawaited(_refresh());
+    } else {
+      _poll?.cancel();
+      _poll = null;
+    }
   }
 
   void _onScroll() {
@@ -114,7 +143,18 @@ class _ChatThreadViewState extends State<ChatThreadView> {
     }
     await _refresh();
     if (!mounted || widget.threadId.isEmpty) return;
-    _poll = Timer.periodic(const Duration(seconds: 4), (_) => unawaited(_refresh()));
+    _startPoll();
+  }
+
+  void _startPoll() {
+    _poll?.cancel();
+    if (widget.threadId.isEmpty) return;
+    _poll = Timer.periodic(const Duration(seconds: 8), (_) {
+      if (!mounted) return;
+      final route = ModalRoute.of(context);
+      if (route != null && !route.isCurrent) return;
+      unawaited(_refresh());
+    });
   }
 
   Future<void> _refresh() async {
@@ -125,10 +165,18 @@ class _ChatThreadViewState extends State<ChatThreadView> {
       if (!mounted) return;
       final known = _messages.map((item) => item.id).toSet();
       final fresh = [for (final item in sync.messages) if (!known.contains(item.id)) item];
+      final presenceChanged = sync.peerDelivered != _peerDelivered ||
+          sync.peerRead != _peerRead ||
+          sync.peerOnline != _peerOnline ||
+          sync.peerPhotoRev != _peerPhoto ||
+          sync.peerLastSeen != _peerSeen;
       _peerDelivered = sync.peerDelivered;
       _peerRead = sync.peerRead;
+      _peerOnline = sync.peerOnline;
+      _peerSeen = sync.peerLastSeen;
+      _peerPhoto = sync.peerPhotoRev;
       if (fresh.isEmpty && !_starting) {
-        setState(() => _error = null);
+        if (presenceChanged || _error != null) setState(() => _error = null);
         unawaited(_noteRead());
         return;
       }
@@ -168,10 +216,12 @@ class _ChatThreadViewState extends State<ChatThreadView> {
     for (final message in _messages) {
       if (message.id > last) last = message.id;
     }
+    if (last <= _readSent) return;
     await ChatReads.mark(widget.threadId, last);
     widget.onRead?.call(widget.threadId, last);
     try {
       await _api.markRead(widget.threadId, last);
+      _readSent = last;
     } catch (_) {
       // The next poll tries again. Local unread still clears.
     }
@@ -200,23 +250,79 @@ class _ChatThreadViewState extends State<ChatThreadView> {
       final message = await _api.send(widget.threadId, text);
       if (!mounted) return;
       _text.clear();
-      setState(() {
-        if (!_messages.any((item) => item.id == message.id)) {
-          _messages = [..._messages, message];
-        }
-        if (message.id > _after) _after = message.id;
-        _sending = false;
-        _stickToEnd = true;
-        _below = 0;
-      });
-      _jump(animate: true);
-      unawaited(_noteRead());
+      _accept(message);
     } catch (error) {
       if (!mounted) return;
       setState(() {
         _sending = false;
         _error = chatErrorText(error);
       });
+    }
+  }
+
+  void _accept(ChatMessage message) {
+    setState(() {
+      if (!_messages.any((item) => item.id == message.id)) {
+        _messages = [..._messages, message];
+      }
+      if (message.id > _after) _after = message.id;
+      _sending = false;
+      _stickToEnd = true;
+      _below = 0;
+      _error = null;
+    });
+    _jump(animate: true);
+    unawaited(_noteRead());
+  }
+
+  Future<void> _startVoice() async {
+    if (_sending || _recording || widget.threadId.isEmpty || Plat.isWeb) return;
+    final problem = await _recorder.begin();
+    if (!mounted) return;
+    if (problem != null) {
+      setState(() => _error = problem);
+      return;
+    }
+    setState(() {
+      _recording = true;
+      _error = null;
+    });
+  }
+
+  Future<void> _finishVoice({required bool send}) async {
+    if (_finishingVoice) return;
+    _finishingVoice = true;
+    try {
+      final taken = await _recorder.stop(send: send);
+      if (!mounted) return;
+      setState(() => _recording = false);
+      if (!send || taken == null) return;
+      if (taken.ms < 500) {
+        setState(() => _error = 'That voice note was too short.');
+        return;
+      }
+      final file = File(taken.path);
+      final bytes = await file.readAsBytes();
+      unawaited(file.delete());
+      if (!mounted) return;
+      if (bytes.isEmpty) {
+        setState(() => _error = 'That voice note could not be sent.');
+        return;
+      }
+      setState(() => _sending = true);
+      final ms = taken.ms > 60000 ? 60000 : taken.ms;
+      final message = await _api.sendVoice(widget.threadId, bytes, ms);
+      if (!mounted) return;
+      _accept(message);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _sending = false;
+        _recording = false;
+        _error = chatErrorText(error);
+      });
+    } finally {
+      _finishingVoice = false;
     }
   }
 
@@ -262,26 +368,47 @@ class _ChatThreadViewState extends State<ChatThreadView> {
     final name = widget.username.replaceFirst(RegExp(r'^@'), '').trim();
     final title = name.isEmpty ? 'Chat' : name;
     final canvas = scheme.brightness == Brightness.dark ? const Color(0xFF0B141A) : const Color(0xFFEFE7DE);
+    final presence = chatPresenceLabel(
+      _peerSeen,
+      _peerOnline,
+      DateTime.now(),
+      _peerSeen == null ? '' : TimeOfDay.fromDateTime(_peerSeen!.toLocal()).format(context),
+    );
     final body = Column(
       children: [
         AppBar(
           automaticallyImplyLeading: !widget.embedded,
           titleSpacing: widget.embedded ? 16 : 0,
           title: InkWell(
-            onTap: () => unawaited(showChatProfile(context, username: title)),
+            onTap: () => unawaited(
+              showChatProfile(
+                context,
+                username: title,
+                photoRev: _peerPhoto,
+                lastSeen: _peerSeen,
+                online: _peerOnline,
+              ),
+            ),
             child: Row(
               children: [
-                ChatAvatar(name: title, size: 36),
+                ChatFace(name: title, size: 36, photoRev: _peerPhoto, online: _peerOnline),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
-                      Text(
-                        'View profile',
-                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: scheme.onSurfaceVariant),
-                      ),
+                      if (presence.isNotEmpty)
+                        Text(
+                          presence,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                            color: _peerOnline ? const Color(0xFF25D366) : scheme.onSurfaceVariant,
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -331,6 +458,7 @@ class _ChatThreadViewState extends State<ChatThreadView> {
                                 return _Bubble(
                                   message: message,
                                   mine: mine,
+                                  api: _api,
                                   tick: chatTick(
                                     mine: mine,
                                     id: message.id,
@@ -339,7 +467,7 @@ class _ChatThreadViewState extends State<ChatThreadView> {
                                     status: message.status,
                                   ),
                                   onLink: _openLink,
-                                  onLongPress: (details) => unawaited(_menu(message, details)),
+                                  onLongPress: message.isVoice ? null : (details) => unawaited(_menu(message, details)),
                                 );
                               },
                             );
@@ -372,52 +500,69 @@ class _ChatThreadViewState extends State<ChatThreadView> {
             top: false,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
-              child: ValueListenableBuilder<TextEditingValue>(
-                valueListenable: _text,
-                builder: (context, value, _) {
-                  final canSend = value.text.trim().isNotEmpty && !_sending;
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Expanded(
-                        child: Focus(
-                          onKeyEvent: _onKey,
-                          child: TextField(
-                            controller: _text,
-                            focusNode: _focus,
-                            minLines: 1,
-                            maxLines: 5,
-                            textInputAction: _enterSends ? TextInputAction.newline : TextInputAction.send,
-                            onSubmitted: _enterSends ? null : (_) => unawaited(_send()),
-                            decoration: InputDecoration(
-                              hintText: 'Message',
-                              filled: true,
-                              fillColor: scheme.surfaceContainerHighest,
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(24),
-                                borderSide: BorderSide.none,
-                              ),
-                            ),
+              child: _recording
+                  ? Row(
+                      children: [
+                        IconButton(
+                          tooltip: 'Delete',
+                          onPressed: () => unawaited(_finishVoice(send: false)),
+                          icon: const Icon(Icons.delete_outline_rounded),
+                        ),
+                        const Icon(Icons.fiber_manual_record, size: 12, color: Color(0xFFE53935)),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            chatClock(_recorder.shownMs),
+                            style: const TextStyle(fontWeight: FontWeight.w700, color: Color(0xFFE53935)),
                           ),
                         ),
-                      ),
-                      if (canSend) ...[
-                        const SizedBox(width: 6),
-                        IconButton.filled(
-                          tooltip: 'Send',
-                          onPressed: () => unawaited(_send()),
-                          icon: const Icon(Icons.send_rounded),
-                        ),
-                      ] else if (_sending)
-                        const Padding(
-                          padding: EdgeInsets.all(12),
-                          child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
-                        ),
-                    ],
-                  );
-                },
-              ),
+                        _roundButton(tooltip: 'Send voice note', icon: Icons.send_rounded, onPressed: () => unawaited(_finishVoice(send: true))),
+                      ],
+                    )
+                  : ValueListenableBuilder<TextEditingValue>(
+                      valueListenable: _text,
+                      builder: (context, value, _) {
+                        final canSend = value.text.trim().isNotEmpty && !_sending;
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Expanded(
+                              child: Focus(
+                                onKeyEvent: _onKey,
+                                child: TextField(
+                                  controller: _text,
+                                  focusNode: _focus,
+                                  minLines: 1,
+                                  maxLines: 5,
+                                  textInputAction: _enterSends ? TextInputAction.newline : TextInputAction.send,
+                                  onSubmitted: _enterSends ? null : (_) => unawaited(_send()),
+                                  decoration: InputDecoration(
+                                    hintText: 'Message',
+                                    filled: true,
+                                    fillColor: scheme.surfaceContainerHighest,
+                                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(24),
+                                      borderSide: BorderSide.none,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            if (_sending)
+                              const Padding(
+                                padding: EdgeInsets.all(12),
+                                child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
+                              )
+                            else if (canSend)
+                              _roundButton(tooltip: 'Send', icon: Icons.send_rounded, onPressed: () => unawaited(_send()))
+                            else if (!Plat.isWeb)
+                              _roundButton(tooltip: 'Voice note', icon: Icons.mic_rounded, onPressed: () => unawaited(_startVoice())),
+                          ],
+                        );
+                      },
+                    ),
             ),
           ),
         ),
@@ -464,20 +609,96 @@ class _Row {
   final ChatMessage? message;
 }
 
-class ChatAvatar extends StatelessWidget {
-  const ChatAvatar({super.key, required this.name, this.size = 48});
+class ChatFace extends StatefulWidget {
+  const ChatFace({super.key, required this.name, this.photoRev = 0, this.size = 48, this.online = false});
 
   final String name;
+  final int photoRev;
   final double size;
+  final bool online;
+
+  @override
+  State<ChatFace> createState() => _ChatFaceState();
+}
+
+class _ChatFaceState extends State<ChatFace> {
+  Uint8List? _bytes;
+
+  @override
+  void initState() {
+    super.initState();
+    _bytes = ChatPhotos.cached(widget.name, widget.photoRev);
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(ChatFace oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.photoRev != widget.photoRev || oldWidget.name != widget.name) {
+      _bytes = ChatPhotos.cached(widget.name, widget.photoRev);
+      _load();
+    }
+  }
+
+  void _load() {
+    final rev = widget.photoRev;
+    if (rev <= 0 || _bytes != null) return;
+    ChatPhotos.fetch(widget.name, rev).then((bytes) {
+      if (!mounted || widget.photoRev != rev || bytes == null) return;
+      setState(() => _bytes = bytes);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    return CircleAvatar(
+    return ChatAvatar(name: widget.name, size: widget.size, bytes: _bytes, online: widget.online);
+  }
+}
+
+class ChatAvatar extends StatelessWidget {
+  const ChatAvatar({super.key, required this.name, this.size = 48, this.bytes, this.online = false});
+
+  final String name;
+  final double size;
+  final Uint8List? bytes;
+  final bool online;
+
+  @override
+  Widget build(BuildContext context) {
+    final avatar = CircleAvatar(
       radius: size / 2,
       backgroundColor: chatAvatarColor(name),
-      child: Text(
-        chatInitial(name),
-        style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: size * 0.38),
+      backgroundImage: bytes == null ? null : MemoryImage(bytes!),
+      child: bytes == null
+          ? Text(
+              chatInitial(name),
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: size * 0.38),
+            )
+          : null,
+    );
+    if (!online) return avatar;
+    final dot = size * 0.28;
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          avatar,
+          Positioned(
+            right: 0,
+            bottom: 0,
+            child: Container(
+              width: dot,
+              height: dot,
+              decoration: BoxDecoration(
+                color: const Color(0xFF25D366),
+                shape: BoxShape.circle,
+                border: Border.all(color: Theme.of(context).colorScheme.surface, width: 2),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -509,10 +730,20 @@ class _DayChip extends StatelessWidget {
   }
 }
 
+Widget _roundButton({required String tooltip, required IconData icon, required VoidCallback onPressed}) {
+  return IconButton.filled(
+    tooltip: tooltip,
+    style: IconButton.styleFrom(backgroundColor: const Color(0xFF25D366), foregroundColor: Colors.white),
+    onPressed: onPressed,
+    icon: Icon(icon),
+  );
+}
+
 class _Bubble extends StatelessWidget {
   const _Bubble({
     required this.message,
     required this.mine,
+    required this.api,
     required this.tick,
     required this.onLink,
     required this.onLongPress,
@@ -520,9 +751,10 @@ class _Bubble extends StatelessWidget {
 
   final ChatMessage message;
   final bool mine;
+  final ChatApi api;
   final String tick;
   final ValueChanged<String> onLink;
-  final ValueChanged<LongPressStartDetails> onLongPress;
+  final ValueChanged<LongPressStartDetails>? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -534,45 +766,62 @@ class _Bubble extends StatelessWidget {
     final fg = dark ? const Color(0xFFE9EDEF) : const Color(0xFF111B21);
     final link = dark ? const Color(0xFF53BDEB) : const Color(0xFF027EB5);
     final time = TimeOfDay.fromDateTime(message.at.toLocal()).format(context);
+    final stamp = chatTickColor(tick, dark: dark);
     return Align(
       alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-      child: GestureDetector(
-        onLongPressStart: onLongPress,
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 460),
-          margin: const EdgeInsets.only(bottom: 3, top: 1),
-          padding: const EdgeInsets.fromLTRB(10, 6, 8, 4),
-          decoration: BoxDecoration(
-            color: bg,
-            borderRadius: BorderRadius.only(
-              topLeft: const Radius.circular(12),
-              topRight: const Radius.circular(12),
-              bottomLeft: Radius.circular(mine ? 12 : 2),
-              bottomRight: Radius.circular(mine ? 2 : 12),
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              _LinkText(text: message.text, links: message.links, color: fg, linkColor: link, onLink: onLink),
-              const SizedBox(height: 2),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(time, style: TextStyle(fontSize: 11, color: fg.withValues(alpha: 0.62))),
-                  if (tick.isNotEmpty) ...[
-                    const SizedBox(width: 3),
-                    Icon(
-                      tick == 'sent' ? Icons.done_rounded : Icons.done_all_rounded,
-                      size: 15,
-                      color: tick == 'read' ? const Color(0xFF53BDEB) : fg.withValues(alpha: 0.62),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final cap = constraints.maxWidth * 0.78;
+          final max = cap > 420 ? 420.0 : cap;
+          return GestureDetector(
+            onLongPressStart: onLongPress,
+            child: Container(
+              constraints: BoxConstraints(maxWidth: max),
+              margin: const EdgeInsets.only(bottom: 2, top: 1),
+              padding: const EdgeInsets.fromLTRB(8, 4, 8, 3),
+              decoration: BoxDecoration(
+                color: bg,
+                borderRadius: BorderRadius.only(
+                  topLeft: const Radius.circular(8),
+                  topRight: const Radius.circular(8),
+                  bottomLeft: Radius.circular(mine ? 8 : 2),
+                  bottomRight: Radius.circular(mine ? 2 : 8),
+                ),
+                boxShadow: dark ? null : const [BoxShadow(color: Color(0x14000000), blurRadius: 0.5, offset: Offset(0, 1))],
+              ),
+              child: IntrinsicWidth(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (message.isVoice)
+                      ChatVoiceBubble(message: message, color: fg, api: api)
+                    else
+                      _LinkText(text: message.text, links: message.links, color: fg, linkColor: link, onLink: onLink),
+                    const SizedBox(height: 1),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(time, style: TextStyle(fontSize: 11, color: stamp)),
+                          if (tick.isNotEmpty) ...[
+                            const SizedBox(width: 2),
+                            Icon(
+                              tick == 'sent' ? Icons.done_rounded : Icons.done_all_rounded,
+                              size: 16,
+                              color: stamp,
+                            ),
+                          ],
+                        ],
+                      ),
                     ),
                   ],
-                ],
+                ),
               ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -596,34 +845,31 @@ class _LinkText extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pieces = _pieces(text, links);
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Text.rich(
-        TextSpan(
-          style: TextStyle(fontSize: 15.5, height: 1.3, color: color),
-          children: [
-            for (final piece in pieces)
-              if (piece.url == null)
-                TextSpan(text: piece.text)
-              else
-                WidgetSpan(
-                  alignment: PlaceholderAlignment.baseline,
-                  baseline: TextBaseline.alphabetic,
-                  child: GestureDetector(
-                    onTap: () => onLink(piece.url!),
-                    child: Text(
-                      piece.text,
-                      style: TextStyle(
-                        fontSize: 15.5,
-                        height: 1.3,
-                        color: linkColor,
-                        decoration: TextDecoration.underline,
-                      ),
+    return Text.rich(
+      TextSpan(
+        style: TextStyle(fontSize: 15.5, height: 1.3, color: color),
+        children: [
+          for (final piece in pieces)
+            if (piece.url == null)
+              TextSpan(text: piece.text)
+            else
+              WidgetSpan(
+                alignment: PlaceholderAlignment.baseline,
+                baseline: TextBaseline.alphabetic,
+                child: GestureDetector(
+                  onTap: () => onLink(piece.url!),
+                  child: Text(
+                    piece.text,
+                    style: TextStyle(
+                      fontSize: 15.5,
+                      height: 1.3,
+                      color: linkColor,
+                      decoration: TextDecoration.underline,
                     ),
                   ),
                 ),
-          ],
-        ),
+              ),
+        ],
       ),
     );
   }

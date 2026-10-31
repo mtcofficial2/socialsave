@@ -19,7 +19,7 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final ChatApi _api = ChatApi();
   final TextEditingController _contact = TextEditingController();
   final TextEditingController _username = TextEditingController();
@@ -42,16 +42,32 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     unawaited(_boot());
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _poll?.cancel();
     _contact.dispose();
     _username.dispose();
     _find.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!_signedIn) return;
+    if (state == AppLifecycleState.resumed) {
+      _poll?.cancel();
+      _poll = null;
+      _startPoll();
+      unawaited(_loadThreads());
+    } else {
+      _poll?.cancel();
+      _poll = null;
+    }
   }
 
   Future<void> _boot() async {
@@ -102,7 +118,12 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _startPoll() {
-    _poll ??= Timer.periodic(const Duration(seconds: 5), (_) => unawaited(_loadThreads()));
+    _poll ??= Timer.periodic(const Duration(seconds: 12), (_) {
+      if (!mounted || !_signedIn) return;
+      final route = ModalRoute.of(context);
+      if (route != null && !route.isCurrent) return;
+      unawaited(_loadThreads());
+    });
   }
 
   Future<void> _loadThreads() async {
@@ -484,8 +505,20 @@ class _ChatScreenState extends State<ChatScreen> {
         actions: [
           IconButton(
             tooltip: 'Your profile',
-            onPressed: () => unawaited(showChatProfile(context, username: user.username, contact: user.contact)),
-            icon: ChatAvatar(name: user.username, size: 32),
+            onPressed: () => unawaited(
+              showChatProfile(
+                context,
+                username: user.username,
+                contact: user.contact,
+                photoRev: user.photoRev,
+                onPhoto: (rev) {
+                  final current = _user;
+                  if (!mounted || current == null) return;
+                  setState(() => _user = current.copyWith(photoRev: rev));
+                },
+              ),
+            ),
+            icon: ChatFace(name: user.username, size: 32, photoRev: user.photoRev),
           ),
         ],
       ),
@@ -545,7 +578,15 @@ class _ChatScreenState extends State<ChatScreen> {
                     me: user.username,
                     selected: wide && item.id == _selectedId,
                     onOpen: () => unawaited(_openSaved(item)),
-                    onProfile: () => unawaited(showChatProfile(context, username: item.username)),
+                    onProfile: () => unawaited(
+                      showChatProfile(
+                        context,
+                        username: item.username,
+                        photoRev: item.photoRev,
+                        lastSeen: item.lastSeen,
+                        online: item.online,
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -578,6 +619,7 @@ class _ChatRow extends StatelessWidget {
     final unread = item.unread > 0;
     final stamp = item.lastAt == null ? '' : chatListStamp(item.lastAt!, DateTime.now(), TimeOfDay.fromDateTime(item.lastAt!.toLocal()).format(context));
     final preview = chatPreview(item.lastText, item.lastFrom, me);
+    final voice = item.lastText.trim() == 'Voice message';
     return Material(
       color: selected ? scheme.primary.withValues(alpha: 0.10) : Colors.transparent,
       child: InkWell(
@@ -588,7 +630,7 @@ class _ChatRow extends StatelessWidget {
             children: [
               GestureDetector(
                 onTap: onProfile,
-                child: ChatAvatar(name: item.username),
+                child: ChatFace(name: item.username, photoRev: item.photoRev, online: item.online),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -605,7 +647,11 @@ class _ChatRow extends StatelessWidget {
                     Row(
                       children: [
                         if (item.lastFrom == me && item.lastStatus.isNotEmpty) ...[
-                          _Tick(status: item.lastStatus, muted: scheme.onSurfaceVariant),
+                          _Tick(status: item.lastStatus),
+                          const SizedBox(width: 4),
+                        ],
+                        if (voice) ...[
+                          Icon(Icons.mic_rounded, size: 16, color: unread ? scheme.onSurface : scheme.onSurfaceVariant),
                           const SizedBox(width: 4),
                         ],
                         Expanded(
@@ -652,17 +698,16 @@ class _ChatRow extends StatelessWidget {
 }
 
 class _Tick extends StatelessWidget {
-  const _Tick({required this.status, required this.muted});
+  const _Tick({required this.status});
 
   final String status;
-  final Color muted;
 
   @override
   Widget build(BuildContext context) {
     return Icon(
       status == 'sent' ? Icons.done_rounded : Icons.done_all_rounded,
       size: 16,
-      color: status == 'read' ? const Color(0xFF53BDEB) : muted,
+      color: chatTickColor(status, dark: Theme.of(context).brightness == Brightness.dark),
     );
   }
 }

@@ -114,3 +114,31 @@ String chatPreview(String lastText, String lastFrom, String me) {
   if (lastFrom.isNotEmpty && lastFrom == me) return 'You: $text';
   return text;
 }
+
+/// Empty when [lastSeen] is missing. Online only when the server said so.
+String chatPresenceLabel(DateTime? lastSeen, bool online, DateTime now, String clock) {
+  if (lastSeen == null) return '';
+  if (online) return 'online';
+  switch (chatDay(lastSeen, now)) {
+    case ChatDay.today:
+      return 'last seen today at $clock';
+    case ChatDay.yesterday:
+      return 'last seen yesterday';
+    case ChatDay.older:
+      final local = lastSeen.toLocal();
+      return 'last seen ${local.day} ${_months[local.month - 1]}';
+  }
+}
+
+String chatClock(int milliseconds) {
+  final total = milliseconds < 0 ? 0 : milliseconds ~/ 1000;
+  final minutes = total ~/ 60;
+  final seconds = total % 60;
+  return '$minutes:${seconds.toString().padLeft(2, '0')}';
+}
+
+/// Sent and delivered stay gray. Read is blue. No washed-out alpha.
+Color chatTickColor(String status, {required bool dark}) {
+  if (status == 'read') return const Color(0xFF53BDEB);
+  return dark ? const Color(0xFFAEBAC1) : const Color(0xFF667781);
+}

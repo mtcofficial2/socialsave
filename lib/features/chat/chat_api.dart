@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -81,12 +83,24 @@ class ChatUser {
     required this.username,
     required this.phone,
     required this.email,
+    this.photoRev = 0,
   });
 
   final String id;
   final String username;
   final String phone;
   final String email;
+  final int photoRev;
+
+  ChatUser copyWith({int? photoRev}) {
+    return ChatUser(
+      id: id,
+      username: username,
+      phone: phone,
+      email: email,
+      photoRev: photoRev ?? this.photoRev,
+    );
+  }
 
   String get contact {
     if (email.isNotEmpty && phone.isNotEmpty) return '$phone · $email';
@@ -99,6 +113,7 @@ class ChatUser {
       username: (json['username'] as String?)?.trim() ?? '',
       phone: (json['phone'] as String?)?.trim() ?? '',
       email: (json['email'] as String?)?.trim() ?? '',
+      photoRev: (json['photoRev'] as num?)?.toInt() ?? 0,
     );
   }
 }
@@ -120,6 +135,9 @@ class ChatThreadSummary {
     this.lastFrom = '',
     this.lastStatus = '',
     this.unread = 0,
+    this.lastSeen,
+    this.online = false,
+    this.photoRev = 0,
   });
 
   final String id;
@@ -130,9 +148,13 @@ class ChatThreadSummary {
   final String lastFrom;
   final String lastStatus;
   final int unread;
+  final DateTime? lastSeen;
+  final bool online;
+  final int photoRev;
 
   factory ChatThreadSummary.fromJson(Map<String, dynamic> json) {
     final at = (json['lastAt'] as num?)?.toInt() ?? 0;
+    final seen = (json['lastSeen'] as num?)?.toInt() ?? 0;
     return ChatThreadSummary(
       id: (json['id'] as String?)?.trim() ?? '',
       username: (json['username'] as String?)?.trim() ?? '',
@@ -142,17 +164,30 @@ class ChatThreadSummary {
       lastFrom: (json['lastFrom'] as String?)?.trim() ?? '',
       lastStatus: (json['lastStatus'] as String?)?.trim() ?? '',
       unread: (json['unread'] as num?)?.toInt() ?? 0,
+      lastSeen: seen > 0 ? DateTime.fromMillisecondsSinceEpoch(seen) : null,
+      online: json['online'] == true && seen > 0,
+      photoRev: (json['photoRev'] as num?)?.toInt() ?? 0,
     );
   }
 }
 
 /// One direct message. [name] is the sender's username.
 class ChatSync {
-  const ChatSync({required this.messages, this.peerDelivered = 0, this.peerRead = 0});
+  const ChatSync({
+    required this.messages,
+    this.peerDelivered = 0,
+    this.peerRead = 0,
+    this.peerLastSeen,
+    this.peerOnline = false,
+    this.peerPhotoRev = 0,
+  });
 
   final List<ChatMessage> messages;
   final int peerDelivered;
   final int peerRead;
+  final DateTime? peerLastSeen;
+  final bool peerOnline;
+  final int peerPhotoRev;
 }
 
 class ChatMessage {
@@ -164,6 +199,9 @@ class ChatMessage {
     required this.links,
     required this.at,
     this.status = '',
+    this.voice = '',
+    this.voiceMs = 0,
+    this.voiceType = '',
   });
 
   final int id;
@@ -173,6 +211,11 @@ class ChatMessage {
   final List<String> links;
   final DateTime at;
   final String status;
+  final String voice;
+  final int voiceMs;
+  final String voiceType;
+
+  bool get isVoice => voice.isNotEmpty;
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
     final links = json['links'];
@@ -184,6 +227,9 @@ class ChatMessage {
       links: links is List ? links.whereType<String>().where((item) => item.startsWith('http')).toList() : const [],
       at: DateTime.fromMillisecondsSinceEpoch((json['at'] as num?)?.toInt() ?? 0),
       status: (json['status'] as String?)?.trim() ?? '',
+      voice: (json['voice'] as String?)?.trim() ?? '',
+      voiceMs: (json['voiceMs'] as num?)?.toInt() ?? 0,
+      voiceType: (json['voiceType'] as String?)?.trim() ?? '',
     );
   }
 }
@@ -298,13 +344,23 @@ class ChatApi {
     final peer = body['peer'];
     var delivered = 0;
     var read = 0;
+    DateTime? seen;
+    var online = false;
+    var photoRev = 0;
     if (peer is Map) {
       delivered = (peer['delivered'] as num?)?.toInt() ?? 0;
       read = (peer['read'] as num?)?.toInt() ?? 0;
+      final at = (peer['lastSeen'] as num?)?.toInt() ?? 0;
+      if (at > 0) seen = DateTime.fromMillisecondsSinceEpoch(at);
+      online = peer['online'] == true && seen != null;
+      photoRev = (peer['photoRev'] as num?)?.toInt() ?? 0;
     }
     return ChatSync(
       peerDelivered: delivered,
       peerRead: read,
+      peerLastSeen: seen,
+      peerOnline: online,
+      peerPhotoRev: photoRev,
       messages: [
         if (items is List)
           for (final item in items)
@@ -335,6 +391,83 @@ class ChatApi {
       );
     }
     return ChatMessage.fromJson(Map<String, dynamic>.from(message));
+  }
+
+  Future<int> setPhoto(Uint8List bytes) async {
+    final auth = await _auth();
+    final headers = Map<String, dynamic>.from(auth.headers ?? {});
+    headers['Content-Type'] = 'application/octet-stream';
+    final response = await _dio.post<dynamic>(
+      '/api/v1/chat/photo',
+      data: bytes,
+      options: auth.copyWith(
+        headers: headers,
+        contentType: 'application/octet-stream',
+        sendTimeout: const Duration(seconds: 40),
+      ),
+    );
+    final rev = (_object(response)['photoRev'] as num?)?.toInt() ?? 0;
+    if (rev <= 0) {
+      throw DioException(requestOptions: response.requestOptions, message: 'That photo could not be saved.');
+    }
+    return rev;
+  }
+
+  Future<Uint8List?> photo(String username) async {
+    final name = username.trim();
+    if (name.isEmpty) return null;
+    try {
+      final auth = await _auth();
+      final response = await _dio.get<dynamic>(
+        '/api/v1/chat/photo',
+        queryParameters: {'username': name},
+        options: auth.copyWith(responseType: ResponseType.bytes),
+      );
+      final data = response.data;
+      if (data is Uint8List && data.isNotEmpty) return data;
+      if (data is List<int> && data.isNotEmpty) return Uint8List.fromList(data);
+      return null;
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
+  Future<ChatMessage> sendVoice(String id, Uint8List bytes, int milliseconds) async {
+    final auth = await _auth();
+    final headers = Map<String, dynamic>.from(auth.headers ?? {});
+    headers['Content-Type'] = 'application/octet-stream';
+    headers['X-Voice-Ms'] = '$milliseconds';
+    final response = await _dio.post<dynamic>(
+      '/api/v1/chat/threads/$id/voice',
+      data: bytes,
+      options: auth.copyWith(
+        headers: headers,
+        contentType: 'application/octet-stream',
+        sendTimeout: const Duration(seconds: 40),
+        receiveTimeout: const Duration(seconds: 40),
+      ),
+    );
+    final message = _object(response)['message'];
+    if (message is! Map) {
+      throw DioException(
+        requestOptions: response.requestOptions,
+        message: 'The chat server did not return the voice note.',
+      );
+    }
+    return ChatMessage.fromJson(Map<String, dynamic>.from(message));
+  }
+
+  Future<Uint8List> voice(String id) async {
+    final auth = await _auth();
+    final response = await _dio.get<dynamic>(
+      '/api/v1/chat/voice/$id',
+      options: auth.copyWith(responseType: ResponseType.bytes, receiveTimeout: const Duration(seconds: 40)),
+    );
+    final data = response.data;
+    if (data is Uint8List && data.isNotEmpty) return data;
+    if (data is List<int> && data.isNotEmpty) return Uint8List.fromList(data);
+    throw DioException(requestOptions: response.requestOptions, message: 'That voice note could not be played.');
   }
 
   Future<Options> _auth() async {
@@ -386,4 +519,42 @@ String chatErrorText(Object error) {
     }
   }
   return 'Chat is not reachable right now.';
+}
+
+/// Profile photos stay in memory for this visit, keyed by username and revision.
+class ChatPhotos {
+  static final ChatApi _api = ChatApi();
+  static final Map<String, Uint8List> _bytes = {};
+  static final Map<String, Future<Uint8List?>> _loading = {};
+
+  static String _key(String username, int rev) => '${username.trim().toLowerCase()}:$rev';
+
+  static Uint8List? cached(String username, int rev) {
+    if (rev <= 0) return null;
+    return _bytes[_key(username, rev)];
+  }
+
+  static void remember(String username, int rev, Uint8List bytes) {
+    if (rev <= 0 || bytes.isEmpty) return;
+    _bytes[_key(username, rev)] = bytes;
+  }
+
+  static Future<Uint8List?> fetch(String username, int rev) {
+    final hit = cached(username, rev);
+    if (hit != null) return Future<Uint8List?>.value(hit);
+    if (rev <= 0 || username.trim().isEmpty) return Future<Uint8List?>.value(null);
+    final key = _key(username, rev);
+    return _loading.putIfAbsent(key, () async {
+      try {
+        final bytes = await _api.photo(username);
+        if (bytes != null && bytes.isNotEmpty) _bytes[key] = bytes;
+        return bytes;
+      } catch (_) {
+        return null;
+      } finally {
+        final pending = _loading.remove(key);
+        if (pending != null) unawaited(pending);
+      }
+    });
+  }
 }
