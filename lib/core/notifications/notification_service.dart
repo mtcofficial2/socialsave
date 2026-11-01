@@ -62,6 +62,14 @@ Future<void> sendChatNotificationReply(String payload, String text) async {
   }
 }
 
+/// Saves a profile photo the next time a chat screen loads it, so a later
+/// message notification already has the face.
+void keepChatFacesForNotifications() {
+  ChatPhotos.onStored ??= (name, rev, bytes) {
+    unawaited(storeNotificationPhoto(name, rev, bytes));
+  };
+}
+
 Future<List<WindowsImage>> _windowsFace(Uint8List? picture, String name) async {
   if (picture == null || picture.isEmpty) return _windowsLogo();
   try {
@@ -195,8 +203,10 @@ class NotificationService {
     List<WindowsInput> inputs = const [],
     List<WindowsAction> actions = const [],
     List<WindowsImage>? images,
+    bool silent = false,
   }) async {
     final shown = images ?? _windowsLogo();
+    final audio = silent ? WindowsNotificationAudio.silent() : null;
     try {
       await _plugin.show(
         id,
@@ -207,6 +217,7 @@ class NotificationService {
             images: shown,
             inputs: inputs,
             actions: actions,
+            audio: audio,
           ),
         ),
         payload: payload,
@@ -223,6 +234,7 @@ class NotificationService {
                 images: _windowsLogo(),
                 inputs: inputs,
                 actions: actions,
+                audio: audio,
               ),
             ),
             payload: payload,
@@ -239,6 +251,7 @@ class NotificationService {
             windows: WindowsNotificationDetails(
               inputs: inputs,
               actions: actions,
+              audio: audio,
             ),
           ),
           payload: payload,
@@ -248,6 +261,7 @@ class NotificationService {
   }
 
   Future<void> init() async {
+    keepChatFacesForNotifications();
     if (kIsWeb) return; // The browser build shows no system notifications.
     if (_initialized) {
       return;
@@ -349,12 +363,14 @@ class NotificationService {
     required String title,
     required String body,
     bool sound = true,
+    bool silent = false,
     Uint8List? picture,
   }) async {
     if (kIsWeb || threadId.isEmpty) return;
     if (!_initialized) await init();
     final payload = 'chat|$threadId|$title';
     final id = threadId.hashCode & 0x7fffffff;
+    final alert = sound && !silent;
     if (defaultTargetPlatform == TargetPlatform.android) {
       // The phone posts this itself. A plugin reply either opened the chat
       // or left Android spinning, and the message never left.
@@ -365,6 +381,7 @@ class NotificationService {
           'body': body,
           'payload': payload,
           'sound': sound,
+          'silent': silent,
           'api': EnvConfig.apiBaseUrl,
           'token': await ChatSession.token() ?? '',
           if (picture != null && picture.isNotEmpty) 'picture': picture,
@@ -385,6 +402,7 @@ class NotificationService {
           WindowsAction(content: 'Reply', arguments: payload, inputId: 'reply'),
         ],
         images: await _windowsFace(picture, title),
+        silent: silent,
       );
       return;
     }
@@ -394,20 +412,24 @@ class NotificationService {
       body,
       NotificationDetails(
         android: AndroidNotificationDetails(
-          sound ? 'chats_v2' : 'chats_quiet',
+          alert ? 'chats_v2' : 'chats_quiet',
           'Chats',
           channelDescription: 'New messages',
           icon: 'ic_notification',
           largeIcon: picture != null && picture.isNotEmpty
               ? ByteArrayAndroidBitmap(picture)
-              : _notificationLogo,
+              : null,
           importance: Importance.high,
           priority: Priority.high,
-          playSound: sound,
-          enableVibration: sound,
+          playSound: alert,
+          enableVibration: alert,
+          onlyAlertOnce: true,
           category: AndroidNotificationCategory.message,
         ),
-        iOS: DarwinNotificationDetails(presentSound: sound, presentAlert: true),
+        iOS: DarwinNotificationDetails(
+          presentSound: alert,
+          presentAlert: true,
+        ),
       ),
       payload: payload,
     );

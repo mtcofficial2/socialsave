@@ -821,6 +821,9 @@ class ChatPhotos {
   static final Map<String, Uint8List> _bytes = {};
   static final Map<String, Future<Uint8List?>> _loading = {};
 
+  /// Called when a profile photo is kept, so a notification can use it later.
+  static void Function(String username, int rev, Uint8List bytes)? onStored;
+
   static String _key(String username, int rev) =>
       '${username.trim().toLowerCase()}:$rev';
 
@@ -832,6 +835,24 @@ class ChatPhotos {
   static void remember(String username, int rev, Uint8List bytes) {
     if (rev <= 0 || bytes.isEmpty) return;
     _bytes[_key(username, rev)] = bytes;
+    onStored?.call(username, rev, bytes);
+  }
+
+  /// Any profile photo already in memory for [username], newest revision first.
+  static Uint8List? anyCached(String username) {
+    final name = username.trim().toLowerCase();
+    if (name.isEmpty) return null;
+    final prefix = '$name:';
+    Uint8List? best;
+    var bestRev = -1;
+    for (final entry in _bytes.entries) {
+      if (!entry.key.startsWith(prefix) || entry.value.isEmpty) continue;
+      final rev = int.tryParse(entry.key.substring(prefix.length)) ?? -1;
+      if (rev < bestRev) continue;
+      bestRev = rev;
+      best = entry.value;
+    }
+    return best;
   }
 
   /// Bytes for a chat notification. Uses the known revision, then any photo
@@ -840,15 +861,14 @@ class ChatPhotos {
     if (rev > 0) return fetch(username, rev);
     final name = username.trim();
     if (name.isEmpty) return null;
-    final prefix = '${name.toLowerCase()}:';
-    for (final entry in _bytes.entries) {
-      if (entry.key.startsWith(prefix) && entry.value.isNotEmpty) {
-        return entry.value;
-      }
-    }
+    final saved = anyCached(name);
+    if (saved != null) return saved;
     try {
       final bytes = await _api.photo(name);
-      if (bytes != null && bytes.isNotEmpty) _bytes['$prefix$rev'] = bytes;
+      if (bytes != null && bytes.isNotEmpty) {
+        _bytes['${name.toLowerCase()}:$rev'] = bytes;
+        onStored?.call(name, rev, bytes);
+      }
       return bytes;
     } catch (_) {
       return null;
@@ -865,7 +885,7 @@ class ChatPhotos {
     return _loading.putIfAbsent(key, () async {
       try {
         final bytes = await _api.photo(username);
-        if (bytes != null && bytes.isNotEmpty) _bytes[key] = bytes;
+        if (bytes != null && bytes.isNotEmpty) remember(username, rev, bytes);
         return bytes;
       } catch (_) {
         return null;

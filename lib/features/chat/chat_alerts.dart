@@ -4,6 +4,8 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:social_save/core/notifications/notification_photo_io.dart'
+    if (dart.library.html) 'package:social_save/core/notifications/notification_photo_stub.dart';
 import 'package:social_save/core/notifications/notification_service.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_format.dart';
@@ -45,6 +47,42 @@ void chatAlertNow({
   );
 }
 
+final Map<String, int> _alertToken = {};
+
+bool _sameBytes(Uint8List a, Uint8List b) {
+  if (identical(a, b)) return true;
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
+/// A face already on this device. The network fetch must not hold the banner.
+Future<({Uint8List? bytes, bool exact})> _savedFace(
+  String username,
+  int photoRev,
+) async {
+  if (username.isEmpty || username == 'New message') {
+    return (bytes: null, exact: true);
+  }
+  if (photoRev > 0) {
+    final known = ChatPhotos.cached(username, photoRev);
+    if (known != null && known.isNotEmpty) {
+      return (bytes: known, exact: true);
+    }
+  }
+  try {
+    final disk = await loadNotificationPhoto(username, photoRev);
+    if (disk.bytes != null && disk.bytes!.isNotEmpty) return disk;
+  } catch (_) {}
+  final any = ChatPhotos.anyCached(username);
+  if (any != null && any.isNotEmpty) {
+    return (bytes: any, exact: false);
+  }
+  return (bytes: null, exact: false);
+}
+
 Future<void> _postChatAlert({
   required String threadId,
   required String title,
@@ -53,22 +91,34 @@ Future<void> _postChatAlert({
   required int photoRev,
   required bool sound,
 }) async {
-  Uint8List? picture;
-  if (username.isNotEmpty && username != 'New message') {
-    try {
-      picture = await ChatPhotos.forAlert(
-        username,
-        photoRev,
-      ).timeout(const Duration(seconds: 2));
-    } catch (_) {}
-  }
+  keepChatFacesForNotifications();
+  final token = (_alertToken[threadId] ?? 0) + 1;
+  _alertToken[threadId] = token;
+  final saved = await _savedFace(username, photoRev);
+  if (_alertToken[threadId] != token) return;
   await NotificationService().showChat(
     threadId: threadId,
     title: title,
     body: body,
     sound: sound,
-    picture: picture,
+    picture: saved.bytes,
   );
+  if (saved.exact || username.isEmpty || username == 'New message') return;
+  try {
+    final later = await ChatPhotos.forAlert(username, photoRev);
+    if (later == null || later.isEmpty) return;
+    if (_alertToken[threadId] != token) return;
+    final shown = saved.bytes;
+    if (shown != null && _sameBytes(shown, later)) return;
+    await NotificationService().showChat(
+      threadId: threadId,
+      title: title,
+      body: body,
+      sound: sound,
+      silent: true,
+      picture: later,
+    );
+  } catch (_) {}
 }
 
 Future<void> _playPhoneTone() async {
@@ -302,6 +352,11 @@ class _ChatAlertHostState extends State<ChatAlertHost>
           );
         },
       );
+      keepChatFacesForNotifications();
+      for (final item in items) {
+        if (item.username.isEmpty || item.photoRev <= 0) continue;
+        unawaited(ChatPhotos.fetch(item.username, item.photoRev));
+      }
     } catch (_) {
       // The next pass tries again. A quiet miss is better than a banner on Home.
     } finally {

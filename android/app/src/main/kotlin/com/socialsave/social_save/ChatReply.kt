@@ -15,7 +15,12 @@ import android.graphics.PorterDuffXfermode
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.Person
 import androidx.core.app.RemoteInput
+import androidx.core.content.LocusIdCompat
+import androidx.core.content.pm.ShortcutInfoCompat
+import androidx.core.content.pm.ShortcutManagerCompat
+import androidx.core.graphics.drawable.IconCompat
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -124,22 +129,50 @@ object ChatReply {
             .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
             .setShowsUserInterface(false)
             .build()
-        val logo = BitmapFactory.decodeResource(context.resources, R.drawable.ic_notification_logo)
-        val face = faceOf(call.argument<ByteArray>("picture"))
-        val notification = NotificationCompat.Builder(context, if (sound) channelLoud else channelQuiet)
+        val silent = call.argument<Boolean>("silent") == true
+        val faces = try {
+            facesOf(pictureBytes(call))
+        } catch (_: Exception) {
+            null
+        }
+        val builder = NotificationCompat.Builder(context, if (sound) channelLoud else channelQuiet)
             .setSmallIcon(R.drawable.ic_notification)
-            .setLargeIcon(face ?: logo)
             .setContentTitle(title)
             .setContentText(body)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setContentIntent(open)
             .setAutoCancel(true)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setOnlyAlertOnce(true)
+            .setSilent(silent)
             .addAction(action)
-            .build()
-        NotificationManagerCompat.from(context).notify(id, notification)
+        if (faces != null) {
+            // Android 12 uses the shortcut icon as the profile circle. The app
+            // logo in that slot is what was covering the sender.
+            val shortcutId = shortcutIdOf(payload)
+            val personIcon = IconCompat.createWithBitmap(faces.circle)
+            val sender = Person.Builder()
+                .setName(title)
+                .setKey(shortcutId)
+                .setIcon(personIcon)
+                .setImportant(true)
+                .build()
+            val me = Person.Builder().setName("You").setKey("socialsave-me").build()
+            builder
+                .setLargeIcon(faces.circle)
+                .setStyle(
+                    NotificationCompat.MessagingStyle(me)
+                        .setGroupConversation(false)
+                        .addMessage(body, System.currentTimeMillis(), sender),
+                )
+                .addPerson(sender)
+                .setShortcutId(shortcutId)
+                .setLocusId(LocusIdCompat(shortcutId))
+            publishFace(context, shortcutId, title, faces.square, sender, payload)
+        } else {
+            builder.setStyle(NotificationCompat.BigTextStyle().bigText(body))
+        }
+        NotificationManagerCompat.from(context).notify(id, builder.build())
     }
 
     fun post(api: String, token: String, payload: String, text: String): Boolean {
@@ -186,23 +219,95 @@ object ChatReply {
         NotificationManagerCompat.from(context).notify(failedId, notification)
     }
 
-    private fun faceOf(bytes: ByteArray?): Bitmap? {
+    private class FaceBitmaps(val square: Bitmap, val circle: Bitmap)
+
+    private fun pictureBytes(call: MethodCall): ByteArray? {
+        val args = call.arguments as? Map<*, *> ?: return null
+        val raw = args["picture"] ?: return null
+        return when (raw) {
+            is ByteArray -> if (raw.isEmpty()) null else raw
+            is List<*> -> {
+                if (raw.isEmpty()) return null
+                val out = ByteArray(raw.size)
+                for (i in raw.indices) {
+                    val n = raw[i] as? Number ?: return null
+                    out[i] = n.toInt().toByte()
+                }
+                out
+            }
+            else -> null
+        }
+    }
+
+    private fun facesOf(bytes: ByteArray?): FaceBitmaps? {
         if (bytes == null || bytes.isEmpty()) return null
-        val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+        val decoded = decodeSampled(bytes) ?: return null
         val side = minOf(decoded.width, decoded.height)
         if (side <= 0) return null
         val left = (decoded.width - side) / 2
         val top = (decoded.height - side) / 2
-        val square = Bitmap.createBitmap(decoded, left, top, side, side)
+        val cropped = Bitmap.createBitmap(decoded, left, top, side, side)
         val size = 192
-        val scaled = if (side == size) square else Bitmap.createScaledBitmap(square, size, size, true)
-        val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(out)
+        val square = if (cropped.width == size && cropped.height == size) {
+            cropped
+        } else {
+            Bitmap.createScaledBitmap(cropped, size, size, true)
+        }
+        val circle = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(circle)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
         paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
-        canvas.drawBitmap(scaled, 0f, 0f, paint)
-        return out
+        canvas.drawBitmap(square, 0f, 0f, paint)
+        return FaceBitmaps(square, circle)
+    }
+
+    private fun decodeSampled(bytes: ByteArray): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sample = 1
+        val maxSide = maxOf(bounds.outWidth, bounds.outHeight)
+        while (maxSide / sample > 512) sample *= 2
+        val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+    }
+
+    private fun shortcutIdOf(payload: String): String {
+        val id = threadOf(payload)
+        if (id != null) return "c$id"
+        return "c${payload.hashCode().toUInt().toString(16)}"
+    }
+
+    private fun publishFace(
+        context: Context,
+        shortcutId: String,
+        title: String,
+        square: Bitmap,
+        sender: Person,
+        payload: String,
+    ) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N_MR1) return
+        try {
+            val label = if (title.length > 40) title.substring(0, 40) else title
+            val open = Intent(context, MainActivity::class.java)
+                .setAction(Intent.ACTION_VIEW)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(EXTRA_OPEN, payload)
+            val shortcut = ShortcutInfoCompat.Builder(context, shortcutId)
+                .setShortLabel(label)
+                .setLongLived(true)
+                .setRank(0)
+                .setIcon(IconCompat.createWithAdaptiveBitmap(square))
+                .setIntent(open)
+                .setPerson(sender)
+                .setCategories(setOf("android.shortcut.conversation"))
+                .setLocusId(LocusIdCompat(shortcutId))
+                .build()
+            ShortcutManagerCompat.pushDynamicShortcut(context, shortcut)
+            ShortcutManagerCompat.reportShortcutUsed(context, shortcutId)
+        } catch (_: Exception) {
+        }
     }
 
     private fun threadOf(payload: String): String? {
