@@ -53,10 +53,27 @@ class ChatImageStore {
   static Future<void> flush(void Function(Uint8List frame) send) async {
     final prefs = await SharedPreferences.getInstance();
     for (final item in _read(prefs)) {
-      final bytes = await load(item.id);
-      if (bytes == null) continue;
-      send(encodeChatPhotoFrame(item.threadId, item.id, bytes));
+      await sendPending(item.id, send);
     }
+  }
+
+  static Future<void> sendPending(
+    String id,
+    void Function(Uint8List frame) send,
+  ) async {
+    if (!_safe(id)) return;
+    final prefs = await SharedPreferences.getInstance();
+    _PendingPhoto? item;
+    for (final pending in _read(prefs)) {
+      if (pending.id == id) {
+        item = pending;
+        break;
+      }
+    }
+    if (item == null) return;
+    final bytes = await load(id);
+    if (bytes == null) return;
+    send(encodeChatPhotoFrame(item.threadId, item.id, bytes));
   }
 
   static Future<void> take(

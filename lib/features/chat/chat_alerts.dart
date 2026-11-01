@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:social_save/core/notifications/notification_service.dart';
@@ -8,8 +9,10 @@ import 'package:social_save/features/chat/chat_format.dart';
 import 'package:social_save/features/chat/chat_live.dart';
 import 'package:social_save/shared/routing/app_router.dart';
 
-/// A sound plus a notification. In the foreground the notification stays quiet
-/// so the alert sound is not played twice. In the background the channel sounds.
+/// A sound plus a notification. Android's system "alert" sound does nothing,
+/// so an open app plays the phone's notification tone itself and keeps the
+/// banner quiet. In the background the notification channel sounds. Windows
+/// only has a system beep, including when the window is in the background.
 void chatAlertNow({
   required String threadId,
   required String title,
@@ -17,7 +20,14 @@ void chatAlertNow({
 }) {
   final life = WidgetsBinding.instance.lifecycleState;
   final resumed = life == null || life == AppLifecycleState.resumed;
-  if (resumed) SystemSound.play(SystemSoundType.alert);
+  final android = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+  final windows = !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+  if (android && resumed) {
+    unawaited(_playPhoneTone());
+  }
+  if (windows) {
+    unawaited(SystemSound.play(SystemSoundType.alert));
+  }
   unawaited(
     NotificationService().showChat(
       threadId: threadId,
@@ -26,6 +36,14 @@ void chatAlertNow({
       sound: !resumed,
     ),
   );
+}
+
+Future<void> _playPhoneTone() async {
+  try {
+    await const MethodChannel(
+      'socialsave/media',
+    ).invokeMethod<void>('playNotificationSound');
+  } catch (_) {}
 }
 
 /// One inbox check for the whole app. The open chat list skips its own fetch

@@ -9,12 +9,21 @@ import 'package:social_save/features/chat/chat_live.dart';
 
 Future<void> runChatSocket(ChatLive live, int epoch) async {
   var delay = 1;
+  final photoTries = <String, int>{};
   if (epoch != live.epoch) return;
   live.deliveredPhoto = (id) {
+    photoTries.remove(id);
     unawaited(ChatImageStore.clear(id));
   };
   live.resendPhotos = () {
+    photoTries.clear();
     unawaited(ChatImageStore.flush(live.sendBinary));
+  };
+  live.resendPhoto = (id) {
+    final n = photoTries[id] ?? 0;
+    if (n >= 6) return;
+    photoTries[id] = n + 1;
+    unawaited(ChatImageStore.sendPending(id, live.sendBinary));
   };
   while (!live.stopped && epoch == live.epoch) {
     final token = await ChatSession.token();

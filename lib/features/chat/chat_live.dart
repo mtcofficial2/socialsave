@@ -47,7 +47,11 @@ class ChatLive {
   void Function()? _close;
   void Function(String id)? deliveredPhoto;
   void Function()? resendPhotos;
+  void Function(String id)? resendPhoto;
   DateTime? _typedAt;
+  String _typingThread = '';
+  bool _typingOn = false;
+  final Map<String, DateTime> _photoAsk = {};
 
   Stream<ChatLiveEvent> get events => _events.stream;
 
@@ -84,6 +88,17 @@ class ChatLive {
     _sendBinary = binary;
     _close = close;
     connected.value = true;
+    if (_typingOn && _typingThread.isNotEmpty) {
+      _typedAt = null;
+      sendText(
+        jsonEncode({
+          'type': 'typing',
+          'thread': _typingThread,
+          'on': true,
+        }),
+      );
+      _typedAt = DateTime.now();
+    }
   }
 
   void detach() {
@@ -99,6 +114,9 @@ class ChatLive {
 
   void typing(String threadId, {required bool on}) {
     if (threadId.isEmpty) return;
+    _typingThread = threadId;
+    _typingOn = on;
+    if (_sendText == null) return;
     if (!on) {
       _typedAt = null;
       sendText(jsonEncode({'type': 'typing', 'thread': threadId, 'on': false}));
@@ -113,6 +131,20 @@ class ChatLive {
     sendText(jsonEncode({'type': 'typing', 'thread': threadId, 'on': true}));
   }
 
+  /// Asks the sender to pass this picture again. The server does not keep it.
+  void wantPhoto(String threadId, String id) {
+    if (threadId.isEmpty || id.isEmpty || _sendText == null) return;
+    final now = DateTime.now();
+    final prev = _photoAsk[id];
+    if (prev != null && now.difference(prev) < const Duration(seconds: 4)) {
+      return;
+    }
+    _photoAsk[id] = now;
+    sendText(
+      jsonEncode({'type': 'photo-need', 'thread': threadId, 'id': id}),
+    );
+  }
+
   void onText(String raw) {
     Object? data;
     try {
@@ -125,7 +157,7 @@ class ChatLive {
     final threadId = (data['thread'] as String?)?.trim() ?? '';
     final named = data['from'] ?? data['username'];
     final from = named is String ? named.trim() : '';
-    final on = data['on'] == true;
+    final on = data['on'] == true || data['online'] == true;
     final id = (data['id'] as num?)?.toInt() ?? 0;
     final at = (data['lastSeen'] as num?)?.toInt() ?? 0;
     final photoId = type == 'photo-ok' || type == 'photo-wait'
@@ -144,7 +176,11 @@ class ChatLive {
       }
       revision.value++;
     }
-    if (type == 'photo-ok' && photoId.isNotEmpty) deliveredPhoto?.call(photoId);
+    if (type == 'photo-ok' && photoId.isNotEmpty) {
+      _photoAsk.remove(photoId);
+      deliveredPhoto?.call(photoId);
+    }
+    if (type == 'photo-wait' && photoId.isNotEmpty) resendPhoto?.call(photoId);
     if (type == 'presence' && on) resendPhotos?.call();
     if (_events.isClosed) return;
     _events.add(

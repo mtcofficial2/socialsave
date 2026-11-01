@@ -173,7 +173,12 @@ class _ChatThreadViewState extends State<ChatThreadView>
     if (_focus.hasFocus) _noteTyping();
   }
 
-  void _noteTyping() {
+  void _onTyped(String _) {
+    _noteTyping(force: true);
+  }
+
+  void _noteTyping({bool force = false}) {
+    if (!force && !_focus.hasFocus) return;
     final on = _text.text.trim().isNotEmpty;
     ChatLive.instance.typing(widget.threadId, on: on);
     _typingIdle?.cancel();
@@ -207,6 +212,13 @@ class _ChatThreadViewState extends State<ChatThreadView>
           _peerSeen = DateTime.fromMillisecondsSinceEpoch(event.at);
         }
       });
+      if (event.on) {
+        for (final message in _messages) {
+          if (!message.isPhoto || message.photo.isEmpty) continue;
+          if (message.localBytes != null) continue;
+          ChatLive.instance.wantPhoto(widget.threadId, message.photo);
+        }
+      }
       return;
     }
     if (event.threadId != widget.threadId) return;
@@ -847,6 +859,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     final body = Column(
       children: [
         AppBar(
+          toolbarHeight: 64,
           automaticallyImplyLeading: !widget.embedded,
           titleSpacing: widget.embedded ? 16 : 0,
           title: InkWell(
@@ -872,7 +885,15 @@ class _ChatThreadViewState extends State<ChatThreadView>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
                       if (subtitle.isNotEmpty)
                         Text(
                           subtitle,
@@ -952,6 +973,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
                           final bubble = _Bubble(
                             key: _keyFor(message.id),
                             message: message,
+                            threadId: widget.threadId,
                             mine: mine,
                             api: _api,
                             tick: chatTick(
@@ -1096,6 +1118,18 @@ class _ChatThreadViewState extends State<ChatThreadView>
                                   ],
                                 ),
                               ),
+                            if (peerTyping)
+                              const Padding(
+                                padding: EdgeInsets.only(left: 12, bottom: 4),
+                                child: Text(
+                                  'typing…',
+                                  style: TextStyle(
+                                    color: Color(0xFF25D366),
+                                    fontStyle: FontStyle.italic,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
                             Row(
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
@@ -1110,6 +1144,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
                                     child: TextField(
                                       controller: _text,
                                       focusNode: _focus,
+                                      onChanged: _onTyped,
                                       minLines: 1,
                                       maxLines: 5,
                                       textInputAction: _enterSends
@@ -1379,6 +1414,7 @@ class _Bubble extends StatelessWidget {
   const _Bubble({
     super.key,
     required this.message,
+    required this.threadId,
     required this.mine,
     required this.api,
     required this.tick,
@@ -1389,6 +1425,7 @@ class _Bubble extends StatelessWidget {
   });
 
   final ChatMessage message;
+  final String threadId;
   final bool mine;
   final ChatApi api;
   final String tick;
@@ -1456,7 +1493,10 @@ class _Bubble extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   ?quote,
-                  _ChatPicture(message: message),
+                  _ChatPicture(
+                    message: message,
+                    threadId: threadId,
+                  ),
                   if (caption.isNotEmpty && caption != 'Photo') ...[
                     const SizedBox(height: 4),
                     _LinkText(
@@ -1643,9 +1683,10 @@ class _Quote extends StatelessWidget {
 }
 
 class _ChatPicture extends StatelessWidget {
-  const _ChatPicture({required this.message});
+  const _ChatPicture({required this.message, required this.threadId});
 
   final ChatMessage message;
+  final String threadId;
 
   @override
   Widget build(BuildContext context) {
@@ -1678,10 +1719,19 @@ class _ChatPicture extends StatelessWidget {
           builder: (context, snapshot) {
             final bytes = snapshot.data;
             if (bytes == null || bytes.isEmpty) {
+              if (snapshot.connectionState == ConnectionState.done) {
+                ChatLive.instance.wantPhoto(threadId, id);
+              }
               return _frame(
                 const SizedBox(
                   height: 120,
-                  child: Center(child: Icon(Icons.image_outlined)),
+                  child: Center(
+                    child: SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
                 ),
               );
             }
@@ -1689,8 +1739,9 @@ class _ChatPicture extends StatelessWidget {
               Image.memory(
                 bytes,
                 fit: BoxFit.cover,
-                cacheWidth: 640,
                 gaplessPlayback: true,
+                errorBuilder: (context, error, stack) =>
+                    const Icon(Icons.image_outlined),
               ),
             );
           },

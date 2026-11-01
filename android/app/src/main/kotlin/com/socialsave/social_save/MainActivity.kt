@@ -11,6 +11,8 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.media.MediaScannerConnection
+import android.media.Ringtone
+import android.media.RingtoneManager
 import android.media.ThumbnailUtils
 import android.net.Uri
 import android.os.Build
@@ -48,6 +50,7 @@ class MainActivity : FlutterFragmentActivity() {
     private var pipWidth = 16
     private var pipHeight = 9
     private val io = Executors.newFixedThreadPool(3)
+    private var messageTone: Ringtone? = null
     private var backupResult: MethodChannel.Result? = null
     private var folderResult: MethodChannel.Result? = null
     private var phoneBody: PhoneBody? = null
@@ -462,6 +465,19 @@ class MainActivity : FlutterFragmentActivity() {
         return fragment
     }
 
+    /** The phone's own notification tone. Android plays no sound for a system alert. */
+    private fun playNotificationSound() {
+        try {
+            messageTone?.stop()
+            val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                ?: Settings.System.DEFAULT_NOTIFICATION_URI
+            val tone = RingtoneManager.getRingtone(applicationContext, uri) ?: return
+            messageTone = tone
+            tone.play()
+        } catch (_: Exception) {
+        }
+    }
+
     /** Back on the first screen while connected: go to the background instead of closing. */
     override fun finish() {
         if (SessionBridge.active && isTaskRoot && moveTaskToBack(true)) return
@@ -483,6 +499,10 @@ class MainActivity : FlutterFragmentActivity() {
         DownloadEvents.channel = channel
         channel?.setMethodCallHandler { call, result ->
             when (call.method) {
+                "playNotificationSound" -> {
+                    playNotificationSound()
+                    result.success(true)
+                }
                 "nearbyLock" -> {
                     // Lets UDP broadcast beacons from other SocialSave apps through.
                     try {

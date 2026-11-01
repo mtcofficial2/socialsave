@@ -213,6 +213,8 @@ func (c *chatRoom) onLiveText(user chatUser, payload []byte) {
 		c.liveTyping(user, body.Thread, body.On)
 	case "photo-have":
 		c.notePhotoHave(user, body.Thread, body.ID)
+	case "photo-need":
+		c.notePhotoNeed(user, body.Thread, body.ID)
 	}
 }
 
@@ -269,6 +271,35 @@ func (c *chatRoom) notePhotoHave(user chatUser, threadID, photoID string) {
 		return
 	}
 	c.live.send(sender, body)
+}
+
+// notePhotoNeed asks the sender to pass the picture again. The bytes are still not stored.
+func (c *chatRoom) notePhotoNeed(user chatUser, threadID, photoID string) {
+	if c.live == nil || threadID == "" || photoID == "" {
+		return
+	}
+	c.mu.Lock()
+	thread := c.threadLocked(threadID)
+	if thread == nil || (thread.A != user.ID && thread.B != user.ID) {
+		c.mu.Unlock()
+		return
+	}
+	sender := ""
+	for i := len(thread.Messages) - 1; i >= 0; i-- {
+		if thread.Messages[i].Photo == photoID {
+			sender = thread.Messages[i].From
+			break
+		}
+	}
+	c.mu.Unlock()
+	if sender == "" || sender == user.ID {
+		return
+	}
+	note, err := json.Marshal(map[string]any{"type": "photo-wait", "thread": threadID, "id": photoID})
+	if err != nil {
+		return
+	}
+	c.live.send(sender, note)
 }
 
 // relayPhoto forwards a picture to the other phone and does not keep the bytes.
