@@ -229,8 +229,8 @@ class NotificationService {
         _onResponse(opened);
       }
     } catch (_) {
-      // Desktop notifications are best-effort; never block app start.
-      if (defaultTargetPlatform != TargetPlatform.windows) rethrow;
+      // A missing icon or a slow plugin must not leave the app on the
+      // opening screen. Notifications stay quiet until the next launch.
     }
     _initialized = true;
   }
