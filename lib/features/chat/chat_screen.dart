@@ -197,7 +197,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         notify: true,
         alert: (item, body) {
           final title = item.username.isEmpty ? 'New message' : item.username;
-          chatAlertNow(threadId: item.id, title: title, body: body);
+          chatAlertNow(
+            threadId: item.id,
+            title: title,
+            body: body,
+            username: item.username,
+            photoRev: item.photoRev,
+          );
         },
       );
       setState(() {

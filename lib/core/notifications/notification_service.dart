@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:social_save/core/config/env_config.dart';
+import 'package:social_save/core/notifications/notification_photo_io.dart'
+    if (dart.library.html) 'package:social_save/core/notifications/notification_photo_stub.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 
 const _notificationLogo = DrawableResourceAndroidBitmap('ic_notification_logo');
@@ -57,6 +60,24 @@ Future<void> sendChatNotificationReply(String payload, String text) async {
     }
     await NotificationService().showReplyFailed();
   }
+}
+
+Future<List<WindowsImage>> _windowsFace(Uint8List? picture, String name) async {
+  if (picture == null || picture.isEmpty) return _windowsLogo();
+  try {
+    final path = await saveNotificationPhoto(picture, name);
+    if (path != null && path.isNotEmpty) {
+      return [
+        WindowsImage(
+          Uri.file(path),
+          altText: name,
+          placement: WindowsImagePlacement.appLogoOverride,
+          crop: WindowsImageCrop.circle,
+        ),
+      ];
+    }
+  } catch (_) {}
+  return _windowsLogo();
 }
 
 List<WindowsImage> _windowsLogo() {
@@ -173,7 +194,9 @@ class NotificationService {
     String? payload,
     List<WindowsInput> inputs = const [],
     List<WindowsAction> actions = const [],
+    List<WindowsImage>? images,
   }) async {
+    final shown = images ?? _windowsLogo();
     try {
       await _plugin.show(
         id,
@@ -181,7 +204,7 @@ class NotificationService {
         body,
         NotificationDetails(
           windows: WindowsNotificationDetails(
-            images: _windowsLogo(),
+            images: shown,
             inputs: inputs,
             actions: actions,
           ),
@@ -189,6 +212,24 @@ class NotificationService {
         payload: payload,
       );
     } catch (_) {
+      if (images != null) {
+        try {
+          await _plugin.show(
+            id,
+            title,
+            body,
+            NotificationDetails(
+              windows: WindowsNotificationDetails(
+                images: _windowsLogo(),
+                inputs: inputs,
+                actions: actions,
+              ),
+            ),
+            payload: payload,
+          );
+          return;
+        } catch (_) {}
+      }
       try {
         await _plugin.show(
           id,
@@ -308,6 +349,7 @@ class NotificationService {
     required String title,
     required String body,
     bool sound = true,
+    Uint8List? picture,
   }) async {
     if (kIsWeb || threadId.isEmpty) return;
     if (!_initialized) await init();
@@ -325,6 +367,7 @@ class NotificationService {
           'sound': sound,
           'api': EnvConfig.apiBaseUrl,
           'token': await ChatSession.token() ?? '',
+          if (picture != null && picture.isNotEmpty) 'picture': picture,
         });
         return;
       } catch (_) {}
@@ -341,6 +384,7 @@ class NotificationService {
         actions: [
           WindowsAction(content: 'Reply', arguments: payload, inputId: 'reply'),
         ],
+        images: await _windowsFace(picture, title),
       );
       return;
     }
@@ -354,7 +398,9 @@ class NotificationService {
           'Chats',
           channelDescription: 'New messages',
           icon: 'ic_notification',
-          largeIcon: _notificationLogo,
+          largeIcon: picture != null && picture.isNotEmpty
+              ? ByteArrayAndroidBitmap(picture)
+              : _notificationLogo,
           importance: Importance.high,
           priority: Priority.high,
           playSound: sound,

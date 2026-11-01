@@ -834,6 +834,27 @@ class ChatPhotos {
     _bytes[_key(username, rev)] = bytes;
   }
 
+  /// Bytes for a chat notification. Uses the known revision, then any photo
+  /// already on this device, then the current profile from the server.
+  static Future<Uint8List?> forAlert(String username, int rev) async {
+    if (rev > 0) return fetch(username, rev);
+    final name = username.trim();
+    if (name.isEmpty) return null;
+    final prefix = '${name.toLowerCase()}:';
+    for (final entry in _bytes.entries) {
+      if (entry.key.startsWith(prefix) && entry.value.isNotEmpty) {
+        return entry.value;
+      }
+    }
+    try {
+      final bytes = await _api.photo(name);
+      if (bytes != null && bytes.isNotEmpty) _bytes['$prefix$rev'] = bytes;
+      return bytes;
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<Uint8List?> fetch(String username, int rev) {
     final hit = cached(username, rev);
     if (hit != null) return Future<Uint8List?>.value(hit);

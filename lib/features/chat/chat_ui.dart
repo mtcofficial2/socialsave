@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/features/chat/chat_api.dart';
@@ -309,6 +310,39 @@ class _ChatListTileState extends State<ChatListTile> {
     });
   }
 
+  Future<void> _menu(TapDownDetails details) async {
+    final box = Overlay.of(context).context.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final choice = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        details.globalPosition & const Size(1, 1),
+        Offset.zero & box.size,
+      ),
+      items: [
+        PopupMenuItem<String>(
+          value: 'archive',
+          child: Text(widget.archived ? 'Unarchive' : 'Archive'),
+        ),
+        PopupMenuItem<String>(
+          value: 'mute',
+          child: Text(widget.muted ? 'Unmute' : 'Mute'),
+        ),
+        const PopupMenuItem<String>(value: 'delete', child: Text('Delete')),
+      ],
+    );
+    if (!mounted || choice == null) return;
+    _close();
+    switch (choice) {
+      case 'archive':
+        widget.onArchive();
+      case 'mute':
+        widget.onMute();
+      case 'delete':
+        widget.onDelete();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final dark = ChatUiTokens.dark(context);
@@ -361,13 +395,15 @@ class _ChatListTileState extends State<ChatListTile> {
               ),
             ),
           ),
-          AnimatedContainer(
-            duration: _dragging
-                ? Duration.zero
-                : const Duration(milliseconds: 160),
-            curve: Curves.easeOut,
-            transform: Matrix4.translationValues(_drag, 0, 0),
+          Positioned.fill(
             child: GestureDetector(
+              // A mouse click was counted as a swipe and uncovered Archive,
+              // Mute, and Delete. Only a finger can slide the row.
+              supportedDevices: const <PointerDeviceKind>{
+                PointerDeviceKind.touch,
+                PointerDeviceKind.stylus,
+                PointerDeviceKind.invertedStylus,
+              },
               onHorizontalDragStart: (_) => _dragging = true,
               onHorizontalDragUpdate: (details) {
                 setState(() {
@@ -381,22 +417,30 @@ class _ChatListTileState extends State<ChatListTile> {
                   _drag = _drag < -_reveal / 2 ? -_reveal : 0;
                 });
               },
-              child: Material(
-                color: rowColor,
-                child: InkWell(
-                  onTap: () {
-                    if (_drag != 0) {
-                      _close();
-                      return;
-                    }
-                    widget.onOpen();
-                  },
-                  child: _RowBody(
-                    item: widget.item,
-                    me: widget.me,
-                    live: _live,
-                    avatar: widget.avatar,
-                    muted: widget.muted,
+              child: AnimatedContainer(
+                duration: _dragging
+                    ? Duration.zero
+                    : const Duration(milliseconds: 160),
+                curve: Curves.easeOut,
+                transform: Matrix4.translationValues(_drag, 0, 0),
+                child: Material(
+                  color: rowColor,
+                  child: InkWell(
+                    onTap: () {
+                      if (_drag != 0) {
+                        _close();
+                        return;
+                      }
+                      widget.onOpen();
+                    },
+                    onSecondaryTapDown: _menu,
+                    child: _RowBody(
+                      item: widget.item,
+                      me: widget.me,
+                      live: _live,
+                      avatar: widget.avatar,
+                      muted: widget.muted,
+                    ),
                   ),
                 ),
               ),

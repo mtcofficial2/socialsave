@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -19,6 +20,8 @@ void chatAlertNow({
   required String threadId,
   required String title,
   required String body,
+  String username = '',
+  int photoRev = 0,
 }) {
   final life = WidgetsBinding.instance.lifecycleState;
   final resumed = life == null || life == AppLifecycleState.resumed;
@@ -31,12 +34,40 @@ void chatAlertNow({
     unawaited(SystemSound.play(SystemSoundType.alert));
   }
   unawaited(
-    NotificationService().showChat(
+    _postChatAlert(
       threadId: threadId,
       title: title,
       body: body,
+      username: username.trim().isEmpty ? title : username.trim(),
+      photoRev: photoRev,
       sound: !resumed,
     ),
+  );
+}
+
+Future<void> _postChatAlert({
+  required String threadId,
+  required String title,
+  required String body,
+  required String username,
+  required int photoRev,
+  required bool sound,
+}) async {
+  Uint8List? picture;
+  if (username.isNotEmpty && username != 'New message') {
+    try {
+      picture = await ChatPhotos.forAlert(
+        username,
+        photoRev,
+      ).timeout(const Duration(seconds: 2));
+    } catch (_) {}
+  }
+  await NotificationService().showChat(
+    threadId: threadId,
+    title: title,
+    body: body,
+    sound: sound,
+    picture: picture,
   );
 }
 
@@ -55,11 +86,13 @@ class ChatAlerts {
   static String openThread = '';
   static bool seeded = false;
   static final Map<String, int> seen = {};
+  static final Map<String, int> photoRevs = {};
 
   static void reset() {
     lastInbox = null;
     seeded = false;
     seen.clear();
+    photoRevs.clear();
     openThread = '';
     ChatLive.instance.stop();
   }
@@ -80,6 +113,10 @@ class ChatAlerts {
     void Function(ChatThreadSummary item, String body)? alert,
   }) {
     lastInbox = DateTime.now();
+    for (final item in items) {
+      if (item.id.isEmpty || item.photoRev <= 0) continue;
+      photoRevs[item.id] = item.photoRev;
+    }
     if (!seeded) {
       for (final item in items) {
         if (item.id.isEmpty) continue;
@@ -207,6 +244,8 @@ class _ChatAlertHostState extends State<ChatAlertHost>
       threadId: threadId,
       title: title,
       body: chatAlertBody(message.text),
+      username: message.name,
+      photoRev: ChatAlerts.photoRevs[threadId] ?? 0,
     );
   }
 
@@ -254,7 +293,13 @@ class _ChatAlertHostState extends State<ChatAlertHost>
         notify: true,
         alert: (item, body) {
           final title = item.username.isEmpty ? 'New message' : item.username;
-          chatAlertNow(threadId: item.id, title: title, body: body);
+          chatAlertNow(
+            threadId: item.id,
+            title: title,
+            body: body,
+            username: item.username,
+            photoRev: item.photoRev,
+          );
         },
       );
     } catch (_) {

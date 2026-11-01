@@ -6,7 +6,12 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -120,9 +125,10 @@ object ChatReply {
             .setShowsUserInterface(false)
             .build()
         val logo = BitmapFactory.decodeResource(context.resources, R.drawable.ic_notification_logo)
+        val face = faceOf(call.argument<ByteArray>("picture"))
         val notification = NotificationCompat.Builder(context, if (sound) channelLoud else channelQuiet)
             .setSmallIcon(R.drawable.ic_notification)
-            .setLargeIcon(logo)
+            .setLargeIcon(face ?: logo)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
@@ -178,6 +184,25 @@ object ChatReply {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .build()
         NotificationManagerCompat.from(context).notify(failedId, notification)
+    }
+
+    private fun faceOf(bytes: ByteArray?): Bitmap? {
+        if (bytes == null || bytes.isEmpty()) return null
+        val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+        val side = minOf(decoded.width, decoded.height)
+        if (side <= 0) return null
+        val left = (decoded.width - side) / 2
+        val top = (decoded.height - side) / 2
+        val square = Bitmap.createBitmap(decoded, left, top, side, side)
+        val size = 192
+        val scaled = if (side == size) square else Bitmap.createScaledBitmap(square, size, size, true)
+        val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
+        paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
+        canvas.drawBitmap(scaled, 0f, 0f, paint)
+        return out
     }
 
     private fun threadOf(payload: String): String? {
