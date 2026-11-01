@@ -1,5 +1,88 @@
+import 'dart:async';
+import 'dart:ui';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:social_save/features/chat/chat_api.dart';
+
+const _notificationLogo = DrawableResourceAndroidBitmap('ic_notification_logo');
+
+/// Reply typed into a chat notification. Works from the background isolate.
+@pragma('vm:entry-point')
+void chatNotificationBackground(NotificationResponse response) {
+  DartPluginRegistrant.ensureInitialized();
+  final text = response.input?.trim() ?? '';
+  final payload = response.payload ?? '';
+  if (response.actionId != 'reply' || text.isEmpty) return;
+  unawaited(sendChatNotificationReply(payload, text));
+}
+
+String? _recentReplyKey;
+DateTime? _recentReplyAt;
+
+/// Chat payload and typed text from a notification tap.
+///
+/// The text is null when the person only opened the chat.
+@visibleForTesting
+(String?, String?) chatNotificationReplyOf(NotificationResponse response) {
+  return (_chatPayload(response), _replyText(response));
+}
+
+/// Sends [text] into the chat named by a `chat|threadId|name` payload.
+Future<void> sendChatNotificationReply(String payload, String text) async {
+  final clean = text.trim();
+  final parts = payload.split('|');
+  if (parts.length < 2 || parts.first != 'chat') return;
+  final id = parts[1].trim();
+  if (id.isEmpty || clean.isEmpty) return;
+  final key = '$id|$clean';
+  final now = DateTime.now();
+  if (_recentReplyKey == key &&
+      _recentReplyAt != null &&
+      now.difference(_recentReplyAt!) < const Duration(seconds: 4)) {
+    return;
+  }
+  _recentReplyKey = key;
+  _recentReplyAt = now;
+  try {
+    final sent = await ChatApi().send(id, clean);
+    final keep = NotificationService.onReplySent;
+    if (keep != null) await keep(id, sent);
+  } catch (_) {
+    if (_recentReplyKey == key) {
+      _recentReplyKey = null;
+      _recentReplyAt = null;
+    }
+    await NotificationService().showReplyFailed();
+  }
+}
+
+List<WindowsImage> _windowsLogo() {
+  return [
+    WindowsImage(
+      WindowsImage.getAssetUri('assets/brand/icon_192.png'),
+      altText: 'Social Save',
+      placement: WindowsImagePlacement.appLogoOverride,
+      crop: WindowsImageCrop.circle,
+    ),
+  ];
+}
+
+String? _replyText(NotificationResponse response) {
+  final typed = response.input?.trim() ?? '';
+  if (typed.isNotEmpty) return typed;
+  final raw = response.data['reply'];
+  if (raw is String && raw.trim().isNotEmpty) return raw.trim();
+  return null;
+}
+
+String? _chatPayload(NotificationResponse response) {
+  final payload = response.payload ?? '';
+  if (payload.startsWith('chat|')) return payload;
+  final action = response.actionId ?? '';
+  if (action.startsWith('chat|')) return action;
+  return null;
+}
 
 class NotificationService {
   NotificationService({FlutterLocalNotificationsPlugin? plugin})
@@ -16,26 +99,39 @@ class NotificationService {
 
   /// A chat toast was tapped. The payload is chat|threadId|username.
   static void Function(String payload)? onChatOpen;
+  static String? _pendingChat;
+
+  /// A reply typed into a notification was accepted by the server.
+  /// The background isolate does not set this, so only the open app saves it.
+  static Future<void> Function(String threadId, ChatMessage message)?
+  onReplySent;
+
+  /// Remembers [open] and delivers a tap that arrived before the chat host.
+  static void attachChatOpen(void Function(String payload) open) {
+    onChatOpen = open;
+    final pending = _pendingChat;
+    _pendingChat = null;
+    if (pending != null) open(pending);
+  }
+
+  /// Drops [open] when that host goes away.
+  static void detachChatOpen(void Function(String payload) open) {
+    if (onChatOpen == open) onChatOpen = null;
+  }
 
   /// Windows toast: a phone was plugged in by USB; "Share files" opens the session screen.
   Future<void> showUsbShare(String name) async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.windows) return;
     if (!_initialized) await init();
-    try {
-      await _plugin.show(
-        0x5553b,
-        'Connected to $name by USB',
-        'Share files both ways over the cable.',
-        const NotificationDetails(
-          windows: WindowsNotificationDetails(
-            actions: [
-              WindowsAction(content: 'Share files', arguments: 'usbshare|open'),
-            ],
-          ),
-        ),
-        payload: 'usbshare|open',
-      );
-    } catch (_) {}
+    await _showWindows(
+      0x5553b,
+      'Connected to $name by USB',
+      'Share files both ways over the cable.',
+      payload: 'usbshare|open',
+      actions: [
+        const WindowsAction(content: 'Share files', arguments: 'usbshare|open'),
+      ],
+    );
   }
 
   /// Windows toast with Download / Dismiss buttons for a copied video link.
@@ -45,22 +141,57 @@ class NotificationService {
   }) async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.windows) return;
     if (!_initialized) await init();
+    await _showWindows(
+      url.hashCode & 0x7fffffff,
+      'Download copied video?',
+      subtitle,
+      payload: url,
+      actions: [
+        WindowsAction(content: 'Download', arguments: 'download|$url'),
+        WindowsAction(content: 'Dismiss', arguments: 'dismiss|$url'),
+      ],
+    );
+  }
+
+  /// Logo first. A missing picture still shows the toast and its buttons.
+  Future<void> _showWindows(
+    int id,
+    String title,
+    String body, {
+    String? payload,
+    List<WindowsInput> inputs = const [],
+    List<WindowsAction> actions = const [],
+  }) async {
     try {
       await _plugin.show(
-        url.hashCode & 0x7fffffff,
-        'Download copied video?',
-        subtitle,
+        id,
+        title,
+        body,
         NotificationDetails(
           windows: WindowsNotificationDetails(
-            actions: [
-              WindowsAction(content: 'Download', arguments: 'download|$url'),
-              WindowsAction(content: 'Dismiss', arguments: 'dismiss|$url'),
-            ],
+            images: _windowsLogo(),
+            inputs: inputs,
+            actions: actions,
           ),
         ),
-        payload: url,
+        payload: payload,
       );
-    } catch (_) {}
+    } catch (_) {
+      try {
+        await _plugin.show(
+          id,
+          title,
+          body,
+          NotificationDetails(
+            windows: WindowsNotificationDetails(
+              inputs: inputs,
+              actions: actions,
+            ),
+          ),
+          payload: payload,
+        );
+      } catch (_) {}
+    }
   }
 
   Future<void> init() async {
@@ -68,7 +199,7 @@ class NotificationService {
     if (_initialized) {
       return;
     }
-    const android = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const android = AndroidInitializationSettings('ic_notification');
     const ios = DarwinInitializationSettings(
       requestAlertPermission: false,
       requestBadgePermission: false,
@@ -87,22 +218,16 @@ class NotificationService {
               iOS: ios,
               windows: windows,
             ),
-            onDidReceiveNotificationResponse: (r) {
-              final probe = (r.actionId ?? '').isNotEmpty
-                  ? r.actionId!
-                  : (r.payload ?? '');
-              if (probe.startsWith('usbshare')) {
-                onUsbShare?.call();
-                return;
-              }
-              if (probe.startsWith('chat|')) {
-                onChatOpen?.call(probe);
-                return;
-              }
-              onResponse?.call(r.actionId, r.payload);
-            },
+            onDidReceiveNotificationResponse: _onResponse,
+            onDidReceiveBackgroundNotificationResponse:
+                chatNotificationBackground,
           )
           .timeout(const Duration(seconds: 3));
+      final launch = await _plugin.getNotificationAppLaunchDetails();
+      final opened = launch?.notificationResponse;
+      if (launch?.didNotificationLaunchApp == true && opened != null) {
+        _onResponse(opened);
+      }
     } catch (_) {
       // Desktop notifications are best-effort; never block app start.
       if (defaultTargetPlatform != TargetPlatform.windows) rethrow;
@@ -125,6 +250,36 @@ class NotificationService {
     await ios?.requestPermissions(alert: true, badge: true, sound: true);
   }
 
+  /// Shown when a reply typed into a notification did not reach the server.
+  Future<void> showReplyFailed() async {
+    if (kIsWeb) return;
+    if (!_initialized) await init();
+    const body = 'Open the chat and send it again.';
+    if (defaultTargetPlatform == TargetPlatform.windows) {
+      await _showWindows(0x52454641, 'Message not sent', body);
+      return;
+    }
+    try {
+      await _plugin.show(
+        0x52454641,
+        'Message not sent',
+        body,
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'chats_v2',
+            'Chats',
+            channelDescription: 'New messages',
+            icon: 'ic_notification',
+            largeIcon: _notificationLogo,
+            importance: Importance.high,
+            priority: Priority.high,
+          ),
+          iOS: DarwinNotificationDetails(presentAlert: true),
+        ),
+      );
+    } catch (_) {}
+  }
+
   Future<void> showChat({
     required String threadId,
     required String title,
@@ -136,9 +291,18 @@ class NotificationService {
     final payload = 'chat|$threadId|$title';
     final id = threadId.hashCode & 0x7fffffff;
     if (defaultTargetPlatform == TargetPlatform.windows) {
-      try {
-        await _plugin.show(id, title, body, null, payload: payload);
-      } catch (_) {}
+      await _showWindows(
+        id,
+        title,
+        body,
+        payload: payload,
+        inputs: const [
+          WindowsTextInput(id: 'reply', placeHolderContent: 'Message'),
+        ],
+        actions: [
+          WindowsAction(content: 'Reply', arguments: payload, inputId: 'reply'),
+        ],
+      );
       return;
     }
     await _plugin.show(
@@ -150,10 +314,26 @@ class NotificationService {
           sound ? 'chats_v2' : 'chats_quiet',
           'Chats',
           channelDescription: 'New messages',
+          icon: 'ic_notification',
+          largeIcon: _notificationLogo,
           importance: Importance.high,
           priority: Priority.high,
           playSound: sound,
           enableVibration: sound,
+          category: AndroidNotificationCategory.message,
+          actions: const <AndroidNotificationAction>[
+            AndroidNotificationAction(
+              'reply',
+              'Reply',
+              showsUserInterface: false,
+              cancelNotification: true,
+              allowGeneratedReplies: true,
+              semanticAction: SemanticAction.reply,
+              inputs: <AndroidNotificationActionInput>[
+                AndroidNotificationActionInput(label: 'Message'),
+              ],
+            ),
+          ],
         ),
         iOS: DarwinNotificationDetails(presentSound: sound, presentAlert: true),
       ),
@@ -170,14 +350,7 @@ class NotificationService {
       await init();
     }
     if (defaultTargetPlatform == TargetPlatform.windows) {
-      try {
-        await _plugin.show(
-          id.hashCode & 0x7fffffff,
-          'Download complete',
-          title,
-          null,
-        );
-      } catch (_) {}
+      await _showWindows(id.hashCode & 0x7fffffff, 'Download complete', title);
       return;
     }
     await _plugin.show(
@@ -189,6 +362,8 @@ class NotificationService {
           'downloads',
           'Downloads',
           channelDescription: 'Finished SocialSave downloads',
+          icon: 'ic_notification',
+          largeIcon: _notificationLogo,
           importance: Importance.defaultImportance,
           priority: Priority.defaultPriority,
         ),
@@ -206,14 +381,7 @@ class NotificationService {
       await init();
     }
     if (defaultTargetPlatform == TargetPlatform.windows) {
-      try {
-        await _plugin.show(
-          id.hashCode & 0x7fffffff,
-          'Download failed',
-          title,
-          null,
-        );
-      } catch (_) {}
+      await _showWindows(id.hashCode & 0x7fffffff, 'Download failed', title);
       return;
     }
     await _plugin.show(
@@ -225,10 +393,47 @@ class NotificationService {
           'downloads',
           'Downloads',
           channelDescription: 'Finished SocialSave downloads',
+          icon: 'ic_notification',
+          largeIcon: _notificationLogo,
           importance: Importance.defaultImportance,
         ),
         iOS: DarwinNotificationDetails(),
       ),
     );
+  }
+
+  static void _onResponse(NotificationResponse response) {
+    final probe = (response.actionId ?? '').isNotEmpty
+        ? response.actionId!
+        : (response.payload ?? '');
+    if (probe.startsWith('usbshare')) {
+      onUsbShare?.call();
+      return;
+    }
+    final payload = _chatPayload(response);
+    final reply = _replyText(response);
+    if (payload != null && reply != null) {
+      unawaited(() async {
+        await sendChatNotificationReply(payload, reply);
+        if (defaultTargetPlatform == TargetPlatform.windows) {
+          _openChat(payload);
+        }
+      }());
+      return;
+    }
+    if (payload != null) {
+      _openChat(payload);
+      return;
+    }
+    onResponse?.call(response.actionId, response.payload);
+  }
+
+  static void _openChat(String payload) {
+    final open = onChatOpen;
+    if (open == null) {
+      _pendingChat = payload;
+      return;
+    }
+    open(payload);
   }
 }

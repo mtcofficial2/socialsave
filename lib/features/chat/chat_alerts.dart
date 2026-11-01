@@ -124,7 +124,8 @@ class _ChatAlertHostState extends State<ChatAlertHost>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    NotificationService.onChatOpen = _open;
+    NotificationService.attachChatOpen(_open);
+    NotificationService.onReplySent = _keep;
     ChatLive.instance.start();
     unawaited(ChatInboxFilter.ensure());
     _live = ChatLive.instance.events.listen(_onLive);
@@ -140,8 +141,9 @@ class _ChatAlertHostState extends State<ChatAlertHost>
     WidgetsBinding.instance.removeObserver(this);
     _poll?.cancel();
     _live?.cancel();
-    if (NotificationService.onChatOpen == _open) {
-      NotificationService.onChatOpen = null;
+    NotificationService.detachChatOpen(_open);
+    if (NotificationService.onReplySent == _keep) {
+      NotificationService.onReplySent = null;
     }
     super.dispose();
   }
