@@ -325,7 +325,10 @@ class NotificationService {
             AndroidNotificationAction(
               'reply',
               'Reply',
-              showsUserInterface: false,
+              // Opening the app sends the reply on the running chat connection.
+              // A background reply keeps Android's spinner up and the message
+              // never leaves.
+              showsUserInterface: true,
               cancelNotification: true,
               allowGeneratedReplies: true,
               semanticAction: SemanticAction.reply,
@@ -413,12 +416,8 @@ class NotificationService {
     final payload = _chatPayload(response);
     final reply = _replyText(response);
     if (payload != null && reply != null) {
-      unawaited(() async {
-        await sendChatNotificationReply(payload, reply);
-        if (defaultTargetPlatform == TargetPlatform.windows) {
-          _openChat(payload);
-        }
-      }());
+      _openChat(payload);
+      unawaited(sendChatNotificationReply(payload, reply));
       return;
     }
     if (payload != null) {
