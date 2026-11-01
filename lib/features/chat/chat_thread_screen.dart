@@ -10,6 +10,7 @@ import 'package:social_save/features/chat/chat_alerts.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_drafts.dart';
 import 'package:social_save/features/chat/chat_format.dart';
+import 'package:social_save/features/chat/chat_history.dart';
 import 'package:social_save/features/chat/chat_image_store.dart';
 import 'package:social_save/features/chat/chat_link.dart';
 import 'package:social_save/features/chat/chat_live.dart';
@@ -212,6 +213,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
           _peerSeen = DateTime.fromMillisecondsSinceEpoch(event.at);
         }
       });
+      _remember();
       if (event.on) {
         for (final message in _messages) {
           if (!message.isPhoto || message.photo.isEmpty) continue;
@@ -228,6 +230,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     }
     if (event.type == 'delivered' && event.id > _peerDelivered) {
       setState(() => _peerDelivered = event.id);
+      _remember();
       return;
     }
     if (event.type == 'read' && event.id > 0) {
@@ -235,7 +238,33 @@ class _ChatThreadViewState extends State<ChatThreadView>
         if (event.id > _peerRead) _peerRead = event.id;
         if (event.id > _peerDelivered) _peerDelivered = event.id;
       });
+      _remember();
     }
+  }
+
+  List<ChatMessage> _mergeOpen(List<ChatMessage> saved, List<ChatMessage> live) {
+    if (live.isEmpty) return saved;
+    final ids = {for (final item in saved) item.id};
+    return [
+      ...saved,
+      for (final item in live)
+        if (!ids.contains(item.id)) item,
+    ];
+  }
+
+  void _remember() {
+    if (_me.isEmpty || widget.threadId.isEmpty) return;
+    unawaited(
+      ChatHistory.saveLog(
+        username: _me,
+        threadId: widget.threadId,
+        messages: _messages,
+        delivered: _peerDelivered,
+        read: _peerRead,
+        seen: _peerSeen,
+        photoRev: _peerPhoto,
+      ),
+    );
   }
 
   GlobalKey _keyFor(int id) => _rowKeys.putIfAbsent(id, GlobalKey.new);
@@ -289,6 +318,34 @@ class _ChatThreadViewState extends State<ChatThreadView>
         _error = 'That chat was not found.';
       });
       return;
+    }
+    final savedLog = _me.isEmpty
+        ? null
+        : await ChatHistory.log(_me, widget.threadId);
+    if (!mounted) return;
+    if (savedLog != null && savedLog.messages.isNotEmpty) {
+      final merged = _mergeOpen(savedLog.messages, _messages);
+      var after = _after;
+      var seq = _localSeq;
+      for (final message in merged) {
+        if (message.id > after) after = message.id;
+        if (message.id < seq) seq = message.id;
+      }
+      setState(() {
+        _messages = merged;
+        _after = after;
+        _localSeq = seq;
+        _peerDelivered = savedLog.delivered;
+        _peerRead = savedLog.read;
+        _peerSeen = savedLog.seen;
+        _peerPhoto = savedLog.photoRev;
+        _peerOnline = false;
+        _starting = false;
+        _error = null;
+      });
+      _jump(animate: false);
+      _remember();
+      unawaited(_noteRead());
     }
     await _refresh();
     if (!mounted || widget.threadId.isEmpty) return;
@@ -366,6 +423,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       final changed = fresh.isNotEmpty || base.length != _messages.length;
       if (!changed && !_starting) {
         if (presenceChanged || _error != null) setState(() => _error = null);
+        if (presenceChanged) _remember();
         unawaited(_noteRead());
         return;
       }
@@ -389,12 +447,13 @@ class _ChatThreadViewState extends State<ChatThreadView>
         }
       });
       if (stick) _jump(animate: !wasStarting && fresh.isNotEmpty);
+      _remember();
       unawaited(_noteRead());
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        _error = chatErrorText(error);
         _starting = false;
+        _error = _messages.isEmpty ? chatErrorText(error) : null;
       });
     } finally {
       _refreshing = false;
@@ -519,6 +578,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     });
     if (isNew && stick) _jump(animate: true);
     if (isNew && !mine) unawaited(_noteRead());
+    _remember();
   }
 
   Future<void> _pickPhoto() async {
@@ -656,6 +716,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
           if (item.id == id) item.copyWith(status: status) else item,
       ];
     });
+    _remember();
   }
 
   void _replaceLocal(int localId, ChatMessage message) {
@@ -665,6 +726,10 @@ class _ChatThreadViewState extends State<ChatThreadView>
       if (item.id == localId) local = item;
     }
     final merged = local == null ? message : message.withQuoteFrom(local);
+    final bytes = local?.localBytes;
+    if (merged.voice.isNotEmpty && bytes != null && bytes.isNotEmpty) {
+      unawaited(ChatVoiceFiles.save(merged.voice, merged.voiceType, bytes));
+    }
     final next = <ChatMessage>[];
     for (final item in _messages) {
       if (item.id == merged.id) continue;
@@ -680,6 +745,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     });
     _jump(animate: true);
     unawaited(_noteRead());
+    _remember();
   }
 
   void _replyTo(ChatMessage message) {
@@ -709,6 +775,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     });
     _jump(animate: true);
     unawaited(_noteRead());
+    _remember();
   }
 
   Future<void> _startVoice() async {

@@ -6,6 +6,7 @@ import 'package:social_save/features/chat/chat_alerts.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_drafts.dart';
 import 'package:social_save/features/chat/chat_format.dart';
+import 'package:social_save/features/chat/chat_history.dart';
 import 'package:social_save/features/chat/chat_live.dart';
 import 'package:social_save/features/chat/chat_profile.dart';
 import 'package:social_save/features/chat/chat_thread_screen.dart';
@@ -99,11 +100,27 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       });
       return;
     }
+    final username = await ChatSession.username();
+    final contact = await ChatSession.contact();
+    final cached = username.isEmpty
+        ? const <ChatThreadSummary>[]
+        : await ChatHistory.threads(username);
+    if (!mounted) return;
     setState(() {
       _signedIn = true;
-      _booting = true;
       _error = null;
+      if (username.isNotEmpty) {
+        _user = _storedUser(username, contact);
+        _threads = cached;
+        _booting = false;
+      } else {
+        _booting = true;
+      }
     });
+    if (username.isNotEmpty) {
+      ChatLive.instance.start();
+      _startPoll();
+    }
     try {
       final user = await _api.me();
       if (!mounted) return;
@@ -134,11 +151,27 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         });
         return;
       }
+      if (_user != null) {
+        setState(() => _booting = false);
+        ChatLive.instance.start();
+        _startPoll();
+        return;
+      }
       setState(() {
         _booting = false;
         _error = chatErrorText(error);
       });
     }
+  }
+
+  ChatUser _storedUser(String username, String contact) {
+    final email = contact.contains('@');
+    return ChatUser(
+      id: '',
+      username: username,
+      phone: email ? '' : contact,
+      email: email ? contact : '',
+    );
   }
 
   void _startPoll() {
@@ -169,6 +202,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _threads = items;
         _error = null;
       });
+      final name = _user?.username ?? '';
+      if (name.isNotEmpty) {
+        unawaited(ChatHistory.archiveInbox(_api, name, items));
+      }
     } catch (error) {
       if (!mounted) return;
       if (chatNeedsRegister(error)) {
@@ -185,7 +222,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         });
         return;
       }
-      setState(() => _error = chatErrorText(error));
+      setState(() {
+        _error = _threads.isEmpty ? chatErrorText(error) : null;
+      });
     } finally {
       _refreshing = false;
     }
@@ -403,6 +442,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               item,
         ];
       });
+      _keepThreads();
       return;
     }
     if (event.threadId.isEmpty) return;
@@ -432,6 +472,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             ..._threads,
           ];
         });
+        _keepThreads();
         return;
       }
       _patchThread(event.threadId, (item) {
@@ -487,6 +528,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 if (item.id == id) updated else item,
             ];
     });
+    _keepThreads();
+  }
+
+  void _keepThreads() {
+    final name = _user?.username ?? '';
+    if (name.isEmpty) return;
+    unawaited(ChatHistory.saveThreads(name, _threads));
   }
 
   List<ChatThreadSummary> _mergeThreads(List<ChatThreadSummary> items) {
@@ -531,6 +579,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             item,
       ];
     });
+    _keepThreads();
   }
 
   @override

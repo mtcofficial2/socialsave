@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
@@ -11,6 +13,43 @@ import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_format.dart';
 
 typedef ChatRecView = ({int ms, List<double> levels, bool paused});
+
+/// A voice note kept on this phone after it has been sent or played.
+class ChatVoiceFiles {
+  static bool _safe(String id) => RegExp(r'^[a-z0-9]+$').hasMatch(id);
+
+  static String _ext(String type) {
+    switch (type) {
+      case 'wav':
+        return 'wav';
+      case 'ogg':
+        return 'ogg';
+      case 'webm':
+        return 'webm';
+      default:
+        return 'm4a';
+    }
+  }
+
+  static Future<File?> existing(String id, String type) async {
+    if (!_safe(id)) return null;
+    final file = await _place(id, type);
+    if (!await file.exists()) return null;
+    return file;
+  }
+
+  static Future<void> save(String id, String type, Uint8List bytes) async {
+    if (!_safe(id) || bytes.isEmpty) return;
+    final file = await _place(id, type);
+    await file.parent.create(recursive: true);
+    await file.writeAsBytes(bytes, flush: true);
+  }
+
+  static Future<File> _place(String id, String type) async {
+    final root = await getApplicationDocumentsDirectory();
+    return File(p.join(root.path, 'chat-voices', '$id.${_ext(type)}'));
+  }
+}
 
 /// Tap-to-record voice notes. Hold-to-record fights scrolling on a phone.
 class ChatRecorder {
@@ -512,18 +551,17 @@ class _ChatVoiceBubbleState extends State<ChatVoiceBubble> {
     if (id.isEmpty) return null;
     final cached = _files[id];
     if (cached != null && File(cached).existsSync()) return cached;
+    final kept = await ChatVoiceFiles.existing(id, widget.message.voiceType);
+    if (kept != null) {
+      _files[id] = kept.path;
+      return kept.path;
+    }
     final bytes = await widget.api.voice(id);
-    final dir = await getTemporaryDirectory();
-    final ext = switch (widget.message.voiceType) {
-      'wav' => 'wav',
-      'ogg' => 'ogg',
-      'webm' => 'webm',
-      _ => 'm4a',
-    };
-    final path = '${dir.path}${Platform.pathSeparator}ss-play-$id.$ext';
-    await File(path).writeAsBytes(bytes, flush: true);
-    _files[id] = path;
-    return path;
+    await ChatVoiceFiles.save(id, widget.message.voiceType, bytes);
+    final stored = await ChatVoiceFiles.existing(id, widget.message.voiceType);
+    if (stored == null) return null;
+    _files[id] = stored.path;
+    return stored.path;
   }
 
   void _fail() {

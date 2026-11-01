@@ -196,6 +196,21 @@ class ChatThreadSummary {
       photoRev: (json['photoRev'] as num?)?.toInt() ?? 0,
     );
   }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'username': username,
+      'lastText': lastText,
+      'lastAt': lastAt?.millisecondsSinceEpoch ?? 0,
+      'lastId': lastId,
+      'lastFrom': lastFrom,
+      'lastStatus': lastStatus,
+      'unread': unread,
+      'lastSeen': lastSeen?.millisecondsSinceEpoch ?? 0,
+      'photoRev': photoRev,
+    };
+  }
 }
 
 /// One direct message. [name] is the sender's username.
@@ -334,7 +349,29 @@ class ChatMessage {
       replyText: (json['replyText'] as String?)?.trim() ?? '',
       photo: (json['photo'] as String?)?.trim() ?? '',
       photoType: (json['photoType'] as String?)?.trim() ?? '',
+      pendingKind: (json['pendingKind'] as String?)?.trim() ?? '',
     );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'from': from,
+      'name': name,
+      'text': text,
+      'links': links,
+      'at': at.millisecondsSinceEpoch,
+      'status': status,
+      'voice': voice,
+      'voiceMs': voiceMs,
+      'voiceType': voiceType,
+      'reply': reply,
+      'replyName': replyName,
+      'replyText': replyText,
+      'photo': photo,
+      'photoType': photoType,
+      if (pendingKind.isNotEmpty) 'pendingKind': pendingKind,
+    };
   }
 }
 

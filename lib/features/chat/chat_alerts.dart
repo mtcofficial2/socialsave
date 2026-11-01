@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:social_save/core/notifications/notification_service.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_format.dart';
+import 'package:social_save/features/chat/chat_history.dart';
 import 'package:social_save/features/chat/chat_live.dart';
 import 'package:social_save/shared/routing/app_router.dart';
 
@@ -159,10 +160,22 @@ class _ChatAlertHostState extends State<ChatAlertHost>
     if (event.type != 'message') return;
     final message = event.message;
     if (message == null || message.id <= 0 || event.threadId.isEmpty) return;
+    unawaited(_keep(event.threadId, message));
     final prev = ChatAlerts.seen[event.threadId] ?? 0;
     if (message.id <= prev) return;
     ChatAlerts.seen[event.threadId] = message.id;
     unawaited(_alertLive(event.threadId, message));
+  }
+
+  Future<void> _keep(String threadId, ChatMessage message) async {
+    if (_me.isEmpty) _me = await ChatSession.username();
+    if (_me.isEmpty) return;
+    await ChatHistory.remember(
+      me: _me,
+      threadId: threadId,
+      message: message,
+      open: threadId == ChatAlerts.openThread,
+    );
   }
 
   Future<void> _alertLive(String threadId, ChatMessage message) async {
@@ -212,6 +225,9 @@ class _ChatAlertHostState extends State<ChatAlertHost>
       final items = await _api.threads();
       if (!mounted) return;
       _me = await ChatSession.username();
+      if (_me.isNotEmpty) {
+        unawaited(ChatHistory.archiveInbox(_api, _me, items));
+      }
       ChatAlerts.observe(
         items,
         me: _me,
