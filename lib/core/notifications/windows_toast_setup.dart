@@ -78,9 +78,8 @@ void _writeShortcut() {
     file = IPersistFile.from(link);
     file.save(linkPtr, 1);
   } finally {
-    file?.release();
-    store?.release();
-    link.release();
+    // win32 releases these when the objects are collected. Releasing them
+    // here as well frees the COM object twice and crashes the process.
     calloc.free(exePtr);
     calloc.free(dirPtr);
     calloc.free(descPtr);

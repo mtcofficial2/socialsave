@@ -23,18 +23,23 @@ bool init(
   NativePlugin* plugin, char* appName, char* aumId, char* guid, char* iconPath,
   NativeNotificationCallback callback
 ) {
-  string icon;
-  if (iconPath != nullptr) icon = string(iconPath);
-  const auto didRegister = plugin->registerApp(aumId, appName, guid, icon, callback);
-  if (!didRegister) return false;
-  plugin->hasIdentity = hasPackageIdentity();
-  plugin->aumid = winrt::to_hstring(aumId);
-  plugin->notifier = plugin->hasIdentity
-    ? ToastNotificationManager::CreateToastNotifier()
-    : ToastNotificationManager::CreateToastNotifier(plugin->aumid);
-  plugin->history = ToastNotificationManager::History();
-  plugin->isReady = true;
-  return true;
+  try {
+    string icon;
+    if (iconPath != nullptr) icon = string(iconPath);
+    const auto didRegister = plugin->registerApp(aumId, appName, guid, icon, callback);
+    if (!didRegister) return false;
+    plugin->hasIdentity = hasPackageIdentity();
+    plugin->aumid = winrt::to_hstring(aumId);
+    plugin->notifier = plugin->hasIdentity
+      ? ToastNotificationManager::CreateToastNotifier()
+      : ToastNotificationManager::CreateToastNotifier(plugin->aumid);
+    plugin->history = ToastNotificationManager::History();
+    plugin->isReady = true;
+    return true;
+  } catch (...) {
+    // A toast setup failure must not take down the process.
+    return false;
+  }
 }
 
 bool isValidXml(char* xml) {
