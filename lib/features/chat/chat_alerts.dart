@@ -8,6 +8,7 @@ import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_format.dart';
 import 'package:social_save/features/chat/chat_history.dart';
 import 'package:social_save/features/chat/chat_live.dart';
+import 'package:social_save/features/chat/chat_ui.dart';
 import 'package:social_save/shared/routing/app_router.dart';
 
 /// A sound plus a notification. Android's system "alert" sound does nothing,
@@ -96,6 +97,7 @@ class ChatAlerts {
       if (!notify || !grew || alert == null) continue;
       if (item.lastFrom.isEmpty || item.lastFrom == me) continue;
       if (item.id == openThread) continue;
+      if (ChatInboxFilter.isMuted(item.id)) continue;
       alert(item, chatAlertBody(item.lastText));
     }
   }
@@ -124,6 +126,7 @@ class _ChatAlertHostState extends State<ChatAlertHost>
     WidgetsBinding.instance.addObserver(this);
     NotificationService.onChatOpen = _open;
     ChatLive.instance.start();
+    unawaited(ChatInboxFilter.ensure());
     _live = ChatLive.instance.events.listen(_onLive);
     _poll = Timer.periodic(
       const Duration(seconds: 12),
@@ -195,6 +198,8 @@ class _ChatAlertHostState extends State<ChatAlertHost>
     if (!mounted) return;
     if (_me.isNotEmpty && message.name == _me) return;
     if (threadId == ChatAlerts.openThread) return;
+    await ChatInboxFilter.ensure();
+    if (ChatInboxFilter.isMuted(threadId)) return;
     final title = message.name.isEmpty ? 'New message' : message.name;
     chatAlertNow(
       threadId: threadId,
@@ -240,6 +245,7 @@ class _ChatAlertHostState extends State<ChatAlertHost>
       if (_me.isNotEmpty) {
         unawaited(ChatHistory.archiveInbox(_api, _me, items));
       }
+      await ChatInboxFilter.ensure();
       ChatAlerts.observe(
         items,
         me: _me,

@@ -5,11 +5,11 @@ import 'package:go_router/go_router.dart';
 import 'package:social_save/features/chat/chat_alerts.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_drafts.dart';
-import 'package:social_save/features/chat/chat_format.dart';
 import 'package:social_save/features/chat/chat_history.dart';
 import 'package:social_save/features/chat/chat_live.dart';
 import 'package:social_save/features/chat/chat_profile.dart';
 import 'package:social_save/features/chat/chat_thread_screen.dart';
+import 'package:social_save/features/chat/chat_ui.dart';
 import 'package:social_save/shared/widgets/app_logo.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
 
@@ -28,8 +28,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final TextEditingController _contact = TextEditingController();
   final TextEditingController _username = TextEditingController();
   final TextEditingController _find = TextEditingController();
+  final FocusNode _findFocus = FocusNode();
+  bool _showArchived = false;
   Timer? _poll;
-  Timer? _typingClock;
   StreamSubscription<ChatLiveEvent>? _live;
   ChatUser? _user;
   List<ChatThreadSummary> _threads = const [];
@@ -54,9 +55,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     ChatDrafts.revision.addListener(_onDrafts);
-    ChatLive.revision.addListener(_onLiveRevision);
+    ChatInboxFilter.revision.addListener(_onDrafts);
     _live = ChatLive.instance.events.listen(_onLiveEvent);
     unawaited(ChatDrafts.ensure());
+    unawaited(ChatInboxFilter.ensure());
     unawaited(_boot());
   }
 
@@ -64,13 +66,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     ChatDrafts.revision.removeListener(_onDrafts);
-    ChatLive.revision.removeListener(_onLiveRevision);
+    ChatInboxFilter.revision.removeListener(_onDrafts);
     _live?.cancel();
-    _typingClock?.cancel();
     _poll?.cancel();
     _contact.dispose();
     _username.dispose();
     _find.dispose();
+    _findFocus.dispose();
     super.dispose();
   }
 
@@ -410,19 +412,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     controller.dispose();
     if (!mounted || name == null) return;
     await _openName(name);
-  }
-
-  void _onLiveRevision() {
-    if (!mounted) return;
-    setState(() {});
-    _typingClock?.cancel();
-    final typing = _threads.any(
-      (item) => ChatLive.isTyping(item.id) || ChatLive.isRecording(item.id),
-    );
-    if (!typing) return;
-    _typingClock = Timer(const Duration(seconds: 4), () {
-      if (mounted) setState(() {});
-    });
   }
 
   void _onLiveEvent(ChatLiveEvent event) {
@@ -785,6 +774,183 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _archiveThread(ChatThreadSummary item) {
+    final on = !ChatInboxFilter.archived.contains(item.id);
+    return ChatInboxFilter.setArchived(item.id, on: on);
+  }
+
+  Future<void> _muteThread(ChatThreadSummary item) async {
+    final on = !ChatInboxFilter.isMuted(item.id);
+    await ChatInboxFilter.setMuted(item.id, on: on);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(on ? 'Muted' : 'Unmuted')),
+    );
+  }
+
+  Future<void> _hideThread(ChatThreadSummary item) async {
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Delete chat'),
+          content: const Text(
+            'This removes the chat from this phone until a new message arrives. The other person still has it.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+    if (yes != true) return;
+    if (_selectedId == item.id && mounted) {
+      setState(() {
+        _selectedId = null;
+        _selectedName = null;
+      });
+    }
+    await ChatInboxFilter.hide(item.id, item.lastId);
+  }
+
+  Widget _threadTile(ChatThreadSummary item, String me, bool wide) {
+    final archived = ChatInboxFilter.archived.contains(item.id);
+    return ChatListTile(
+      key: ValueKey(item.id),
+      item: item,
+      me: me,
+      selected: wide && item.id == _selectedId,
+      muted: ChatInboxFilter.isMuted(item.id),
+      archived: archived,
+      avatar: GestureDetector(
+        onTap: () => unawaited(
+          showChatProfile(
+            context,
+            username: item.username,
+            photoRev: item.photoRev,
+            lastSeen: item.lastSeen,
+            online: item.online,
+          ),
+        ),
+        child: ChatFace(
+          name: item.username,
+          photoRev: item.photoRev,
+          online: item.online,
+          size: ChatUiTokens.avatar,
+        ),
+      ),
+      onOpen: () => unawaited(_openSaved(item)),
+      onArchive: () => unawaited(_archiveThread(item)),
+      onMute: () => unawaited(_muteThread(item)),
+      onDelete: () => unawaited(_hideThread(item)),
+    );
+  }
+
+  Widget _inboxList(
+    bool wide,
+    ChatUser user,
+    String query,
+    bool canStart,
+    List<ChatThreadSummary> shown,
+    ColorScheme scheme,
+  ) {
+    final visible = [
+      for (final item in shown)
+        if (!ChatInboxFilter.hides(item.id, item.lastId)) item,
+    ];
+    final archived = [
+      for (final item in visible)
+        if (ChatInboxFilter.archived.contains(item.id)) item,
+    ];
+    final open = query.isEmpty
+        ? [
+            for (final item in visible)
+              if (!ChatInboxFilter.archived.contains(item.id)) item,
+          ]
+        : visible;
+    final showHeader = query.isEmpty && archived.isNotEmpty;
+    final archivedShown = showHeader && _showArchived ? archived.length : 0;
+    final empty = !canStart && open.isEmpty && !showHeader;
+    final count =
+        (canStart ? 1 : 0) +
+        (showHeader ? 1 : 0) +
+        archivedShown +
+        open.length +
+        (empty ? 1 : 0);
+    return RefreshIndicator(
+      onRefresh: _loadThreads,
+      child: ListView.builder(
+        physics: const AlwaysScrollableScrollPhysics(),
+        itemCount: count,
+        itemBuilder: (context, index) {
+          var cursor = index;
+          if (canStart) {
+            if (cursor == 0) {
+              return ListTile(
+                leading: const Icon(Icons.person_add_alt_1_rounded),
+                title: Text('Message @$query'),
+                onTap: () => unawaited(_openName(query)),
+              );
+            }
+            cursor--;
+          }
+          if (showHeader) {
+            if (cursor == 0) {
+              final unread = archived.fold<int>(
+                0,
+                (sum, item) => sum + item.unread,
+              );
+              return ListTile(
+                leading: const Icon(Icons.archive_outlined),
+                title: const Text('Archived'),
+                trailing: unread > 0
+                    ? Text(
+                        unread > 99 ? '99+' : '$unread',
+                        style: const TextStyle(
+                          color: ChatUiTokens.brand,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      )
+                    : Icon(
+                        _showArchived
+                            ? Icons.expand_less_rounded
+                            : Icons.expand_more_rounded,
+                      ),
+                onTap: () => setState(() => _showArchived = !_showArchived),
+              );
+            }
+            cursor--;
+            if (_showArchived && cursor < archived.length) {
+              return _threadTile(archived[cursor], user.username, wide);
+            }
+            if (_showArchived) cursor -= archived.length;
+          }
+          if (cursor < open.length) {
+            return _threadTile(open[cursor], user.username, wide);
+          }
+          if (_threads.isEmpty) {
+            return ChatEmptyInbox(onStart: () => _findFocus.requestFocus());
+          }
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(24, 48, 24, 24),
+            child: Text(
+              'No chats match that search.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   Widget _inbox(bool wide) {
     final scheme = Theme.of(context).colorScheme;
     final user = _user!;
@@ -841,22 +1007,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-            child: TextField(
+            child: ChatSearchField(
               controller: _find,
-              autocorrect: false,
+              focusNode: _findFocus,
               onChanged: (_) => setState(() {}),
               onSubmitted: (value) => unawaited(_openName(value)),
-              decoration: InputDecoration(
-                hintText: 'Search or start a chat',
-                prefixIcon: const Icon(Icons.search_rounded),
-                filled: true,
-                isDense: true,
-                fillColor: scheme.surfaceContainerHighest,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(24),
-                  borderSide: BorderSide.none,
-                ),
-              ),
             ),
           ),
           if (_error != null)
@@ -867,287 +1022,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 style: TextStyle(color: scheme.error, height: 1.35),
               ),
             ),
-          Expanded(
-            child: RefreshIndicator(
-              onRefresh: _loadThreads,
-              child: ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                children: [
-                  if (canStart)
-                    ListTile(
-                      leading: const Icon(Icons.person_add_alt_1_rounded),
-                      title: Text('Message @$query'),
-                      onTap: () => unawaited(_openName(query)),
-                    ),
-                  if (shown.isEmpty && !canStart)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(24, 48, 24, 24),
-                      child: Text(
-                        _threads.isEmpty
-                            ? 'No chats yet. Start one with a username.'
-                            : 'No chats match that search.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: scheme.onSurfaceVariant,
-                          height: 1.4,
-                        ),
-                      ),
-                    ),
-                  for (final item in shown)
-                    _ChatRow(
-                      item: item,
-                      me: user.username,
-                      selected: wide && item.id == _selectedId,
-                      onOpen: () => unawaited(_openSaved(item)),
-                      onProfile: () => unawaited(
-                        showChatProfile(
-                          context,
-                          username: item.username,
-                          photoRev: item.photoRev,
-                          lastSeen: item.lastSeen,
-                          online: item.online,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
+          Expanded(child: _inboxList(wide, user, query, canStart, shown, scheme)),
         ],
-      ),
-    );
-  }
-}
-
-class _ChatRow extends StatelessWidget {
-  const _ChatRow({
-    required this.item,
-    required this.me,
-    required this.selected,
-    required this.onOpen,
-    required this.onProfile,
-  });
-
-  final ChatThreadSummary item;
-  final String me;
-  final bool selected;
-  final VoidCallback onOpen;
-  final VoidCallback onProfile;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final unread = item.unread > 0;
-    final stamp = item.lastAt == null
-        ? ''
-        : chatListStamp(
-            item.lastAt!,
-            DateTime.now(),
-            TimeOfDay.fromDateTime(item.lastAt!.toLocal()).format(context),
-          );
-    final draft = ChatDrafts.peek(item.id).trim();
-    final recording = ChatLive.isRecording(item.id);
-    final typing = !recording && ChatLive.isTyping(item.id);
-    final preview = chatPreview(item.lastText, item.lastFrom, me);
-    final voice = draft.isEmpty && item.lastText.trim() == 'Voice message';
-    final photo = draft.isEmpty && item.lastText.trim() == 'Photo';
-    return Material(
-      color: selected
-          ? scheme.primary.withValues(alpha: 0.10)
-          : Colors.transparent,
-      child: InkWell(
-        onTap: onOpen,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-          child: Row(
-            children: [
-              GestureDetector(
-                onTap: onProfile,
-                child: ChatFace(
-                  name: item.username,
-                  photoRev: item.photoRev,
-                  online: item.online,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      item.username,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: unread ? FontWeight.w800 : FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    if (recording)
-                      const Text(
-                        'recording audio…',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: Color(0xFF25D366),
-                          fontStyle: FontStyle.italic,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      )
-                    else if (typing)
-                      const Text(
-                        'typing…',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: Color(0xFF25D366),
-                          fontStyle: FontStyle.italic,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      )
-                    else if (draft.isNotEmpty)
-                      Text.rich(
-                        TextSpan(
-                          children: [
-                            const TextSpan(
-                              text: 'Draft: ',
-                              style: TextStyle(
-                                color: Color(0xFF25D366),
-                                fontStyle: FontStyle.italic,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            TextSpan(
-                              text: draft,
-                              style: TextStyle(
-                                fontStyle: FontStyle.italic,
-                                color: scheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      )
-                    else
-                      Row(
-                        children: [
-                          if (item.lastFrom == me &&
-                              item.lastStatus.isNotEmpty) ...[
-                            _Tick(status: item.lastStatus),
-                            const SizedBox(width: 4),
-                          ],
-                          if (voice) ...[
-                            Icon(
-                              Icons.mic_rounded,
-                              size: 16,
-                              color: unread
-                                  ? scheme.onSurface
-                                  : scheme.onSurfaceVariant,
-                            ),
-                            const SizedBox(width: 4),
-                          ],
-                          if (photo) ...[
-                            Icon(
-                              Icons.photo_outlined,
-                              size: 16,
-                              color: unread
-                                  ? scheme.onSurface
-                                  : scheme.onSurfaceVariant,
-                            ),
-                            const SizedBox(width: 4),
-                          ],
-                          Expanded(
-                            child: Text(
-                              preview,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: unread
-                                    ? scheme.onSurface
-                                    : scheme.onSurfaceVariant,
-                                fontWeight: unread
-                                    ? FontWeight.w700
-                                    : FontWeight.w400,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  if (stamp.isNotEmpty)
-                    Text(
-                      stamp,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: unread ? FontWeight.w700 : FontWeight.w500,
-                        color: unread
-                            ? const Color(0xFF25D366)
-                            : scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  if (unread) ...[
-                    const SizedBox(height: 6),
-                    _Badge(count: item.unread),
-                  ],
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _Tick extends StatelessWidget {
-  const _Tick({required this.status});
-
-  final String status;
-
-  @override
-  Widget build(BuildContext context) {
-    return Icon(
-      status == 'sent' ? Icons.done_rounded : Icons.done_all_rounded,
-      size: 16,
-      color: chatTickColor(
-        status,
-        dark: Theme.of(context).brightness == Brightness.dark,
-      ),
-    );
-  }
-}
-
-class _Badge extends StatelessWidget {
-  const _Badge({required this.count});
-
-  final int count;
-
-  @override
-  Widget build(BuildContext context) {
-    final label = count > 99 ? '99+' : '$count';
-    return Container(
-      constraints: const BoxConstraints(minWidth: 20, minHeight: 20),
-      padding: const EdgeInsets.symmetric(horizontal: 6),
-      alignment: Alignment.center,
-      decoration: const BoxDecoration(
-        color: Color(0xFF25D366),
-        borderRadius: BorderRadius.all(Radius.circular(12)),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 12,
-          fontWeight: FontWeight.w800,
-        ),
       ),
     );
   }

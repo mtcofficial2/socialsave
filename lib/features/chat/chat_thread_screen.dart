@@ -15,6 +15,7 @@ import 'package:social_save/features/chat/chat_image_store.dart';
 import 'package:social_save/features/chat/chat_link.dart';
 import 'package:social_save/features/chat/chat_live.dart';
 import 'package:social_save/features/chat/chat_profile.dart';
+import 'package:social_save/features/chat/chat_ui.dart';
 import 'package:social_save/features/chat/chat_voice.dart';
 import 'package:social_save/features/chat/chat_wallpaper.dart';
 
@@ -89,6 +90,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
   int? _replyId;
   String _replyName = '';
   String _replyText = '';
+  final Set<int> _selected = <int>{};
 
   bool get _enterSends {
     switch (Theme.of(context).platform) {
@@ -612,9 +614,73 @@ class _ChatThreadViewState extends State<ChatThreadView>
     _remember();
   }
 
+  Future<void> _attach() async {
+    if (_recording || widget.threadId.isEmpty) return;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.photo_outlined),
+                title: const Text('Gallery'),
+                minTileHeight: 48,
+                onTap: () => Navigator.pop(context, 'gallery'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.description_outlined),
+                title: const Text('Document'),
+                subtitle: const Text('A photo file can be sent'),
+                minTileHeight: 48,
+                onTap: () => Navigator.pop(context, 'document'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    if (!mounted || choice == null) return;
+    if (choice == 'document') {
+      await _pickDocument();
+      return;
+    }
+    await _pickPhoto();
+  }
+
+  Future<void> _pickDocument() async {
+    if (_recording || widget.threadId.isEmpty) return;
+    final picked = await openFile();
+    if (picked == null || !mounted) return;
+    final name = picked.name.toLowerCase();
+    final photo =
+        name.endsWith('.jpg') ||
+        name.endsWith('.jpeg') ||
+        name.endsWith('.png');
+    if (!photo) {
+      setState(() => _error = 'Only a photo can be sent from a file.');
+      return;
+    }
+    try {
+      final raw = await picked.readAsBytes();
+      final fitted = await fitChatImage(raw);
+      if (!mounted) return;
+      await _sendFittedPhoto(fitted);
+    } catch (error) {
+      if (!mounted) return;
+      setState(
+        () => _error = error is StateError
+            ? error.message
+            : chatErrorText(error),
+      );
+    }
+  }
+
   Future<void> _pickPhoto() async {
     if (_recording || widget.threadId.isEmpty) return;
-    int? localId;
+    Uint8List? fitted;
     try {
       final picked = await openFile(
         acceptedTypeGroups: const [
@@ -623,8 +689,23 @@ class _ChatThreadViewState extends State<ChatThreadView>
       );
       if (picked == null || !mounted) return;
       final raw = await picked.readAsBytes();
-      final fitted = await fitChatImage(raw);
+      fitted = await fitChatImage(raw);
+    } catch (error) {
       if (!mounted) return;
+      setState(
+        () => _error = error is StateError
+            ? error.message
+            : chatErrorText(error),
+      );
+      return;
+    }
+    if (!mounted) return;
+    await _sendFittedPhoto(fitted);
+  }
+
+  Future<void> _sendFittedPhoto(Uint8List fitted) async {
+    int? localId;
+    try {
       final caption = _text.text.trim();
       final reply = _replyId ?? 0;
       final replyName = _replyName;
@@ -901,72 +982,184 @@ class _ChatThreadViewState extends State<ChatThreadView>
     return KeyEventResult.handled;
   }
 
-  Future<void> _menu(ChatMessage message, LongPressStartDetails details) async {
-    final box = Overlay.of(context).context.findRenderObject();
-    if (box is! RenderBox) return;
-    final selected = await showMenu<String>(
-      context: context,
-      position: RelativeRect.fromRect(
-        Rect.fromLTWH(
-          details.globalPosition.dx,
-          details.globalPosition.dy,
-          0,
-          0,
-        ),
-        Offset.zero & box.size,
-      ),
-      items: [
-        if (message.id > 0)
-          const PopupMenuItem(value: 'reply', child: Text('Reply')),
-        if (message.text.trim().isNotEmpty)
-          const PopupMenuItem(value: 'copy', child: Text('Copy')),
-        if (message.links.isNotEmpty)
-          const PopupMenuItem(value: 'save', child: Text('Save link')),
-        const PopupMenuItem(value: 'delete', child: Text('Delete')),
-        if (message.id > 0 && message.name == _me && _me.isNotEmpty)
-          const PopupMenuItem(value: 'unsend', child: Text('Unsend')),
-      ],
-    );
-    if (!mounted || selected == null) return;
-    if (selected == 'reply') {
-      _replyTo(message);
-      return;
-    }
-    if (selected == 'delete') {
-      final yes = await _confirm(
-        'Delete message',
-        'This removes it from this phone. The other person still has it.',
-        'Delete',
-      );
-      if (yes) await _forget(message);
-      return;
-    }
-    if (selected == 'unsend') {
-      final yes = await _confirm(
-        'Unsend message',
-        'This removes it for both of you.',
-        'Unsend',
-      );
-      if (!yes || !mounted) return;
-      try {
-        await _api.unsend(widget.threadId, message.id);
-      } catch (error) {
-        if (!mounted) return;
-        setState(() => _error = chatErrorText(error));
-        return;
+  void _toggleSelect(ChatMessage message) {
+    setState(() {
+      if (_selected.contains(message.id)) {
+        _selected.remove(message.id);
+      } else {
+        _selected.add(message.id);
       }
-      await _forget(message);
-      return;
+    });
+  }
+
+  List<ChatMessage> get _picked => [
+    for (final message in _messages)
+      if (_selected.contains(message.id)) message,
+  ];
+
+  Widget _selectionBar() {
+    final picked = _picked;
+    final one = picked.length == 1 ? picked.first : null;
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: Text(
+              '${_selected.length}',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+            ),
+          ),
+          if (one != null && one.id > 0)
+            IconButton(
+              tooltip: 'Reply',
+              onPressed: () {
+                final message = one;
+                setState(_selected.clear);
+                _replyTo(message);
+              },
+              icon: const Icon(Icons.reply_rounded),
+            ),
+          if (picked.any((message) => message.text.trim().isNotEmpty))
+            IconButton(
+              tooltip: 'Copy',
+              onPressed: () => unawaited(_copyPicked()),
+              icon: const Icon(Icons.copy_rounded),
+            ),
+          if (one != null &&
+              one.text.trim().isNotEmpty &&
+              !one.isPhoto &&
+              !one.isVoice)
+            IconButton(
+              tooltip: 'Forward',
+              onPressed: () => unawaited(_forward(one)),
+              icon: const Icon(Icons.forward_rounded),
+            ),
+          IconButton(
+            tooltip: 'Delete',
+            onPressed: () => unawaited(_deletePicked()),
+            icon: const Icon(Icons.delete_outline_rounded),
+          ),
+          if (one != null && one.id > 0 && one.name == _me && _me.isNotEmpty)
+            IconButton(
+              tooltip: 'Unsend',
+              onPressed: () => unawaited(_unsendOne(one)),
+              icon: const Icon(Icons.undo_rounded),
+            ),
+          if (one != null && one.links.isNotEmpty)
+            IconButton(
+              tooltip: 'Save link',
+              onPressed: () {
+                final link = one.links.first;
+                setState(_selected.clear);
+                _openLink(link);
+              },
+              icon: const Icon(Icons.link_rounded),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _copyPicked() async {
+    final text = [
+      for (final message in _picked)
+        if (message.text.trim().isNotEmpty) message.text.trim(),
+    ].join('\n');
+    if (text.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    setState(_selected.clear);
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Message copied')));
+  }
+
+  Future<void> _deletePicked() async {
+    final yes = await _confirm(
+      'Delete message',
+      'This removes it from this phone. The other person still has it.',
+      'Delete',
+    );
+    if (!yes || !mounted) return;
+    final ids = _picked.map((message) => message.id).toList();
+    for (final id in ids) {
+      _drop(id);
     }
-    if (selected == 'copy') {
-      await Clipboard.setData(ClipboardData(text: message.text));
+    setState(_selected.clear);
+  }
+
+  Future<void> _unsendOne(ChatMessage message) async {
+    final yes = await _confirm(
+      'Unsend message',
+      'This removes it for both of you.',
+      'Unsend',
+    );
+    if (!yes || !mounted) return;
+    try {
+      await _api.unsend(widget.threadId, message.id);
+    } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Message copied')));
+      setState(() => _error = chatErrorText(error));
       return;
     }
-    _openLink(message.links.first);
+    _drop(message.id);
+    if (mounted) setState(_selected.clear);
+  }
+
+  Future<void> _forward(ChatMessage message) async {
+    final text = message.text.trim();
+    if (text.isEmpty || message.isPhoto || message.isVoice) return;
+    final List<ChatThreadSummary> threads;
+    try {
+      threads = await _api.threads();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = chatErrorText(error));
+      return;
+    }
+    if (!mounted) return;
+    final others = [
+      for (final item in threads)
+        if (item.id != widget.threadId) item,
+    ];
+    if (others.isEmpty) {
+      setState(() => _error = 'There is no other chat to forward to.');
+      return;
+    }
+    final target = await showModalBottomSheet<ChatThreadSummary>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              for (final item in others)
+                ListTile(
+                  title: Text(item.username),
+                  minTileHeight: 48,
+                  onTap: () => Navigator.pop(context, item),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+    if (target == null || !mounted) return;
+    try {
+      await _api.send(target.id, text);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = chatErrorText(error));
+      return;
+    }
+    if (!mounted) return;
+    setState(_selected.clear);
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Forwarded to ${target.username}')));
   }
 
   Future<bool> _confirm(String title, String body, String action) async {
@@ -992,15 +1185,14 @@ class _ChatThreadViewState extends State<ChatThreadView>
     return yes == true;
   }
 
-  Future<void> _forget(ChatMessage message) async {
-    _drop(message.id);
-  }
-
   void _drop(int id) {
     if (!mounted) return;
     final next = [for (final item in _messages) if (item.id != id) item];
     if (next.length != _messages.length) {
-      setState(() => _messages = next);
+      setState(() {
+        _messages = next;
+        _selected.remove(id);
+      });
     }
     if (_me.isEmpty || widget.threadId.isEmpty) return;
     unawaited(
@@ -1013,9 +1205,9 @@ class _ChatThreadViewState extends State<ChatThreadView>
     final scheme = Theme.of(context).colorScheme;
     final name = widget.username.replaceFirst(RegExp(r'^@'), '').trim();
     final title = name.isEmpty ? 'Chat' : name;
-    final canvas = scheme.brightness == Brightness.dark
-        ? const Color(0xFF0B141A)
-        : const Color(0xFFEFE7DE);
+    final dark = scheme.brightness == Brightness.dark;
+    final canvas = ChatUiTokens.canvas(dark);
+    final selecting = _selected.isNotEmpty;
     final recording = ChatLive.isRecording(widget.threadId);
     final peerTyping = !recording && ChatLive.isTyping(widget.threadId);
     final presence = chatPresenceLabel(
@@ -1035,9 +1227,16 @@ class _ChatThreadViewState extends State<ChatThreadView>
       children: [
         AppBar(
           toolbarHeight: 64,
-          automaticallyImplyLeading: !widget.embedded,
+          automaticallyImplyLeading: !selecting && !widget.embedded,
           titleSpacing: widget.embedded ? 16 : 0,
-          title: InkWell(
+          leading: selecting
+              ? IconButton(
+                  tooltip: 'Clear',
+                  onPressed: () => setState(_selected.clear),
+                  icon: const Icon(Icons.close_rounded),
+                )
+              : null,
+          title: selecting ? _selectionBar() : InkWell(
             onTap: () => unawaited(
               showChatProfile(
                 context,
@@ -1140,9 +1339,11 @@ class _ChatThreadViewState extends State<ChatThreadView>
                         itemBuilder: (context, index) {
                           final row = rows[index];
                           if (row.banner != null) {
-                            return _DayChip(label: row.banner!);
+                            return ChatDayPill(label: row.banner!);
                           }
-                          if (row.day != null) return _DayChip(label: row.day!);
+                          if (row.day != null) {
+                            return ChatDayPill(label: row.day!);
+                          }
                           final message = row.message!;
                           final mine = message.name == _me && _me.isNotEmpty;
                           final previous = index > 0
@@ -1161,7 +1362,8 @@ class _ChatThreadViewState extends State<ChatThreadView>
                               previous.name == message.name &&
                               message.at.difference(previous.at).inMinutes.abs() <
                                   5;
-                          final bubble = _Bubble(
+                          final picked = _selected.contains(message.id);
+                          Widget bubble = ChatBubble(
                             key: _keyFor(message.id),
                             message: message,
                             threadId: widget.threadId,
@@ -1181,11 +1383,31 @@ class _ChatThreadViewState extends State<ChatThreadView>
                             onRetry: message.status == 'failed'
                                 ? () => unawaited(_retry(message))
                                 : null,
-                            onLongPress: (details) =>
-                                unawaited(_menu(message, details)),
+                            onLongPress: (_) => _toggleSelect(message),
                           );
-                          if (message.id <= 0) return bubble;
-                          return Dismissible(
+                          if (picked) {
+                            bubble = ColoredBox(
+                              color: ChatUiTokens.brand.withValues(alpha: 0.18),
+                              child: SizedBox(
+                                width: double.infinity,
+                                child: bubble,
+                              ),
+                            );
+                          }
+                          if (message.id <= 0) {
+                            if (!selecting) return bubble;
+                            return GestureDetector(
+                              onTap: () => _toggleSelect(message),
+                              behavior: HitTestBehavior.opaque,
+                              child: AbsorbPointer(
+                                child: SizedBox(
+                                  width: double.infinity,
+                                  child: bubble,
+                                ),
+                              ),
+                            );
+                          }
+                          final replyRow = Dismissible(
                             key: ValueKey('reply-${message.id}'),
                             direction: DismissDirection.startToEnd,
                             dismissThresholds: const {
@@ -1213,6 +1435,12 @@ class _ChatThreadViewState extends State<ChatThreadView>
                               child: bubble,
                             ),
                           );
+                          if (!selecting) return replyRow;
+                          return GestureDetector(
+                            onTap: () => _toggleSelect(message),
+                            behavior: HitTestBehavior.opaque,
+                            child: AbsorbPointer(child: replyRow),
+                          );
                         },
                       );
                     },
@@ -1221,9 +1449,8 @@ class _ChatThreadViewState extends State<ChatThreadView>
                   Positioned(
                     right: 12,
                     bottom: 12,
-                    child: FloatingActionButton.small(
-                      heroTag: 'chat-down-${widget.threadId}',
-                      tooltip: 'New messages',
+                    child: ChatDownChip(
+                      count: _below,
                       onPressed: () {
                         setState(() {
                           _stickToEnd = true;
@@ -1231,7 +1458,6 @@ class _ChatThreadViewState extends State<ChatThreadView>
                         });
                         _jump(animate: true);
                       },
-                      child: const Icon(Icons.keyboard_arrow_down_rounded),
                     ),
                   ),
               ],
@@ -1334,94 +1560,16 @@ class _ChatThreadViewState extends State<ChatThreadView>
                       onPause: () => unawaited(_recorder.togglePause()),
                     )
                   else
-                    ValueListenableBuilder<TextEditingValue>(
-                      valueListenable: _text,
-                      builder: (context, value, _) {
-                        final canSend = value.text.trim().isNotEmpty;
-                        final field = scheme.brightness == Brightness.dark
-                            ? const Color(0xFF1F2C34)
-                            : Colors.white;
-                        return Row(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Expanded(
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  color: field,
-                                  borderRadius: BorderRadius.circular(24),
-                                ),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.end,
-                                  children: [
-                                    IconButton(
-                                      tooltip: 'Photo',
-                                      visualDensity: VisualDensity.compact,
-                                      onPressed: () => unawaited(_pickPhoto()),
-                                      icon: Icon(
-                                        Icons.image_outlined,
-                                        color: scheme.onSurfaceVariant,
-                                        size: 22,
-                                      ),
-                                    ),
-                                    Expanded(
-                                      child: Focus(
-                                        onKeyEvent: _onKey,
-                                        child: TextField(
-                                          controller: _text,
-                                          focusNode: _focus,
-                                          onChanged: _onTyped,
-                                          minLines: 1,
-                                          maxLines: 5,
-                                          textInputAction: _enterSends
-                                              ? TextInputAction.newline
-                                              : TextInputAction.send,
-                                          onSubmitted: _enterSends
-                                              ? null
-                                              : (_) => unawaited(_send()),
-                                          style: const TextStyle(
-                                            fontSize: 16,
-                                            height: 1.25,
-                                          ),
-                                          decoration: const InputDecoration(
-                                            hintText: 'Message',
-                                            filled: false,
-                                            isDense: true,
-                                            contentPadding: EdgeInsets.fromLTRB(
-                                              0,
-                                              10,
-                                              14,
-                                              10,
-                                            ),
-                                            border: InputBorder.none,
-                                            enabledBorder: InputBorder.none,
-                                            focusedBorder: InputBorder.none,
-                                            disabledBorder: InputBorder.none,
-                                            errorBorder: InputBorder.none,
-                                            focusedErrorBorder: InputBorder.none,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            if (canSend)
-                              _roundButton(
-                                tooltip: 'Send',
-                                icon: Icons.send_rounded,
-                                onPressed: () => unawaited(_send()),
-                              )
-                            else if (!Plat.isWeb)
-                              _roundButton(
-                                tooltip: 'Voice note',
-                                icon: Icons.mic_rounded,
-                                onPressed: () => unawaited(_startVoice()),
-                              ),
-                          ],
-                        );
-                      },
+                    ChatComposer(
+                      controller: _text,
+                      focusNode: _focus,
+                      enterSends: _enterSends,
+                      onKey: _onKey,
+                      onChanged: _onTyped,
+                      onSend: () => unawaited(_send()),
+                      onMic: () => unawaited(_startVoice()),
+                      onAttach: () => unawaited(_attach()),
+                      showMic: !Plat.isWeb,
                     ),
                 ],
               ),
@@ -1594,61 +1742,8 @@ class ChatAvatar extends StatelessWidget {
   }
 }
 
-class _DayChip extends StatelessWidget {
-  const _DayChip({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Center(
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: scheme.surface.withValues(alpha: 0.92),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-Widget _roundButton({
-  required String tooltip,
-  required IconData icon,
-  required VoidCallback onPressed,
-}) {
-  return IconButton.filled(
-    tooltip: tooltip,
-    style: IconButton.styleFrom(
-      backgroundColor: const Color(0xFF25D366),
-      foregroundColor: Colors.white,
-      fixedSize: const Size(42, 42),
-      minimumSize: const Size(42, 42),
-      padding: EdgeInsets.zero,
-      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-    ),
-    onPressed: onPressed,
-    icon: Icon(icon, size: 22),
-  );
-}
-
-class _Bubble extends StatelessWidget {
-  const _Bubble({
+class ChatBubble extends StatelessWidget {
+  const ChatBubble({
     super.key,
     required this.message,
     required this.threadId,
@@ -1677,19 +1772,17 @@ class _Bubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    final bg = mine
-        ? (dark ? const Color(0xFF005C4B) : const Color(0xFFD9FDD3))
-        : (dark ? const Color(0xFF202C33) : Colors.white);
-    final fg = dark ? const Color(0xFFE9EDEF) : const Color(0xFF111B21);
-    final link = dark ? const Color(0xFF53BDEB) : const Color(0xFF027EB5);
+    final dark = ChatUiTokens.dark(context);
+    final bg = mine ? ChatUiTokens.outgoing(dark) : ChatUiTokens.incoming(dark);
+    final fg = ChatUiTokens.text(dark);
+    final link = ChatUiTokens.link(dark);
     final time = TimeOfDay.fromDateTime(message.at.toLocal()).format(context);
     final tickColor = chatTickColor(tick, dark: dark);
     return Align(
       alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final cap = constraints.maxWidth * 0.78;
+          final cap = constraints.maxWidth * ChatUiTokens.bubbleMax;
           final max = cap > 420 ? 420.0 : cap;
           final inner = max - 16;
           final voiceWidth = inner > 328 ? 328.0 : (inner < 0 ? 0.0 : inner);
@@ -1704,9 +1797,7 @@ class _Bubble extends StatelessWidget {
                       ? () => onQuote!(message.reply)
                       : null,
                 );
-          final timeColor = dark
-              ? const Color(0xFFAEBAC1)
-              : const Color(0xFF667781);
+          final timeColor = ChatUiTokens.time(dark);
           final stamp = _stamp(
             time,
             timeColor,
