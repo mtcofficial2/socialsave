@@ -17,7 +17,7 @@ import 'package:social_save/shared/routing/app_router.dart';
 /// A sound plus a notification. Android's system "alert" sound does nothing,
 /// so an open app plays the phone's notification tone itself and keeps the
 /// banner quiet. In the background the notification channel sounds. Windows
-/// only has a system beep, including when the window is in the background.
+/// shows a toast. A beep is only the fallback when that toast cannot be shown.
 void chatAlertNow({
   required String threadId,
   required String title,
@@ -28,12 +28,8 @@ void chatAlertNow({
   final life = WidgetsBinding.instance.lifecycleState;
   final resumed = life == null || life == AppLifecycleState.resumed;
   final android = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
-  final windows = !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
   if (android && resumed) {
     unawaited(_playPhoneTone());
-  }
-  if (windows) {
-    unawaited(SystemSound.play(SystemSoundType.alert));
   }
   unawaited(
     _postChatAlert(
@@ -96,13 +92,16 @@ Future<void> _postChatAlert({
   _alertToken[threadId] = token;
   final saved = await _savedFace(username, photoRev);
   if (_alertToken[threadId] != token) return;
-  await NotificationService().showChat(
+  final shown = await NotificationService().showChat(
     threadId: threadId,
     title: title,
     body: body,
     sound: sound,
     picture: saved.bytes,
   );
+  if (!shown && !kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
+    unawaited(SystemSound.play(SystemSoundType.alert));
+  }
   if (saved.exact || username.isEmpty || username == 'New message') return;
   try {
     final later = await ChatPhotos.forAlert(username, photoRev);

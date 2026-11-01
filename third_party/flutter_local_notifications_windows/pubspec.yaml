@@ -1,5 +1,5 @@
 name: flutter_local_notifications_windows
-description: Local copy of flutter_local_notifications_windows 1.0.3 without the native C++ part (it needs Visual Studio ATL, which this PC does not have). Windows toasts are skipped; Android is unaffected.
+description: Local copy of flutter_local_notifications_windows 1.0.3. The native toast library is built with the Windows app.
 version: 1.0.3
 publish_to: none
 
@@ -21,4 +21,5 @@ flutter:
     implements: flutter_local_notifications
     platforms:
       windows:
+        ffiPlugin: true
         dartPluginClass: FlutterLocalNotificationsWindows

@@ -8,6 +8,8 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:social_save/core/config/env_config.dart';
 import 'package:social_save/core/notifications/notification_photo_io.dart'
     if (dart.library.html) 'package:social_save/core/notifications/notification_photo_stub.dart';
+import 'package:social_save/core/notifications/windows_toast_setup_stub.dart'
+    if (dart.library.ffi) 'package:social_save/core/notifications/windows_toast_setup.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 
 const _notificationLogo = DrawableResourceAndroidBitmap('ic_notification_logo');
@@ -195,7 +197,8 @@ class NotificationService {
   }
 
   /// Logo first. A missing picture still shows the toast and its buttons.
-  Future<void> _showWindows(
+  /// Returns false when Windows refused the toast.
+  Future<bool> _showWindows(
     int id,
     String title,
     String body, {
@@ -222,6 +225,7 @@ class NotificationService {
         ),
         payload: payload,
       );
+      return true;
     } catch (_) {
       if (images != null) {
         try {
@@ -239,7 +243,7 @@ class NotificationService {
             ),
             payload: payload,
           );
-          return;
+          return true;
         } catch (_) {}
       }
       try {
@@ -256,8 +260,10 @@ class NotificationService {
           ),
           payload: payload,
         );
+        return true;
       } catch (_) {}
     }
+    return false;
   }
 
   Future<void> init() async {
@@ -272,10 +278,14 @@ class NotificationService {
       requestBadgePermission: false,
       requestSoundPermission: false,
     );
-    const windows = WindowsInitializationSettings(
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
+      ensureWindowsNotificationIdentity();
+    }
+    final windows = WindowsInitializationSettings(
       appName: 'SocialSave',
-      appUserModelId: 'com.socialsave.SocialSave',
+      appUserModelId: windowsNotificationAppId,
       guid: '6f1c2b8e-4d3a-4a5e-9b7c-2e8f0a1d5c43',
+      iconPath: windowsNotificationIconPath(),
     );
     if (defaultTargetPlatform == TargetPlatform.android) {
       _androidChatNotify.setMethodCallHandler((call) async {
@@ -291,7 +301,7 @@ class NotificationService {
     try {
       await _plugin
           .initialize(
-            const InitializationSettings(
+            InitializationSettings(
               android: android,
               iOS: ios,
               windows: windows,
@@ -358,7 +368,7 @@ class NotificationService {
     } catch (_) {}
   }
 
-  Future<void> showChat({
+  Future<bool> showChat({
     required String threadId,
     required String title,
     required String body,
@@ -366,7 +376,7 @@ class NotificationService {
     bool silent = false,
     Uint8List? picture,
   }) async {
-    if (kIsWeb || threadId.isEmpty) return;
+    if (kIsWeb || threadId.isEmpty) return false;
     if (!_initialized) await init();
     final payload = 'chat|$threadId|$title';
     final id = threadId.hashCode & 0x7fffffff;
@@ -386,11 +396,11 @@ class NotificationService {
           'token': await ChatSession.token() ?? '',
           if (picture != null && picture.isNotEmpty) 'picture': picture,
         });
-        return;
+        return true;
       } catch (_) {}
     }
     if (defaultTargetPlatform == TargetPlatform.windows) {
-      await _showWindows(
+      return _showWindows(
         id,
         title,
         body,
@@ -404,7 +414,6 @@ class NotificationService {
         images: await _windowsFace(picture, title),
         silent: silent,
       );
-      return;
     }
     await _plugin.show(
       id,
@@ -433,6 +442,7 @@ class NotificationService {
       ),
       payload: payload,
     );
+    return true;
   }
 
   Future<void> showDownloadComplete({
