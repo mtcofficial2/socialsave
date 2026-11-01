@@ -21,7 +21,7 @@ Future<void> runChatSocket(ChatLive live, int epoch) async {
   };
   live.resendPhoto = (id) {
     final n = photoTries[id] ?? 0;
-    if (n >= 6) return;
+    if (n >= 40) return;
     photoTries[id] = n + 1;
     unawaited(ChatImageStore.sendPending(id, live.sendBinary));
   };

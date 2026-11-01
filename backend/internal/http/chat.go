@@ -31,6 +31,7 @@ import (
 
 const (
 	chatKeep        = 200
+	chatRemovedKeep = 200
 	chatTextMax     = 400
 	chatPostRate    = 20
 	chatJoinRate    = 8
@@ -105,6 +106,7 @@ type chatThread struct {
 	Next     int64               `json:"next"`
 	Messages []chatMessage       `json:"messages"`
 	Seen     map[string]chatSeen `json:"seen,omitempty"`
+	Removed  []int64             `json:"removed,omitempty"`
 }
 
 type chatData struct {
@@ -322,13 +324,13 @@ func (c *chatRoom) open(ctx context.Context, userID, username string) (chatThrea
 	return thread, other.Username, nil
 }
 
-func (c *chatRoom) since(ctx context.Context, userID, threadID string, after int64) ([]chatMessage, chatPeerView, error) {
+func (c *chatRoom) since(ctx context.Context, userID, threadID string, after int64) ([]chatMessage, []int64, chatPeerView, error) {
 	c.ensure(ctx)
 	c.mu.Lock()
 	thread := c.threadLocked(threadID)
 	if thread == nil || (thread.A != userID && thread.B != userID) {
 		c.mu.Unlock()
-		return nil, chatPeerView{}, chatRejected("That chat was not found.")
+		return nil, nil, chatPeerView{}, chatRejected("That chat was not found.")
 	}
 	dirty := c.touchLocked(userID)
 	if noteDelivered(thread, userID) {
@@ -354,11 +356,64 @@ func (c *chatRoom) since(ctx context.Context, userID, threadID string, after int
 		Online:    chatOnline(other.LastSeen, time.Now()),
 		PhotoRev:  other.PhotoRev,
 	}
+	var removed []int64
+	if len(thread.Removed) > 0 {
+		removed = append([]int64(nil), thread.Removed...)
+	}
 	c.mu.Unlock()
 	if dirty {
 		c.persist(ctx)
 	}
-	return out, peer, nil
+	return out, removed, peer, nil
+}
+
+func (c *chatRoom) unsend(ctx context.Context, user chatUser, threadID string, id int64) error {
+	if id < 1 {
+		return chatRejected("That message was not found.")
+	}
+	c.ensure(ctx)
+	c.mu.Lock()
+	thread := c.threadLocked(threadID)
+	if thread == nil || (thread.A != user.ID && thread.B != user.ID) {
+		c.mu.Unlock()
+		return chatRejected("That chat was not found.")
+	}
+	index := -1
+	for i := range thread.Messages {
+		if thread.Messages[i].ID != id {
+			continue
+		}
+		if thread.Messages[i].From != user.ID {
+			c.mu.Unlock()
+			return chatRejected("You can only unsend your own message.")
+		}
+		index = i
+		break
+	}
+	if index < 0 {
+		c.mu.Unlock()
+		return chatRejected("That message was not found.")
+	}
+	thread.Messages = append(thread.Messages[:index], thread.Messages[index+1:]...)
+	thread.Removed = rememberRemoved(thread.Removed, id)
+	a, b := thread.A, thread.B
+	c.mu.Unlock()
+	c.persist(ctx)
+	c.announceRemoved(a, b, threadID, id)
+	return nil
+}
+
+func rememberRemoved(ids []int64, id int64) []int64 {
+	for _, cur := range ids {
+		if cur == id {
+			return ids
+		}
+	}
+	ids = append(ids, id)
+	if len(ids) > chatRemovedKeep {
+		ids = append([]int64(nil), ids[len(ids)-chatRemovedKeep:]...)
+	}
+	return ids
 }
 
 func (c *chatRoom) markRead(ctx context.Context, userID, threadID string, id int64) error {
@@ -1294,7 +1349,7 @@ func (s *Server) chatThreadList(w http.ResponseWriter, r *http.Request) {
 	if after < 0 {
 		after = 0
 	}
-	items, peer, err := s.chat.since(r.Context(), user.ID, chi.URLParam(r, "id"), after)
+	items, removed, peer, err := s.chat.since(r.Context(), user.ID, chi.URLParam(r, "id"), after)
 	if err != nil {
 		writeChatFailure(w, err)
 		return
@@ -1312,11 +1367,34 @@ func (s *Server) chatThreadList(w http.ResponseWriter, r *http.Request) {
 	if peer.PhotoRev > 0 {
 		peerJSON["photoRev"] = peer.PhotoRev
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	payload := map[string]any{
 		"success":  true,
 		"messages": items,
 		"peer":     peerJSON,
-	})
+	}
+	if len(removed) > 0 {
+		payload["removed"] = removed
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (s *Server) chatThreadUnsend(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.chatActor(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 256)).Decode(&body); err != nil {
+		writeChatError(w, http.StatusBadRequest, "That message was not found.")
+		return
+	}
+	if err := s.chat.unsend(r.Context(), user, chi.URLParam(r, "id"), body.ID); err != nil {
+		writeChatFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
 func (s *Server) chatThreadVoice(w http.ResponseWriter, r *http.Request) {

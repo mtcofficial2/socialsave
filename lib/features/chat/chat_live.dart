@@ -35,6 +35,7 @@ class ChatLive {
   static final instance = ChatLive._();
   static final revision = ValueNotifier<int>(0);
   static final Map<String, DateTime> _typingUntil = {};
+  static final Map<String, DateTime> _recordingUntil = {};
 
   final connected = ValueNotifier<bool>(false);
   final _events = StreamController<ChatLiveEvent>.broadcast();
@@ -51,12 +52,20 @@ class ChatLive {
   DateTime? _typedAt;
   String _typingThread = '';
   bool _typingOn = false;
+  DateTime? _recordedAt;
+  String _recordingThread = '';
+  bool _recordingOn = false;
   final Map<String, DateTime> _photoAsk = {};
 
   Stream<ChatLiveEvent> get events => _events.stream;
 
   static bool isTyping(String id) {
     final until = _typingUntil[id];
+    return until != null && until.isAfter(DateTime.now());
+  }
+
+  static bool isRecording(String id) {
+    final until = _recordingUntil[id];
     return until != null && until.isAfter(DateTime.now());
   }
 
@@ -99,6 +108,17 @@ class ChatLive {
       );
       _typedAt = DateTime.now();
     }
+    if (_recordingOn && _recordingThread.isNotEmpty) {
+      _recordedAt = null;
+      sendText(
+        jsonEncode({
+          'type': 'recording',
+          'thread': _recordingThread,
+          'on': true,
+        }),
+      );
+      _recordedAt = DateTime.now();
+    }
   }
 
   void detach() {
@@ -131,6 +151,33 @@ class ChatLive {
     sendText(jsonEncode({'type': 'typing', 'thread': threadId, 'on': true}));
   }
 
+  void recording(String threadId, {required bool on}) {
+    if (threadId.isEmpty) return;
+    _recordingThread = threadId;
+    _recordingOn = on;
+    if (on) {
+      _typingOn = false;
+      _typedAt = null;
+    }
+    if (_sendText == null) return;
+    if (!on) {
+      _recordedAt = null;
+      sendText(
+        jsonEncode({'type': 'recording', 'thread': threadId, 'on': false}),
+      );
+      return;
+    }
+    final now = DateTime.now();
+    if (_recordedAt != null &&
+        now.difference(_recordedAt!) < const Duration(seconds: 2)) {
+      return;
+    }
+    _recordedAt = now;
+    sendText(
+      jsonEncode({'type': 'recording', 'thread': threadId, 'on': true}),
+    );
+  }
+
   /// Asks the sender to pass this picture again. The server does not keep it.
   void wantPhoto(String threadId, String id) {
     if (threadId.isEmpty || id.isEmpty || _sendText == null) return;
@@ -158,7 +205,8 @@ class ChatLive {
     final named = data['from'] ?? data['username'];
     final from = named is String ? named.trim() : '';
     final on = data['on'] == true || data['online'] == true;
-    final id = (data['id'] as num?)?.toInt() ?? 0;
+    final rawId = data['id'];
+    final id = rawId is num ? rawId.toInt() : 0;
     final at = (data['lastSeen'] as num?)?.toInt() ?? 0;
     final photoId = type == 'photo-ok' || type == 'photo-wait'
         ? ((data['id'] as String?)?.trim() ?? '')
@@ -168,11 +216,13 @@ class ChatLive {
     if (rawMessage is Map) {
       message = ChatMessage.fromJson(Map<String, dynamic>.from(rawMessage));
     }
-    if (type == 'typing') {
+    if (type == 'typing' || type == 'recording') {
+      final book = type == 'recording' ? _recordingUntil : _typingUntil;
       if (on) {
-        _typingUntil[threadId] = DateTime.now().add(const Duration(seconds: 4));
+        book[threadId] = DateTime.now().add(const Duration(seconds: 4));
+        if (type == 'recording') _typingUntil.remove(threadId);
       } else {
-        _typingUntil.remove(threadId);
+        book.remove(threadId);
       }
       revision.value++;
     }

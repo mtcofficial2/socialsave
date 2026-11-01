@@ -67,7 +67,37 @@ func (h *chatHub) send(userID string, text []byte) bool {
 }
 
 func (h *chatHub) sendBinary(userID string, data []byte) bool {
-	return h.deliver(userID, liveFrame{opcode: 0x2, data: data})
+	return h.deliverWait(userID, liveFrame{opcode: 0x2, data: data}, 2*time.Second)
+}
+
+// deliverWait gives a picture a moment to join the queue. A full queue used
+// to drop the frame and the other phone never saw it.
+func (h *chatHub) deliverWait(userID string, frame liveFrame, wait time.Duration) bool {
+	if h == nil || userID == "" || len(frame.data) == 0 {
+		return false
+	}
+	h.mu.Lock()
+	set := h.byUser[userID]
+	conns := make([]*liveConn, 0, len(set))
+	for conn := range set {
+		conns = append(conns, conn)
+	}
+	h.mu.Unlock()
+	if len(conns) == 0 {
+		return false
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	ok := false
+	for _, conn := range conns {
+		select {
+		case conn.out <- frame:
+			ok = true
+		case <-timer.C:
+			return ok
+		}
+	}
+	return ok
 }
 
 func (h *chatHub) deliver(userID string, frame liveFrame) bool {
@@ -209,8 +239,8 @@ func (c *chatRoom) onLiveText(user chatUser, payload []byte) {
 		return
 	}
 	switch body.Type {
-	case "typing":
-		c.liveTyping(user, body.Thread, body.On)
+	case "typing", "recording":
+		c.liveSignal(user, body.Thread, body.Type, body.On)
 	case "photo-have":
 		c.notePhotoHave(user, body.Thread, body.ID)
 	case "photo-need":
@@ -218,8 +248,11 @@ func (c *chatRoom) onLiveText(user chatUser, payload []byte) {
 	}
 }
 
-func (c *chatRoom) liveTyping(user chatUser, threadID string, on bool) {
+func (c *chatRoom) liveSignal(user chatUser, threadID, kind string, on bool) {
 	if c.live == nil || threadID == "" {
+		return
+	}
+	if kind != "typing" && kind != "recording" {
 		return
 	}
 	c.mu.Lock()
@@ -234,7 +267,7 @@ func (c *chatRoom) liveTyping(user chatUser, threadID string, on bool) {
 	}
 	c.mu.Unlock()
 	body, err := json.Marshal(map[string]any{
-		"type":   "typing",
+		"type":   kind,
 		"thread": threadID,
 		"from":   user.Username,
 		"on":     on,
@@ -243,6 +276,24 @@ func (c *chatRoom) liveTyping(user chatUser, threadID string, on bool) {
 		return
 	}
 	c.live.send(other, body)
+}
+
+func (c *chatRoom) announceRemoved(a, b, threadID string, id int64) {
+	if c.live == nil || id <= 0 {
+		return
+	}
+	body, err := json.Marshal(map[string]any{
+		"type":   "removed",
+		"thread": threadID,
+		"id":     id,
+	})
+	if err != nil {
+		return
+	}
+	c.live.send(a, body)
+	if a != b {
+		c.live.send(b, body)
+	}
 }
 
 func (c *chatRoom) notePhotoHave(user chatUser, threadID, photoID string) {
@@ -419,7 +470,7 @@ func (s *Server) chatLive(w http.ResponseWriter, r *http.Request) {
 	if err = rw.Flush(); err != nil {
 		return
 	}
-	lc := &liveConn{userID: user.ID, out: make(chan liveFrame, 8)}
+	lc := &liveConn{userID: user.ID, out: make(chan liveFrame, 32)}
 	s.chat.live.add(lc)
 	defer func() {
 		if s.chat.live.remove(lc) == 0 {
@@ -432,24 +483,50 @@ func (s *Server) chatLive(w http.ResponseWriter, r *http.Request) {
 	s.chat.live.send(user.ID, []byte(`{"type":"ready"}`))
 	s.chat.touch(r.Context(), user.ID)
 	s.chat.announcePresence(user.ID, true)
+	var fragOp byte
+	var frag []byte
 	for {
 		_ = conn.SetReadDeadline(time.Now().Add(50 * time.Second))
-		op, payload, err := readFrame(rw.Reader, chatPhotoMax+512)
+		fin, op, payload, err := readFrame(rw.Reader, chatPhotoMax+512)
 		if err != nil {
 			return
 		}
-		switch op {
-		case 0x8:
-			return
-		case 0x9:
-			select {
-			case lc.out <- liveFrame{opcode: 0xA, data: payload}:
-			default:
+		if op >= 0x8 {
+			switch op {
+			case 0x8:
+				return
+			case 0x9:
+				select {
+				case lc.out <- liveFrame{opcode: 0xA, data: payload}:
+				default:
+				}
 			}
+			continue
+		}
+		if op == 0x0 {
+			if fragOp == 0 {
+				return
+			}
+			frag = append(frag, payload...)
+		} else {
+			fragOp = op
+			frag = append(frag[:0], payload...)
+		}
+		if len(frag) > chatPhotoMax+512 {
+			return
+		}
+		if !fin {
+			continue
+		}
+		message := frag
+		kind := fragOp
+		frag = nil
+		fragOp = 0
+		switch kind {
 		case 0x2:
-			s.chat.relayIncomingPhoto(user, payload)
+			s.chat.relayIncomingPhoto(user, message)
 		case 0x1:
-			s.chat.onLiveText(user, payload)
+			s.chat.onLiveText(user, message)
 		}
 	}
 }
@@ -462,7 +539,7 @@ func (s *Server) writeLive(ctx context.Context, conn net.Conn, w *bufio.Writer, 
 		mu.Lock()
 		defer mu.Unlock()
 		_ = conn.SetWriteDeadline(time.Now().Add(15 * time.Second))
-		return writeFrame(w, op, data)
+		return writeMessage(w, op, data)
 	}
 	for {
 		select {
@@ -483,14 +560,45 @@ func (s *Server) writeLive(ctx context.Context, conn net.Conn, w *bufio.Writer, 
 	}
 }
 
-func writeFrame(w *bufio.Writer, opcode byte, payload []byte) error {
+// writeMessage splits a large picture into small frames. One big frame was
+// dropped on the way to the phone, so the picture never appeared.
+func writeMessage(w *bufio.Writer, opcode byte, payload []byte) error {
+	if payload == nil {
+		payload = []byte{}
+	}
+	const chunk = 16 * 1024
+	if len(payload) <= chunk {
+		return writeFrame(w, opcode, payload, true)
+	}
+	for off := 0; off < len(payload); {
+		n := chunk
+		if remain := len(payload) - off; remain < n {
+			n = remain
+		}
+		op := opcode
+		if off > 0 {
+			op = 0
+		}
+		if err := writeFrame(w, op, payload[off:off+n], off+n == len(payload)); err != nil {
+			return err
+		}
+		off += n
+	}
+	return nil
+}
+
+func writeFrame(w *bufio.Writer, opcode byte, payload []byte, fin bool) error {
 	if payload == nil {
 		payload = []byte{}
 	}
 	if len(payload) > chatPhotoMax+512 {
 		return errors.New("frame")
 	}
-	header := []byte{0x80 | opcode}
+	mark := opcode
+	if fin {
+		mark |= 0x80
+	}
+	header := []byte{mark}
 	n := len(payload)
 	switch {
 	case n < 126:
@@ -511,14 +619,15 @@ func writeFrame(w *bufio.Writer, opcode byte, payload []byte) error {
 	return w.Flush()
 }
 
-func readFrame(r *bufio.Reader, max int) (byte, []byte, error) {
+func readFrame(r *bufio.Reader, max int) (bool, byte, []byte, error) {
 	var hdr [2]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
-		return 0, nil, err
+		return false, 0, nil, err
 	}
-	if hdr[0]&0x70 != 0 || hdr[0]&0x80 == 0 {
-		return 0, nil, errors.New("frame")
+	if hdr[0]&0x70 != 0 {
+		return false, 0, nil, errors.New("frame")
 	}
+	fin := hdr[0]&0x80 != 0
 	opcode := hdr[0] & 0x0f
 	masked := hdr[1]&0x80 != 0
 	length := int(hdr[1] & 0x7f)
@@ -526,33 +635,33 @@ func readFrame(r *bufio.Reader, max int) (byte, []byte, error) {
 	case 126:
 		var ext [2]byte
 		if _, err := io.ReadFull(r, ext[:]); err != nil {
-			return 0, nil, err
+			return false, 0, nil, err
 		}
 		length = int(binary.BigEndian.Uint16(ext[:]))
 	case 127:
 		var ext [8]byte
 		if _, err := io.ReadFull(r, ext[:]); err != nil {
-			return 0, nil, err
+			return false, 0, nil, err
 		}
 		n := binary.BigEndian.Uint64(ext[:])
 		if n > uint64(max) {
-			return 0, nil, errors.New("frame")
+			return false, 0, nil, errors.New("frame")
 		}
 		length = int(n)
 	}
 	if length > max {
-		return 0, nil, errors.New("frame")
+		return false, 0, nil, errors.New("frame")
 	}
 	var mask [4]byte
 	if masked {
 		if _, err := io.ReadFull(r, mask[:]); err != nil {
-			return 0, nil, err
+			return false, 0, nil, err
 		}
 	}
 	payload := make([]byte, length)
 	if length > 0 {
 		if _, err := io.ReadFull(r, payload); err != nil {
-			return 0, nil, err
+			return false, 0, nil, err
 		}
 	}
 	if masked {
@@ -560,5 +669,5 @@ func readFrame(r *bufio.Reader, max int) (byte, []byte, error) {
 			payload[i] ^= mask[i%4]
 		}
 	}
-	return opcode, payload, nil
+	return fin, opcode, payload, nil
 }

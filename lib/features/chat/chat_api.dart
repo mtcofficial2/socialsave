@@ -217,6 +217,7 @@ class ChatThreadSummary {
 class ChatSync {
   const ChatSync({
     required this.messages,
+    this.removed = const [],
     this.peerDelivered = 0,
     this.peerRead = 0,
     this.peerLastSeen,
@@ -225,6 +226,7 @@ class ChatSync {
   });
 
   final List<ChatMessage> messages;
+  final List<int> removed;
   final int peerDelivered;
   final int peerRead;
   final DateTime? peerLastSeen;
@@ -508,6 +510,7 @@ class ChatApi {
     );
     final body = _object(response);
     final items = body['messages'];
+    final removed = body['removed'];
     final peer = body['peer'];
     var delivered = 0;
     var read = 0;
@@ -528,12 +531,25 @@ class ChatApi {
       peerLastSeen: seen,
       peerOnline: online,
       peerPhotoRev: photoRev,
+      removed: [
+        if (removed is List)
+          for (final item in removed)
+            if (item is num && item > 0) item.toInt(),
+      ],
       messages: [
         if (items is List)
           for (final item in items)
             if (item is Map)
               ChatMessage.fromJson(Map<String, dynamic>.from(item)),
       ],
+    );
+  }
+
+  Future<void> unsend(String id, int messageId) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/threads/$id/unsend',
+      data: {'id': messageId},
+      options: await _auth(),
     );
   }
 

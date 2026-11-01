@@ -128,6 +128,7 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requireKey).Get("/chat/threads/{id}", s.chatThreadList)
 		r.With(s.requireKey).Post("/chat/threads/{id}", s.chatThreadPost)
 		r.With(s.requireKey).Post("/chat/threads/{id}/read", s.chatThreadRead)
+		r.With(s.requireKey).Post("/chat/threads/{id}/unsend", s.chatThreadUnsend)
 		r.With(s.requireKey).Post("/chat/threads/{id}/voice", s.chatThreadVoice)
 		r.With(s.requireKey).Post("/chat/threads/{id}/photo", s.chatThreadPhoto)
 		r.With(s.requireKey).Get("/chat/images/{id}", s.chatImageGet)

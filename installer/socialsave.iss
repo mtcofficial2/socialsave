@@ -6,7 +6,7 @@
 ; yt-dlp, ffmpeg/ffprobe and deno in Release\engine\.)
 ; Then compile this script with Inno Setup (ISCC).
 
-#define AppVersion "1.0.63"
+#define AppVersion "1.0.64"
 #define SourceDir "..\build\windows\x64\runner\Release"
 
 [Setup]

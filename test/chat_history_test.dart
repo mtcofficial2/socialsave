@@ -178,4 +178,56 @@ void main() {
     expect(threads.single.unread, 2);
     expect(threads.single.lastId, 8);
   });
+
+  test('a deleted message does not come back', () async {
+    const me = 'ada';
+    await ChatHistory.merge(
+      username: me,
+      threadId: 'abc123',
+      incoming: [
+        message(id: 1, text: 'First'),
+        message(id: 2, text: 'Second'),
+      ],
+    );
+    await ChatHistory.saveThreads(me, [
+      ChatThreadSummary(
+        id: 'abc123',
+        username: 'ben',
+        lastText: 'Second',
+        lastId: 2,
+        lastFrom: 'ben',
+      ),
+    ]);
+    await ChatHistory.hide(username: me, threadId: 'abc123', ids: [2]);
+    await ChatHistory.merge(
+      username: me,
+      threadId: 'abc123',
+      incoming: [message(id: 2, text: 'Second'), message(id: 3, text: 'Third')],
+      removed: const [2],
+    );
+    await ChatHistory.remember(
+      me: me,
+      threadId: 'abc123',
+      message: message(id: 2, text: 'Second'),
+    );
+    await ChatHistory.saveLog(
+      username: me,
+      threadId: 'abc123',
+      messages: [
+        message(id: 1, text: 'First'),
+        message(id: 2, text: 'Second'),
+        message(id: 3, text: 'Third'),
+      ],
+      delivered: 3,
+      read: 0,
+      photoRev: 0,
+    );
+    ChatHistory.debugReset();
+
+    final log = await ChatHistory.log(me, 'abc123');
+    expect(log!.messages.map((item) => item.id), [1, 3]);
+    final threads = await ChatHistory.threads(me);
+    expect(threads.single.lastId, 1);
+    expect(threads.single.lastText, 'First');
+  });
 }

@@ -126,6 +126,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     _live?.cancel();
     ChatLive.revision.removeListener(_onTypingClock);
     ChatLive.instance.typing(widget.threadId, on: false);
+    ChatLive.instance.recording(widget.threadId, on: false);
     _poll?.cancel();
     _draftTimer?.cancel();
     _typingIdle?.cancel();
@@ -193,14 +194,19 @@ class _ChatThreadViewState extends State<ChatThreadView>
     if (!mounted) return;
     setState(() {});
     _typingClock?.cancel();
-    if (!ChatLive.isTyping(widget.threadId)) return;
+    final live =
+        ChatLive.isTyping(widget.threadId) ||
+        ChatLive.isRecording(widget.threadId);
+    if (!live) return;
     _typingClock = Timer(const Duration(seconds: 4), () {
       if (mounted) setState(() {});
     });
   }
 
   void _onLive(ChatLiveEvent event) {
-    if (!mounted || event.type == 'typing') return;
+    if (!mounted || event.type == 'typing' || event.type == 'recording') {
+      return;
+    }
     if (event.type == 'presence') {
       final peer = widget.username
           .replaceFirst(RegExp(r'^@'), '')
@@ -224,6 +230,10 @@ class _ChatThreadViewState extends State<ChatThreadView>
       return;
     }
     if (event.threadId != widget.threadId) return;
+    if (event.type == 'removed') {
+      if (event.id > 0) _drop(event.id);
+      return;
+    }
     if (event.type == 'message' && event.message != null) {
       _ingest(event.message!);
       return;
@@ -380,7 +390,28 @@ class _ChatThreadViewState extends State<ChatThreadView>
       _peerOnline = sync.peerOnline;
       _peerSeen = sync.peerLastSeen;
       _peerPhoto = sync.peerPhotoRev;
-      final incoming = sync.messages;
+      final gone = sync.removed.toSet();
+      if (gone.isNotEmpty) {
+        final before = _messages.length;
+        _messages = [
+          for (final item in _messages)
+            if (!gone.contains(item.id)) item,
+        ];
+        if (_me.isNotEmpty) {
+          unawaited(
+            ChatHistory.hide(
+              username: _me,
+              threadId: widget.threadId,
+              ids: gone,
+            ),
+          );
+        }
+        if (before != _messages.length && mounted) setState(() {});
+      }
+      final incoming = [
+        for (final item in sync.messages)
+          if (!gone.contains(item.id)) item,
+      ];
       final keptLocal = <int>{};
       final consumed = <int>{};
       final matchedLocal = <int, ChatMessage>{};
@@ -790,11 +821,14 @@ class _ChatThreadViewState extends State<ChatThreadView>
       _recording = true;
       _error = null;
     });
+    ChatLive.instance.typing(widget.threadId, on: false);
+    ChatLive.instance.recording(widget.threadId, on: true);
   }
 
   Future<void> _finishVoice({required bool send}) async {
     if (_finishingVoice) return;
     _finishingVoice = true;
+    ChatLive.instance.recording(widget.threadId, on: false);
     var voiceLocal = 0;
     try {
       final taken = await _recorder.stop(send: send);
@@ -884,14 +918,44 @@ class _ChatThreadViewState extends State<ChatThreadView>
       items: [
         if (message.id > 0)
           const PopupMenuItem(value: 'reply', child: Text('Reply')),
-        const PopupMenuItem(value: 'copy', child: Text('Copy')),
+        if (message.text.trim().isNotEmpty)
+          const PopupMenuItem(value: 'copy', child: Text('Copy')),
         if (message.links.isNotEmpty)
           const PopupMenuItem(value: 'save', child: Text('Save link')),
+        const PopupMenuItem(value: 'delete', child: Text('Delete')),
+        if (message.id > 0 && message.name == _me && _me.isNotEmpty)
+          const PopupMenuItem(value: 'unsend', child: Text('Unsend')),
       ],
     );
     if (!mounted || selected == null) return;
     if (selected == 'reply') {
       _replyTo(message);
+      return;
+    }
+    if (selected == 'delete') {
+      final yes = await _confirm(
+        'Delete message',
+        'This removes it from this phone. The other person still has it.',
+        'Delete',
+      );
+      if (yes) await _forget(message);
+      return;
+    }
+    if (selected == 'unsend') {
+      final yes = await _confirm(
+        'Unsend message',
+        'This removes it for both of you.',
+        'Unsend',
+      );
+      if (!yes || !mounted) return;
+      try {
+        await _api.unsend(widget.threadId, message.id);
+      } catch (error) {
+        if (!mounted) return;
+        setState(() => _error = chatErrorText(error));
+        return;
+      }
+      await _forget(message);
       return;
     }
     if (selected == 'copy') {
@@ -905,6 +969,45 @@ class _ChatThreadViewState extends State<ChatThreadView>
     _openLink(message.links.first);
   }
 
+  Future<bool> _confirm(String title, String body, String action) async {
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(title),
+          content: Text(body),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(action),
+            ),
+          ],
+        );
+      },
+    );
+    return yes == true;
+  }
+
+  Future<void> _forget(ChatMessage message) async {
+    _drop(message.id);
+  }
+
+  void _drop(int id) {
+    if (!mounted) return;
+    final next = [for (final item in _messages) if (item.id != id) item];
+    if (next.length != _messages.length) {
+      setState(() => _messages = next);
+    }
+    if (_me.isEmpty || widget.threadId.isEmpty) return;
+    unawaited(
+      ChatHistory.hide(username: _me, threadId: widget.threadId, ids: [id]),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -913,7 +1016,8 @@ class _ChatThreadViewState extends State<ChatThreadView>
     final canvas = scheme.brightness == Brightness.dark
         ? const Color(0xFF0B141A)
         : const Color(0xFFEFE7DE);
-    final peerTyping = ChatLive.isTyping(widget.threadId);
+    final recording = ChatLive.isRecording(widget.threadId);
+    final peerTyping = !recording && ChatLive.isTyping(widget.threadId);
     final presence = chatPresenceLabel(
       _peerSeen,
       _peerOnline,
@@ -922,7 +1026,11 @@ class _ChatThreadViewState extends State<ChatThreadView>
           ? ''
           : TimeOfDay.fromDateTime(_peerSeen!.toLocal()).format(context),
     );
-    final subtitle = peerTyping ? 'typing…' : presence;
+    final subtitle = recording
+        ? 'recording audio…'
+        : peerTyping
+        ? 'typing…'
+        : presence;
     final body = Column(
       children: [
         AppBar(
@@ -969,10 +1077,10 @@ class _ChatThreadViewState extends State<ChatThreadView>
                           style: TextStyle(
                             fontSize: 12.5,
                             fontWeight: FontWeight.w600,
-                            fontStyle: peerTyping
+                            fontStyle: recording || peerTyping
                                 ? FontStyle.italic
                                 : FontStyle.normal,
-                            color: peerTyping || _peerOnline
+                            color: recording || peerTyping || _peerOnline
                                 ? const Color(0xFF25D366)
                                 : scheme.onSurfaceVariant,
                           ),
@@ -1037,11 +1145,29 @@ class _ChatThreadViewState extends State<ChatThreadView>
                           if (row.day != null) return _DayChip(label: row.day!);
                           final message = row.message!;
                           final mine = message.name == _me && _me.isNotEmpty;
+                          final previous = index > 0
+                              ? rows[index - 1].message
+                              : null;
+                          final following = index + 1 < rows.length
+                              ? rows[index + 1].message
+                              : null;
+                          final tail =
+                              following == null ||
+                              following.name != message.name ||
+                              following.at.difference(message.at).inMinutes.abs() >=
+                                  5;
+                          final tight =
+                              previous != null &&
+                              previous.name == message.name &&
+                              message.at.difference(previous.at).inMinutes.abs() <
+                                  5;
                           final bubble = _Bubble(
                             key: _keyFor(message.id),
                             message: message,
                             threadId: widget.threadId,
                             mine: mine,
+                            tail: tail,
+                            tight: tight,
                             api: _api,
                             tick: chatTick(
                               mine: mine,
@@ -1055,10 +1181,8 @@ class _ChatThreadViewState extends State<ChatThreadView>
                             onRetry: message.status == 'failed'
                                 ? () => unawaited(_retry(message))
                                 : null,
-                            onLongPress: message.id <= 0
-                                ? null
-                                : (details) =>
-                                      unawaited(_menu(message, details)),
+                            onLongPress: (details) =>
+                                unawaited(_menu(message, details)),
                           );
                           if (message.id <= 0) return bubble;
                           return Dismissible(
@@ -1114,151 +1238,188 @@ class _ChatThreadViewState extends State<ChatThreadView>
             ),
           ),
         ),
-        Material(
-          color: scheme.surface,
+        ColoredBox(
+          color: canvas,
           child: SafeArea(
             top: false,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
-              child: _recording
-                  ? ChatRecordingBar(
+              padding: const EdgeInsets.fromLTRB(6, 2, 6, 6),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (recording)
+                    const Padding(
+                      padding: EdgeInsets.only(left: 14, bottom: 4),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'recording audio…',
+                          style: TextStyle(
+                            color: Color(0xFF25D366),
+                            fontStyle: FontStyle.italic,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    )
+                  else if (peerTyping)
+                    const Padding(
+                      padding: EdgeInsets.only(left: 14, bottom: 4),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'typing…',
+                          style: TextStyle(
+                            color: Color(0xFF25D366),
+                            fontStyle: FontStyle.italic,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                  if (_replyText.isNotEmpty)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 6),
+                      padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
+                      decoration: BoxDecoration(
+                        color: scheme.brightness == Brightness.dark
+                            ? const Color(0xFF1F2C34)
+                            : Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: const Border(
+                          left: BorderSide(color: Color(0xFF25D366), width: 3),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _replyName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Color(0xFF25D366),
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                Text(
+                                  _replyText,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Cancel reply',
+                            onPressed: () => setState(() {
+                              _replyId = null;
+                              _replyName = '';
+                              _replyText = '';
+                            }),
+                            icon: const Icon(Icons.close_rounded, size: 20),
+                          ),
+                        ],
+                      ),
+                    ),
+                  if (_recording)
+                    ChatRecordingBar(
                       view: _recorder.view,
                       onDelete: () => unawaited(_finishVoice(send: false)),
                       onSend: () => unawaited(_finishVoice(send: true)),
                       onPause: () => unawaited(_recorder.togglePause()),
                     )
-                  : ValueListenableBuilder<TextEditingValue>(
+                  else
+                    ValueListenableBuilder<TextEditingValue>(
                       valueListenable: _text,
                       builder: (context, value, _) {
                         final canSend = value.text.trim().isNotEmpty;
-                        return Column(
-                          mainAxisSize: MainAxisSize.min,
+                        final field = scheme.brightness == Brightness.dark
+                            ? const Color(0xFF1F2C34)
+                            : Colors.white;
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
-                            if (_replyText.isNotEmpty)
-                              Container(
-                                margin: const EdgeInsets.only(bottom: 6),
-                                padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
+                            Expanded(
+                              child: DecoratedBox(
                                 decoration: BoxDecoration(
-                                  color: scheme.surfaceContainerHighest,
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: const Border(
-                                    left: BorderSide(
-                                      color: Color(0xFF25D366),
-                                      width: 3,
-                                    ),
-                                  ),
+                                  color: field,
+                                  borderRadius: BorderRadius.circular(24),
                                 ),
                                 child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
                                   children: [
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            _replyName,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(
-                                              color: Color(0xFF25D366),
-                                              fontWeight: FontWeight.w700,
-                                              fontSize: 13,
-                                            ),
-                                          ),
-                                          Text(
-                                            _replyText,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ],
+                                    IconButton(
+                                      tooltip: 'Photo',
+                                      visualDensity: VisualDensity.compact,
+                                      onPressed: () => unawaited(_pickPhoto()),
+                                      icon: Icon(
+                                        Icons.image_outlined,
+                                        color: scheme.onSurfaceVariant,
+                                        size: 22,
                                       ),
                                     ),
-                                    IconButton(
-                                      tooltip: 'Cancel reply',
-                                      onPressed: () => setState(() {
-                                        _replyId = null;
-                                        _replyName = '';
-                                        _replyText = '';
-                                      }),
-                                      icon: const Icon(Icons.close_rounded),
+                                    Expanded(
+                                      child: Focus(
+                                        onKeyEvent: _onKey,
+                                        child: TextField(
+                                          controller: _text,
+                                          focusNode: _focus,
+                                          onChanged: _onTyped,
+                                          minLines: 1,
+                                          maxLines: 5,
+                                          textInputAction: _enterSends
+                                              ? TextInputAction.newline
+                                              : TextInputAction.send,
+                                          onSubmitted: _enterSends
+                                              ? null
+                                              : (_) => unawaited(_send()),
+                                          style: const TextStyle(
+                                            fontSize: 16,
+                                            height: 1.25,
+                                          ),
+                                          decoration: const InputDecoration(
+                                            hintText: 'Message',
+                                            filled: false,
+                                            isDense: true,
+                                            contentPadding: EdgeInsets.fromLTRB(
+                                              0,
+                                              10,
+                                              14,
+                                              10,
+                                            ),
+                                            border: InputBorder.none,
+                                          ),
+                                        ),
+                                      ),
                                     ),
                                   ],
                                 ),
                               ),
-                            if (peerTyping)
-                              const Padding(
-                                padding: EdgeInsets.only(left: 12, bottom: 4),
-                                child: Text(
-                                  'typing…',
-                                  style: TextStyle(
-                                    color: Color(0xFF25D366),
-                                    fontStyle: FontStyle.italic,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ),
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                IconButton(
-                                  tooltip: 'Photo',
-                                  onPressed: () => unawaited(_pickPhoto()),
-                                  icon: const Icon(Icons.image_outlined),
-                                ),
-                                Expanded(
-                                  child: Focus(
-                                    onKeyEvent: _onKey,
-                                    child: TextField(
-                                      controller: _text,
-                                      focusNode: _focus,
-                                      onChanged: _onTyped,
-                                      minLines: 1,
-                                      maxLines: 5,
-                                      textInputAction: _enterSends
-                                          ? TextInputAction.newline
-                                          : TextInputAction.send,
-                                      onSubmitted: _enterSends
-                                          ? null
-                                          : (_) => unawaited(_send()),
-                                      decoration: InputDecoration(
-                                        hintText: 'Message',
-                                        filled: true,
-                                        fillColor:
-                                            scheme.surfaceContainerHighest,
-                                        contentPadding:
-                                            const EdgeInsets.symmetric(
-                                              horizontal: 16,
-                                              vertical: 10,
-                                            ),
-                                        border: OutlineInputBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            24,
-                                          ),
-                                          borderSide: BorderSide.none,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-                                if (canSend)
-                                  _roundButton(
-                                    tooltip: 'Send',
-                                    icon: Icons.send_rounded,
-                                    onPressed: () => unawaited(_send()),
-                                  )
-                                else if (!Plat.isWeb)
-                                  _roundButton(
-                                    tooltip: 'Voice note',
-                                    icon: Icons.mic_rounded,
-                                    onPressed: () => unawaited(_startVoice()),
-                                  ),
-                              ],
                             ),
+                            const SizedBox(width: 6),
+                            if (canSend)
+                              _roundButton(
+                                tooltip: 'Send',
+                                icon: Icons.send_rounded,
+                                onPressed: () => unawaited(_send()),
+                              )
+                            else if (!Plat.isWeb)
+                              _roundButton(
+                                tooltip: 'Voice note',
+                                icon: Icons.mic_rounded,
+                                onPressed: () => unawaited(_startVoice()),
+                              ),
                           ],
                         );
                       },
                     ),
+                ],
+              ),
             ),
           ),
         ),
@@ -1471,9 +1632,13 @@ Widget _roundButton({
     style: IconButton.styleFrom(
       backgroundColor: const Color(0xFF25D366),
       foregroundColor: Colors.white,
+      fixedSize: const Size(42, 42),
+      minimumSize: const Size(42, 42),
+      padding: EdgeInsets.zero,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
     ),
     onPressed: onPressed,
-    icon: Icon(icon),
+    icon: Icon(icon, size: 22),
   );
 }
 
@@ -1487,6 +1652,8 @@ class _Bubble extends StatelessWidget {
     required this.tick,
     required this.onLink,
     required this.onLongPress,
+    this.tail = true,
+    this.tight = false,
     this.onQuote,
     this.onRetry,
   });
@@ -1494,6 +1661,8 @@ class _Bubble extends StatelessWidget {
   final ChatMessage message;
   final String threadId;
   final bool mine;
+  final bool tail;
+  final bool tight;
   final ChatApi api;
   final String tick;
   final ValueChanged<String> onLink;
@@ -1530,7 +1699,19 @@ class _Bubble extends StatelessWidget {
                       ? () => onQuote!(message.reply)
                       : null,
                 );
-          final stamp = _stamp(time, tickColor, tick, onRetry: onRetry);
+          final timeColor = dark
+              ? const Color(0xFFAEBAC1)
+              : const Color(0xFF667781);
+          final stamp = _stamp(
+            time,
+            timeColor,
+            tick,
+            tickColor: tickColor,
+            onRetry: onRetry,
+          );
+          final caption = message.text.trim();
+          final barePhoto =
+              message.isPhoto && (caption.isEmpty || caption == 'Photo');
           final Widget body;
           if (message.isVoice) {
             body = SizedBox(
@@ -1546,13 +1727,14 @@ class _Bubble extends StatelessWidget {
                     mine: mine,
                     dark: dark,
                   ),
-                  const SizedBox(height: 1),
                   stamp,
                 ],
               ),
             );
           } else if (message.isPhoto) {
-            final caption = message.text.trim();
+            final overlayTick = tick == 'read'
+                ? const Color(0xFF53BDEB)
+                : Colors.white;
             body = SizedBox(
               width: cardWidth,
               child: Column(
@@ -1560,22 +1742,47 @@ class _Bubble extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   ?quote,
-                  _ChatPicture(
-                    message: message,
-                    threadId: threadId,
+                  Stack(
+                    children: [
+                      _ChatPicture(message: message, threadId: threadId),
+                      if (barePhoto)
+                        Positioned(
+                          right: 4,
+                          bottom: 4,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: const Color(0x8A000000),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(6, 1, 4, 1),
+                              child: _stamp(
+                                time,
+                                Colors.white,
+                                tick,
+                                tickColor: overlayTick,
+                                onRetry: onRetry,
+                                onDark: true,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
-                  if (caption.isNotEmpty && caption != 'Photo') ...[
+                  if (!barePhoto) ...[
                     const SizedBox(height: 4),
-                    _LinkText(
-                      text: message.text,
-                      links: message.links,
-                      color: fg,
-                      linkColor: link,
-                      onLink: onLink,
+                    _TimedLine(
+                      text: _LinkText(
+                        text: message.text,
+                        links: message.links,
+                        color: fg,
+                        linkColor: link,
+                        onLink: onLink,
+                        reserve: mine ? 78 : 58,
+                      ),
+                      stamp: stamp,
                     ),
                   ],
-                  const SizedBox(height: 1),
-                  stamp,
                 ],
               ),
             );
@@ -1588,15 +1795,17 @@ class _Bubble extends StatelessWidget {
                 children: [
                   ?quote,
                   ChatLinkCard(url: message.links.first, onOpen: onLink),
-                  _LinkText(
-                    text: message.text,
-                    links: message.links,
-                    color: fg,
-                    linkColor: link,
-                    onLink: onLink,
+                  _TimedLine(
+                    text: _LinkText(
+                      text: message.text,
+                      links: message.links,
+                      color: fg,
+                      linkColor: link,
+                      onLink: onLink,
+                      reserve: mine ? 78 : 58,
+                    ),
+                    stamp: stamp,
                   ),
-                  const SizedBox(height: 1),
-                  stamp,
                 ],
               ),
             );
@@ -1607,44 +1816,74 @@ class _Bubble extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   ?quote,
-                  _LinkText(
-                    text: message.text,
-                    links: message.links,
-                    color: fg,
-                    linkColor: link,
-                    onLink: onLink,
+                  _TimedLine(
+                    text: _LinkText(
+                      text: message.text,
+                      links: message.links,
+                      color: fg,
+                      linkColor: link,
+                      onLink: onLink,
+                      reserve: mine ? 78 : 58,
+                    ),
+                    stamp: stamp,
                   ),
-                  const SizedBox(height: 1),
-                  stamp,
                 ],
               ),
             );
           }
+          final radius = BorderRadius.only(
+            topLeft: Radius.circular(tight && !mine ? 6 : 8),
+            topRight: Radius.circular(tight && mine ? 6 : 8),
+            bottomLeft: Radius.circular(!tail || mine ? 8 : 0),
+            bottomRight: Radius.circular(!tail || !mine ? 8 : 0),
+          );
           return GestureDetector(
             onLongPressStart: onLongPress,
-            child: Container(
-              constraints: BoxConstraints(maxWidth: max),
-              margin: const EdgeInsets.only(bottom: 2, top: 1),
-              padding: const EdgeInsets.fromLTRB(8, 4, 8, 3),
-              decoration: BoxDecoration(
-                color: bg,
-                borderRadius: BorderRadius.only(
-                  topLeft: const Radius.circular(8),
-                  topRight: const Radius.circular(8),
-                  bottomLeft: Radius.circular(mine ? 8 : 2),
-                  bottomRight: Radius.circular(mine ? 2 : 8),
-                ),
-                boxShadow: dark
-                    ? null
-                    : const [
-                        BoxShadow(
-                          color: Color(0x14000000),
-                          blurRadius: 0.5,
-                          offset: Offset(0, 1),
-                        ),
-                      ],
+            child: Padding(
+              padding: EdgeInsets.only(
+                top: tight ? 1 : 7,
+                bottom: tail ? 2 : 1,
+                left: mine ? 0 : 8,
+                right: mine ? 8 : 0,
               ),
-              child: body,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Container(
+                    constraints: BoxConstraints(maxWidth: max),
+                    padding: EdgeInsets.fromLTRB(
+                      barePhoto ? 3 : 8,
+                      barePhoto ? 3 : 6,
+                      barePhoto ? 3 : 7,
+                      barePhoto ? 3 : 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: bg,
+                      borderRadius: radius,
+                      boxShadow: dark
+                          ? null
+                          : const [
+                              BoxShadow(
+                                color: Color(0x14000000),
+                                blurRadius: 0.5,
+                                offset: Offset(0, 1),
+                              ),
+                            ],
+                    ),
+                    child: body,
+                  ),
+                  if (tail)
+                    Positioned(
+                      right: mine ? -7 : null,
+                      left: mine ? null : -7,
+                      bottom: 0,
+                      child: CustomPaint(
+                        size: const Size(10, 12),
+                        painter: _BubbleTail(color: bg, mine: mine),
+                      ),
+                    ),
+                ],
+              ),
             ),
           );
         },
@@ -1653,16 +1892,70 @@ class _Bubble extends StatelessWidget {
   }
 }
 
-Widget _stamp(String time, Color color, String tick, {VoidCallback? onRetry}) {
+class _TimedLine extends StatelessWidget {
+  const _TimedLine({required this.text, required this.stamp});
+
+  final Widget text;
+  final Widget stamp;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        text,
+        Positioned(right: 0, bottom: 0, child: stamp),
+      ],
+    );
+  }
+}
+
+class _BubbleTail extends CustomPainter {
+  const _BubbleTail({required this.color, required this.mine});
+
+  final Color color;
+  final bool mine;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = Path();
+    final w = size.width;
+    final h = size.height;
+    if (mine) {
+      path
+        ..moveTo(0, 0)
+        ..quadraticBezierTo(w * 0.9, h * 0.28, w, h)
+        ..lineTo(0, h);
+    } else {
+      path
+        ..moveTo(w, 0)
+        ..quadraticBezierTo(w * 0.1, h * 0.28, 0, h)
+        ..lineTo(w, h);
+    }
+    path.close();
+    canvas.drawPath(path, Paint()..color = color);
+  }
+
+  @override
+  bool shouldRepaint(_BubbleTail old) => old.color != color || old.mine != mine;
+}
+
+Widget _stamp(
+  String time,
+  Color timeColor,
+  String tick, {
+  Color? tickColor,
+  VoidCallback? onRetry,
+  bool onDark = false,
+}) {
   final IconData? icon;
-  var iconColor = color;
-  var size = 16.0;
+  var iconColor = tickColor ?? timeColor;
+  var size = 15.0;
   if (tick == 'failed') {
     icon = Icons.error_outline;
     iconColor = const Color(0xFFEF5350);
   } else if (tick == 'sending') {
     icon = Icons.schedule_rounded;
-    size = 14;
+    size = 13;
   } else if (tick == 'sent') {
     icon = Icons.done_rounded;
   } else if (tick == 'delivered' || tick == 'read') {
@@ -1685,8 +1978,17 @@ Widget _stamp(String time, Color color, String tick, {VoidCallback? onRetry}) {
     alignment: Alignment.centerRight,
     child: Row(
       mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        Text(time, style: TextStyle(fontSize: 11, color: color)),
+        Text(
+          time,
+          style: TextStyle(
+            fontSize: 11,
+            height: 1.1,
+            color: timeColor,
+            fontWeight: onDark ? FontWeight.w600 : FontWeight.w400,
+          ),
+        ),
         if (icon != null) ...[const SizedBox(width: 2), mark],
       ],
     ),
@@ -1749,80 +2051,146 @@ class _Quote extends StatelessWidget {
   }
 }
 
-class _ChatPicture extends StatelessWidget {
+class _ChatPicture extends StatefulWidget {
   const _ChatPicture({required this.message, required this.threadId});
 
   final ChatMessage message;
   final String threadId;
 
   @override
-  Widget build(BuildContext context) {
-    final local = message.localBytes;
-    if (local != null && local.isNotEmpty) {
-      return _frame(
-        Image.memory(
-          local,
-          fit: BoxFit.cover,
-          cacheWidth: 640,
-          gaplessPlayback: true,
-        ),
-      );
+  State<_ChatPicture> createState() => _ChatPictureState();
+}
+
+class _ChatPictureState extends State<_ChatPicture> {
+  Uint8List? _bytes;
+  bool _waiting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _bytes = _copy(widget.message.localBytes);
+    ChatImageStore.revision.addListener(_onStore);
+    if (_bytes == null) _load();
+  }
+
+  @override
+  void didUpdateWidget(_ChatPicture old) {
+    super.didUpdateWidget(old);
+    final local = _copy(widget.message.localBytes);
+    if (local != null) {
+      _bytes = local;
+      return;
     }
-    final id = message.photo;
-    if (id.isEmpty) {
-      return _frame(
-        const SizedBox(
-          height: 120,
-          child: Center(child: Icon(Icons.image_outlined)),
-        ),
-      );
+    if (old.message.photo != widget.message.photo) _load();
+  }
+
+  @override
+  void dispose() {
+    ChatImageStore.revision.removeListener(_onStore);
+    super.dispose();
+  }
+
+  void _onStore() {
+    if (_bytes == null) _load();
+  }
+
+  Future<void> _load() async {
+    final id = widget.message.photo;
+    if (id.isEmpty) return;
+    final bytes = await ChatImageStore.load(id);
+    if (!mounted) return;
+    if (bytes == null || bytes.isEmpty) {
+      ChatLive.instance.wantPhoto(widget.threadId, id);
+      if (_waiting) return;
+      _waiting = true;
+      Future<void>.delayed(const Duration(seconds: 4), () {
+        _waiting = false;
+        if (mounted && _bytes == null && widget.message.photo == id) _load();
+      });
+      return;
     }
-    return ValueListenableBuilder<int>(
-      valueListenable: ChatImageStore.revision,
-      builder: (context, revision, _) {
-        return FutureBuilder<Uint8List?>(
-          key: ValueKey('$id-$revision'),
-          future: ChatImageStore.load(id),
-          builder: (context, snapshot) {
-            final bytes = snapshot.data;
-            if (bytes == null || bytes.isEmpty) {
-              if (snapshot.connectionState == ConnectionState.done) {
-                ChatLive.instance.wantPhoto(threadId, id);
-              }
-              return _frame(
-                const SizedBox(
-                  height: 120,
-                  child: Center(
-                    child: SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  ),
-                ),
-              );
-            }
-            return _frame(
-              Image.memory(
-                bytes,
-                fit: BoxFit.cover,
-                gaplessPlayback: true,
-                errorBuilder: (context, error, stack) =>
-                    const Icon(Icons.image_outlined),
-              ),
-            );
-          },
-        );
-      },
+    setState(() => _bytes = Uint8List.fromList(bytes));
+  }
+
+  Uint8List? _copy(Uint8List? bytes) {
+    if (bytes == null || bytes.isEmpty) return null;
+    return Uint8List.fromList(bytes);
+  }
+
+  void _open() {
+    final bytes = _bytes;
+    if (bytes == null) return;
+    Navigator.of(context).push(
+      PageRouteBuilder<void>(
+        opaque: true,
+        pageBuilder: (context, animation, secondary) {
+          return _PhotoPage(bytes: bytes);
+        },
+      ),
     );
   }
 
-  Widget _frame(Widget child) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 2),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(6),
-        child: SizedBox(height: 180, width: double.infinity, child: child),
+  @override
+  Widget build(BuildContext context) {
+    final bytes = _bytes;
+    final child = bytes == null
+        ? const SizedBox(
+            height: 180,
+            child: Center(
+              child: SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          )
+        : GestureDetector(
+            onTap: _open,
+            child: Image.memory(
+              bytes,
+              height: 180,
+              width: double.infinity,
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
+              errorBuilder: (context, error, stack) => const SizedBox(
+                height: 180,
+                child: Center(child: Icon(Icons.image_outlined)),
+              ),
+            ),
+          );
+    return ClipRRect(borderRadius: BorderRadius.circular(6), child: child);
+  }
+}
+
+class _PhotoPage extends StatelessWidget {
+  const _PhotoPage({required this.bytes});
+
+  final Uint8List bytes;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          Center(
+            child: InteractiveViewer(
+              minScale: 1,
+              maxScale: 4,
+              child: Image.memory(bytes, fit: BoxFit.contain),
+            ),
+          ),
+          SafeArea(
+            child: Align(
+              alignment: Alignment.topLeft,
+              child: IconButton(
+                tooltip: 'Close',
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.close_rounded, color: Colors.white),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1835,6 +2203,7 @@ class _LinkText extends StatelessWidget {
     required this.color,
     required this.linkColor,
     required this.onLink,
+    this.reserve = 0,
   });
 
   final String text;
@@ -1842,6 +2211,7 @@ class _LinkText extends StatelessWidget {
   final Color color;
   final Color linkColor;
   final ValueChanged<String> onLink;
+  final double reserve;
 
   @override
   Widget build(BuildContext context) {
@@ -1870,6 +2240,8 @@ class _LinkText extends StatelessWidget {
                   ),
                 ),
               ),
+          if (reserve > 0)
+            WidgetSpan(child: SizedBox(width: reserve, height: 14)),
         ],
       ),
     );

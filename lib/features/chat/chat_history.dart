@@ -14,6 +14,7 @@ import 'package:social_save/features/chat/chat_api.dart';
 class ChatLog {
   const ChatLog({
     required this.messages,
+    this.hidden = const [],
     this.delivered = 0,
     this.read = 0,
     this.seen,
@@ -21,6 +22,9 @@ class ChatLog {
   });
 
   final List<ChatMessage> messages;
+
+  /// Messages this phone has deleted or the sender has unsent.
+  final List<int> hidden;
   final int delivered;
   final int read;
   final DateTime? seen;
@@ -37,6 +41,7 @@ class ChatLog {
 
 class ChatHistory {
   static const keep = 2000;
+  static const hiddenKeep = 2000;
 
   @visibleForTesting
   static Directory? rootOverride;
@@ -102,14 +107,49 @@ class ChatHistory {
       final book = await _book(username);
       if (book == null || !_threadOk(threadId)) return;
       final prior = book.logs[threadId];
-      final merged = _union(prior?.messages ?? const [], messages);
+      final hidden = prior?.hidden ?? const <int>[];
+      final merged = _union(prior?.messages ?? const [], messages, hidden);
       book.logs[threadId] = ChatLog(
         messages: _cap(merged),
+        hidden: hidden,
         delivered: _max(prior?.delivered ?? 0, delivered),
         read: _max(prior?.read ?? 0, read),
         seen: _later(prior?.seen, seen),
         photoRev: _max(prior?.photoRev ?? 0, photoRev),
       );
+      await book.flush();
+    });
+  }
+
+  /// Keeps a message from coming back on the next sync.
+  static Future<void> hide({
+    required String username,
+    required String threadId,
+    required Iterable<int> ids,
+  }) {
+    return _run(() async {
+      final book = await _book(username);
+      if (book == null || !_threadOk(threadId)) return;
+      final prior = book.logs[threadId];
+      final drop = <int>{};
+      for (final id in ids) {
+        if (id != 0) drop.add(id);
+      }
+      if (drop.isEmpty) return;
+      final hidden = _rememberHidden(prior?.hidden ?? const [], drop);
+      final kept = [
+        for (final item in prior?.messages ?? const <ChatMessage>[])
+          if (!drop.contains(item.id) && !hidden.contains(item.id)) item,
+      ];
+      book.logs[threadId] = ChatLog(
+        messages: kept,
+        hidden: hidden,
+        delivered: prior?.delivered ?? 0,
+        read: prior?.read ?? 0,
+        seen: prior?.seen,
+        photoRev: prior?.photoRev ?? 0,
+      );
+      book.dropPreview(threadId, drop, kept);
       await book.flush();
     });
   }
@@ -125,9 +165,12 @@ class ChatHistory {
       final book = await _book(me);
       if (book == null || !_threadOk(threadId) || message.id <= 0) return;
       final prior = book.logs[threadId];
-      final merged = _addIncoming(prior?.messages ?? const [], [message]);
+      final hidden = prior?.hidden ?? const <int>[];
+      if (hidden.contains(message.id)) return;
+      final merged = _addIncoming(prior?.messages ?? const [], [message], hidden);
       book.logs[threadId] = ChatLog(
         messages: _cap(merged),
+        hidden: hidden,
         delivered: prior?.delivered ?? 0,
         read: prior?.read ?? 0,
         seen: prior?.seen,
@@ -146,18 +189,32 @@ class ChatHistory {
     int read = 0,
     DateTime? seen,
     int photoRev = 0,
+    List<int> removed = const [],
   }) {
     return _run(() async {
       final book = await _book(username);
       if (book == null || !_threadOk(threadId)) return;
       final prior = book.logs[threadId];
+      final hidden = _rememberHidden(prior?.hidden ?? const [], removed);
+      final current = [
+        for (final item in prior?.messages ?? const <ChatMessage>[])
+          if (!hidden.contains(item.id)) item,
+      ];
       book.logs[threadId] = ChatLog(
-        messages: _cap(_addIncoming(prior?.messages ?? const [], incoming)),
+        messages: _cap(_addIncoming(current, incoming, hidden)),
+        hidden: hidden,
         delivered: _max(prior?.delivered ?? 0, delivered),
         read: _max(prior?.read ?? 0, read),
         seen: _later(prior?.seen, seen),
         photoRev: _max(prior?.photoRev ?? 0, photoRev),
       );
+      if (removed.isNotEmpty) {
+        book.dropPreview(
+          threadId,
+          removed.where((id) => id > 0).toSet(),
+          book.logs[threadId]!.messages,
+        );
+      }
       await book.flush();
     });
   }
@@ -186,7 +243,7 @@ class ChatHistory {
     for (final item in items) {
       if (!_threadOk(item.id) || item.lastId <= 0) continue;
       final known = await newest(username, item.id);
-      if (known >= item.lastId) continue;
+      if (known == item.lastId) continue;
       try {
         final sync = await api.messages(item.id, known);
         await merge(
@@ -197,6 +254,7 @@ class ChatHistory {
           read: sync.peerRead,
           seen: sync.peerLastSeen,
           photoRev: sync.peerPhotoRev,
+          removed: sync.removed,
         );
       } catch (_) {
         return;
@@ -245,17 +303,31 @@ class ChatHistory {
     return [...saved.sublist(start), ...pending];
   }
 
+  static List<int> _rememberHidden(List<int> current, Iterable<int> extra) {
+    final ids = <int>{...current};
+    for (final id in extra) {
+      if (id > 0) ids.add(id);
+    }
+    final list = ids.toList()..sort();
+    if (list.length <= hiddenKeep) return list;
+    return list.sublist(list.length - hiddenKeep);
+  }
+
   static List<ChatMessage> _union(
     List<ChatMessage> disk,
     List<ChatMessage> widget,
+    List<int> hidden,
   ) {
+    final gone = hidden.toSet();
     final widgetIds = {for (final item in widget) item.id};
     final byId = <int, ChatMessage>{};
     for (final item in disk) {
+      if (gone.contains(item.id)) continue;
       if (item.id < 0 && !widgetIds.contains(item.id)) continue;
       byId[item.id] = item;
     }
     for (final item in widget) {
+      if (gone.contains(item.id)) continue;
       byId[item.id] = item;
     }
     final pending = [for (final item in widget) if (item.id < 0) item];
@@ -267,10 +339,16 @@ class ChatHistory {
   static List<ChatMessage> _addIncoming(
     List<ChatMessage> current,
     List<ChatMessage> incoming,
+    List<int> hidden,
   ) {
+    final gone = hidden.toSet();
     final next = [...current];
     for (final server in incoming) {
       if (server.id <= 0) continue;
+      if (gone.contains(server.id)) {
+        next.removeWhere((item) => item.id == server.id);
+        continue;
+      }
       next.removeWhere((local) => _samePending(local, server));
       final index = next.indexWhere((item) => item.id == server.id);
       if (index >= 0) {
@@ -403,11 +481,48 @@ class _Book {
     threads.insert(0, row);
   }
 
+  void dropPreview(String threadId, Set<int> drop, List<ChatMessage> messages) {
+    final index = threads.indexWhere((item) => item.id == threadId);
+    if (index < 0 || !drop.contains(threads[index].lastId)) return;
+    final current = threads[index];
+    ChatMessage? last;
+    for (final message in messages) {
+      if (message.id <= 0) continue;
+      if (last == null || message.id > last.id) last = message;
+    }
+    if (last == null) {
+      threads[index] = ChatThreadSummary(
+        id: current.id,
+        username: current.username,
+        lastSeen: current.lastSeen,
+        photoRev: current.photoRev,
+        unread: current.unread,
+      );
+      return;
+    }
+    threads[index] = ChatThreadSummary(
+      id: current.id,
+      username: current.username,
+      lastText: last.text,
+      lastAt: last.at,
+      lastId: last.id,
+      lastFrom: last.name,
+      lastStatus: last.status,
+      unread: current.unread,
+      lastSeen: current.lastSeen,
+      photoRev: current.photoRev,
+    );
+  }
+
   ChatThreadSummary _prefer(ChatThreadSummary? disk, ChatThreadSummary incoming) {
     final quiet = incoming.copyWith(online: false);
     if (disk == null) return quiet;
     if (incoming.lastId > disk.lastId) return quiet;
-    if (incoming.lastId < disk.lastId) return disk.copyWith(online: false);
+    if (incoming.lastId < disk.lastId) {
+      final hidden = logs[incoming.id]?.hidden ?? const <int>[];
+      if (hidden.contains(disk.lastId)) return quiet;
+      return disk.copyWith(online: false);
+    }
     final unread = incoming.unread < disk.unread ? incoming.unread : disk.unread;
     final seen = ChatHistory._later(disk.lastSeen, incoming.lastSeen);
     return quiet.copyWith(
@@ -455,8 +570,20 @@ class _Book {
       }
     }
     final seenAt = (json['seen'] as num?)?.toInt() ?? 0;
+    final rawHidden = json['hidden'];
+    final hidden = <int>[];
+    if (rawHidden is List) {
+      for (final item in rawHidden) {
+        if (item is num && item > 0) hidden.add(item.toInt());
+      }
+    }
+    final gone = hidden.toSet();
     return ChatLog(
-      messages: messages,
+      messages: [
+        for (final item in messages)
+          if (!gone.contains(item.id)) item,
+      ],
+      hidden: hidden,
       delivered: (json['delivered'] as num?)?.toInt() ?? 0,
       read: (json['read'] as num?)?.toInt() ?? 0,
       seen: seenAt > 0 ? DateTime.fromMillisecondsSinceEpoch(seenAt) : null,
@@ -470,6 +597,7 @@ class _Book {
       'read': log.read,
       'seen': log.seen?.millisecondsSinceEpoch ?? 0,
       'photo': log.photoRev,
+      if (log.hidden.isNotEmpty) 'hidden': log.hidden,
       'messages': [for (final item in log.messages) item.toJson()],
     };
   }

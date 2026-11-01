@@ -157,6 +157,12 @@ class _ChatAlertHostState extends State<ChatAlertHost>
   }
 
   void _onLive(ChatLiveEvent event) {
+    if (event.type == 'removed') {
+      if (event.id > 0 && event.threadId.isNotEmpty) {
+        unawaited(_drop(event.threadId, event.id));
+      }
+      return;
+    }
     if (event.type != 'message') return;
     final message = event.message;
     if (message == null || message.id <= 0 || event.threadId.isEmpty) return;
@@ -165,6 +171,12 @@ class _ChatAlertHostState extends State<ChatAlertHost>
     if (message.id <= prev) return;
     ChatAlerts.seen[event.threadId] = message.id;
     unawaited(_alertLive(event.threadId, message));
+  }
+
+  Future<void> _drop(String threadId, int id) async {
+    if (_me.isEmpty) _me = await ChatSession.username();
+    if (_me.isEmpty) return;
+    await ChatHistory.hide(username: _me, threadId: threadId, ids: [id]);
   }
 
   Future<void> _keep(String threadId, ChatMessage message) async {

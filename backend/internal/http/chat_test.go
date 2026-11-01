@@ -418,6 +418,85 @@ func TestChatPhotoReachesTheOtherPhoneWithoutBeingStored(t *testing.T) {
 	}
 }
 
+func TestChatUnsendDropsTheMessageForBothPeople(t *testing.T) {
+	app := testApp(t)
+	app.chat.file = filepath.Join(t.TempDir(), "accounts.json")
+	ada := registerChat(t, app, `{"phone":"256700000555","username":"ada4"}`)
+	ben := registerChat(t, app, `{"email":"ben4@example.com","username":"ben4"}`)
+	opened := postChat(app, "/api/v1/chat/threads", ada.token, `{"username":"ben4"}`)
+	var thread struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(opened.Body.Bytes(), &thread); err != nil || thread.ID == "" {
+		t.Fatalf("open %d %s", opened.Code, opened.Body.String())
+	}
+	first := postChat(app, "/api/v1/chat/threads/"+thread.ID, ada.token, `{"text":"Keep me"}`)
+	second := postChat(app, "/api/v1/chat/threads/"+thread.ID, ada.token, `{"text":"Take me back"}`)
+	if first.Code != http.StatusOK || second.Code != http.StatusOK {
+		t.Fatalf("send %d %d", first.Code, second.Code)
+	}
+	denied := postChat(app, "/api/v1/chat/threads/"+thread.ID+"/unsend", ben.token, `{"id":2}`)
+	if denied.Code != http.StatusBadRequest {
+		t.Fatalf("receiver unsend %d %s", denied.Code, denied.Body.String())
+	}
+	gone := postChat(app, "/api/v1/chat/threads/"+thread.ID+"/unsend", ada.token, `{"id":2}`)
+	if gone.Code != http.StatusOK {
+		t.Fatalf("unsend %d %s", gone.Code, gone.Body.String())
+	}
+	seen := getChat(app, "/api/v1/chat/threads/"+thread.ID+"?after=0", ben.token)
+	body := seen.Body.Bytes()
+	if bytes.Contains(body, []byte("Take me back")) || !bytes.Contains(body, []byte("Keep me")) {
+		t.Fatalf("thread %s", body)
+	}
+	if !bytes.Contains(body, []byte(`"removed":[2]`)) {
+		t.Fatalf("removed %s", body)
+	}
+	inbox := getChat(app, "/api/v1/chat/threads", ben.token)
+	if bytes.Contains(inbox.Body.Bytes(), []byte("Take me back")) || !bytes.Contains(inbox.Body.Bytes(), []byte("Keep me")) {
+		t.Fatalf("inbox %s", inbox.Body.String())
+	}
+}
+
+func TestChatLargePhotoArrivesWhole(t *testing.T) {
+	app := testApp(t)
+	app.chat.file = filepath.Join(t.TempDir(), "accounts.json")
+	ada := registerChat(t, app, `{"phone":"256700000666","username":"ada5"}`)
+	ben := registerChat(t, app, `{"email":"ben5@example.com","username":"ben5"}`)
+	opened := postChat(app, "/api/v1/chat/threads", ada.token, `{"username":"ben5"}`)
+	var thread struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(opened.Body.Bytes(), &thread); err != nil || thread.ID == "" {
+		t.Fatalf("open %s", opened.Body.String())
+	}
+	srv := httptest.NewServer(app.Router())
+	defer srv.Close()
+	conn, reader := dialChatSocket(t, srv.URL, ben.token)
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if op, payload := readClientFrame(t, reader); op != 0x1 || !bytes.Contains(payload, []byte(`"ready"`)) {
+		t.Fatalf("ready %d %s", op, payload)
+	}
+	jpeg := bytes.Repeat([]byte{0}, 20*1024)
+	jpeg[0], jpeg[1], jpeg[2] = 0xFF, 0xD8, 0xFF
+	photo := postChatRaw(app, "/api/v1/chat/threads/"+thread.ID+"/photo", ada.token, jpeg, "", "")
+	if photo.Code != http.StatusOK {
+		t.Fatalf("photo %d %s", photo.Code, photo.Body.String())
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	var got []byte
+	for i := 0; i < 8; i++ {
+		op, payload := readClientFrame(t, reader)
+		if op == 0x2 && bytes.Contains(payload, jpeg) {
+			got = payload
+			break
+		}
+	}
+	if !bytes.Contains(got, jpeg) {
+		t.Fatalf("picture length %d", len(got))
+	}
+}
+
 func dialChatSocket(t *testing.T, rawURL, token string) (net.Conn, *bufio.Reader) {
 	t.Helper()
 	host := strings.TrimPrefix(rawURL, "http://")
@@ -448,11 +527,26 @@ func dialChatSocket(t *testing.T, rawURL, token string) (net.Conn, *bufio.Reader
 
 func readClientFrame(t *testing.T, r *bufio.Reader) (byte, []byte) {
 	t.Helper()
-	op, payload, err := readFrame(r, chatPhotoMax+512)
-	if err != nil {
-		t.Fatal(err)
+	var op byte
+	var buf []byte
+	for {
+		fin, opcode, payload, err := readFrame(r, chatPhotoMax+512)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if opcode >= 0x8 {
+			return opcode, payload
+		}
+		if opcode == 0 {
+			buf = append(buf, payload...)
+		} else {
+			op = opcode
+			buf = append([]byte(nil), payload...)
+		}
+		if fin {
+			return op, buf
+		}
 	}
-	return op, payload
 }
 
 func getChat(app *Server, path, token string) *httptest.ResponseRecorder {

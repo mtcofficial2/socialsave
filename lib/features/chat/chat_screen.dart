@@ -416,7 +416,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (!mounted) return;
     setState(() {});
     _typingClock?.cancel();
-    final typing = _threads.any((item) => ChatLive.isTyping(item.id));
+    final typing = _threads.any(
+      (item) => ChatLive.isTyping(item.id) || ChatLive.isRecording(item.id),
+    );
     if (!typing) return;
     _typingClock = Timer(const Duration(seconds: 4), () {
       if (mounted) setState(() {});
@@ -446,6 +448,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       return;
     }
     if (event.threadId.isEmpty) return;
+    if (event.type == 'removed' && event.id > 0) {
+      final me = _user?.username ?? '';
+      if (me.isNotEmpty) unawaited(_applyRemoved(me, event.threadId, event.id));
+      return;
+    }
     if (event.type == 'message' && event.message != null) {
       final message = event.message!;
       if (message.id <= 0) return;
@@ -502,6 +509,24 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         return item.copyWith(lastStatus: 'delivered');
       });
     }
+  }
+
+  Future<void> _applyRemoved(String me, String threadId, int id) async {
+    await ChatHistory.hide(username: me, threadId: threadId, ids: [id]);
+    final stored = await ChatHistory.threads(me);
+    if (!mounted) return;
+    ChatThreadSummary? found;
+    for (final item in stored) {
+      if (item.id == threadId) found = item;
+    }
+    if (found == null) return;
+    final row = found;
+    setState(() {
+      _threads = [
+        for (final item in _threads)
+          if (item.id == threadId) row.copyWith(online: item.online) else item,
+      ];
+    });
   }
 
   void _patchThread(
@@ -921,7 +946,8 @@ class _ChatRow extends StatelessWidget {
             TimeOfDay.fromDateTime(item.lastAt!.toLocal()).format(context),
           );
     final draft = ChatDrafts.peek(item.id).trim();
-    final typing = ChatLive.isTyping(item.id);
+    final recording = ChatLive.isRecording(item.id);
+    final typing = !recording && ChatLive.isTyping(item.id);
     final preview = chatPreview(item.lastText, item.lastFrom, me);
     final voice = draft.isEmpty && item.lastText.trim() == 'Voice message';
     final photo = draft.isEmpty && item.lastText.trim() == 'Photo';
@@ -958,7 +984,18 @@ class _ChatRow extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 2),
-                    if (typing)
+                    if (recording)
+                      const Text(
+                        'recording audio…',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Color(0xFF25D366),
+                          fontStyle: FontStyle.italic,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      )
+                    else if (typing)
                       const Text(
                         'typing…',
                         maxLines: 1,
