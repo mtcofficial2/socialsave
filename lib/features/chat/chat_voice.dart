@@ -246,28 +246,23 @@ class ChatRecordingBar extends StatelessWidget {
     return ValueListenableBuilder<ChatRecView>(
       valueListenable: view,
       builder: (context, rec, _) {
-        final field = scheme.brightness == Brightness.dark
-            ? const Color(0xFF1F2C34)
-            : Colors.white;
         return Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             IconButton(
               tooltip: 'Delete',
-              visualDensity: VisualDensity.compact,
               onPressed: onDelete,
-              icon: const Icon(Icons.delete_outline_rounded, color: Color(0xFFEF5350)),
+              icon: const Icon(Icons.delete_rounded, color: Color(0xFFEF5350)),
             ),
             Expanded(
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  color: field,
+                  color: scheme.surfaceContainerHighest,
                   borderRadius: BorderRadius.circular(24),
                 ),
                 child: SizedBox(
-                  height: 42,
+                  height: 48,
                   child: Padding(
-                    padding: const EdgeInsets.only(left: 12, right: 8),
+                    padding: const EdgeInsets.only(left: 14, right: 12),
                     child: Row(
                       children: [
                         _RecDot(paused: rec.paused),
@@ -275,13 +270,13 @@ class ChatRecordingBar extends StatelessWidget {
                         Text(
                           chatClock(rec.ms),
                           style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
                             color: scheme.onSurface,
                             fontFeatures: const [FontFeature.tabularFigures()],
                           ),
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 10),
                         Expanded(
                           child: CustomPaint(
                             painter: _BarsPainter(
@@ -292,16 +287,7 @@ class ChatRecordingBar extends StatelessWidget {
                               fromEnd: true,
                               showThumb: false,
                             ),
-                            child: const SizedBox(height: 22),
-                          ),
-                        ),
-                        IconButton(
-                          tooltip: rec.paused ? 'Resume' : 'Pause',
-                          visualDensity: VisualDensity.compact,
-                          onPressed: onPause,
-                          icon: Icon(
-                            rec.paused ? Icons.mic_rounded : Icons.pause_rounded,
-                            size: 22,
+                            child: const SizedBox(height: 28),
                           ),
                         ),
                       ],
@@ -310,19 +296,17 @@ class ChatRecordingBar extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(width: 6),
+            const SizedBox(width: 2),
+            IconButton(
+              tooltip: rec.paused ? 'Resume' : 'Pause',
+              onPressed: onPause,
+              icon: Icon(rec.paused ? Icons.mic_rounded : Icons.pause_rounded),
+            ),
             IconButton.filled(
               tooltip: 'Send voice note',
-              style: IconButton.styleFrom(
-                backgroundColor: const Color(0xFF25D366),
-                foregroundColor: Colors.white,
-                fixedSize: const Size(42, 42),
-                minimumSize: const Size(42, 42),
-                padding: EdgeInsets.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
+              style: IconButton.styleFrom(backgroundColor: const Color(0xFF25D366), foregroundColor: Colors.white),
               onPressed: onSend,
-              icon: const Icon(Icons.send_rounded, size: 22),
+              icon: const Icon(Icons.send_rounded),
             ),
           ],
         );
@@ -596,75 +580,75 @@ class _ChatVoiceBubbleState extends State<ChatVoiceBubble> {
     final totalMs = widget.message.voiceMs <= 0 ? 1 : widget.message.voiceMs;
     final progress = (_position.inMilliseconds / totalMs).clamp(0.0, 1.0);
     final shown = _playing || _position > Duration.zero ? (totalMs - _position.inMilliseconds).clamp(0, totalMs) : widget.message.voiceMs;
-    final bars = voiceBars(
-      widget.message.voice.isEmpty ? '${widget.message.id}' : widget.message.voice,
-      16,
-    );
     return Padding(
-      padding: const EdgeInsets.only(top: 2, bottom: 1),
+      padding: const EdgeInsets.only(top: 3, bottom: 1),
       child: Row(
         children: [
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: _busy ? null : () => unawaited(_toggle()),
-            onHorizontalDragUpdate: (details) {
-              unawaited(_seekTo(details.localPosition.dx / 62));
-            },
-            child: SizedBox(
-              width: 62,
-              height: 62,
-              child: CustomPaint(
-                painter: _CircleBarsPainter(
-                  levels: bars,
-                  progress: progress,
-                  fill: paint.button,
-                  played: paint.played,
-                  rest: paint.rest,
-                ),
-                child: Center(
-                  child: _busy
-                      ? SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: paint.icon),
-                        )
-                      : Icon(
-                          _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                          color: paint.icon,
-                          size: 28,
-                        ),
-                ),
-              ),
-            ),
+          _PlayButton(
+            busy: _busy,
+            playing: _playing,
+            paint: paint,
+            onPressed: () => unawaited(_toggle()),
           ),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  chatClock(shown),
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 15,
-                    height: 1,
-                    fontWeight: FontWeight.w600,
-                    color: paint.meta,
-                    fontFeatures: const [FontFeature.tabularFigures()],
+                SizedBox(
+                  height: 32,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final width = constraints.maxWidth;
+                            final count = (width / 5).floor().clamp(14, 52);
+                            return GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTapDown: width <= 0 ? null : (details) => unawaited(_seekTo(details.localPosition.dx / width)),
+                              onHorizontalDragUpdate: width <= 0 ? null : (details) => unawaited(_seekTo(details.localPosition.dx / width)),
+                              child: CustomPaint(
+                                painter: _BarsPainter(
+                                  levels: voiceBars(
+                                    widget.message.voice.isEmpty ? '${widget.message.id}' : widget.message.voice,
+                                    count,
+                                  ),
+                                  progress: progress,
+                                  played: paint.played,
+                                  rest: paint.rest,
+                                  fromEnd: false,
+                                  showThumb: true,
+                                ),
+                                child: const SizedBox(height: 32),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      if (_heard)
+                        GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () => unawaited(_cycleRate()),
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: Text(
+                              _rateLabel,
+                              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: paint.played),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
-                if (_heard) ...[
-                  const SizedBox(height: 4),
-                  GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () => unawaited(_cycleRate()),
-                    child: Text(
-                      _rateLabel,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: paint.played),
-                    ),
-                  ),
-                ],
+                const SizedBox(height: 1),
+                Row(
+                  children: [
+                    Icon(Icons.mic_rounded, size: 14, color: paint.meta),
+                    const SizedBox(width: 2),
+                    Text(chatClock(shown), style: TextStyle(fontSize: 12, height: 1.1, color: paint.meta)),
+                  ],
+                ),
               ],
             ),
           ),
@@ -674,55 +658,46 @@ class _ChatVoiceBubbleState extends State<ChatVoiceBubble> {
   }
 }
 
-class _CircleBarsPainter extends CustomPainter {
-  _CircleBarsPainter({
-    required this.levels,
-    required this.progress,
-    required this.fill,
-    required this.played,
-    required this.rest,
-  });
+class _PlayButton extends StatelessWidget {
+  const _PlayButton({required this.busy, required this.playing, required this.paint, required this.onPressed});
 
-  final List<double> levels;
-  final double progress;
-  final Color fill;
-  final Color played;
-  final Color rest;
+  final bool busy;
+  final bool playing;
+  final _VoicePaint paint;
+  final VoidCallback onPressed;
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final side = size.shortestSide;
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = side / 2;
-    canvas.drawCircle(center, radius, Paint()..color = fill);
-    if (levels.isEmpty) return;
-    canvas.save();
-    canvas.clipPath(Path()..addOval(Rect.fromCircle(center: center, radius: radius - 1)));
-    final count = levels.length;
-    final span = side * 0.72;
-    final step = span / count;
-    final barW = (step * 0.62).clamp(1.5, 3.0);
-    final origin = center.dx - span / 2;
-    final room = radius * 0.72;
-    for (var i = 0; i < count; i++) {
-      final level = levels[i].clamp(0.22, 1.0);
-      final half = room * level;
-      final x = origin + i * step + step / 2;
-      final head = (i + 0.5) / count <= progress;
-      canvas.drawLine(
-        Offset(x, center.dy - half),
-        Offset(x, center.dy + half),
-        Paint()
-          ..color = head ? played : rest
-          ..strokeWidth = barW
-          ..strokeCap = StrokeCap.round,
-      );
-    }
-    canvas.restore();
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 42,
+      height: 42,
+      child: Material(
+        color: paint.button,
+        shape: const CircleBorder(),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: busy ? null : onPressed,
+          customBorder: const CircleBorder(),
+          child: Center(
+            child: busy
+                ? SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: paint.icon),
+                  )
+                : Padding(
+                    padding: EdgeInsets.only(left: playing ? 0 : 2),
+                    child: Icon(
+                      playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                      color: paint.icon,
+                      size: 30,
+                    ),
+                  ),
+          ),
+        ),
+      ),
+    );
   }
-
-  @override
-  bool shouldRepaint(_CircleBarsPainter old) => true;
 }
 
 class _BarsPainter extends CustomPainter {
