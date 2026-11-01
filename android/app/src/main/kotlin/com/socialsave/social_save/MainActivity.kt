@@ -497,6 +497,7 @@ class MainActivity : FlutterFragmentActivity() {
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, "socialsave/phone").setStreamHandler(body)
         channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
         DownloadEvents.channel = channel
+        ChatReplyBridge.install(this, flutterEngine.dartExecutor.binaryMessenger)
         channel?.setMethodCallHandler { call, result ->
             when (call.method) {
                 "playNotificationSound" -> {
@@ -1107,6 +1108,7 @@ class MainActivity : FlutterFragmentActivity() {
         captureOpenedVideo(intent)
         captureOpenSession(intent)
         captureQuickAction(intent)
+        ChatReplyBridge.note(intent)
     }
 
     /** The Quick Settings tile: open Hotspot share. */
@@ -1148,6 +1150,7 @@ class MainActivity : FlutterFragmentActivity() {
         else channel?.invokeMethod("sharedText", pendingShare)
         captureOpenedVideo(intent)
         captureQuickAction(intent)
+        ChatReplyBridge.note(intent)
     }
 
     private fun captureShare(intent: Intent?) {

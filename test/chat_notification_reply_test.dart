@@ -39,12 +39,35 @@ void main() {
     expect(parts.$2, 'see you');
   });
 
+  test('a reply does not open the chat', () {
+    expect(
+      chatNotificationOpensChat(
+        _tap(actionId: 'reply', input: 'hello', payload: 'chat|abc|Ada'),
+      ),
+      isFalse,
+    );
+    expect(
+      chatNotificationOpensChat(
+        _tap(
+          actionId: 'chat|abc|Ada',
+          payload: 'chat|abc|Ada',
+          data: {'reply': 'see you'},
+        ),
+      ),
+      isFalse,
+    );
+  });
+
   test('opening the chat without text is not a reply', () {
     final parts = chatNotificationReplyOf(
       _tap(payload: 'chat|abc|Ada', input: '   '),
     );
     expect(parts.$1, 'chat|abc|Ada');
     expect(parts.$2, isNull);
+    expect(
+      chatNotificationOpensChat(_tap(payload: 'chat|abc|Ada')),
+      isTrue,
+    );
   });
 
   test('other notifications are left alone', () {

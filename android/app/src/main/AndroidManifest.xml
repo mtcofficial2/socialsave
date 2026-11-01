@@ -165,6 +165,9 @@
         <receiver
             android:name=".DownloadActionReceiver"
             android:exported="false" />
+        <receiver
+            android:name=".ChatReplyReceiver"
+            android:exported="false" />
         <service
             android:name=".PlaybackService"
             android:exported="false"

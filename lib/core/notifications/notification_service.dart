@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:social_save/core/config/env_config.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 
 const _notificationLogo = DrawableResourceAndroidBitmap('ic_notification_logo');
@@ -82,6 +84,16 @@ String? _chatPayload(NotificationResponse response) {
   final action = response.actionId ?? '';
   if (action.startsWith('chat|')) return action;
   return null;
+}
+
+const _androidChatNotify = MethodChannel('socialsave/chat_notify');
+
+/// A typed reply stays on the current screen. Only a tap with no text
+/// opens that chat.
+@visibleForTesting
+bool chatNotificationOpensChat(NotificationResponse response) {
+  if (_chatPayload(response) == null) return false;
+  return _replyText(response) == null;
 }
 
 class NotificationService {
@@ -210,6 +222,17 @@ class NotificationService {
       appUserModelId: 'com.socialsave.SocialSave',
       guid: '6f1c2b8e-4d3a-4a5e-9b7c-2e8f0a1d5c43',
     );
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      _androidChatNotify.setMethodCallHandler((call) async {
+        if (call.method == 'opened' && call.arguments is String) {
+          _openChat(call.arguments as String);
+        }
+      });
+      try {
+        final pending = await _androidChatNotify.invokeMethod<String>('pending');
+        if (pending != null && pending.startsWith('chat|')) _openChat(pending);
+      } catch (_) {}
+    }
     try {
       await _plugin
           .initialize(
@@ -290,6 +313,22 @@ class NotificationService {
     if (!_initialized) await init();
     final payload = 'chat|$threadId|$title';
     final id = threadId.hashCode & 0x7fffffff;
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      // The phone posts this itself. A plugin reply either opened the chat
+      // or left Android spinning, and the message never left.
+      try {
+        await _androidChatNotify.invokeMethod<void>('show', <String, Object?>{
+          'id': id,
+          'title': title,
+          'body': body,
+          'payload': payload,
+          'sound': sound,
+          'api': EnvConfig.apiBaseUrl,
+          'token': await ChatSession.token() ?? '',
+        });
+        return;
+      } catch (_) {}
+    }
     if (defaultTargetPlatform == TargetPlatform.windows) {
       await _showWindows(
         id,
@@ -321,22 +360,6 @@ class NotificationService {
           playSound: sound,
           enableVibration: sound,
           category: AndroidNotificationCategory.message,
-          actions: const <AndroidNotificationAction>[
-            AndroidNotificationAction(
-              'reply',
-              'Reply',
-              // Opening the app sends the reply on the running chat connection.
-              // A background reply keeps Android's spinner up and the message
-              // never leaves.
-              showsUserInterface: true,
-              cancelNotification: true,
-              allowGeneratedReplies: true,
-              semanticAction: SemanticAction.reply,
-              inputs: <AndroidNotificationActionInput>[
-                AndroidNotificationActionInput(label: 'Message'),
-              ],
-            ),
-          ],
         ),
         iOS: DarwinNotificationDetails(presentSound: sound, presentAlert: true),
       ),
@@ -416,7 +439,6 @@ class NotificationService {
     final payload = _chatPayload(response);
     final reply = _replyText(response);
     if (payload != null && reply != null) {
-      _openChat(payload);
       unawaited(sendChatNotificationReply(payload, reply));
       return;
     }
