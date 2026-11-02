@@ -3,16 +3,24 @@ package com.socialsave.social_save
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
+import android.net.Uri
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.os.Build
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.os.PowerManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.Person
@@ -27,6 +35,7 @@ import io.flutter.plugin.common.MethodChannel
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
+import java.util.concurrent.atomic.AtomicInteger
 import org.json.JSONObject
 
 /// Reply typed on a chat notification.
@@ -108,24 +117,41 @@ object ChatReply {
                 .putExtra(EXTRA_OPEN, payload),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val replyIntent = Intent(context, ChatReplyReceiver::class.java)
+        // One UI 7 on Android 15 treats a reply broadcast as "open the app"
+        // when that PendingIntent shares a request code with the tap action,
+        // because the tap action is immutable and the reply text cannot be
+        // attached. A foreground service started by the reply itself is a
+        // user action, so Samsung delivers it while the app is asleep.
+        val replyCode = id xor 0x5A5A5A5A
+        val replyFlags = PendingIntent.FLAG_UPDATE_CURRENT or
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
+        val replyIntent = Intent(context, ChatReplyService::class.java)
             .setAction(ACTION)
+            .setData(Uri.parse("socialsave://reply/$id"))
             .putExtra(EXTRA_ID, id)
             .putExtra(EXTRA_PAYLOAD, payload)
             .putExtra(EXTRA_API, api)
             .putExtra(EXTRA_TOKEN, token)
-        val replyFlags = PendingIntent.FLAG_UPDATE_CURRENT or
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
-        val reply = PendingIntent.getBroadcast(
-            context,
-            id,
-            replyIntent,
-            replyFlags,
-        )
+        val reply = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            PendingIntent.getForegroundService(context, replyCode, replyIntent, replyFlags)
+        } else {
+            PendingIntent.getBroadcast(
+                context,
+                replyCode,
+                Intent(context, ChatReplyReceiver::class.java)
+                    .setAction(ACTION)
+                    .setData(Uri.parse("socialsave://reply/$id"))
+                    .putExtra(EXTRA_ID, id)
+                    .putExtra(EXTRA_PAYLOAD, payload)
+                    .putExtra(EXTRA_API, api)
+                    .putExtra(EXTRA_TOKEN, token),
+                replyFlags,
+            )
+        }
         val input = RemoteInput.Builder(KEY_TEXT).setLabel("Message").build()
-        val action = NotificationCompat.Action.Builder(0, "Reply", reply)
+        val action = NotificationCompat.Action.Builder(R.drawable.ic_notification, "Reply", reply)
             .addRemoteInput(input)
-            .setAllowGeneratedReplies(true)
+            .setAllowGeneratedReplies(false)
             .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
             .setShowsUserInterface(false)
             .build()
@@ -166,9 +192,9 @@ object ChatReply {
                         .addMessage(body, System.currentTimeMillis(), sender),
                 )
                 .addPerson(sender)
-                .setShortcutId(shortcutId)
-                .setLocusId(LocusIdCompat(shortcutId))
-            publishFace(context, shortcutId, title, faces.square, sender, payload)
+            if (publishFace(context, shortcutId, title, faces.square, sender, payload)) {
+                builder.setShortcutId(shortcutId).setLocusId(LocusIdCompat(shortcutId))
+            }
         } else {
             builder.setStyle(NotificationCompat.BigTextStyle().bigText(body))
         }
@@ -279,6 +305,31 @@ object ChatReply {
         return "c${payload.hashCode().toUInt().toString(16)}"
     }
 
+    fun markSending(context: Context, id: Int, payload: String) {
+        if (id == 0) return
+        try {
+            ensureChannels(context)
+            val title = titleOf(payload)
+            val notification = NotificationCompat.Builder(context, channelQuiet)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle(title)
+                .setContentText("Sending…")
+                .setOnlyAlertOnce(true)
+                .setSilent(true)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .build()
+            NotificationManagerCompat.from(context).notify(id, notification)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun titleOf(payload: String): String {
+        val parts = payload.split('|')
+        if (parts.size < 3 || parts[0] != "chat") return "Social Save"
+        val title = parts.drop(2).joinToString("|").trim()
+        return if (title.isEmpty()) "Social Save" else title
+    }
+
     private fun publishFace(
         context: Context,
         shortcutId: String,
@@ -286,9 +337,9 @@ object ChatReply {
         square: Bitmap,
         sender: Person,
         payload: String,
-    ) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N_MR1) return
-        try {
+    ): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N_MR1) return false
+        return try {
             val label = if (title.length > 40) title.substring(0, 40) else title
             val open = Intent(context, MainActivity::class.java)
                 .setAction(Intent.ACTION_VIEW)
@@ -306,7 +357,9 @@ object ChatReply {
                 .build()
             ShortcutManagerCompat.pushDynamicShortcut(context, shortcut)
             ShortcutManagerCompat.reportShortcutUsed(context, shortcutId)
+            true
         } catch (_: Exception) {
+            false
         }
     }
 
@@ -329,6 +382,157 @@ object ChatReply {
         quiet.enableVibration(false)
         manager.createNotificationChannel(loud)
         manager.createNotificationChannel(quiet)
+    }
+}
+
+/**
+ * Sends the notification reply. One UI 7 does not deliver a reply broadcast
+ * while Social Save is asleep, and tells the person to open the app. The
+ * reply button starts this service directly, which Android allows because
+ * the person tapped the notification.
+ */
+class ChatReplyService : Service() {
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val app = applicationContext
+        goForeground()
+        val text = RemoteInput.getResultsFromIntent(intent)
+            ?.getCharSequence(ChatReply.KEY_TEXT)
+            ?.toString()
+            ?.trim()
+            .orEmpty()
+        if (intent == null || intent.action != ChatReply.ACTION || text.isEmpty()) {
+            stopIfIdle()
+            return START_NOT_STICKY
+        }
+        val id = intent.getIntExtra(ChatReply.EXTRA_ID, 0)
+        val payload = intent.getStringExtra(ChatReply.EXTRA_PAYLOAD).orEmpty()
+        val api = intent.getStringExtra(ChatReply.EXTRA_API).orEmpty()
+        val token = intent.getStringExtra(ChatReply.EXTRA_TOKEN).orEmpty()
+        ChatReply.markSending(app, id, payload)
+        inflight.incrementAndGet()
+        holdWake(app)
+        Thread {
+            try {
+                val sent = ChatReply.post(api, token, payload, text)
+                if (id != 0) NotificationManagerCompat.from(app).cancel(id)
+                if (!sent) ChatReply.failed(app)
+            } catch (_: Exception) {
+                if (id != 0) NotificationManagerCompat.from(app).cancel(id)
+                ChatReply.failed(app)
+            } finally {
+                if (inflight.decrementAndGet() == 0) {
+                    dropWake()
+                    Handler(Looper.getMainLooper()).post { stopIfIdle() }
+                }
+            }
+        }.start()
+        return START_NOT_STICKY
+    }
+
+    private fun goForeground() {
+        val notification = statusNotification(this)
+        try {
+            if (Build.VERSION.SDK_INT >= 34) {
+                try {
+                    startForeground(
+                        STATUS_ID,
+                        notification,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING,
+                    )
+                } catch (e: Exception) {
+                    Log.w(TAG, "remoteMessaging refused, using dataSync: $e")
+                    startForeground(
+                        STATUS_ID,
+                        notification,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+                    )
+                }
+            } else if (Build.VERSION.SDK_INT >= 29) {
+                startForeground(
+                    STATUS_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+                )
+            } else {
+                startForeground(STATUS_ID, notification)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "reply foreground refused: $e")
+        }
+    }
+
+    private fun stopIfIdle() {
+        if (inflight.get() != 0) return
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
+        } catch (_: Exception) {
+        }
+        stopSelf()
+    }
+
+    companion object {
+        private const val TAG = "SocialSaveReply"
+        private const val STATUS_ID = 4813
+        private val inflight = AtomicInteger(0)
+        private var wake: PowerManager.WakeLock? = null
+
+        private fun holdWake(context: Context) {
+            if (wake != null) return
+            try {
+                val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+                wake = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SocialSave:reply").apply {
+                    setReferenceCounted(false)
+                    acquire(60_000L)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "wake lock: $e")
+            }
+        }
+
+        private fun dropWake() {
+            try {
+                wake?.release()
+            } catch (_: Exception) {
+            }
+            wake = null
+        }
+
+        private fun statusNotification(context: Context): android.app.Notification {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val manager = context.getSystemService(NotificationManager::class.java)
+                if (manager != null && manager.getNotificationChannel(ChatListenService.CHANNEL_ID) == null) {
+                    manager.createNotificationChannel(
+                        NotificationChannel(
+                            ChatListenService.CHANNEL_ID,
+                            "Message listener",
+                            NotificationManager.IMPORTANCE_LOW,
+                        ).apply {
+                            description = "Keeps Social Save able to pop a message after the app is closed"
+                            setShowBadge(false)
+                            setSound(null, null)
+                            enableVibration(false)
+                        },
+                    )
+                }
+            }
+            return NotificationCompat.Builder(context, ChatListenService.CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle("Social Save")
+                .setContentText("Sending a message")
+                .setSilent(true)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setCategory(NotificationCompat.CATEGORY_SERVICE)
+                .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+                .build()
+        }
     }
 }
 
