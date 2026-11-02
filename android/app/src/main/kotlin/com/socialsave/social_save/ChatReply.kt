@@ -126,15 +126,15 @@ object ChatReply {
                 .putExtra(EXTRA_OPEN, payload),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        // The tap action is immutable. One UI 7 drops the reply text when the
-        // reply uses that same PendingIntent, and then tells the person to
-        // open the app. The reply has its own request code and starts a
-        // foreground service, which is allowed because they tapped Send.
+        // The tap action is immutable, so the reply must use its own request
+        // code or One UI 7 opens the app instead of sending. Android 14+
+        // starts a foreground service for that send. Android 13 and older,
+        // including the AQUOS, keep the broadcast that already sends.
         val reply = replyPending(context, id, payload, api, token)
         val input = RemoteInput.Builder(KEY_TEXT).setLabel("Message").build()
         val action = NotificationCompat.Action.Builder(R.drawable.ic_notification, "Reply", reply)
             .addRemoteInput(input)
-            .setAllowGeneratedReplies(false)
+            .setAllowGeneratedReplies(true)
             .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
             .setShowsUserInterface(false)
             .build()
@@ -306,7 +306,9 @@ object ChatReply {
             .putExtra(EXTRA_PAYLOAD, payload)
             .putExtra(EXTRA_API, api)
             .putExtra(EXTRA_TOKEN, token)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        // getForegroundService is an Android 14+ exemption. On the AQUOS
+        // (Android 12/13) that call is refused and the reply never leaves.
+        if (Build.VERSION.SDK_INT >= 34) {
             try {
                 return PendingIntent.getForegroundService(
                     context,
@@ -357,7 +359,7 @@ object ChatReply {
                 replyPending(context, id, payload, api, token),
             )
                 .addRemoteInput(input)
-                .setAllowGeneratedReplies(false)
+                .setAllowGeneratedReplies(true)
                 .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
                 .setShowsUserInterface(false)
                 .build()
@@ -462,10 +464,9 @@ object ChatReply {
 }
 
 /**
- * Sends the notification reply. One UI 7 does not deliver a reply broadcast
- * while Social Save is asleep, and tells the person to open the app. The
- * reply button starts this service directly, which Android allows because
- * the person tapped the notification.
+ * Sends a notification reply on Android 14 and newer. One UI 7 does not
+ * deliver a reply broadcast while Social Save is asleep. Android 13 and
+ * older, including the AQUOS, use ChatReplyReceiver instead.
  */
 class ChatReplyService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
@@ -541,6 +542,13 @@ class ChatReplyService : Service() {
             }
         } catch (e: Exception) {
             Log.w(TAG, "reply foreground refused: $e")
+            if (Build.VERSION.SDK_INT < 34) {
+                try {
+                    startForeground(STATUS_ID, notification)
+                } catch (e2: Exception) {
+                    Log.w(TAG, "plain foreground refused: $e2")
+                }
+            }
         }
     }
 

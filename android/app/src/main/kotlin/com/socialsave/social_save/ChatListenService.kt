@@ -115,6 +115,13 @@ class ChatListenService : Service() {
             }
         } catch (e: Exception) {
             Log.w(TAG, "could not go foreground: $e")
+            if (Build.VERSION.SDK_INT < 34) {
+                try {
+                    startForeground(NOTIFICATION_ID, notification)
+                } catch (e2: Exception) {
+                    Log.w(TAG, "plain foreground refused: $e2")
+                }
+            }
         }
         running = true
         acquireLock()
