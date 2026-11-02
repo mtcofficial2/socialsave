@@ -236,7 +236,6 @@ class ChatListenService : Service() {
                 .setOngoing(true)
                 .setSilent(true)
                 .setOnlyAlertOnce(true)
-                .setShowBadge(false)
                 .setCategory(NotificationCompat.CATEGORY_SERVICE)
                 .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
                 .setContentIntent(open)
