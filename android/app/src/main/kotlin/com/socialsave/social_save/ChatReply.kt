@@ -95,6 +95,15 @@ object ChatReply {
     private val threadId = Regex("^[A-Za-z0-9]{2,80}$")
 
     fun show(context: Context, call: MethodCall) {
+        try {
+            showInner(context, call)
+        } catch (t: Throwable) {
+            Log.e("SocialSaveReply", "notification failed", t)
+            showPlain(context, call)
+        }
+    }
+
+    private fun showInner(context: Context, call: MethodCall) {
         val rawId = call.argument<Any>("id")
         val id = when (rawId) {
             is Int -> rawId
@@ -117,37 +126,11 @@ object ChatReply {
                 .putExtra(EXTRA_OPEN, payload),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        // One UI 7 on Android 15 treats a reply broadcast as "open the app"
-        // when that PendingIntent shares a request code with the tap action,
-        // because the tap action is immutable and the reply text cannot be
-        // attached. A foreground service started by the reply itself is a
-        // user action, so Samsung delivers it while the app is asleep.
-        val replyCode = id xor 0x5A5A5A5A
-        val replyFlags = PendingIntent.FLAG_UPDATE_CURRENT or
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
-        val replyIntent = Intent(context, ChatReplyService::class.java)
-            .setAction(ACTION)
-            .setData(Uri.parse("socialsave://reply/$id"))
-            .putExtra(EXTRA_ID, id)
-            .putExtra(EXTRA_PAYLOAD, payload)
-            .putExtra(EXTRA_API, api)
-            .putExtra(EXTRA_TOKEN, token)
-        val reply = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            PendingIntent.getForegroundService(context, replyCode, replyIntent, replyFlags)
-        } else {
-            PendingIntent.getBroadcast(
-                context,
-                replyCode,
-                Intent(context, ChatReplyReceiver::class.java)
-                    .setAction(ACTION)
-                    .setData(Uri.parse("socialsave://reply/$id"))
-                    .putExtra(EXTRA_ID, id)
-                    .putExtra(EXTRA_PAYLOAD, payload)
-                    .putExtra(EXTRA_API, api)
-                    .putExtra(EXTRA_TOKEN, token),
-                replyFlags,
-            )
-        }
+        // The tap action is immutable. One UI 7 drops the reply text when the
+        // reply uses that same PendingIntent, and then tells the person to
+        // open the app. The reply has its own request code and starts a
+        // foreground service, which is allowed because they tapped Send.
+        val reply = replyPending(context, id, payload, api, token)
         val input = RemoteInput.Builder(KEY_TEXT).setLabel("Message").build()
         val action = NotificationCompat.Action.Builder(R.drawable.ic_notification, "Reply", reply)
             .addRemoteInput(input)
@@ -303,6 +286,99 @@ object ChatReply {
         val id = threadOf(payload)
         if (id != null) return "c$id"
         return "c${payload.hashCode().toUInt().toString(16)}"
+    }
+
+    private fun replyPending(
+        context: Context,
+        id: Int,
+        payload: String,
+        api: String,
+        token: String,
+    ): PendingIntent {
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
+        val code = id xor 0x5A5A5A5A
+        val data = Uri.parse("socialsave://reply/$id")
+        fun fill(target: Intent): Intent = target
+            .setAction(ACTION)
+            .setData(data)
+            .putExtra(EXTRA_ID, id)
+            .putExtra(EXTRA_PAYLOAD, payload)
+            .putExtra(EXTRA_API, api)
+            .putExtra(EXTRA_TOKEN, token)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                return PendingIntent.getForegroundService(
+                    context,
+                    code,
+                    fill(Intent(context, ChatReplyService::class.java)),
+                    flags,
+                )
+            } catch (t: Throwable) {
+                Log.w("SocialSaveReply", "service reply refused", t)
+            }
+        }
+        return PendingIntent.getBroadcast(
+            context,
+            code,
+            fill(Intent(context, ChatReplyReceiver::class.java)),
+            flags,
+        )
+    }
+
+    private fun showPlain(context: Context, call: MethodCall) {
+        try {
+            val rawId = call.argument<Any>("id")
+            val id = when (rawId) {
+                is Int -> rawId
+                is Long -> rawId.toInt()
+                else -> return
+            }
+            val title = call.argument<String>("title")?.trim().orEmpty()
+            val body = call.argument<String>("body")?.trim().orEmpty()
+            val payload = call.argument<String>("payload")?.trim().orEmpty()
+            if (title.isEmpty() || !payload.startsWith("chat|")) return
+            val api = call.argument<String>("api")?.trim().orEmpty()
+            val token = call.argument<String>("token")?.trim().orEmpty()
+            val sound = call.argument<Boolean>("sound") != false
+            ensureChannels(context)
+            val open = PendingIntent.getActivity(
+                context,
+                id,
+                Intent(context, MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    .putExtra(EXTRA_OPEN, payload),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            val input = RemoteInput.Builder(KEY_TEXT).setLabel("Message").build()
+            val action = NotificationCompat.Action.Builder(
+                R.drawable.ic_notification,
+                "Reply",
+                replyPending(context, id, payload, api, token),
+            )
+                .addRemoteInput(input)
+                .setAllowGeneratedReplies(false)
+                .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
+                .setShowsUserInterface(false)
+                .build()
+            val notification = NotificationCompat.Builder(
+                context,
+                if (sound) channelLoud else channelQuiet,
+            )
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+                .setContentIntent(open)
+                .setAutoCancel(true)
+                .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .addAction(action)
+                .build()
+            NotificationManagerCompat.from(context).notify(id, notification)
+        } catch (t: Throwable) {
+            Log.e("SocialSaveReply", "plain notification failed", t)
+        }
     }
 
     fun markSending(context: Context, id: Int, payload: String) {

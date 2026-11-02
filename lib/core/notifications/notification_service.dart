@@ -338,6 +338,43 @@ class NotificationService {
     await ios?.requestPermissions(alert: true, badge: true, sound: true);
   }
 
+  Future<bool> _postAndroidChat({
+    required int id,
+    required String title,
+    required String body,
+    required String payload,
+    required bool sound,
+    required bool silent,
+    Uint8List? picture,
+  }) async {
+    final token = await ChatSession.token() ?? '';
+    Future<void> sendWithToken(Uint8List? face) {
+      return _androidChatNotify.invokeMethod<void>('show', <String, Object?>{
+        'id': id,
+        'title': title,
+        'body': body,
+        'payload': payload,
+        'sound': sound,
+        'silent': silent,
+        'api': EnvConfig.apiBaseUrl,
+        'token': token,
+        if (face != null && face.isNotEmpty) 'picture': face,
+      });
+    }
+
+    try {
+      await sendWithToken(picture);
+      return true;
+    } catch (_) {}
+    if (picture != null && picture.isNotEmpty) {
+      try {
+        await sendWithToken(null);
+        return true;
+      } catch (_) {}
+    }
+    return false;
+  }
+
   /// Shown when a reply typed into a notification did not reach the server.
   Future<void> showReplyFailed() async {
     if (kIsWeb) return;
@@ -382,22 +419,19 @@ class NotificationService {
     final id = threadId.hashCode & 0x7fffffff;
     final alert = sound && !silent;
     if (defaultTargetPlatform == TargetPlatform.android) {
-      // The phone posts this itself. A plugin reply either opened the chat
-      // or left Android spinning, and the message never left.
-      try {
-        await _androidChatNotify.invokeMethod<void>('show', <String, Object?>{
-          'id': id,
-          'title': title,
-          'body': body,
-          'payload': payload,
-          'sound': sound,
-          'silent': silent,
-          'api': EnvConfig.apiBaseUrl,
-          'token': await ChatSession.token() ?? '',
-          if (picture != null && picture.isNotEmpty) 'picture': picture,
-        });
-        return true;
-      } catch (_) {}
+      // The plugin notification has no reply box. One UI then says to open
+      // the app. Stay on the native notification, and try once without the
+      // photo if the first post is refused.
+      final posted = await _postAndroidChat(
+        id: id,
+        title: title,
+        body: body,
+        payload: payload,
+        sound: sound,
+        silent: silent,
+        picture: picture,
+      );
+      return posted;
     }
     if (defaultTargetPlatform == TargetPlatform.windows) {
       return _showWindows(
