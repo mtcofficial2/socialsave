@@ -131,6 +131,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         username: user.username,
         contact: user.contact,
       );
+      unawaited(ChatPresence.sync());
       if (!mounted) return;
       setState(() {
         _user = user;
@@ -262,6 +263,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         username: created.user.username,
         contact: created.user.contact,
       );
+      unawaited(ChatPresence.sync());
       if (!mounted) return;
       _contact.clear();
       _username.clear();

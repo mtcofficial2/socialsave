@@ -422,12 +422,13 @@ class MainActivity : FlutterFragmentActivity() {
 
         /** Ends the engine that outlived its activity (session over, app closed). */
         fun destroyDetachedEngine() {
-            if (SessionBridge.activityAlive || SessionBridge.active) return
+            if (SessionBridge.activityAlive || SessionBridge.active || ChatListen.active) return
             val engine = FlutterEngineCache.getInstance().get(ENGINE_ID) ?: return
             FlutterEngineCache.getInstance().remove(ENGINE_ID)
             DownloadEvents.channel = null
             HotspotShare.disposeAll()
             SessionBridge.detach()
+            ChatListen.detach()
             try {
                 engine.destroy()
             } catch (_: Exception) {
@@ -437,9 +438,9 @@ class MainActivity : FlutterFragmentActivity() {
 
     /**
      * The app's Flutter engine is owned here (not by the activity's fragment)
-     * so a connected share session keeps running after the activity is
-     * closed (Back on the home screen, swiped from Recents). Without a
-     * session it is destroyed with the activity exactly as before.
+     * so a connected share session, or a signed-in chat, keeps running after
+     * the activity is closed (Back on the home screen, swiped from Recents).
+     * Without either, it is destroyed with the activity exactly as before.
      */
     override fun provideFlutterEngine(context: android.content.Context): FlutterEngine? {
         FlutterEngineCache.getInstance().get(ENGINE_ID)?.let { return it }
@@ -478,9 +479,9 @@ class MainActivity : FlutterFragmentActivity() {
         }
     }
 
-    /** Back on the first screen while connected: go to the background instead of closing. */
+    /** Back on the first screen while connected or listening for messages: stay alive. */
     override fun finish() {
-        if (SessionBridge.active && isTaskRoot && moveTaskToBack(true)) return
+        if ((SessionBridge.active || ChatListen.active) && isTaskRoot && moveTaskToBack(true)) return
         super.finish()
     }
 
@@ -498,6 +499,7 @@ class MainActivity : FlutterFragmentActivity() {
         channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
         DownloadEvents.channel = channel
         ChatReplyBridge.install(this, flutterEngine.dartExecutor.binaryMessenger)
+        ChatListen.attach(this, flutterEngine.dartExecutor.binaryMessenger)
         channel?.setMethodCallHandler { call, result ->
             when (call.method) {
                 "playNotificationSound" -> {
@@ -1127,8 +1129,8 @@ class MainActivity : FlutterFragmentActivity() {
         phoneBody?.stop()
         phoneBody = null
         super.onDestroy()
-        if (!SessionBridge.active) {
-            // No session: tear everything down like before.
+        if (!SessionBridge.active && !ChatListen.active) {
+            // Nothing left that has to keep receiving. Tear the engine down.
             destroyDetachedEngine()
         }
     }

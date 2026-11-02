@@ -1,17 +1,20 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/notifications/notification_photo_io.dart'
     if (dart.library.html) 'package:social_save/core/notifications/notification_photo_stub.dart';
 import 'package:social_save/core/notifications/notification_service.dart';
+import 'package:social_save/core/platform/plat.dart';
+import 'package:social_save/features/chat/chat_alert_policy.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_format.dart';
 import 'package:social_save/features/chat/chat_history.dart';
 import 'package:social_save/features/chat/chat_live.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
+import 'package:social_save/features/library/desktop_tray.dart';
 import 'package:social_save/shared/routing/app_router.dart';
 
 /// A sound plus a notification. Android's system "alert" sound does nothing,
@@ -25,22 +28,52 @@ void chatAlertNow({
   String username = '',
   int photoRev = 0,
 }) {
-  final life = WidgetsBinding.instance.lifecycleState;
-  final resumed = life == null || life == AppLifecycleState.resumed;
-  final android = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
-  if (android && resumed) {
-    unawaited(_playPhoneTone());
-  }
   unawaited(
-    _postChatAlert(
+    _deliverChatAlert(
       threadId: threadId,
       title: title,
       body: body,
-      username: username.trim().isEmpty ? title : username.trim(),
+      username: username,
       photoRev: photoRev,
-      sound: !resumed,
     ),
   );
+}
+
+Future<void> _deliverChatAlert({
+  required String threadId,
+  required String title,
+  required String body,
+  required String username,
+  required int photoRev,
+}) async {
+  final here = chatUserIsHere(
+    life: WidgetsBinding.instance.lifecycleState,
+    screenOn: await _androidScreenOn(),
+  );
+  if (Plat.isAndroid && here) {
+    unawaited(_playPhoneTone());
+  }
+  await _postChatAlert(
+    threadId: threadId,
+    title: title,
+    body: body,
+    username: username.trim().isEmpty ? title : username.trim(),
+    photoRev: photoRev,
+    sound: !here,
+  );
+}
+
+/// The phone screen is on. Other platforms, and a failed check, count as on.
+Future<bool> _androidScreenOn() async {
+  if (!Plat.isAndroid) return true;
+  try {
+    final on = await const MethodChannel(
+      'socialsave/chat_listen',
+    ).invokeMethod<bool>('screenOn');
+    return on != false;
+  } catch (_) {
+    return true;
+  }
 }
 
 final Map<String, int> _alertToken = {};
@@ -144,6 +177,7 @@ class ChatAlerts {
     photoRevs.clear();
     openThread = '';
     ChatLive.instance.stop();
+    unawaited(ChatPresence.sync());
   }
 
   static void holdThread(String threadId) {
@@ -159,6 +193,7 @@ class ChatAlerts {
     List<ChatThreadSummary> items, {
     required String me,
     required bool notify,
+    bool holdOpen = true,
     void Function(ChatThreadSummary item, String body)? alert,
   }) {
     lastInbox = DateTime.now();
@@ -182,69 +217,85 @@ class ChatAlerts {
       seen[item.id] = item.lastId > prev ? item.lastId : prev;
       if (!notify || !grew || alert == null) continue;
       if (item.lastFrom.isEmpty || item.lastFrom == me) continue;
-      if (item.id == openThread) continue;
+      if (holdOpen && item.id == openThread) continue;
       if (ChatInboxFilter.isMuted(item.id)) continue;
       alert(item, chatAlertBody(item.lastText));
     }
   }
 }
 
-/// Stays mounted on every screen, including a conversation.
-class ChatAlertHost extends StatefulWidget {
-  const ChatAlertHost({super.key});
+/// Phone foreground service and Windows tray, while a chat account is signed in.
+class ChatPresence {
+  ChatPresence._();
 
-  @override
-  State<ChatAlertHost> createState() => _ChatAlertHostState();
+  static bool _on = false;
+  static bool _batteryAsked = false;
+
+  static Future<void> sync() async {
+    final token = await ChatSession.token();
+    final signedIn = token != null && token.isNotEmpty;
+    if (Plat.isWindows) {
+      DesktopTray.messages(signedIn);
+      _on = signedIn;
+      return;
+    }
+    if (!Plat.isAndroid) {
+      _on = signedIn;
+      return;
+    }
+    if (signedIn == _on) return;
+    _on = signedIn;
+    try {
+      await const MethodChannel(
+        'socialsave/chat_listen',
+      ).invokeMethod<void>(signedIn ? 'start' : 'stop');
+      if (signedIn) unawaited(_askBatteryOnce());
+    } catch (_) {}
+  }
+
+  static Future<void> _askBatteryOnce() async {
+    if (_batteryAsked) return;
+    _batteryAsked = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool('chat.listen.battery.asked') == true) return;
+      final exempt = await const MethodChannel(
+        'socialsave/session',
+      ).invokeMethod<bool>('batteryExempt');
+      if (exempt == true) return;
+      await prefs.setBool('chat.listen.battery.asked', true);
+      await const MethodChannel(
+        'socialsave/session',
+      ).invokeMethod<void>('requestBatteryExempt');
+    } catch (_) {}
+  }
 }
 
-class _ChatAlertHostState extends State<ChatAlertHost>
-    with WidgetsBindingObserver {
+/// Listens for messages for the life of the process, including after the
+/// window is hidden or the activity is gone.
+class ChatAlertWatch {
+  ChatAlertWatch._();
+
+  static final instance = ChatAlertWatch._();
+
   final ChatApi _api = ChatApi();
   Timer? _poll;
-  StreamSubscription<ChatLiveEvent>? _live;
   bool _busy = false;
   bool _asked = false;
   String _me = '';
 
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
+  void ensure() {
+    if (_poll != null) return;
     NotificationService.attachChatOpen(_open);
     NotificationService.onReplySent = _keep;
     ChatLive.instance.start();
     unawaited(ChatInboxFilter.ensure());
-    _live = ChatLive.instance.events.listen(_onLive);
+    ChatLive.instance.events.listen(_onLive);
     _poll = Timer.periodic(
       const Duration(seconds: 12),
       (_) => unawaited(_check()),
     );
     unawaited(_check());
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _poll?.cancel();
-    _live?.cancel();
-    NotificationService.detachChatOpen(_open);
-    if (NotificationService.onReplySent == _keep) {
-      NotificationService.onReplySent = null;
-    }
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    _poll?.cancel();
-    _poll = null;
-    if (state == AppLifecycleState.resumed) {
-      _poll = Timer.periodic(
-        const Duration(seconds: 12),
-        (_) => unawaited(_check()),
-      );
-      unawaited(_check());
-    }
   }
 
   void _onLive(ChatLiveEvent event) {
@@ -273,19 +324,20 @@ class _ChatAlertHostState extends State<ChatAlertHost>
   Future<void> _keep(String threadId, ChatMessage message) async {
     if (_me.isEmpty) _me = await ChatSession.username();
     if (_me.isEmpty) return;
+    final here = await _here();
     await ChatHistory.remember(
       me: _me,
       threadId: threadId,
       message: message,
-      open: threadId == ChatAlerts.openThread,
+      open: here && threadId == ChatAlerts.openThread,
     );
   }
 
   Future<void> _alertLive(String threadId, ChatMessage message) async {
     if (_me.isEmpty) _me = await ChatSession.username();
-    if (!mounted) return;
     if (_me.isNotEmpty && message.name == _me) return;
-    if (threadId == ChatAlerts.openThread) return;
+    final here = await _here();
+    if (here && threadId == ChatAlerts.openThread) return;
     await ChatInboxFilter.ensure();
     if (ChatInboxFilter.isMuted(threadId)) return;
     final title = message.name.isEmpty ? 'New message' : message.name;
@@ -300,29 +352,39 @@ class _ChatAlertHostState extends State<ChatAlertHost>
 
   void _open(String payload) {
     final parts = payload.split('|');
-    if (parts.length < 3 || parts[0] != 'chat' || !mounted) return;
+    if (parts.length < 3 || parts[0] != 'chat') return;
     final id = parts[1].trim();
     final name = parts.sublist(2).join('|').trim();
     if (id.isEmpty) return;
+    if (Plat.isWindows) unawaited(DesktopTray.show());
     appRouter.push('/chat/$id', extra: name);
   }
 
+  Future<bool> _here() {
+    return _androidScreenOn().then((screenOn) {
+      return chatUserIsHere(
+        life: WidgetsBinding.instance.lifecycleState,
+        screenOn: screenOn,
+      );
+    });
+  }
+
   Future<void> _check() async {
-    if (_busy || !mounted) return;
-    final life = WidgetsBinding.instance.lifecycleState;
-    if (life != null && life != AppLifecycleState.resumed) return;
+    if (_busy) return;
+    if (!chatInboxCheckRuns(WidgetsBinding.instance.lifecycleState)) return;
     final fresh = ChatAlerts.lastInbox;
     if (fresh != null &&
         DateTime.now().difference(fresh) < const Duration(seconds: 10)) {
+      unawaited(ChatPresence.sync());
       return;
     }
     final token = await ChatSession.token();
-    if (!mounted) return;
     if (token == null) {
       ChatAlerts.reset();
       return;
     }
     ChatLive.instance.start();
+    unawaited(ChatPresence.sync());
     _busy = true;
     try {
       if (!_asked) {
@@ -330,16 +392,17 @@ class _ChatAlertHostState extends State<ChatAlertHost>
         unawaited(NotificationService().requestPermission());
       }
       final items = await _api.threads();
-      if (!mounted) return;
       _me = await ChatSession.username();
       if (_me.isNotEmpty) {
         unawaited(ChatHistory.archiveInbox(_api, _me, items));
       }
       await ChatInboxFilter.ensure();
+      final here = await _here();
       ChatAlerts.observe(
         items,
         me: _me,
         notify: true,
+        holdOpen: here,
         alert: (item, body) {
           final title = item.username.isEmpty ? 'New message' : item.username;
           chatAlertNow(
@@ -361,6 +424,22 @@ class _ChatAlertHostState extends State<ChatAlertHost>
     } finally {
       _busy = false;
     }
+  }
+}
+
+/// Stays mounted on every screen, including a conversation.
+class ChatAlertHost extends StatefulWidget {
+  const ChatAlertHost({super.key});
+
+  @override
+  State<ChatAlertHost> createState() => _ChatAlertHostState();
+}
+
+class _ChatAlertHostState extends State<ChatAlertHost> {
+  @override
+  void initState() {
+    super.initState();
+    ChatAlertWatch.instance.ensure();
   }
 
   @override
