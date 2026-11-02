@@ -396,20 +396,25 @@ class ChatReplyService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val app = applicationContext
+        val incoming = intent
         goForeground()
-        val text = RemoteInput.getResultsFromIntent(intent)
-            ?.getCharSequence(ChatReply.KEY_TEXT)
-            ?.toString()
-            ?.trim()
-            .orEmpty()
-        if (intent == null || intent.action != ChatReply.ACTION || text.isEmpty()) {
+        val text = if (incoming == null) {
+            ""
+        } else {
+            RemoteInput.getResultsFromIntent(incoming)
+                ?.getCharSequence(ChatReply.KEY_TEXT)
+                ?.toString()
+                ?.trim()
+                .orEmpty()
+        }
+        if (incoming == null || incoming.action != ChatReply.ACTION || text.isEmpty()) {
             stopIfIdle()
             return START_NOT_STICKY
         }
-        val id = intent.getIntExtra(ChatReply.EXTRA_ID, 0)
-        val payload = intent.getStringExtra(ChatReply.EXTRA_PAYLOAD).orEmpty()
-        val api = intent.getStringExtra(ChatReply.EXTRA_API).orEmpty()
-        val token = intent.getStringExtra(ChatReply.EXTRA_TOKEN).orEmpty()
+        val id = incoming.getIntExtra(ChatReply.EXTRA_ID, 0)
+        val payload = incoming.getStringExtra(ChatReply.EXTRA_PAYLOAD).orEmpty()
+        val api = incoming.getStringExtra(ChatReply.EXTRA_API).orEmpty()
+        val token = incoming.getStringExtra(ChatReply.EXTRA_TOKEN).orEmpty()
         ChatReply.markSending(app, id, payload)
         inflight.incrementAndGet()
         holdWake(app)
