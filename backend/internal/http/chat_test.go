@@ -705,3 +705,37 @@ func postChatHeaders(app *Server, path, token string, body []byte, headers map[s
 	app.Router().ServeHTTP(response, request)
 	return response
 }
+
+func TestChatThreadReportsLastIDSoClientsCanResetTheirCursor(t *testing.T) {
+	app := testApp(t)
+	app.chat.file = filepath.Join(t.TempDir(), "accounts.json")
+	ada := registerChat(t, app, `{"phone":"256700000561","username":"ada9"}`)
+	ben := registerChat(t, app, `{"email":"ben9@example.com","username":"ben9"}`)
+	opened := postChat(app, "/api/v1/chat/threads", ada.token, `{"username":"@BEN9"}`)
+	var thread struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(opened.Body.Bytes(), &thread); err != nil || thread.ID == "" {
+		t.Fatalf("open %d %s", opened.Code, opened.Body.String())
+	}
+	back := postChat(app, "/api/v1/chat/threads", ben.token, `{"username":"ada9"}`)
+	if !bytes.Contains(back.Body.Bytes(), []byte(thread.ID)) {
+		t.Fatalf("reply side opened another thread: %s", back.Body.String())
+	}
+	for _, text := range []string{"one", "two"} {
+		if sent := postChat(app, "/api/v1/chat/threads/"+thread.ID, ada.token, `{"text":"`+text+`"}`); sent.Code != http.StatusOK {
+			t.Fatalf("send %d %s", sent.Code, sent.Body.String())
+		}
+	}
+	var got struct {
+		LastID   int64             `json:"lastId"`
+		Messages []json.RawMessage `json:"messages"`
+	}
+	res := getChat(app, "/api/v1/chat/threads/"+thread.ID+"?after=50", ben.token)
+	if err := json.Unmarshal(res.Body.Bytes(), &got); err != nil {
+		t.Fatalf("list %s", res.Body.String())
+	}
+	if got.LastID != 2 || len(got.Messages) != 0 {
+		t.Fatalf("lastId %d messages %d", got.LastID, len(got.Messages))
+	}
+}

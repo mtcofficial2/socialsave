@@ -98,6 +98,20 @@ func (c *chatRoom) adminUsers(ctx context.Context) []chatAdminRow {
 	return rows
 }
 
+// storageState says where accounts are kept: "s3", "s3-error" (stored
+// accounts could not be read), or "temporary" (lost when the server restarts).
+func (c *chatRoom) storageState() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.blob == nil {
+		return "temporary"
+	}
+	if c.blobFailed {
+		return "s3-error"
+	}
+	return "s3"
+}
+
 func (s *Server) chatAdminUsers(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.chatActor(w, r)
 	if !ok {
@@ -110,5 +124,6 @@ func (s *Server) chatAdminUsers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"users":   s.chat.adminUsers(r.Context()),
+		"storage": s.chat.storageState(),
 	})
 }

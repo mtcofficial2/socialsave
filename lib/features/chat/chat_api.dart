@@ -279,6 +279,7 @@ class ChatSync {
     this.peerOnline = false,
     this.peerPhotoRev = 0,
     this.peerName = '',
+    this.lastId = -1,
   });
 
   final List<ChatMessage> messages;
@@ -289,6 +290,9 @@ class ChatSync {
   final bool peerOnline;
   final int peerPhotoRev;
   final String peerName;
+
+  /// Newest message id on the server, or -1 from an older server.
+  final int lastId;
 }
 
 class ChatMessage {
@@ -509,12 +513,18 @@ class ChatApi {
     );
   }
 
+  /// Where the server keeps accounts, from the last [directory] call:
+  /// 's3', 's3-error', 'temporary', or empty when the server did not say.
+  String lastStorage = '';
+
   Future<List<ChatDirectoryEntry>> directory() async {
     final response = await _dio.get<dynamic>(
       '/api/v1/chat/admin/users',
       options: await _auth(),
     );
-    final items = _object(response)['users'];
+    final body = _object(response);
+    lastStorage = (body['storage'] as String?)?.trim() ?? '';
+    final items = body['users'];
     if (items is! List) return const [];
     return [
       for (final item in items)
@@ -622,6 +632,7 @@ class ChatApi {
       peerOnline: online,
       peerPhotoRev: photoRev,
       peerName: peerName,
+      lastId: (body['lastId'] as num?)?.toInt() ?? -1,
       removed: [
         if (removed is List)
           for (final item in removed)

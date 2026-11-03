@@ -66,6 +66,16 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
               'Everyone who signed up for chat on Social Save.',
               style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4),
             ),
+            if (!_loading && _error == null && _api.lastStorage.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text(
+                _storageText(_api.lastStorage),
+                style: TextStyle(
+                  color: _api.lastStorage == 's3' ? scheme.primary : scheme.error,
+                  height: 1.4,
+                ),
+              ),
+            ],
             if (_error != null) ...[
               const SizedBox(height: 16),
               Text(_error!, style: TextStyle(color: scheme.error, height: 1.4)),
@@ -81,8 +91,10 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
               Padding(
                 padding: const EdgeInsets.only(top: 24),
                 child: Text(
-                  'No one has registered yet.',
-                  style: TextStyle(color: scheme.onSurfaceVariant),
+                  _api.lastStorage == 's3'
+                      ? 'No one has registered yet.'
+                      : 'The server has no accounts. It may have restarted and lost them. Ask people to register again.',
+                  style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4),
                 ),
               )
             else
@@ -103,6 +115,17 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
         ),
       ),
     );
+  }
+}
+
+String _storageText(String storage) {
+  switch (storage) {
+    case 's3':
+      return 'Storage: saved online. Accounts stay after the server restarts.';
+    case 's3-error':
+      return 'Storage: the server could not read saved accounts. It will not overwrite them, but this list may be incomplete.';
+    default:
+      return 'Storage: temporary. Accounts are lost each time the server restarts. Add S3 settings on Render to keep them.';
   }
 }
 

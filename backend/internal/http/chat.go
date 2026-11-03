@@ -139,12 +139,18 @@ type chatPeerView struct {
 	Online    bool
 	PhotoRev  int64
 	Name      string
+	// LastID is the newest message id in the thread, so a client whose
+	// cursor is past it (the server lost or restored older data) can reset.
+	LastID int64
 }
 
 type chatRoom struct {
 	mu        sync.Mutex
 	saveMu    sync.Mutex
 	load      sync.Once
+	// blobFailed is set when stored accounts could not be read, so a save
+	// does not replace them with a smaller list.
+	blobFailed bool
 	data      chatData
 	posts     map[string][]time.Time
 	joins     map[string][]time.Time
@@ -160,6 +166,7 @@ func newChatRoom(up storage.Uploader) *chatRoom {
 	if value, ok := up.(chatBlob); ok {
 		blob = value
 	}
+	slog.Info("chat storage", "persistent", blob != nil)
 	return &chatRoom{
 		posts:     map[string][]time.Time{},
 		joins:     map[string][]time.Time{},
@@ -394,6 +401,7 @@ func (c *chatRoom) since(ctx context.Context, userID, threadID string, after int
 		Online:    chatOnline(other.LastSeen, time.Now()),
 		PhotoRev:  other.PhotoRev,
 		Name:      seenNameLocked(c.data, userID, other.Username),
+		LastID:    thread.Next - 1,
 	}
 	var removed []int64
 	if len(thread.Removed) > 0 {
@@ -1045,12 +1053,27 @@ func (c *chatRoom) ensure(ctx context.Context) {
 	c.load.Do(func() {
 		fileData := readChatFile(c.file)
 		remote := chatData{}
+		failed := false
 		if c.blob != nil {
-			loadCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
-			body, err := c.blob.GetBytes(loadCtx, chatKey)
-			cancel()
-			if err == nil {
-				remote = decodeChat(body)
+			var err error
+			for attempt := 0; attempt < 3; attempt++ {
+				loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+				var body []byte
+				body, err = c.blob.GetBytes(loadCtx, chatKey)
+				cancel()
+				if err == nil {
+					remote = decodeChat(body)
+					break
+				}
+				if errors.Is(err, os.ErrNotExist) {
+					err = nil
+					break
+				}
+				time.Sleep(time.Duration(attempt+1) * time.Second)
+			}
+			if err != nil {
+				failed = true
+				slog.Warn("chat storage load failed; saves to storage are paused")
 			}
 		}
 		best := fileData
@@ -1058,6 +1081,7 @@ func (c *chatRoom) ensure(ctx context.Context) {
 			best = remote
 		}
 		c.mu.Lock()
+		c.blobFailed = failed
 		c.data = best
 		c.mu.Unlock()
 	})
@@ -1089,6 +1113,8 @@ func (c *chatRoom) persist(ctx context.Context) {
 	body, err := json.Marshal(c.data)
 	file := c.file
 	blob := c.blob
+	failed := c.blobFailed
+	users := len(c.data.Users)
 	c.mu.Unlock()
 	if err != nil {
 		return
@@ -1096,6 +1122,22 @@ func (c *chatRoom) persist(ctx context.Context) {
 	_ = os.WriteFile(file, body, 0o600)
 	if blob == nil {
 		return
+	}
+	if failed {
+		checkCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 8*time.Second)
+		stored, getErr := blob.GetBytes(checkCtx, chatKey)
+		cancel()
+		if getErr != nil && !errors.Is(getErr, os.ErrNotExist) {
+			slog.Warn("chat storage still unreadable; save skipped")
+			return
+		}
+		if getErr == nil && len(decodeChat(stored).Users) > users {
+			slog.Warn("chat storage has more accounts than memory; save skipped")
+			return
+		}
+		c.mu.Lock()
+		c.blobFailed = false
+		c.mu.Unlock()
 	}
 	saveCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
@@ -1418,6 +1460,7 @@ func (s *Server) chatThreadList(w http.ResponseWriter, r *http.Request) {
 		"success":  true,
 		"messages": items,
 		"peer":     peerJSON,
+		"lastId":   max(peer.LastID, 0),
 	}
 	if len(removed) > 0 {
 		payload["removed"] = removed

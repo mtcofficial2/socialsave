@@ -58,6 +58,10 @@ class ChatThreadView extends StatefulWidget {
 class _ChatThreadViewState extends State<ChatThreadView>
     with WidgetsBindingObserver {
   final ChatApi _api = ChatApi();
+  // The server can lose a chat (restart without storage) and hand out a new
+  // id for the same person, so the id can change while the screen is open.
+  late String _threadId = widget.threadId;
+  bool _reopening = false;
   final ChatRecorder _recorder = ChatRecorder();
   final TextEditingController _text = TextEditingController();
   final ScrollController _scroll = ScrollController();
@@ -109,7 +113,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    ChatAlerts.holdThread(widget.threadId);
+    ChatAlerts.holdThread(_threadId);
     _live = ChatLive.instance.events.listen(_onLive);
     ChatLive.revision.addListener(_onTypingClock);
     _scroll.addListener(_onScroll);
@@ -124,18 +128,18 @@ class _ChatThreadViewState extends State<ChatThreadView>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    ChatAlerts.releaseThread(widget.threadId);
+    ChatAlerts.releaseThread(_threadId);
     _live?.cancel();
     ChatLive.revision.removeListener(_onTypingClock);
-    ChatLive.instance.typing(widget.threadId, on: false);
-    ChatLive.instance.recording(widget.threadId, on: false);
+    ChatLive.instance.typing(_threadId, on: false);
+    ChatLive.instance.recording(_threadId, on: false);
     _poll?.cancel();
     _draftTimer?.cancel();
     _typingIdle?.cancel();
     _typingClock?.cancel();
     _text.removeListener(_onDraftChanged);
     final pendingDraft = _text.text;
-    final threadId = widget.threadId;
+    final threadId = _threadId;
     unawaited(ChatDrafts.write(threadId, pendingDraft));
     unawaited(_recorder.dispose());
     _scroll.removeListener(_onScroll);
@@ -169,7 +173,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
 
   void _onDraftChanged() {
     _draftTimer?.cancel();
-    final threadId = widget.threadId;
+    final threadId = _threadId;
     final text = _text.text;
     _draftTimer = Timer(const Duration(milliseconds: 300), () {
       unawaited(ChatDrafts.write(threadId, text));
@@ -184,11 +188,11 @@ class _ChatThreadViewState extends State<ChatThreadView>
   void _noteTyping({bool force = false}) {
     if (!force && !_focus.hasFocus) return;
     final on = _text.text.trim().isNotEmpty;
-    ChatLive.instance.typing(widget.threadId, on: on);
+    ChatLive.instance.typing(_threadId, on: on);
     _typingIdle?.cancel();
     if (!on) return;
     _typingIdle = Timer(const Duration(seconds: 3), () {
-      ChatLive.instance.typing(widget.threadId, on: false);
+      ChatLive.instance.typing(_threadId, on: false);
     });
   }
 
@@ -197,8 +201,8 @@ class _ChatThreadViewState extends State<ChatThreadView>
     setState(() {});
     _typingClock?.cancel();
     final live =
-        ChatLive.isTyping(widget.threadId) ||
-        ChatLive.isRecording(widget.threadId);
+        ChatLive.isTyping(_threadId) ||
+        ChatLive.isRecording(_threadId);
     if (!live) return;
     _typingClock = Timer(const Duration(seconds: 4), () {
       if (mounted) setState(() {});
@@ -226,12 +230,12 @@ class _ChatThreadViewState extends State<ChatThreadView>
         for (final message in _messages) {
           if (!message.isPhoto || message.photo.isEmpty) continue;
           if (message.localBytes != null) continue;
-          ChatLive.instance.wantPhoto(widget.threadId, message.photo);
+          ChatLive.instance.wantPhoto(_threadId, message.photo);
         }
       }
       return;
     }
-    if (event.threadId != widget.threadId) return;
+    if (event.threadId != _threadId) return;
     if (event.type == 'removed') {
       if (event.id > 0) _drop(event.id);
       return;
@@ -265,11 +269,11 @@ class _ChatThreadViewState extends State<ChatThreadView>
   }
 
   void _remember() {
-    if (_me.isEmpty || widget.threadId.isEmpty) return;
+    if (_me.isEmpty || _threadId.isEmpty) return;
     unawaited(
       ChatHistory.saveLog(
         username: _me,
-        threadId: widget.threadId,
+        threadId: _threadId,
         messages: _messages,
         delivered: _peerDelivered,
         read: _peerRead,
@@ -313,7 +317,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
 
   Future<void> _open() async {
     _me = await ChatSession.username();
-    final saved = await ChatDrafts.read(widget.threadId);
+    final saved = await ChatDrafts.read(_threadId);
     if (!mounted) return;
     if (saved.isNotEmpty && _text.text.isEmpty) {
       _text.value = TextEditingValue(
@@ -322,9 +326,9 @@ class _ChatThreadViewState extends State<ChatThreadView>
       );
     }
     final seen = await ChatReads.load();
-    _seenAtOpen = seen[widget.threadId] ?? 0;
+    _seenAtOpen = seen[_threadId] ?? 0;
     if (!mounted) return;
-    if (widget.threadId.isEmpty) {
+    if (_threadId.isEmpty) {
       setState(() {
         _starting = false;
         _error = 'That chat was not found.';
@@ -333,7 +337,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     }
     final savedLog = _me.isEmpty
         ? null
-        : await ChatHistory.log(_me, widget.threadId);
+        : await ChatHistory.log(_me, _threadId);
     if (!mounted) return;
     if (savedLog != null && savedLog.messages.isNotEmpty) {
       final merged = _mergeOpen(savedLog.messages, _messages);
@@ -360,13 +364,13 @@ class _ChatThreadViewState extends State<ChatThreadView>
       unawaited(_noteRead());
     }
     await _refresh();
-    if (!mounted || widget.threadId.isEmpty) return;
+    if (!mounted || _threadId.isEmpty) return;
     _startPoll();
   }
 
   void _startPoll() {
     _poll?.cancel();
-    if (widget.threadId.isEmpty) return;
+    if (_threadId.isEmpty) return;
     _poll = Timer.periodic(const Duration(seconds: 8), (_) {
       if (!mounted) return;
       final route = ModalRoute.of(context);
@@ -376,11 +380,18 @@ class _ChatThreadViewState extends State<ChatThreadView>
   }
 
   Future<void> _refresh() async {
-    if (_refreshing || widget.threadId.isEmpty) return;
+    if (_refreshing || _threadId.isEmpty) return;
     _refreshing = true;
     try {
-      final sync = await _api.messages(widget.threadId, _after);
+      var sync = await _api.messages(_threadId, _after);
       if (!mounted) return;
+      if (sync.lastId >= 0 && sync.lastId < _after) {
+        // The server's history is shorter than ours, so it lost or rolled
+        // back messages. Start the cursor again or new ones are skipped.
+        _forgetServerMessages();
+        sync = await _api.messages(_threadId, 0);
+        if (!mounted) return;
+      }
       final presenceChanged =
           sync.peerDelivered != _peerDelivered ||
           sync.peerRead != _peerRead ||
@@ -403,7 +414,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
           unawaited(
             ChatHistory.hide(
               username: _me,
-              threadId: widget.threadId,
+              threadId: _threadId,
               ids: gone,
             ),
           );
@@ -484,12 +495,55 @@ class _ChatThreadViewState extends State<ChatThreadView>
       unawaited(_noteRead());
     } catch (error) {
       if (!mounted) return;
+      if (_chatGone(error) && await _reopen()) {
+        _refreshing = false;
+        return _refresh();
+      }
       setState(() {
         _starting = false;
         _error = _messages.isEmpty ? chatErrorText(error) : null;
       });
     } finally {
       _refreshing = false;
+    }
+  }
+
+  bool _chatGone(Object error) =>
+      chatErrorText(error).toLowerCase().contains('chat was not found');
+
+  void _forgetServerMessages() {
+    _messages = [
+      for (final item in _messages)
+        if (item.id < 0) item,
+    ];
+    _after = 0;
+    _peerDelivered = 0;
+    _peerRead = 0;
+    _readSent = 0;
+  }
+
+  /// Opens the chat again by username when the server no longer knows this
+  /// id. Returns true when there is a new id to use.
+  Future<bool> _reopen() async {
+    final peer = widget.username.replaceFirst(RegExp(r'^@'), '').trim();
+    if (_reopening || peer.isEmpty) return false;
+    _reopening = true;
+    try {
+      final opened = await _api.openThread(peer);
+      if (!mounted || opened.id.isEmpty || opened.id == _threadId) {
+        return false;
+      }
+      ChatAlerts.releaseThread(_threadId);
+      ChatAlerts.holdThread(opened.id);
+      setState(() {
+        _threadId = opened.id;
+        _forgetServerMessages();
+      });
+      return true;
+    } catch (_) {
+      return false;
+    } finally {
+      _reopening = false;
     }
   }
 
@@ -511,10 +565,10 @@ class _ChatThreadViewState extends State<ChatThreadView>
       if (message.id > last) last = message.id;
     }
     if (last <= 0 || last <= _readSent) return;
-    await ChatReads.mark(widget.threadId, last);
-    widget.onRead?.call(widget.threadId, last);
+    await ChatReads.mark(_threadId, last);
+    widget.onRead?.call(_threadId, last);
     try {
-      await _api.markRead(widget.threadId, last);
+      await _api.markRead(_threadId, last);
       _readSent = last;
     } catch (_) {
       // The next poll tries again. Local unread still clears.
@@ -539,7 +593,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
 
   Future<void> _send() async {
     final text = _text.text.trim();
-    if (text.isEmpty || _recording || widget.threadId.isEmpty) return;
+    if (text.isEmpty || _recording || _threadId.isEmpty) return;
     final reply = _replyId ?? 0;
     final replyName = _replyName;
     final replyText = _replyText;
@@ -552,11 +606,19 @@ class _ChatThreadViewState extends State<ChatThreadView>
     _clearComposer();
     _accept(local);
     try {
-      final message = await _api.send(widget.threadId, text, reply: reply);
+      final message = await _api.send(_threadId, text, reply: reply);
       if (!mounted) return;
       _replaceLocal(local.id, message);
-    } catch (_) {
-      if (_messages.any((item) => item.id == local.id)) {
+    } catch (error) {
+      if (mounted && _chatGone(error) && await _reopen()) {
+        try {
+          final message = await _api.send(_threadId, text);
+          if (!mounted) return;
+          _replaceLocal(local.id, message);
+          return;
+        } catch (_) {}
+      }
+      if (mounted && _messages.any((item) => item.id == local.id)) {
         _mark(local.id, 'failed');
       }
     }
@@ -566,10 +628,10 @@ class _ChatThreadViewState extends State<ChatThreadView>
     final photoId = outgoing.message.photo;
     if (photoId.isEmpty) return;
     await ChatImageStore.save(photoId, bytes);
-    await ChatImageStore.keep(widget.threadId, photoId);
+    await ChatImageStore.keep(_threadId, photoId);
     if (outgoing.held) {
       ChatLive.instance.sendBinary(
-        encodeChatPhotoFrame(widget.threadId, photoId, bytes),
+        encodeChatPhotoFrame(_threadId, photoId, bytes),
       );
     }
   }
@@ -615,7 +677,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
   }
 
   Future<void> _attach() async {
-    if (_recording || widget.threadId.isEmpty) return;
+    if (_recording || _threadId.isEmpty) return;
     final choice = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
@@ -651,7 +713,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
   }
 
   Future<void> _pickDocument() async {
-    if (_recording || widget.threadId.isEmpty) return;
+    if (_recording || _threadId.isEmpty) return;
     final picked = await openFile();
     if (picked == null || !mounted) return;
     final name = picked.name.toLowerCase();
@@ -679,7 +741,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
   }
 
   Future<void> _pickPhoto() async {
-    if (_recording || widget.threadId.isEmpty) return;
+    if (_recording || _threadId.isEmpty) return;
     Uint8List? fitted;
     try {
       final picked = await openFile(
@@ -723,7 +785,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       _clearComposer();
       _accept(local);
       final outgoing = await _api.sendPhoto(
-        widget.threadId,
+        _threadId,
         fitted,
         caption: caption,
         reply: reply,
@@ -752,7 +814,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       final ChatMessage sent;
       if (message.pendingKind == 'voice' && message.localBytes != null) {
         sent = await _api.sendVoice(
-          widget.threadId,
+          _threadId,
           message.localBytes!,
           message.voiceMs,
           reply: message.reply,
@@ -760,7 +822,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       } else if (message.pendingKind == 'photo' && message.localBytes != null) {
         final caption = message.text == 'Photo' ? '' : message.text;
         final outgoing = await _api.sendPhoto(
-          widget.threadId,
+          _threadId,
           message.localBytes!,
           caption: caption,
           reply: message.reply,
@@ -769,15 +831,17 @@ class _ChatThreadViewState extends State<ChatThreadView>
         sent = outgoing.message;
       } else {
         sent = await _api.send(
-          widget.threadId,
+          _threadId,
           message.text,
           reply: message.reply,
         );
       }
       if (!mounted || !_messages.any((item) => item.id == message.id)) return;
       _replaceLocal(message.id, sent);
-    } catch (_) {
-      if (_messages.any((item) => item.id == message.id)) {
+    } catch (error) {
+      // A lost chat gets a fresh id, so the next tap on retry goes through.
+      if (mounted && _chatGone(error)) await _reopen();
+      if (mounted && _messages.any((item) => item.id == message.id)) {
         _mark(message.id, 'failed');
       }
     }
@@ -816,8 +880,8 @@ class _ChatThreadViewState extends State<ChatThreadView>
     _replyName = '';
     _replyText = '';
     _typingIdle?.cancel();
-    ChatLive.instance.typing(widget.threadId, on: false);
-    unawaited(ChatDrafts.write(widget.threadId, ''));
+    ChatLive.instance.typing(_threadId, on: false);
+    unawaited(ChatDrafts.write(_threadId, ''));
   }
 
   void _mark(int id, String status) {
@@ -891,7 +955,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
   }
 
   Future<void> _startVoice() async {
-    if (_recording || widget.threadId.isEmpty || Plat.isWeb) return;
+    if (_recording || _threadId.isEmpty || Plat.isWeb) return;
     final problem = await _recorder.begin();
     if (!mounted) return;
     if (problem != null) {
@@ -902,14 +966,14 @@ class _ChatThreadViewState extends State<ChatThreadView>
       _recording = true;
       _error = null;
     });
-    ChatLive.instance.typing(widget.threadId, on: false);
-    ChatLive.instance.recording(widget.threadId, on: true);
+    ChatLive.instance.typing(_threadId, on: false);
+    ChatLive.instance.recording(_threadId, on: true);
   }
 
   Future<void> _finishVoice({required bool send}) async {
     if (_finishingVoice) return;
     _finishingVoice = true;
-    ChatLive.instance.recording(widget.threadId, on: false);
+    ChatLive.instance.recording(_threadId, on: false);
     var voiceLocal = 0;
     try {
       final taken = await _recorder.stop(send: send);
@@ -947,7 +1011,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       voiceLocal = local.id;
       _accept(local);
       final message = await _api.sendVoice(
-        widget.threadId,
+        _threadId,
         bytes,
         ms,
         reply: reply,
@@ -1098,7 +1162,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     );
     if (!yes || !mounted) return;
     try {
-      await _api.unsend(widget.threadId, message.id);
+      await _api.unsend(_threadId, message.id);
     } catch (error) {
       if (!mounted) return;
       setState(() => _error = chatErrorText(error));
@@ -1122,7 +1186,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     if (!mounted) return;
     final others = [
       for (final item in threads)
-        if (item.id != widget.threadId) item,
+        if (item.id != _threadId) item,
     ];
     if (others.isEmpty) {
       setState(() => _error = 'There is no other chat to forward to.');
@@ -1194,9 +1258,9 @@ class _ChatThreadViewState extends State<ChatThreadView>
         _selected.remove(id);
       });
     }
-    if (_me.isEmpty || widget.threadId.isEmpty) return;
+    if (_me.isEmpty || _threadId.isEmpty) return;
     unawaited(
-      ChatHistory.hide(username: _me, threadId: widget.threadId, ids: [id]),
+      ChatHistory.hide(username: _me, threadId: _threadId, ids: [id]),
     );
   }
 
@@ -1208,8 +1272,8 @@ class _ChatThreadViewState extends State<ChatThreadView>
     final dark = scheme.brightness == Brightness.dark;
     final canvas = ChatUiTokens.canvas(dark);
     final selecting = _selected.isNotEmpty;
-    final recording = ChatLive.isRecording(widget.threadId);
-    final peerTyping = !recording && ChatLive.isTyping(widget.threadId);
+    final recording = ChatLive.isRecording(_threadId);
+    final peerTyping = !recording && ChatLive.isTyping(_threadId);
     final presence = chatPresenceLabel(
       _peerSeen,
       _peerOnline,
@@ -1366,7 +1430,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
                           Widget bubble = ChatBubble(
                             key: _keyFor(message.id),
                             message: message,
-                            threadId: widget.threadId,
+                            threadId: _threadId,
                             mine: mine,
                             tail: tail,
                             tight: tight,
