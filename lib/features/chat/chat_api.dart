@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/config/build_flags.dart';
 import 'package:social_save/core/config/env_config.dart';
@@ -888,7 +889,13 @@ String chatErrorText(Object error) {
         break;
     }
   }
-  return 'Chat is not reachable right now.';
+  // Keep the real reason visible so a failure can be diagnosed.
+  final why = error is DioException
+      ? '${error.type.name} ${error.response?.statusCode ?? ''} ${error.message ?? ''} ${error.error ?? ''}'
+      : '${error.runtimeType}: $error';
+  debugPrint('chat error: $why');
+  final short = why.trim().length > 140 ? why.trim().substring(0, 140) : why.trim();
+  return 'Chat is not reachable right now. ($short)';
 }
 
 /// Pictures sent inside a conversation, kept for this visit.

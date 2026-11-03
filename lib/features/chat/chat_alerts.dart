@@ -216,7 +216,7 @@ class ChatAlerts {
       final grew = item.lastId > prev && item.lastId > 0;
       seen[item.id] = item.lastId > prev ? item.lastId : prev;
       if (!notify || !grew || alert == null) continue;
-      if (item.lastFrom.isEmpty || item.lastFrom == me) continue;
+      if (item.lastFrom.isEmpty || chatSameUser(item.lastFrom, me)) continue;
       if (holdOpen && item.id == openThread) continue;
       if (ChatInboxFilter.isMuted(item.id)) continue;
       alert(item, chatAlertBody(item.lastText));
@@ -335,7 +335,7 @@ class ChatAlertWatch {
 
   Future<void> _alertLive(String threadId, ChatMessage message) async {
     if (_me.isEmpty) _me = await ChatSession.username();
-    if (_me.isNotEmpty && message.name == _me) return;
+    if (_me.isEmpty || chatSameUser(message.name, _me)) return;
     final here = await _here();
     if (here && threadId == ChatAlerts.openThread) return;
     await ChatInboxFilter.ensure();
@@ -444,4 +444,10 @@ class _ChatAlertHostState extends State<ChatAlertHost> {
 
   @override
   Widget build(BuildContext context) => const SizedBox.shrink();
+}
+
+/// Usernames match without case or a leading @.
+bool chatSameUser(String a, String b) {
+  String n(String s) => s.trim().replaceFirst(RegExp(r'^@'), '').toLowerCase();
+  return n(a).isNotEmpty && n(a) == n(b);
 }
