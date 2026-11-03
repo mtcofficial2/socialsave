@@ -857,6 +857,15 @@ String chatErrorText(Object error) {
         error.type == DioExceptionType.unknown) {
       return own;
     }
+    final detail = '${error.error ?? ''} $own'.toLowerCase();
+    if (detail.contains('host lookup') ||
+        detail.contains('no address associated')) {
+      return 'This network cannot find the chat server. Try mobile data, another Wi-Fi, or a different DNS.';
+    }
+    final code = error.response?.statusCode;
+    if (code != null && code >= 400) {
+      return 'The chat server answered with error $code. Try again in a moment.';
+    }
     switch (error.type) {
       case DioExceptionType.connectionTimeout:
       case DioExceptionType.receiveTimeout:
