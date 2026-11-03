@@ -131,6 +131,77 @@ func TestChatRegisterDirect(t *testing.T) {
 	}
 }
 
+func TestChatLoginAndAdminList(t *testing.T) {
+	app := testApp(t)
+	app.chat.file = filepath.Join(t.TempDir(), "accounts.json")
+
+	ada := registerChat(t, app, `{"phone":"+256 700 000 111","username":"Ada"}`)
+	again := registerChat(t, app, `{"phone":"256700000111","username":"@ada"}`)
+	if again.user.Username != "ada" || again.token == "" || again.token == ada.token {
+		t.Fatalf("login %#v token %q", again.user, again.token)
+	}
+	stale := getChat(app, "/api/v1/chat/me", ada.token)
+	if stale.Code != http.StatusUnauthorized {
+		t.Fatalf("old token %d %s", stale.Code, stale.Body.String())
+	}
+	fresh := getChat(app, "/api/v1/chat/me", again.token)
+	if fresh.Code != http.StatusOK || !bytes.Contains(fresh.Body.Bytes(), []byte(`"username":"ada"`)) {
+		t.Fatalf("new token %d %s", fresh.Code, fresh.Body.String())
+	}
+	mismatch := postChat(app, "/api/v1/chat/register", "", `{"phone":"256700000111","username":"other"}`)
+	if mismatch.Code != http.StatusBadRequest || !bytes.Contains(mismatch.Body.Bytes(), []byte("already has")) {
+		t.Fatalf("mismatch %d %s", mismatch.Code, mismatch.Body.String())
+	}
+
+	stolen := postChat(app, "/api/v1/chat/register", "", `{"phone":"15550001111","username":"daniel256"}`)
+	if stolen.Code != http.StatusBadRequest || !bytes.Contains(stolen.Body.Bytes(), []byte("taken")) {
+		t.Fatalf("stolen name %d %s", stolen.Code, stolen.Body.String())
+	}
+	stolenPhone := postChat(app, "/api/v1/chat/register", "", `{"phone":"+256 703 487 378","username":"someone"}`)
+	if stolenPhone.Code != http.StatusBadRequest {
+		t.Fatalf("stolen phone %d %s", stolenPhone.Code, stolenPhone.Body.String())
+	}
+	emailAdmin := postChat(app, "/api/v1/chat/register", "", `{"email":"admin@example.com","username":"daniel256"}`)
+	if emailAdmin.Code != http.StatusBadRequest {
+		t.Fatalf("email admin %d %s", emailAdmin.Code, emailAdmin.Body.String())
+	}
+
+	hidden := getChat(app, "/api/v1/chat/admin/users", again.token)
+	if hidden.Code != http.StatusForbidden || bytes.Contains(hidden.Body.Bytes(), []byte("256700000111")) {
+		t.Fatalf("hidden list %d %s", hidden.Code, hidden.Body.String())
+	}
+	missing := getChat(app, "/api/v1/chat/admin/users", "")
+	if missing.Code != http.StatusUnauthorized {
+		t.Fatalf("missing token %d %s", missing.Code, missing.Body.String())
+	}
+
+	admin := registerChat(t, app, `{"phone":"+256 703 487 378","username":"@daniel256"}`)
+	if admin.user.Username != "daniel256" || admin.user.Phone != "256703487378" {
+		t.Fatalf("admin %#v", admin.user)
+	}
+	list := getChat(app, "/api/v1/chat/admin/users", admin.token)
+	if list.Code != http.StatusOK {
+		t.Fatalf("list %d %s", list.Code, list.Body.String())
+	}
+	body := list.Body.Bytes()
+	if !bytes.Contains(body, []byte(`"username":"ada"`)) || !bytes.Contains(body, []byte("256700000111")) || !bytes.Contains(body, []byte(`"username":"daniel256"`)) {
+		t.Fatalf("list body %s", body)
+	}
+	if bytes.Contains(body, []byte("tokenHash")) || bytes.Contains(body, []byte(admin.token)) {
+		t.Fatalf("list leaked a token %s", body)
+	}
+	signedIn := registerChat(t, app, `{"phone":"256703487378","username":"daniel256"}`)
+	if signedIn.token == "" || signedIn.token == admin.token {
+		t.Fatalf("admin login token %q", signedIn.token)
+	}
+	if getChat(app, "/api/v1/chat/admin/users", admin.token).Code != http.StatusUnauthorized {
+		t.Fatal("old admin token still listed people")
+	}
+	if getChat(app, "/api/v1/chat/admin/users", signedIn.token).Code != http.StatusOK {
+		t.Fatal("new admin token could not list people")
+	}
+}
+
 type registeredChat struct {
 	token string
 	user  struct {

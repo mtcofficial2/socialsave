@@ -41,7 +41,7 @@ class ChatReads {
   }
 }
 
-/// This device's chat account. The token is the login. It is not a code.
+/// This device's chat account. The token is the sign-in. It is not a code.
 class ChatSession {
   static Future<String?> token() async {
     final prefs = await SharedPreferences.getInstance();
@@ -108,6 +108,9 @@ class ChatUser {
     return email.isNotEmpty ? email : phone;
   }
 
+  /// The in-app people list. The server still refuses anyone else.
+  bool get isAdmin => chatUserIsAdmin(this);
+
   factory ChatUser.fromJson(Map<String, dynamic> json) {
     return ChatUser(
       id: (json['id'] as String?)?.trim() ?? '',
@@ -124,6 +127,48 @@ class ChatRegistration {
 
   final String token;
   final ChatUser user;
+}
+
+/// One person who registered for chat. Only the admin request returns these.
+class ChatDirectoryEntry {
+  const ChatDirectoryEntry({
+    required this.username,
+    required this.phone,
+    required this.email,
+    required this.created,
+  });
+
+  final String username;
+  final String phone;
+  final String email;
+  final DateTime? created;
+
+  String get contact {
+    if (phone.isNotEmpty && email.isNotEmpty) return '$phone · $email';
+    return phone.isNotEmpty ? phone : email;
+  }
+
+  factory ChatDirectoryEntry.fromJson(Map<String, dynamic> json) {
+    final at = (json['created'] as num?)?.toInt() ?? 0;
+    return ChatDirectoryEntry(
+      username: (json['username'] as String?)?.trim() ?? '',
+      phone: (json['phone'] as String?)?.trim() ?? '',
+      email: (json['email'] as String?)?.trim() ?? '',
+      created: at > 0 ? DateTime.fromMillisecondsSinceEpoch(at) : null,
+    );
+  }
+}
+
+/// True only for @daniel256 on 256703487378. The people list is still refused
+/// by the server when this is wrong.
+bool chatUserIsAdmin(ChatUser? user) {
+  if (user == null) return false;
+  final name = user.username
+      .toLowerCase()
+      .replaceFirst(RegExp(r'^@'), '')
+      .trim();
+  final digits = user.phone.replaceAll(RegExp(r'\D'), '');
+  return name == 'daniel256' && digits == '256703487378';
 }
 
 class ChatThreadSummary {
@@ -450,6 +495,20 @@ class ChatApi {
     );
   }
 
+  Future<List<ChatDirectoryEntry>> directory() async {
+    final response = await _dio.get<dynamic>(
+      '/api/v1/chat/admin/users',
+      options: await _auth(),
+    );
+    final items = _object(response)['users'];
+    if (items is! List) return const [];
+    return [
+      for (final item in items)
+        if (item is Map)
+          ChatDirectoryEntry.fromJson(Map<String, dynamic>.from(item)),
+    ];
+  }
+
   Future<ChatUser> me() async {
     final response = await _dio.get<dynamic>(
       '/api/v1/chat/me',
@@ -752,7 +811,7 @@ bool chatNeedsRegister(Object error) {
 /// The sentence to show when a chat request fails.
 String chatErrorText(Object error) {
   if (error is ChatSignedOut) {
-    return 'Register a phone number or email to use chat.';
+    return 'Sign in with your phone or email and username to use chat.';
   }
   if (error is DioException) {
     final data = error.response?.data;

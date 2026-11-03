@@ -173,6 +173,9 @@ func (c *chatRoom) register(ctx context.Context, ip, phone, email, username stri
 	if err != nil {
 		return chatUser{}, "", err
 	}
+	if blocked, message := chatReservedAccount(username, phone); blocked {
+		return chatUser{}, "", chatRejected(message)
+	}
 	plain, hash, err := newChatToken()
 	if err != nil {
 		return chatUser{}, "", err
@@ -182,19 +185,21 @@ func (c *chatRoom) register(ctx context.Context, ip, phone, email, username stri
 		c.mu.Unlock()
 		return chatUser{}, "", errs.RateLimited()
 	}
-	for _, user := range c.data.Users {
-		if phone != "" && user.Phone == phone {
-			c.mu.Unlock()
-			return chatUser{}, "", chatRejected("That phone number already has a Social Save username.")
+	for i := range c.data.Users {
+		user := c.data.Users[i]
+		if !chatAccountOverlaps(user, phone, email, username) {
+			continue
 		}
-		if email != "" && user.Email == email {
+		if !chatSameSignIn(user, phone, email, username) {
 			c.mu.Unlock()
-			return chatUser{}, "", chatRejected("That email already has a Social Save username.")
+			return chatUser{}, "", chatRejected(chatOverlapMessage(user, phone, email, username))
 		}
-		if user.Username == username {
-			c.mu.Unlock()
-			return chatUser{}, "", chatRejected("That username is taken.")
-		}
+		c.data.Users[i].TokenHash = hash
+		signed := c.data.Users[i]
+		c.mu.Unlock()
+		c.persist(ctx)
+		signed.TokenHash = ""
+		return signed, plain, nil
 	}
 	user := chatUser{
 		ID:        newChatID("u"),
@@ -1525,7 +1530,7 @@ func (s *Server) chatThreadPost(w http.ResponseWriter, r *http.Request) {
 func (s *Server) chatActor(w http.ResponseWriter, r *http.Request) (chatUser, bool) {
 	user, ok := s.chat.userByToken(r.Context(), r.Header.Get(chatTokenHeader))
 	if !ok {
-		writeChatError(w, http.StatusUnauthorized, "Register a phone number or email to use chat.")
+		writeChatError(w, http.StatusUnauthorized, "Sign in with your phone or email and username to use chat.")
 		return chatUser{}, false
 	}
 	return user, true

@@ -444,7 +444,7 @@ func (s *Server) chatLive(w http.ResponseWriter, r *http.Request) {
 	}
 	user, ok := s.chat.userByToken(r.Context(), r.Header.Get(chatTokenHeader))
 	if !ok {
-		writeChatError(w, http.StatusUnauthorized, "Register a phone number or email to use chat.")
+		writeChatError(w, http.StatusUnauthorized, "Sign in with your phone or email and username to use chat.")
 		return
 	}
 	key := strings.TrimSpace(r.Header.Get("Sec-WebSocket-Key"))

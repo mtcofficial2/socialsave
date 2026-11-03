@@ -17,6 +17,7 @@ android {
 
     defaultConfig {
         applicationId = "com.socialsave.social_save"
+        // Android 7.0 and newer.
         minSdk = 24
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

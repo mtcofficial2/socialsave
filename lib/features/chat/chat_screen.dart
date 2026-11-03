@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:social_save/features/chat/chat_admin_screen.dart';
 import 'package:social_save/features/chat/chat_alerts.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_drafts.dart';
@@ -651,14 +652,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             const Center(child: AppLogo(size: 72)),
             const SizedBox(height: 20),
             Text(
-              step ? 'Enter your phone or email' : 'Choose your username',
+              step ? 'Sign in or register' : 'Your username',
               style: pageTitleStyle(context),
             ),
             const SizedBox(height: 8),
             Text(
               step
-                  ? 'People will not see this. Social Save does not send a code. This device keeps the account.'
-                  : 'This is the name people message. You cannot change it later.',
+                  ? 'People will not see this. Social Save does not send a code. The same phone or email and username sign this device in.'
+                  : 'A new username creates the account. Your existing username signs this device in and signs the other one out.',
               style: TextStyle(
                 fontSize: 14,
                 height: 1.4,
@@ -736,7 +737,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       height: 18,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : Text(step ? 'Next' : 'Done'),
+                  : Text(step ? 'Next' : 'Continue'),
             ),
             if (!step)
               TextButton(
@@ -782,6 +783,52 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _openAdmin() {
+    return Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => const ChatAdminScreen()));
+  }
+
+  Future<void> _logOut() async {
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Log out'),
+          content: const Text(
+            'This signs chat out on this device. Sign in again with the same phone or email and username.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Log out'),
+            ),
+          ],
+        );
+      },
+    );
+    if (yes != true || !mounted) return;
+    _poll?.cancel();
+    _poll = null;
+    await ChatSession.clear();
+    ChatAlerts.reset();
+    if (!mounted) return;
+    setState(() {
+      _signedIn = false;
+      _user = null;
+      _threads = const [];
+      _selectedId = null;
+      _selectedName = null;
+      _step = 0;
+      _error = null;
+      _busy = false;
+    });
+  }
+
   Future<void> _archiveThread(ChatThreadSummary item) {
     final on = !ChatInboxFilter.archived.contains(item.id);
     return ChatInboxFilter.setArchived(item.id, on: on);
@@ -791,9 +838,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final on = !ChatInboxFilter.isMuted(item.id);
     await ChatInboxFilter.setMuted(item.id, on: on);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(on ? 'Muted' : 'Unmuted')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(on ? 'Muted' : 'Unmuted')));
   }
 
   Future<void> _hideThread(ChatThreadSummary item) async {
@@ -982,6 +1029,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       appBar: AppBar(
         title: const Text('Chats'),
         actions: [
+          PopupMenuButton<String>(
+            tooltip: 'Account',
+            onSelected: (value) {
+              if (value == 'people') unawaited(_openAdmin());
+              if (value == 'logout') unawaited(_logOut());
+            },
+            itemBuilder: (context) => [
+              if (user.isAdmin)
+                const PopupMenuItem(
+                  value: 'people',
+                  child: Text('Registered people'),
+                ),
+              const PopupMenuItem(value: 'logout', child: Text('Log out')),
+            ],
+          ),
           IconButton(
             tooltip: 'Your profile',
             onPressed: () => unawaited(
@@ -990,6 +1052,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 username: user.username,
                 contact: user.contact,
                 photoRev: user.photoRev,
+                onLogOut: () => unawaited(_logOut()),
                 onPhoto: (rev) {
                   final current = _user;
                   if (!mounted || current == null) return;
@@ -1030,7 +1093,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 style: TextStyle(color: scheme.error, height: 1.35),
               ),
             ),
-          Expanded(child: _inboxList(wide, user, query, canStart, shown, scheme)),
+          Expanded(
+            child: _inboxList(wide, user, query, canStart, shown, scheme),
+          ),
         ],
       ),
     );

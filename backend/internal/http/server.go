@@ -119,6 +119,7 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requireKey).Post("/pair", s.createPair)
 		r.With(s.requireKey).Post("/chat/register", s.chatRegister)
 		r.With(s.requireKey).Get("/chat/me", s.chatMe)
+		r.With(s.requireKey).Get("/chat/admin/users", s.chatAdminUsers)
 		r.With(s.requireKey).Post("/chat/photo", s.chatPhotoPost)
 		r.With(s.requireKey).Get("/chat/photo", s.chatPhotoGet)
 		r.With(s.requireKey).Get("/chat/lookup", s.chatLookup)

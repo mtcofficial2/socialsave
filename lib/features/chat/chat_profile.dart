@@ -18,6 +18,7 @@ Future<void> showChatProfile(
   DateTime? lastSeen,
   bool online = false,
   void Function(int photoRev)? onPhoto,
+  void Function()? onLogOut,
 }) {
   final name = username.replaceFirst(RegExp(r'^@'), '').trim();
   final mine = contact.trim().isNotEmpty;
@@ -133,6 +134,20 @@ Future<void> showChatProfile(
                       label: const Text('Change photo'),
                     ),
                   if (mine) const SizedBox(height: 8),
+                  if (mine && onLogOut != null) ...[
+                    TextButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        onLogOut();
+                      },
+                      icon: Icon(Icons.logout_rounded, color: scheme.error),
+                      label: Text(
+                        'Log out',
+                        style: TextStyle(color: scheme.error),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
                   FilledButton.tonalIcon(
                     onPressed: () async {
                       await Clipboard.setData(ClipboardData(text: '@$name'));
