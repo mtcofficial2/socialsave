@@ -184,10 +184,16 @@ class ChatThreadSummary {
     this.lastSeen,
     this.online = false,
     this.photoRev = 0,
+    this.name = '',
   });
 
   final String id;
   final String username;
+
+  /// The name this account wants to see. Blank means show [username].
+  final String name;
+
+  String get label => name.trim().isNotEmpty ? name.trim() : username;
   final String lastText;
   final DateTime? lastAt;
   final int lastId;
@@ -208,10 +214,12 @@ class ChatThreadSummary {
     DateTime? lastSeen,
     bool? online,
     int? photoRev,
+    String? name,
   }) {
     return ChatThreadSummary(
       id: id,
       username: username,
+      name: name ?? this.name,
       lastText: lastText ?? this.lastText,
       lastAt: lastAt ?? this.lastAt,
       lastId: lastId ?? this.lastId,
@@ -230,6 +238,7 @@ class ChatThreadSummary {
     return ChatThreadSummary(
       id: (json['id'] as String?)?.trim() ?? '',
       username: (json['username'] as String?)?.trim() ?? '',
+      name: (json['name'] as String?)?.trim() ?? '',
       lastText: (json['lastText'] as String?)?.trim() ?? '',
       lastAt: at > 0 ? DateTime.fromMillisecondsSinceEpoch(at) : null,
       lastId: (json['lastId'] as num?)?.toInt() ?? 0,
@@ -246,6 +255,7 @@ class ChatThreadSummary {
     return {
       'id': id,
       'username': username,
+      'name': name,
       'lastText': lastText,
       'lastAt': lastAt?.millisecondsSinceEpoch ?? 0,
       'lastId': lastId,
@@ -268,6 +278,7 @@ class ChatSync {
     this.peerLastSeen,
     this.peerOnline = false,
     this.peerPhotoRev = 0,
+    this.peerName = '',
   });
 
   final List<ChatMessage> messages;
@@ -277,6 +288,7 @@ class ChatSync {
   final DateTime? peerLastSeen;
   final bool peerOnline;
   final int peerPhotoRev;
+  final String peerName;
 }
 
 class ChatMessage {
@@ -471,11 +483,13 @@ class ChatApi {
     String phone = '',
     String email = '',
     required String username,
+    required String password,
   }) async {
     final response = await _dio.post<dynamic>(
       '/api/v1/chat/register',
       data: {
         'username': username,
+        'password': password,
         if (phone.trim().isNotEmpty) 'phone': phone.trim(),
         if (email.trim().isNotEmpty) 'email': email.trim(),
       },
@@ -538,10 +552,24 @@ class ChatApi {
     ];
   }
 
-  Future<ChatThreadSummary> openThread(String username) async {
+  Future<void> setSeenName(String username, String name) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/saved',
+      data: {'username': username, 'name': name},
+      options: await _auth(),
+    );
+  }
+
+  Future<ChatThreadSummary> openThread(
+    String username, {
+    String? seenName,
+  }) async {
     final response = await _dio.post<dynamic>(
       '/api/v1/chat/threads',
-      data: {'username': username},
+      data: {
+        'username': username,
+        if (seenName != null) 'name': seenName,
+      },
       options: await _auth(),
     );
     final body = _object(response);
@@ -556,6 +584,7 @@ class ChatApi {
     return ChatThreadSummary(
       id: id,
       username: name,
+      name: (body['name'] as String?)?.trim() ?? '',
       lastText: '',
       lastAt: null,
     );
@@ -576,6 +605,7 @@ class ChatApi {
     DateTime? seen;
     var online = false;
     var photoRev = 0;
+    var peerName = '';
     if (peer is Map) {
       delivered = (peer['delivered'] as num?)?.toInt() ?? 0;
       read = (peer['read'] as num?)?.toInt() ?? 0;
@@ -583,6 +613,7 @@ class ChatApi {
       if (at > 0) seen = DateTime.fromMillisecondsSinceEpoch(at);
       online = peer['online'] == true && seen != null;
       photoRev = (peer['photoRev'] as num?)?.toInt() ?? 0;
+      peerName = (peer['name'] as String?)?.trim() ?? '';
     }
     return ChatSync(
       peerDelivered: delivered,
@@ -590,6 +621,7 @@ class ChatApi {
       peerLastSeen: seen,
       peerOnline: online,
       peerPhotoRev: photoRev,
+      peerName: peerName,
       removed: [
         if (removed is List)
           for (final item in removed)

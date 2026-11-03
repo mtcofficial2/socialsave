@@ -54,11 +54,13 @@ type chatUser struct {
 	ID        string `json:"id"`
 	Phone     string `json:"phone,omitempty"`
 	Email     string `json:"email,omitempty"`
-	Username  string `json:"username"`
-	TokenHash string `json:"tokenHash"`
-	Created   int64  `json:"created"`
-	PhotoRev  int64  `json:"photoRev,omitempty"`
-	LastSeen  int64  `json:"lastSeen,omitempty"`
+	Username     string            `json:"username"`
+	TokenHash    string            `json:"tokenHash"`
+	PasswordHash string            `json:"passwordHash,omitempty"`
+	Saved        map[string]string `json:"saved,omitempty"`
+	Created      int64             `json:"created"`
+	PhotoRev     int64             `json:"photoRev,omitempty"`
+	LastSeen     int64             `json:"lastSeen,omitempty"`
 }
 
 type chatMessage struct {
@@ -117,6 +119,7 @@ type chatData struct {
 type chatInboxItem struct {
 	ID         string `json:"id"`
 	Username   string `json:"username"`
+	Name       string `json:"name,omitempty"`
 	LastText   string `json:"lastText,omitempty"`
 	LastAt     int64  `json:"lastAt,omitempty"`
 	LastID     int64  `json:"lastId,omitempty"`
@@ -135,6 +138,7 @@ type chatPeerView struct {
 	LastSeen  int64
 	Online    bool
 	PhotoRev  int64
+	Name      string
 }
 
 type chatRoom struct {
@@ -167,7 +171,7 @@ func newChatRoom(up storage.Uploader) *chatRoom {
 	}
 }
 
-func (c *chatRoom) register(ctx context.Context, ip, phone, email, username string) (chatUser, string, error) {
+func (c *chatRoom) register(ctx context.Context, ip, phone, email, username, password string) (chatUser, string, error) {
 	c.ensure(ctx)
 	phone, email, username, err := cleanAccount(phone, email, username)
 	if err != nil {
@@ -194,11 +198,17 @@ func (c *chatRoom) register(ctx context.Context, ip, phone, email, username stri
 			c.mu.Unlock()
 			return chatUser{}, "", chatRejected(chatOverlapMessage(user, phone, email, username))
 		}
+		if err := applyChatPassword(&c.data.Users[i], password); err != nil {
+			c.mu.Unlock()
+			return chatUser{}, "", err
+		}
 		c.data.Users[i].TokenHash = hash
 		signed := c.data.Users[i]
 		c.mu.Unlock()
 		c.persist(ctx)
 		signed.TokenHash = ""
+		signed.PasswordHash = ""
+		signed.Saved = nil
 		return signed, plain, nil
 	}
 	user := chatUser{
@@ -209,10 +219,16 @@ func (c *chatRoom) register(ctx context.Context, ip, phone, email, username stri
 		TokenHash: hash,
 		Created:   time.Now().UnixMilli(),
 	}
+	if err := applyChatPassword(&user, password); err != nil {
+		c.mu.Unlock()
+		return chatUser{}, "", err
+	}
 	c.data.Users = append(c.data.Users, user)
 	c.mu.Unlock()
 	c.persist(ctx)
 	user.TokenHash = ""
+	user.PasswordHash = ""
+	user.Saved = nil
 	return user, plain, nil
 }
 
@@ -225,6 +241,8 @@ func (c *chatRoom) userByToken(ctx context.Context, plain string) (chatUser, boo
 	for _, user := range c.data.Users {
 		if subtle.ConstantTimeCompare([]byte(user.TokenHash), []byte(want)) == 1 {
 			user.TokenHash = ""
+			user.PasswordHash = ""
+			user.Saved = nil
 			return user, true
 		}
 	}
@@ -268,6 +286,7 @@ func (c *chatRoom) inbox(ctx context.Context, userID string) []chatInboxItem {
 		item := chatInboxItem{
 			ID:       thread.ID,
 			Username: other.Username,
+			Name:     seenNameLocked(c.data, userID, other.Username),
 			Unread:   unreadCount(thread, userID),
 			LastSeen: other.LastSeen,
 			Online:   chatOnline(other.LastSeen, now),
@@ -295,7 +314,7 @@ func (c *chatRoom) inbox(ctx context.Context, userID string) []chatInboxItem {
 	return out
 }
 
-func (c *chatRoom) open(ctx context.Context, userID, username string) (chatThread, string, error) {
+func (c *chatRoom) open(ctx context.Context, userID, username string, seen *string) (chatThread, string, string, error) {
 	c.ensure(ctx)
 	name := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(username, "@")))
 	c.mu.Lock()
@@ -310,23 +329,37 @@ func (c *chatRoom) open(ctx context.Context, userID, username string) (chatThrea
 	}
 	if !found {
 		c.mu.Unlock()
-		return chatThread{}, "", chatRejected("No Social Save user has that username.")
+		return chatThread{}, "", "", chatRejected("No Social Save user has that username.")
 	}
 	if other.ID == userID {
 		c.mu.Unlock()
-		return chatThread{}, "", chatRejected("That is your own username.")
+		return chatThread{}, "", "", chatRejected("That is your own username.")
+	}
+	label := seenNameLocked(c.data, userID, other.Username)
+	dirty := false
+	if seen != nil {
+		next, err := saveSeenLocked(&c.data, userID, other.Username, *seen)
+		if err != nil {
+			c.mu.Unlock()
+			return chatThread{}, "", "", err
+		}
+		label = next
+		dirty = true
 	}
 	for _, thread := range c.data.Threads {
 		if threadPairs(thread, userID, other.ID) {
 			c.mu.Unlock()
-			return thread, other.Username, nil
+			if dirty {
+				c.persist(ctx)
+			}
+			return thread, other.Username, label, nil
 		}
 	}
 	thread := chatThread{ID: newChatID("t"), A: userID, B: other.ID, Next: 1}
 	c.data.Threads = append(c.data.Threads, thread)
 	c.mu.Unlock()
 	c.persist(ctx)
-	return thread, other.Username, nil
+	return thread, other.Username, label, nil
 }
 
 func (c *chatRoom) since(ctx context.Context, userID, threadID string, after int64) ([]chatMessage, []int64, chatPeerView, error) {
@@ -360,6 +393,7 @@ func (c *chatRoom) since(ctx context.Context, userID, threadID string, after int
 		LastSeen:  other.LastSeen,
 		Online:    chatOnline(other.LastSeen, time.Now()),
 		PhotoRev:  other.PhotoRev,
+		Name:      seenNameLocked(c.data, userID, other.Username),
 	}
 	var removed []int64
 	if len(thread.Removed) > 0 {
@@ -1220,12 +1254,13 @@ func (s *Server) chatRegister(w http.ResponseWriter, r *http.Request) {
 		Phone    string `json:"phone"`
 		Email    string `json:"email"`
 		Username string `json:"username"`
+		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&body); err != nil {
 		writeChatError(w, http.StatusBadRequest, "Enter a phone number or an email, and a username.")
 		return
 	}
-	user, token, err := s.chat.register(r.Context(), clientIP(r), body.Phone, body.Email, body.Username)
+	user, token, err := s.chat.register(r.Context(), clientIP(r), body.Phone, body.Email, body.Username, body.Password)
 	if err != nil {
 		writeChatFailure(w, err)
 		return
@@ -1316,13 +1351,14 @@ func (s *Server) chatOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Username string `json:"username"`
+		Username string  `json:"username"`
+		Name     *string `json:"name"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 2048)).Decode(&body); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil {
 		writeChatError(w, http.StatusBadRequest, "Enter a username.")
 		return
 	}
-	thread, name, err := s.chat.open(r.Context(), user.ID, body.Username)
+	thread, name, seen, err := s.chat.open(r.Context(), user.ID, body.Username, body.Name)
 	if err != nil {
 		writeChatFailure(w, err)
 		return
@@ -1332,6 +1368,9 @@ func (s *Server) chatOpen(w http.ResponseWriter, r *http.Request) {
 		"success":  true,
 		"id":       thread.ID,
 		"username": name,
+	}
+	if seen != "" {
+		payload["name"] = seen
 	}
 	if lastSeen > 0 {
 		payload["lastSeen"] = lastSeen
@@ -1371,6 +1410,9 @@ func (s *Server) chatThreadList(w http.ResponseWriter, r *http.Request) {
 	}
 	if peer.PhotoRev > 0 {
 		peerJSON["photoRev"] = peer.PhotoRev
+	}
+	if peer.Name != "" {
+		peerJSON["name"] = peer.Name
 	}
 	payload := map[string]any{
 		"success":  true,

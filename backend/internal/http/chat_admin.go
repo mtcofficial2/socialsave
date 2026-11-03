@@ -66,10 +66,12 @@ func chatOverlapMessage(user chatUser, phone, email, username string) string {
 }
 
 type chatAdminRow struct {
-	Username string `json:"username"`
-	Phone    string `json:"phone,omitempty"`
-	Email    string `json:"email,omitempty"`
-	Created  int64  `json:"created"`
+	Username    string `json:"username"`
+	Phone       string `json:"phone,omitempty"`
+	Email       string `json:"email,omitempty"`
+	Created     int64  `json:"created"`
+	LastSeen    int64  `json:"lastSeen,omitempty"`
+	HasPassword bool   `json:"hasPassword"`
 }
 
 func (c *chatRoom) adminUsers(ctx context.Context) []chatAdminRow {
@@ -79,10 +81,12 @@ func (c *chatRoom) adminUsers(ctx context.Context) []chatAdminRow {
 	rows := make([]chatAdminRow, 0, len(c.data.Users))
 	for _, user := range c.data.Users {
 		rows = append(rows, chatAdminRow{
-			Username: user.Username,
-			Phone:    user.Phone,
-			Email:    user.Email,
-			Created:  user.Created,
+			Username:    user.Username,
+			Phone:       user.Phone,
+			Email:       user.Email,
+			Created:     user.Created,
+			LastSeen:    user.LastSeen,
+			HasPassword: user.PasswordHash != "",
 		})
 	}
 	sort.Slice(rows, func(i, j int) bool {

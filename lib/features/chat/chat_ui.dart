@@ -231,6 +231,7 @@ class ChatListTile extends StatefulWidget {
     required this.onArchive,
     required this.onMute,
     required this.onDelete,
+    this.onRename,
     required this.muted,
     required this.archived,
   });
@@ -243,6 +244,7 @@ class ChatListTile extends StatefulWidget {
   final VoidCallback onArchive;
   final VoidCallback onMute;
   final VoidCallback onDelete;
+  final VoidCallback? onRename;
   final bool muted;
   final bool archived;
 
@@ -328,6 +330,8 @@ class _ChatListTileState extends State<ChatListTile> {
           value: 'mute',
           child: Text(widget.muted ? 'Unmute' : 'Mute'),
         ),
+        if (widget.onRename != null)
+          const PopupMenuItem<String>(value: 'rename', child: Text('Edit name')),
         const PopupMenuItem<String>(value: 'delete', child: Text('Delete')),
       ],
     );
@@ -338,6 +342,8 @@ class _ChatListTileState extends State<ChatListTile> {
         widget.onArchive();
       case 'mute':
         widget.onMute();
+      case 'rename':
+        widget.onRename?.call();
       case 'delete':
         widget.onDelete();
     }
@@ -526,7 +532,7 @@ class _RowBody extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  item.username,
+                  item.label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(

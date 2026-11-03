@@ -28,6 +28,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final ChatApi _api = ChatApi();
   final TextEditingController _contact = TextEditingController();
   final TextEditingController _username = TextEditingController();
+  final TextEditingController _password = TextEditingController();
+  bool _showPassword = false;
   final TextEditingController _find = TextEditingController();
   final FocusNode _findFocus = FocusNode();
   bool _showArchived = false;
@@ -72,6 +74,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _poll?.cancel();
     _contact.dispose();
     _username.dispose();
+    _password.dispose();
     _find.dispose();
     _findFocus.dispose();
     super.dispose();
@@ -258,6 +261,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         phone: _kind == _ContactKind.phone ? contact : '',
         email: _kind == _ContactKind.email ? contact : '',
         username: username,
+        password: _password.text,
       );
       await ChatSession.save(
         token: created.token,
@@ -268,6 +272,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (!mounted) return;
       _contact.clear();
       _username.clear();
+    _password.clear();
       setState(() {
         _user = created.user;
         _signedIn = true;
@@ -303,6 +308,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final name = username.toLowerCase().replaceFirst(RegExp(r'^@'), '');
     if (!RegExp(r'^[a-z0-9_]{3,20}$').hasMatch(name)) {
       return 'Usernames are 3 to 20 letters, numbers, or underscores.';
+    }
+    final password = _password.text;
+    if (password.length < 6 || password.length > 64 || password.trim().isEmpty) {
+      return 'Use a password of 6 to 64 characters.';
     }
     return null;
   }
@@ -343,7 +352,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (mounted) unawaited(_loadThreads());
   }
 
-  Future<void> _openName(String raw) async {
+  Future<void> _openName(String raw, {String? seenName}) async {
     final name = raw.trim();
     if (name.isEmpty || _busy) return;
     setState(() {
@@ -351,7 +360,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _error = null;
     });
     try {
-      final opened = await _api.openThread(name);
+      final opened = await _api.openThread(name, seenName: seenName);
       if (!mounted) return;
       _find.clear();
       setState(() {
@@ -376,11 +385,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   Future<void> _newChat() async {
     final controller = TextEditingController();
-    final name = await showModalBottomSheet<String>(
+    final seen = TextEditingController();
+    var seenEdited = false;
+    controller.addListener(() {
+      if (!seenEdited) seen.text = controller.text.trim();
+    });
+    final picked = await showModalBottomSheet<(String, String)>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
       builder: (context) {
+        void submit() =>
+            Navigator.pop(context, (controller.text, seen.text));
         return Padding(
           padding: EdgeInsets.fromLTRB(
             20,
@@ -401,28 +417,94 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 controller: controller,
                 autofocus: true,
                 autocorrect: false,
-                textInputAction: TextInputAction.done,
-                onSubmitted: (value) => Navigator.pop(context, value),
+                textInputAction: TextInputAction.next,
                 decoration: const InputDecoration(
-                  hintText: 'Username',
+                  labelText: 'Username',
                   prefixText: '@',
                 ),
               ),
               const SizedBox(height: 12),
-              FilledButton(
-                onPressed: () => Navigator.pop(context, controller.text),
-                child: const Text('Message'),
+              TextField(
+                controller: seen,
+                maxLength: 40,
+                textCapitalization: TextCapitalization.words,
+                textInputAction: TextInputAction.done,
+                onChanged: (_) => seenEdited = true,
+                onSubmitted: (_) => submit(),
+                decoration: const InputDecoration(
+                  labelText: 'Name to show',
+                  helperText: 'Only you see this name.',
+                ),
               ),
+              const SizedBox(height: 12),
+              FilledButton(onPressed: submit, child: const Text('Message')),
             ],
           ),
         );
       },
     );
     controller.dispose();
-    if (!mounted || name == null) return;
-    await _openName(name);
+    seen.dispose();
+    if (!mounted || picked == null) return;
+    final username = picked.$1.trim().replaceFirst(RegExp(r'^@'), '');
+    final shown = picked.$2.trim();
+    await _openName(
+      username,
+      seenName: shown.isNotEmpty && shown != username ? shown : null,
+    );
   }
 
+  Future<void> _renameThread(ChatThreadSummary item) async {
+    final controller = TextEditingController(text: item.label);
+    final next = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Edit name'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            maxLength: 40,
+            textCapitalization: TextCapitalization.words,
+            onSubmitted: (value) => Navigator.pop(context, value),
+            decoration: InputDecoration(
+              labelText: 'Name to show',
+              helperText: 'Leave blank to show @${item.username}',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, controller.text),
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+    controller.dispose();
+    if (!mounted || next == null) return;
+    final name = next.trim() == item.username ? '' : next.trim();
+    try {
+      await _api.setSeenName(item.username, name);
+      if (!mounted) return;
+      setState(() {
+        _threads = [
+          for (final thread in _threads)
+            if (thread.id == item.id) thread.copyWith(name: name) else thread,
+        ];
+      });
+      _keepThreads();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(chatErrorText(error))));
+    }
+  }
   void _onLiveEvent(ChatLiveEvent event) {
     if (!mounted) return;
     if (event.type == 'presence') {
@@ -704,21 +786,46 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   hintText: phone ? '256700000111' : 'you@example.com',
                 ),
               ),
-            ] else
+            ] else ...[
               TextField(
                 controller: _username,
                 enabled: !_busy,
                 autofocus: true,
                 autocorrect: false,
                 maxLength: 20,
-                textInputAction: TextInputAction.done,
-                onSubmitted: (_) => unawaited(_register()),
+                textInputAction: TextInputAction.next,
                 decoration: const InputDecoration(
                   labelText: 'Username',
                   hintText: 'ada',
                   prefixText: '@',
                 ),
               ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _password,
+                enabled: !_busy,
+                obscureText: !_showPassword,
+                autocorrect: false,
+                enableSuggestions: false,
+                maxLength: 64,
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => unawaited(_register()),
+                decoration: InputDecoration(
+                  labelText: 'Password',
+                  helperText: 'At least 6 characters.',
+                  suffixIcon: IconButton(
+                    tooltip: _showPassword ? 'Hide password' : 'Show password',
+                    icon: Icon(
+                      _showPassword
+                          ? Icons.visibility_off_rounded
+                          : Icons.visibility_rounded,
+                    ),
+                    onPressed: () =>
+                        setState(() => _showPassword = !_showPassword),
+                  ),
+                ),
+              ),
+            ],
             if (_error != null) ...[
               const SizedBox(height: 8),
               Text(
@@ -905,6 +1012,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       onArchive: () => unawaited(_archiveThread(item)),
       onMute: () => unawaited(_muteThread(item)),
       onDelete: () => unawaited(_hideThread(item)),
+      onRename: () => unawaited(_renameThread(item)),
     );
   }
 

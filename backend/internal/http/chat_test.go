@@ -121,7 +121,7 @@ func TestChatRegisterPhoneOrEmailAndMessage(t *testing.T) {
 func TestChatRegisterDirect(t *testing.T) {
 	room := newChatRoom(nil)
 	room.file = filepath.Join(t.TempDir(), "missing.json")
-	user, token, err := room.register(context.Background(), "1.2.3.4", "", "a@b.co", "sam")
+	user, token, err := room.register(context.Background(), "1.2.3.4", "", "a@b.co", "sam", "secret1")
 	if err != nil || user.Username != "sam" || token == "" {
 		t.Fatalf("%v %#v", err, user)
 	}
@@ -213,7 +213,7 @@ type registeredChat struct {
 
 func registerChat(t *testing.T, app *Server, body string) registeredChat {
 	t.Helper()
-	response := postChat(app, "/api/v1/chat/register", "", body)
+	response := postChat(app, "/api/v1/chat/register", "", chatTestBody(body))
 	if response.Code != http.StatusOK {
 		t.Fatalf("register %d %s", response.Code, response.Body.String())
 	}
@@ -229,6 +229,56 @@ func registerChat(t *testing.T, app *Server, body string) registeredChat {
 		t.Fatal(err)
 	}
 	return registeredChat{token: parsed.Token, user: parsed.User}
+}
+
+func chatTestBody(body string) string {
+	if strings.Contains(body, `"password"`) {
+		return body
+	}
+	trimmed := strings.TrimSpace(body)
+	if strings.HasSuffix(trimmed, "}") {
+		return trimmed[:len(trimmed)-1] + `,"password":"secret1"}`
+	}
+	return body
+}
+
+func TestChatPasswordAndSeenName(t *testing.T) {
+	app := testApp(t)
+	app.chat.file = filepath.Join(t.TempDir(), "accounts.json")
+	ada := registerChat(t, app, `{"phone":"256700000777","username":"ada"}`)
+	bad := postChat(app, "/api/v1/chat/register", "", `{"phone":"256700000777","username":"ada","password":"nope12"}`)
+	if bad.Code != http.StatusBadRequest || !bytes.Contains(bad.Body.Bytes(), []byte("does not match")) {
+		t.Fatalf("bad password %d %s", bad.Code, bad.Body.String())
+	}
+	if getChat(app, "/api/v1/chat/me", ada.token).Code != http.StatusOK {
+		t.Fatal("wrong password signed the account out")
+	}
+	short := postChat(app, "/api/v1/chat/register", "", `{"phone":"256711111111","username":"shorty","password":"123"}`)
+	if short.Code != http.StatusBadRequest {
+		t.Fatalf("short password %d %s", short.Code, short.Body.String())
+	}
+	ben := registerChat(t, app, `{"email":"ben7@example.com","username":"ben7"}`)
+	opened := postChat(app, "/api/v1/chat/threads", ada.token, `{"username":"ben7","name":"Benny"}`)
+	if opened.Code != http.StatusOK || !bytes.Contains(opened.Body.Bytes(), []byte(`"name":"Benny"`)) {
+		t.Fatalf("open name %d %s", opened.Code, opened.Body.String())
+	}
+	inbox := getChat(app, "/api/v1/chat/threads", ada.token)
+	if !bytes.Contains(inbox.Body.Bytes(), []byte(`"name":"Benny"`)) || bytes.Contains(inbox.Body.Bytes(), []byte("passwordHash")) {
+		t.Fatalf("inbox name %s", inbox.Body.String())
+	}
+	changed := postChat(app, "/api/v1/chat/saved", ada.token, `{"username":"ben7","name":"Ben B"}`)
+	if changed.Code != http.StatusOK || !bytes.Contains(changed.Body.Bytes(), []byte(`"name":"Ben B"`)) {
+		t.Fatalf("saved %d %s", changed.Code, changed.Body.String())
+	}
+	cleared := postChat(app, "/api/v1/chat/saved", ada.token, `{"username":"@ben7","name":"ben7"}`)
+	if cleared.Code != http.StatusOK || bytes.Contains(cleared.Body.Bytes(), []byte(`"name":"ben7"`)) {
+		t.Fatalf("clear %d %s", cleared.Code, cleared.Body.String())
+	}
+	list := getChat(app, "/api/v1/chat/admin/users", registerChat(t, app, `{"phone":"+256 703 487 378","username":"@daniel256"}`).token)
+	if list.Code != http.StatusOK || !bytes.Contains(list.Body.Bytes(), []byte(`"hasPassword":true`)) || bytes.Contains(list.Body.Bytes(), []byte("secret1")) || bytes.Contains(list.Body.Bytes(), []byte("passwordHash")) {
+		t.Fatalf("admin %d %s", list.Code, list.Body.String())
+	}
+	_ = ben
 }
 
 func postChat(app *Server, path, token, body string) *httptest.ResponseRecorder {
