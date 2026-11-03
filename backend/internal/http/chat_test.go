@@ -475,7 +475,7 @@ func TestChatReplyAndPicture(t *testing.T) {
 		t.Fatal("picture bytes were stored")
 	}
 	got := getChat(app, "/api/v1/chat/images/"+picture.Message.Photo, ben.token)
-	if got.Code != http.StatusNotFound {
+	if got.Code != http.StatusOK || !bytes.Equal(got.Body.Bytes(), png) {
 		t.Fatalf("image %d %s", got.Code, got.Body.String())
 	}
 	cara := registerChat(t, app, `{"phone":"15550003333","username":"cara"}`)
@@ -534,8 +534,8 @@ func TestChatPhotoReachesTheOtherPhoneWithoutBeingStored(t *testing.T) {
 	if bytes.Contains(saved, png) {
 		t.Fatal("picture bytes were stored")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "chat", "images")); err == nil {
-		t.Fatal("picture file was stored")
+	if _, err := os.Stat(filepath.Join(dir, "chat", "images")); err != nil {
+		t.Fatal("picture file was not kept for later")
 	}
 }
 

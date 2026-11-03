@@ -2224,6 +2224,16 @@ class _ChatPicture extends StatefulWidget {
 class _ChatPictureState extends State<_ChatPicture> {
   Uint8List? _bytes;
   bool _waiting = false;
+  bool _failed = false;
+  DateTime? _startedAt;
+
+  void _retry() {
+    setState(() {
+      _failed = false;
+      _startedAt = null;
+    });
+    _load();
+  }
 
   @override
   void initState() {
@@ -2257,9 +2267,28 @@ class _ChatPictureState extends State<_ChatPicture> {
   Future<void> _load() async {
     final id = widget.message.photo;
     if (id.isEmpty) return;
-    final bytes = await ChatImageStore.load(id);
+    _startedAt ??= DateTime.now();
+    var bytes = await ChatImageStore.load(id);
     if (!mounted) return;
     if (bytes == null || bytes.isEmpty) {
+      // Ask the sender's device too, but fetch the server copy right away
+      // instead of only waiting for the peer to come online.
+      ChatLive.instance.wantPhoto(widget.threadId, id);
+      try {
+        bytes = await ChatImages.fetch(id).timeout(const Duration(seconds: 25));
+      } catch (_) {
+        bytes = null;
+      }
+      if (!mounted || widget.message.photo != id) return;
+      if (_bytes != null) return;
+      if (bytes != null && bytes.isNotEmpty) {
+        unawaited(ChatImageStore.save(id, bytes));
+      }
+    }
+    if (bytes == null || bytes.isEmpty) {
+      if (DateTime.now().difference(_startedAt!) > const Duration(seconds: 45)) {
+        if (!_failed) setState(() => _failed = true);
+      }
       ChatLive.instance.wantPhoto(widget.threadId, id);
       if (_waiting) return;
       _waiting = true;
@@ -2269,7 +2298,11 @@ class _ChatPictureState extends State<_ChatPicture> {
       });
       return;
     }
-    setState(() => _bytes = Uint8List.fromList(bytes));
+    final got = bytes;
+    setState(() {
+      _failed = false;
+      _bytes = Uint8List.fromList(got);
+    });
   }
 
   Uint8List? _copy(Uint8List? bytes) {
@@ -2293,7 +2326,24 @@ class _ChatPictureState extends State<_ChatPicture> {
   @override
   Widget build(BuildContext context) {
     final bytes = _bytes;
-    final child = bytes == null
+    final child = bytes == null && _failed
+        ? GestureDetector(
+            onTap: _retry,
+            child: const SizedBox(
+              height: 180,
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.refresh_rounded),
+                    SizedBox(height: 6),
+                    Text('Photo not loaded. Tap to retry'),
+                  ],
+                ),
+              ),
+            ),
+          )
+        : bytes == null
         ? const SizedBox(
             height: 180,
             child: Center(
@@ -2310,6 +2360,7 @@ class _ChatPictureState extends State<_ChatPicture> {
               bytes,
               height: 180,
               width: double.infinity,
+              cacheHeight: 540,
               fit: BoxFit.cover,
               gaplessPlayback: true,
               errorBuilder: (context, error, stack) => const SizedBox(

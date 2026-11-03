@@ -633,7 +633,8 @@ func (c *chatRoom) postPhoto(ctx context.Context, user chatUser, threadID string
 	if kind == "image/jpeg" {
 		photoType = "jpeg"
 	}
-	// The bytes are not stored. They are handed to the other phone, then dropped.
+	// The bytes are kept so the other phone can fetch them even when the
+	// sender is offline. They are also handed over live when possible.
 	id := newChatID("p")
 	item := c.appendMessageLocked(thread, user, text, chatExtra{
 		Reply: reply, ReplyName: replyName, ReplyText: replyText,
@@ -641,6 +642,11 @@ func (c *chatRoom) postPhoto(ctx context.Context, user chatUser, threadID string
 	})
 	a, b := thread.A, thread.B
 	c.mu.Unlock()
+	if key, err := chatBlobKey("chat/images/", id); err == nil {
+		if err := c.putBlob(ctx, key, body); err != nil {
+			slog.Info("chat image save failed")
+		}
+	}
 	c.persist(ctx)
 	item.Status = "sent"
 	c.announce(ctx, a, b, threadID, item)
@@ -769,8 +775,40 @@ func (c *chatRoom) voiceFor(ctx context.Context, userID, voiceID string) ([]byte
 }
 
 func (c *chatRoom) imageFor(ctx context.Context, userID, imageID string) ([]byte, string, error) {
-	// Conversation photos are not kept on the server.
-	return nil, "", os.ErrNotExist
+	key, err := chatBlobKey("chat/images/", imageID)
+	if err != nil {
+		return nil, "", os.ErrNotExist
+	}
+	c.ensure(ctx)
+	c.mu.Lock()
+	found := false
+	for _, thread := range c.data.Threads {
+		if thread.A != userID && thread.B != userID {
+			continue
+		}
+		for _, message := range thread.Messages {
+			if message.Photo == imageID {
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+	}
+	c.mu.Unlock()
+	if !found {
+		return nil, "", os.ErrNotExist
+	}
+	body, err := c.getBlob(ctx, key)
+	if err != nil || len(body) == 0 {
+		return nil, "", os.ErrNotExist
+	}
+	kind := imageKind(body)
+	if kind == "" {
+		return nil, "", os.ErrNotExist
+	}
+	return body, kind, nil
 }
 
 func (c *chatRoom) presence(ctx context.Context, username string) (int64, bool, int64) {

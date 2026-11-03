@@ -353,13 +353,20 @@ class _ChatListTileState extends State<ChatListTile> {
   Widget build(BuildContext context) {
     final dark = ChatUiTokens.dark(context);
     final scheme = Theme.of(context).colorScheme;
+    final baseColor = dark ? ChatUiTokens.canvasDark : scheme.surface;
+    // Opaque, so the swipe actions underneath never show through.
     final rowColor = widget.selected
-        ? ChatUiTokens.brand.withValues(alpha: dark ? 0.22 : 0.16)
-        : (dark ? ChatUiTokens.canvasDark : scheme.surface);
+        ? Color.alphaBlend(
+            ChatUiTokens.brand.withValues(alpha: dark ? 0.22 : 0.16),
+            baseColor,
+          )
+        : baseColor;
+    final showActions = _dragging || _drag != 0;
     return SizedBox(
       height: 72,
       child: Stack(
         children: [
+          if (showActions)
           Positioned.fill(
             child: ColoredBox(
               color: dark ? const Color(0xFF111B21) : const Color(0xFFF0F2F5),
@@ -437,6 +444,7 @@ class _ChatListTileState extends State<ChatListTile> {
                         _close();
                         return;
                       }
+                      _close();
                       widget.onOpen();
                     },
                     onSecondaryTapDown: _menu,
