@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:file_selector/file_selector.dart';
@@ -5,9 +6,73 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as im;
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'package:social_save/core/platform/plat.dart';
+import 'package:social_save/core/storage/download_path_service.dart';
+import 'package:social_save/core/storage/media_store_service.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_format.dart';
 import 'package:social_save/features/chat/chat_thread_screen.dart';
+
+/// Saves this person's profile photo. The sentence is what to show afterwards.
+Future<String> downloadChatProfilePhoto(
+  String username, {
+  int photoRev = 0,
+}) async {
+  final name = username.replaceFirst(RegExp(r'^@'), '').trim();
+  if (name.isEmpty) return 'No profile photo to download.';
+  Uint8List? bytes;
+  if (photoRev > 0) bytes = await ChatPhotos.fetch(name, photoRev);
+  bytes ??= ChatPhotos.anyCached(name);
+  if (bytes == null || bytes.isEmpty) {
+    try {
+      bytes = await ChatApi().photo(name);
+    } catch (_) {
+      bytes = null;
+    }
+  }
+  if (bytes == null || bytes.isEmpty) {
+    return 'No profile photo to download.';
+  }
+  ChatPhotos.remember(name, photoRev > 0 ? photoRev : 1, bytes);
+  final png = bytes.length >= 8 &&
+      bytes[0] == 0x89 &&
+      bytes[1] == 0x50 &&
+      bytes[2] == 0x4E &&
+      bytes[3] == 0x47;
+  final ext = png ? 'png' : 'jpg';
+  final mime = png ? 'image/png' : 'image/jpeg';
+  final safe = name.replaceAll(RegExp(r'[^A-Za-z0-9_]'), '');
+  final fileName = '${safe.isEmpty ? 'profile' : safe}-profile.$ext';
+  try {
+    if (Plat.isAndroid) {
+      final dir = await getTemporaryDirectory();
+      final file = File(p.join(dir.path, 'chat-profile-$fileName'));
+      await file.writeAsBytes(bytes, flush: true);
+      final saved = await MediaStoreService().publishToDownloads(
+        sourcePath: file.path,
+        fileName: fileName,
+        mimeType: mime,
+      );
+      try {
+        if (await file.exists()) await file.delete();
+      } catch (_) {}
+      if (saved == null || saved.isEmpty) {
+        return 'That photo could not be saved.';
+      }
+      return 'Profile photo saved to Downloads.';
+    }
+    final folder = await DownloadPathService().resolveDirectory(
+      DownloadLocation.publicDownloads,
+    );
+    await File(p.join(folder.path, fileName)).writeAsBytes(bytes, flush: true);
+    if (Plat.isWindows) return 'Profile photo saved to Documents.';
+    return 'Profile photo saved.';
+  } catch (_) {
+    return 'That photo could not be saved.';
+  }
+}
 
 /// The person behind a username. Another person's phone or email is never shown.
 Future<void> showChatProfile(
@@ -35,6 +100,7 @@ Future<void> showChatProfile(
       var rev = photoRev;
       var busy = false;
       var blockedNow = blocked;
+      var looked = false;
       String? problem;
       final presence = chatPresenceLabel(
         lastSeen,
@@ -46,6 +112,14 @@ Future<void> showChatProfile(
       );
       return StatefulBuilder(
         builder: (context, setSheet) {
+          if (!mine && rev <= 0 && !looked && name.isNotEmpty) {
+            looked = true;
+            ChatApi().photo(name).then((bytes) {
+              if (bytes == null || bytes.isEmpty || !context.mounted) return;
+              ChatPhotos.remember(name, 1, bytes);
+              setSheet(() => rev = 1);
+            }).catchError((_) {});
+          }
           return SafeArea(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
@@ -239,6 +313,28 @@ Future<void> showChatProfile(
                     const SizedBox(height: 8),
                   ],
                   FilledButton.tonalIcon(
+                    onPressed: busy || name.isEmpty
+                        ? null
+                        : () async {
+                            setSheet(() {
+                              busy = true;
+                              problem = null;
+                            });
+                            final text = await downloadChatProfilePhoto(
+                              name,
+                              photoRev: rev,
+                            );
+                            if (!context.mounted) return;
+                            setSheet(() => busy = false);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text(text)),
+                            );
+                          },
+                    icon: const Icon(Icons.download_rounded),
+                    label: const Text('Download photo'),
+                  ),
+                  const SizedBox(height: 8),
+                  FilledButton.tonalIcon(
                     onPressed: () async {
                       await Clipboard.setData(ClipboardData(text: '@$name'));
                       if (!context.mounted) return;
@@ -390,6 +486,15 @@ Future<void> showChatGroup(
                               minTileHeight: 40,
                               leading: ChatFace(name: member, size: 32),
                               title: Text('@$member'),
+                              trailing: const Icon(Icons.chevron_right_rounded),
+                              onTap: () => showChatProfile(
+                                context,
+                                username: member,
+                                onBlock: (on) =>
+                                    ChatApi().block(member, on: on),
+                                onSeenName: (value) =>
+                                    ChatApi().setSeenName(member, value),
+                              ),
                             ),
                         ],
                       ),

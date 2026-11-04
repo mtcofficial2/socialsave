@@ -73,6 +73,29 @@ void main() {
     );
   });
 
+  test('mute stays on that chat and does not open it', () {
+    expect(
+      chatNotificationMuteThread(
+        _tap(actionId: 'mute|gFeature', payload: 'mute|gFeature'),
+      ),
+      'gFeature',
+    );
+    expect(
+      chatNotificationOpensChat(
+        _tap(actionId: 'mute|tabc', payload: 'mute|tabc'),
+      ),
+      isFalse,
+    );
+    expect(
+      chatNotificationMuteThread(
+        _tap(actionId: 'reply', input: 'hello', payload: 'chat|abc|Ada'),
+      ),
+      isNull,
+    );
+    expect(chatNotificationMuteThread(_tap(actionId: 'mute|')), isNull);
+    expect(chatNotificationMuteThread(_tap(actionId: 'mute|bad id')), isNull);
+  });
+
   test('opening the chat without text is not a reply', () {
     final parts = chatNotificationReplyOf(
       _tap(payload: 'chat|abc|Ada', input: '   '),

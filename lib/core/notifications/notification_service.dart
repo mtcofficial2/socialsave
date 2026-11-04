@@ -11,6 +11,7 @@ import 'package:social_save/core/notifications/notification_photo_io.dart'
 import 'package:social_save/core/notifications/windows_toast_setup_stub.dart'
     if (dart.library.ffi) 'package:social_save/core/notifications/windows_toast_setup.dart';
 import 'package:social_save/features/chat/chat_api.dart';
+import 'package:social_save/features/chat/chat_ui.dart';
 
 const _notificationLogo = DrawableResourceAndroidBitmap('ic_notification_logo');
 
@@ -18,10 +19,29 @@ const _notificationLogo = DrawableResourceAndroidBitmap('ic_notification_logo');
 @pragma('vm:entry-point')
 void chatNotificationBackground(NotificationResponse response) {
   DartPluginRegistrant.ensureInitialized();
+  final muted = chatNotificationMuteThread(response);
+  if (muted != null) {
+    unawaited(ChatInboxFilter.setMuted(muted, on: true));
+    return;
+  }
   final text = response.input?.trim() ?? '';
   final payload = response.payload ?? '';
   if (response.actionId != 'reply' || text.isEmpty) return;
   unawaited(sendChatNotificationReply(payload, text));
+}
+
+final _chatThreadId = RegExp(r'^[A-Za-z0-9]{2,80}$');
+
+/// Thread id from a Mute button on a chat notification, or null.
+@visibleForTesting
+String? chatNotificationMuteThread(NotificationResponse response) {
+  for (final raw in [response.actionId, response.payload]) {
+    final value = raw?.trim() ?? '';
+    if (!value.startsWith('mute|')) continue;
+    final id = value.substring(5).trim();
+    if (_chatThreadId.hasMatch(id)) return id;
+  }
+  return null;
 }
 
 String? _recentReplyKey;
@@ -140,6 +160,7 @@ const _androidChatNotify = MethodChannel('socialsave/chat_notify');
 /// opens that chat.
 @visibleForTesting
 bool chatNotificationOpensChat(NotificationResponse response) {
+  if (chatNotificationMuteThread(response) != null) return false;
   if (_chatPayload(response) == null) return false;
   return _replyText(response) == null;
 }
@@ -308,6 +329,11 @@ class NotificationService {
       _androidChatNotify.setMethodCallHandler((call) async {
         if (call.method == 'opened' && call.arguments is String) {
           _openChat(call.arguments as String);
+        } else if (call.method == 'muted' && call.arguments is String) {
+          final id = (call.arguments as String).trim();
+          if (_chatThreadId.hasMatch(id)) {
+            unawaited(ChatInboxFilter.setMuted(id, on: true));
+          }
         }
       });
       try {
@@ -467,6 +493,7 @@ class NotificationService {
         ],
         actions: [
           WindowsAction(content: 'Reply', arguments: payload, inputId: 'reply'),
+          WindowsAction(content: 'Mute', arguments: 'mute|$threadId'),
         ],
         images: await _windowsFace(picture, handle, title),
         silent: silent,
@@ -569,6 +596,11 @@ class NotificationService {
         : (response.payload ?? '');
     if (probe.startsWith('usbshare')) {
       onUsbShare?.call();
+      return;
+    }
+    final muteThread = chatNotificationMuteThread(response);
+    if (muteThread != null) {
+      unawaited(ChatInboxFilter.setMuted(muteThread, on: true));
       return;
     }
     final payload = _chatPayload(response);

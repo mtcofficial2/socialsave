@@ -46,18 +46,6 @@ class ChatUiTokens {
   static Color searchFill(bool dark) => dark ? fieldDark : Colors.white;
 }
 
-/// A direct chat and a group can be silenced separately. One conversation
-/// can still be muted on its own.
-bool chatNotificationsMuted({
-  required bool group,
-  required bool threadMuted,
-  required bool chatsMuted,
-  required bool groupsMuted,
-}) {
-  if (threadMuted) return true;
-  return group ? groupsMuted : chatsMuted;
-}
-
 /// Local list choices. Archive and mute stay on this phone. A hidden chat
 /// comes back when a newer message arrives, so a delete cannot swallow it.
 class ChatInboxFilter {
@@ -66,14 +54,10 @@ class ChatInboxFilter {
   static const _archiveKey = 'chat.list.archived.v1';
   static const _muteKey = 'chat.list.muted.v1';
   static const _hideKey = 'chat.list.hidden.v1';
-  static const _muteChatsKey = 'chat.list.muteChats.v1';
-  static const _muteGroupsKey = 'chat.list.muteGroups.v1';
 
   static final ValueNotifier<int> revision = ValueNotifier<int>(0);
   static Set<String> archived = <String>{};
   static Set<String> muted = <String>{};
-  static bool muteChats = false;
-  static bool muteGroups = false;
   static final Map<String, int> hidden = <String, int>{};
   static Future<void>? _loading;
 
@@ -82,30 +66,6 @@ class ChatInboxFilter {
   }
 
   static bool isMuted(String id) => muted.contains(id);
-
-  static bool skipsAlert({required bool group, required String threadId}) {
-    return chatNotificationsMuted(
-      group: group,
-      threadMuted: isMuted(threadId),
-      chatsMuted: muteChats,
-      groupsMuted: muteGroups,
-    );
-  }
-
-  static Future<void> setKindMuted({
-    required bool group,
-    required bool on,
-  }) async {
-    await ensure();
-    if (group) {
-      muteGroups = on;
-    } else {
-      muteChats = on;
-    }
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(group ? _muteGroupsKey : _muteChatsKey, on);
-    revision.value++;
-  }
 
   static bool hides(String id, int lastId) {
     final at = hidden[id];
@@ -125,11 +85,18 @@ class ChatInboxFilter {
   }
 
   static Future<void> setMuted(String id, {required bool on}) async {
+    final clean = id.trim();
+    if (clean.isEmpty) return;
     await ensure();
+    // A notification mute writes this key from Android while the list is
+    // open. Read it again so that write is not replaced by an older copy.
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    muted = (prefs.getStringList(_muteKey) ?? muted.toList()).toSet();
     if (on) {
-      muted.add(id);
+      muted.add(clean);
     } else {
-      muted.remove(id);
+      muted.remove(clean);
     }
     await _write(_muteKey, muted.toList());
     revision.value++;
@@ -151,8 +118,6 @@ class ChatInboxFilter {
     final prefs = await SharedPreferences.getInstance();
     archived = (prefs.getStringList(_archiveKey) ?? const <String>[]).toSet();
     muted = (prefs.getStringList(_muteKey) ?? const <String>[]).toSet();
-    muteChats = prefs.getBool(_muteChatsKey) ?? false;
-    muteGroups = prefs.getBool(_muteGroupsKey) ?? false;
     hidden.clear();
     for (final raw in prefs.getStringList(_hideKey) ?? const <String>[]) {
       final cut = raw.lastIndexOf(':');
@@ -316,6 +281,8 @@ class ChatListTile extends StatefulWidget {
     required this.selected,
     required this.avatar,
     required this.onOpen,
+    required this.onProfile,
+    required this.onDownload,
     required this.onArchive,
     required this.onMute,
     required this.onDelete,
@@ -329,6 +296,8 @@ class ChatListTile extends StatefulWidget {
   final bool selected;
   final Widget avatar;
   final VoidCallback onOpen;
+  final VoidCallback onProfile;
+  final VoidCallback onDownload;
   final VoidCallback onArchive;
   final VoidCallback onMute;
   final VoidCallback onDelete;
@@ -400,23 +369,33 @@ class _ChatListTileState extends State<ChatListTile> {
     });
   }
 
-  Future<void> _menu(TapDownDetails details) async {
+  Future<void> _menuAt(Offset global) async {
     final box = Overlay.of(context).context.findRenderObject() as RenderBox?;
     if (box == null) return;
     final choice = await showMenu<String>(
       context: context,
       position: RelativeRect.fromRect(
-        details.globalPosition & const Size(1, 1),
+        global & const Size(1, 1),
         Offset.zero & box.size,
       ),
       items: [
-        PopupMenuItem<String>(
-          value: 'archive',
-          child: Text(widget.archived ? 'Unarchive' : 'Archive'),
+        const PopupMenuItem<String>(
+          value: 'profile',
+          child: Text('View profile'),
         ),
         PopupMenuItem<String>(
           value: 'mute',
-          child: Text(widget.muted ? 'Unmute' : 'Mute'),
+          child: Text(
+            widget.muted ? 'Unmute notifications' : 'Mute notifications',
+          ),
+        ),
+        const PopupMenuItem<String>(
+          value: 'download',
+          child: Text('Download photo'),
+        ),
+        PopupMenuItem<String>(
+          value: 'archive',
+          child: Text(widget.archived ? 'Unarchive' : 'Archive'),
         ),
         if (widget.onRename != null)
           const PopupMenuItem<String>(value: 'rename', child: Text('Edit name')),
@@ -426,6 +405,10 @@ class _ChatListTileState extends State<ChatListTile> {
     if (!mounted || choice == null) return;
     _close();
     switch (choice) {
+      case 'profile':
+        widget.onProfile();
+      case 'download':
+        widget.onDownload();
       case 'archive':
         widget.onArchive();
       case 'mute':
@@ -473,7 +456,9 @@ class _ChatListTileState extends State<ChatListTile> {
                     },
                   ),
                   _SwipeAction(
-                    tooltip: widget.muted ? 'Unmute' : 'Mute',
+                    tooltip: widget.muted
+                        ? 'Unmute notifications'
+                        : 'Mute notifications',
                     icon: widget.muted
                         ? Icons.notifications_off_outlined
                         : Icons.notifications_none_rounded,
@@ -535,7 +520,15 @@ class _ChatListTileState extends State<ChatListTile> {
                       _close();
                       widget.onOpen();
                     },
-                    onSecondaryTapDown: _menu,
+                    onSecondaryTapDown: (details) =>
+                        unawaited(_menuAt(details.globalPosition)),
+                    onLongPress: () {
+                      final row = context.findRenderObject() as RenderBox?;
+                      final at = row == null
+                          ? Offset.zero
+                          : row.localToGlobal(row.size.center(Offset.zero));
+                      unawaited(_menuAt(at));
+                    },
                     child: _RowBody(
                       item: widget.item,
                       me: widget.me,
@@ -736,36 +729,33 @@ class _RowBody extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 4),
           Column(
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              if (stamp.isNotEmpty || muted)
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (muted) ...[
-                      Icon(
-                        Icons.notifications_off_outlined,
-                        size: 15,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                      if (stamp.isNotEmpty) const SizedBox(width: 4),
-                    ],
-                    if (stamp.isNotEmpty)
-                      Text(
-                        stamp,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: unread ? FontWeight.w700 : FontWeight.w500,
-                          color: unread
-                              ? ChatUiTokens.brand
-                              : scheme.onSurfaceVariant,
-                        ),
-                      ),
-                  ],
+              if (stamp.isNotEmpty)
+                Text(
+                  stamp,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: unread ? FontWeight.w700 : FontWeight.w500,
+                    color: unread
+                        ? ChatUiTokens.brand
+                        : scheme.onSurfaceVariant,
+                  ),
                 ),
+              if (muted) ...[
+                if (stamp.isNotEmpty) const SizedBox(height: 4),
+                Tooltip(
+                  message: 'Notifications muted',
+                  child: Icon(
+                    Icons.notifications_off_rounded,
+                    size: 16,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
               if (unread) ...[
                 const SizedBox(height: 6),
                 _CountBadge(count: item.unread),

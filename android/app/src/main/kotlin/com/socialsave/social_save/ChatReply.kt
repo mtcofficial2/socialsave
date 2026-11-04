@@ -36,6 +36,7 @@ import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
 import java.util.concurrent.atomic.AtomicInteger
+import org.json.JSONArray
 import org.json.JSONObject
 
 /// Reply typed on a chat notification.
@@ -79,10 +80,19 @@ object ChatReplyBridge {
             pending = payload
         }
     }
+
+    fun tellMute(threadId: String) {
+        if (!listening || threadId.isEmpty()) return
+        try {
+            channel?.invokeMethod("muted", threadId)
+        } catch (_: Exception) {
+        }
+    }
 }
 
 object ChatReply {
     const val ACTION = "com.socialsave.social_save.CHAT_REPLY"
+    const val ACTION_MUTE = "com.socialsave.social_save.CHAT_MUTE"
     const val EXTRA_OPEN = "socialsave.chat.open"
     const val EXTRA_ID = "socialsave.chat.id"
     const val EXTRA_PAYLOAD = "socialsave.chat.payload"
@@ -92,7 +102,7 @@ object ChatReply {
     private const val channelLoud = "chats_v2"
     private const val channelQuiet = "chats_quiet"
     private const val failedId = 0x52454641
-    private val threadId = Regex("^[A-Za-z0-9]{2,80}$")
+    private val threadPattern = Regex("^[A-Za-z0-9]{2,80}$")
 
     fun show(context: Context, call: MethodCall) {
         try {
@@ -138,6 +148,7 @@ object ChatReply {
             .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
             .setShowsUserInterface(false)
             .build()
+        val mute = muteAction(context, id, payload)
         val silent = call.argument<Boolean>("silent") == true
         val faces = try {
             facesOf(pictureBytes(call))
@@ -155,6 +166,7 @@ object ChatReply {
             .setOnlyAlertOnce(true)
             .setSilent(silent)
             .addAction(action)
+            .addAction(mute)
         if (faces != null) {
             // Android 12 uses the shortcut icon as the profile circle. The app
             // logo in that slot is what was covering the sender.
@@ -363,6 +375,7 @@ object ChatReply {
                 .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
                 .setShowsUserInterface(false)
                 .build()
+            val mute = muteAction(context, id, payload)
             val notification = NotificationCompat.Builder(
                 context,
                 if (sound) channelLoud else channelQuiet,
@@ -376,6 +389,7 @@ object ChatReply {
                 .setCategory(NotificationCompat.CATEGORY_MESSAGE)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .addAction(action)
+                .addAction(mute)
                 .build()
             NotificationManagerCompat.from(context).notify(id, notification)
         } catch (t: Throwable) {
@@ -443,11 +457,69 @@ object ChatReply {
         }
     }
 
+    fun applyMute(context: Context, intent: Intent) {
+        val id = intent.getIntExtra(EXTRA_ID, 0)
+        if (id != 0) {
+            try {
+                NotificationManagerCompat.from(context).cancel(id)
+            } catch (_: Exception) {
+            }
+        }
+        val thread = threadOf(intent.getStringExtra(EXTRA_PAYLOAD).orEmpty()) ?: return
+        rememberMute(context, thread)
+        ChatReplyBridge.tellMute(thread)
+    }
+
+    private fun muteAction(context: Context, id: Int, payload: String): NotificationCompat.Action {
+        val pending = PendingIntent.getBroadcast(
+            context,
+            id xor 0x3C3C3C3C,
+            Intent(context, ChatReplyReceiver::class.java)
+                .setAction(ACTION_MUTE)
+                .setData(Uri.parse("socialsave://mute/$id"))
+                .putExtra(EXTRA_ID, id)
+                .putExtra(EXTRA_PAYLOAD, payload),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        return NotificationCompat.Action.Builder(R.drawable.ic_notification, "Mute", pending)
+            .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_MUTE)
+            .setShowsUserInterface(false)
+            .build()
+    }
+
+    /// Same list Social Save reads as chat.list.muted.v1. A mute from the
+    /// notification still holds after the app process is gone.
+    private fun rememberMute(context: Context, threadId: String) {
+        if (!threadPattern.matches(threadId)) return
+        val prefs = context.getSharedPreferences(
+            "FlutterSharedPreferences",
+            Context.MODE_PRIVATE,
+        )
+        val key = "flutter.chat.list.muted.v1"
+        val prefix = "VGhpcyBpcyB0aGUgcHJlZml4IGZvciBhIGxpc3Qu!"
+        val raw = prefs.getString(key, null)
+        val ids = LinkedHashSet<String>()
+        if (raw != null) {
+            if (!raw.startsWith(prefix)) return
+            try {
+                val arr = JSONArray(raw.substring(prefix.length))
+                for (i in 0 until arr.length()) {
+                    val item = arr.optString(i).trim()
+                    if (threadPattern.matches(item)) ids.add(item)
+                }
+            } catch (_: Exception) {
+                return
+            }
+        }
+        ids.add(threadId)
+        prefs.edit().putString(key, prefix + JSONArray(ids.toList()).toString()).commit()
+    }
+
     private fun threadOf(payload: String): String? {
         val parts = payload.split('|')
         if (parts.size < 2 || parts[0] != "chat") return null
         val id = parts[1].trim()
-        if (!threadId.matches(id)) return null
+        if (!threadPattern.matches(id)) return null
         return id
     }
 
@@ -629,6 +701,10 @@ class ChatReplyService : Service() {
 
 class ChatReplyReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == ChatReply.ACTION_MUTE) {
+            ChatReply.applyMute(context.applicationContext, intent)
+            return
+        }
         if (intent.action != ChatReply.ACTION) return
         val pending = goAsync()
         val app = context.applicationContext

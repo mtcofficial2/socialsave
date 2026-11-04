@@ -1143,28 +1143,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     return ChatInboxFilter.setArchived(item.id, on: on);
   }
 
-  Future<void> _muteKind() async {
-    final groups = _groups;
-    final on = !(groups
-        ? ChatInboxFilter.muteGroups
-        : ChatInboxFilter.muteChats);
-    await ChatInboxFilter.setKindMuted(group: groups, on: on);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          on
-              ? (groups
-                    ? 'Group notifications are muted'
-                    : 'Chat notifications are muted')
-              : (groups
-                    ? 'Group notifications are on'
-                    : 'Chat notifications are on'),
-        ),
-      ),
-    );
-  }
-
   int _sectionUnread(bool groups) {
     var count = 0;
     for (final item in _threads) {
@@ -1181,13 +1159,114 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     return '$name · ${unread > 99 ? '99+' : unread}';
   }
 
+  Future<void> _viewProfile(ChatThreadSummary item) async {
+    final group = item.group || item.id.startsWith('g');
+    if (group) {
+      try {
+        final info = await _api.group(item.id);
+        if (!mounted) return;
+        await showChatGroup(
+          context,
+          name: info.name.isEmpty ? item.label : info.name,
+          code: info.code,
+          members: info.members,
+          onAdd: (value) async {
+            final next = await _api.addMember(item.id, value);
+            return next.members;
+          },
+          onRename: (value) async {
+            final saved = await _api.renameGroup(item.id, value);
+            if (mounted && saved.isNotEmpty) {
+              setState(() {
+                _threads = [
+                  for (final row in _threads)
+                    if (row.id == item.id) row.copyWith(name: saved) else row,
+                ];
+                if (_selectedId == item.id) _selectedSeen = saved;
+              });
+            }
+            return saved;
+          },
+          onLeave: () async {
+            await _api.leaveGroup(item.id);
+            if (!mounted) return;
+            setState(() {
+              _threads = [
+                for (final row in _threads)
+                  if (row.id != item.id) row,
+              ];
+              if (_selectedId == item.id) {
+                _selectedId = null;
+                _selectedName = null;
+                _selectedSeen = '';
+                _selectedGroup = false;
+              }
+            });
+          },
+        );
+      } catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(chatErrorText(error))),
+        );
+      }
+      return;
+    }
+    await showChatProfile(
+      context,
+      username: item.username,
+      seenName: item.name,
+      photoRev: item.photoRev,
+      lastSeen: item.lastSeen,
+      online: item.online,
+      blocked: item.blocked,
+      onBlock: (on) async {
+        final blocked = await _api.block(item.username, on: on);
+        if (mounted) unawaited(_loadThreads());
+        return blocked;
+      },
+      onSeenName: (value) async {
+        final saved = await _api.setSeenName(item.username, value);
+        if (mounted) _applySeen(item.id, saved);
+        return saved;
+      },
+    );
+  }
+
+  Future<void> _downloadProfile(ChatThreadSummary item) async {
+    final messenger = ScaffoldMessenger.of(context);
+    if (item.group || item.id.startsWith('g')) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Open the group profile and choose a person to download their photo.',
+          ),
+        ),
+      );
+      return;
+    }
+    final text = await downloadChatProfilePhoto(
+      item.username,
+      photoRev: item.photoRev,
+    );
+    if (!mounted) return;
+    messenger.showSnackBar(SnackBar(content: Text(text)));
+  }
+
   Future<void> _muteThread(ChatThreadSummary item) async {
     final on = !ChatInboxFilter.isMuted(item.id);
     await ChatInboxFilter.setMuted(item.id, on: on);
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(on ? 'Muted' : 'Unmuted')));
+    final name = item.label.trim().isEmpty
+        ? (item.group ? 'this group' : 'this chat')
+        : item.label.trim();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          on ? 'Notifications muted for $name' : 'Notifications on for $name',
+        ),
+      ),
+    );
   }
 
   Future<void> _hideThread(ChatThreadSummary item) async {
@@ -1234,29 +1313,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       muted: ChatInboxFilter.isMuted(item.id),
       archived: archived,
       avatar: GestureDetector(
-        onTap: () => unawaited(
-          item.group
-              ? _openSaved(item)
-              : showChatProfile(
-                  context,
-                  username: item.username,
-                  seenName: item.name,
-                  photoRev: item.photoRev,
-                  lastSeen: item.lastSeen,
-                  online: item.online,
-                  blocked: item.blocked,
-                  onBlock: (on) async {
-                    final blocked = await _api.block(item.username, on: on);
-                    if (mounted) unawaited(_loadThreads());
-                    return blocked;
-                  },
-                  onSeenName: (value) async {
-                    final saved = await _api.setSeenName(item.username, value);
-                    if (mounted) _applySeen(item.id, saved);
-                    return saved;
-                  },
-                ),
-        ),
+        onTap: () => unawaited(_viewProfile(item)),
         child: ChatFace(
           name: item.group || item.username.isEmpty ? item.label : item.username,
           photoRev: item.group ? 0 : item.photoRev,
@@ -1265,6 +1322,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ),
       ),
       onOpen: () => unawaited(_openSaved(item)),
+      onProfile: () => unawaited(_viewProfile(item)),
+      onDownload: () => unawaited(_downloadProfile(item)),
       onArchive: () => unawaited(_archiveThread(item)),
       onMute: () => unawaited(_muteThread(item)),
       onDelete: () => unawaited(_hideThread(item)),
@@ -1432,28 +1491,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         query.isNotEmpty &&
         RegExp(r'^[a-z0-9_]{1,20}$').hasMatch(query) &&
         shown.every((item) => item.username != query);
-    final kindMuted = _groups
-        ? ChatInboxFilter.muteGroups
-        : ChatInboxFilter.muteChats;
     return Scaffold(
       appBar: AppBar(
         title: Text(_groups ? 'Groups' : 'Chats'),
         actions: [
-          IconButton(
-            tooltip: _groups
-                ? (kindMuted
-                      ? 'Unmute group notifications'
-                      : 'Mute group notifications')
-                : (kindMuted
-                      ? 'Unmute chat notifications'
-                      : 'Mute chat notifications'),
-            onPressed: () => unawaited(_muteKind()),
-            icon: Icon(
-              kindMuted
-                  ? Icons.notifications_off_rounded
-                  : Icons.notifications_none_rounded,
-            ),
-          ),
           PopupMenuButton<String>(
             tooltip: 'Account',
             onSelected: (value) {
