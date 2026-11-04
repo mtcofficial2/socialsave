@@ -126,6 +126,7 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requireKey).Post("/chat/groups", s.chatGroupCreate)
 		r.With(s.requireKey).Post("/chat/groups/join", s.chatGroupJoin)
 		r.With(s.requireKey).Get("/chat/groups/{id}", s.chatGroupGet)
+		r.With(s.requireKey).Post("/chat/groups/{id}/members", s.chatGroupAdd)
 		r.With(s.requireKey).Post("/chat/groups/{id}/name", s.chatGroupName)
 		r.With(s.requireKey).Post("/chat/groups/{id}/leave", s.chatGroupLeave)
 		r.With(s.requireKey).Post("/chat/photo", s.chatPhotoPost)

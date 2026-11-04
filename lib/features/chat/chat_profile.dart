@@ -321,16 +321,19 @@ Future<int?> _pickChatPhoto(String username) async {
 }
 
 /// Members, the join code, and leave. Rename is offered to everyone; the
-/// server keeps it for the person who made the group.
+/// server keeps it for the person who made the group. Any member can add a
+/// username that already has a Social Save account.
 Future<void> showChatGroup(
   BuildContext context, {
   required String name,
   required String code,
   required List<String> members,
   required Future<String> Function(String name) onRename,
+  required Future<List<String>> Function(String username) onAdd,
   required Future<void> Function() onLeave,
 }) {
   var shown = name.trim();
+  var people = List<String>.from(members);
   return showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
@@ -360,9 +363,7 @@ Future<void> showChatGroup(
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    members.length == 1
-                        ? '1 person'
-                        : '${members.length} people',
+                    people.length == 1 ? '1 person' : '${people.length} people',
                     style: TextStyle(color: scheme.onSurfaceVariant),
                   ),
                   if (code.isNotEmpty) ...[
@@ -377,13 +378,13 @@ Future<void> showChatGroup(
                     ),
                   ],
                   const SizedBox(height: 12),
-                  if (members.isNotEmpty)
+                  if (people.isNotEmpty)
                     ConstrainedBox(
                       constraints: const BoxConstraints(maxHeight: 180),
                       child: ListView(
                         shrinkWrap: true,
                         children: [
-                          for (final member in members)
+                          for (final member in people)
                             ListTile(
                               dense: true,
                               minTileHeight: 40,
@@ -393,6 +394,35 @@ Future<void> showChatGroup(
                         ],
                       ),
                     ),
+                  const SizedBox(height: 8),
+                  FilledButton.tonalIcon(
+                    onPressed: busy
+                        ? null
+                        : () async {
+                            final username = await _askUsername(context);
+                            if (username == null || !context.mounted) return;
+                            setSheet(() {
+                              busy = true;
+                              problem = null;
+                            });
+                            try {
+                              final next = await onAdd(username);
+                              if (!context.mounted) return;
+                              setSheet(() {
+                                busy = false;
+                                people = next;
+                              });
+                            } catch (error) {
+                              if (!context.mounted) return;
+                              setSheet(() {
+                                busy = false;
+                                problem = chatErrorText(error);
+                              });
+                            }
+                          },
+                    icon: const Icon(Icons.person_add_alt_1_rounded),
+                    label: const Text('Add person'),
+                  ),
                   const SizedBox(height: 8),
                   if (code.isNotEmpty)
                     FilledButton.tonalIcon(
@@ -502,6 +532,43 @@ Future<void> showChatGroup(
       );
     },
   );
+}
+
+Future<String?> _askUsername(BuildContext context) {
+  final controller = TextEditingController();
+  return showDialog<String>(
+    context: context,
+    builder: (context) {
+      return AlertDialog(
+        title: const Text('Add person'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 20,
+          autocorrect: false,
+          onSubmitted: (value) => Navigator.pop(context, value),
+          decoration: const InputDecoration(
+            labelText: 'Username',
+            prefixText: '@',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('Add'),
+          ),
+        ],
+      );
+    },
+  ).whenComplete(controller.dispose).then((value) {
+    final handle = value?.trim().replaceFirst(RegExp(r'^@'), '') ?? '';
+    if (handle.isEmpty) return null;
+    return handle;
+  });
 }
 
 Future<String?> _askGroupName(BuildContext context, String current) {

@@ -12,6 +12,7 @@ import 'package:social_save/features/chat/chat_profile.dart';
 import 'package:social_save/features/chat/chat_thread_screen.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
 import 'package:social_save/shared/widgets/app_logo.dart';
+import 'package:social_save/shared/widgets/liquid_glass.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
 
 enum _ContactKind { phone, email }
@@ -34,6 +35,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final FocusNode _findFocus = FocusNode();
   bool _showArchived = false;
   bool _showBlocked = false;
+  bool _groups = false;
   Timer? _poll;
   StreamSubscription<ChatLiveEvent>? _live;
   ChatUser? _user;
@@ -442,6 +444,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _newGroup() async {
+    setState(() => _groups = true);
     final name = await _askLine(
       title: 'New group',
       label: 'Group name',
@@ -478,6 +481,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _joinGroup() async {
+    setState(() => _groups = true);
     final code = await _askLine(
       title: 'Join a group',
       label: '6-character code',
@@ -1139,6 +1143,44 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     return ChatInboxFilter.setArchived(item.id, on: on);
   }
 
+  Future<void> _muteKind() async {
+    final groups = _groups;
+    final on = !(groups
+        ? ChatInboxFilter.muteGroups
+        : ChatInboxFilter.muteChats);
+    await ChatInboxFilter.setKindMuted(group: groups, on: on);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          on
+              ? (groups
+                    ? 'Group notifications are muted'
+                    : 'Chat notifications are muted')
+              : (groups
+                    ? 'Group notifications are on'
+                    : 'Chat notifications are on'),
+        ),
+      ),
+    );
+  }
+
+  int _sectionUnread(bool groups) {
+    var count = 0;
+    for (final item in _threads) {
+      final isGroup = item.group || item.id.startsWith('g');
+      if (isGroup != groups) continue;
+      if (ChatInboxFilter.hides(item.id, item.lastId)) continue;
+      count += item.unread;
+    }
+    return count;
+  }
+
+  String _sectionLabel(String name, int unread) {
+    if (unread <= 0) return name;
+    return '$name · ${unread > 99 ? '99+' : unread}';
+  }
+
   Future<void> _muteThread(ChatThreadSummary item) async {
     final on = !ChatInboxFilter.isMuted(item.id);
     await ChatInboxFilter.setMuted(item.id, on: on);
@@ -1235,6 +1277,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     ChatUser user,
     String query,
     bool canStart,
+    bool groups,
     List<ChatThreadSummary> shown,
     ColorScheme scheme,
   ) {
@@ -1343,17 +1386,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           if (cursor < open.length) {
             return _threadTile(open[cursor], user.username, wide);
           }
-          if (_threads.isEmpty) {
-            return ChatEmptyInbox(onStart: () => _findFocus.requestFocus());
+          if (query.isNotEmpty) {
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(24, 48, 24, 24),
+              child: Text(
+                groups
+                    ? 'No groups match that search.'
+                    : 'No chats match that search.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4),
+              ),
+            );
           }
-          return Padding(
-            padding: const EdgeInsets.fromLTRB(24, 48, 24, 24),
-            child: Text(
-              'No chats match that search.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4),
-            ),
-          );
+          if (groups) {
+            return ChatEmptyGroups(onCreate: () => unawaited(_newGroup()));
+          }
+          return ChatEmptyInbox(onStart: () => _findFocus.requestFocus());
         },
       ),
     );
@@ -1366,8 +1414,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       RegExp(r'^@'),
       '',
     );
-    final shown = [
+    final section = [
       for (final item in _threads)
+        if ((item.group || item.id.startsWith('g')) == _groups) item,
+    ];
+    final shown = [
+      for (final item in section)
         if (query.isEmpty ||
             item.username.contains(query) ||
             item.label.toLowerCase().contains(query) ||
@@ -1376,13 +1428,32 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           item,
     ];
     final canStart =
+        !_groups &&
         query.isNotEmpty &&
         RegExp(r'^[a-z0-9_]{1,20}$').hasMatch(query) &&
         shown.every((item) => item.username != query);
+    final kindMuted = _groups
+        ? ChatInboxFilter.muteGroups
+        : ChatInboxFilter.muteChats;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Chats'),
+        title: Text(_groups ? 'Groups' : 'Chats'),
         actions: [
+          IconButton(
+            tooltip: _groups
+                ? (kindMuted
+                      ? 'Unmute group notifications'
+                      : 'Mute group notifications')
+                : (kindMuted
+                      ? 'Unmute chat notifications'
+                      : 'Mute chat notifications'),
+            onPressed: () => unawaited(_muteKind()),
+            icon: Icon(
+              kindMuted
+                  ? Icons.notifications_off_rounded
+                  : Icons.notifications_none_rounded,
+            ),
+          ),
           PopupMenuButton<String>(
             tooltip: 'Account',
             onSelected: (value) {
@@ -1428,9 +1499,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       ),
       floatingActionButton: FloatingActionButton(
         heroTag: 'chat-new',
-        tooltip: 'New chat',
-        onPressed: _busy ? null : () => unawaited(_newChat()),
-        child: const Icon(Icons.chat_rounded),
+        tooltip: _groups ? 'New group' : 'New chat',
+        onPressed: _busy
+            ? null
+            : () => unawaited(_groups ? _newGroup() : _newChat()),
+        child: Icon(_groups ? Icons.group_add_rounded : Icons.chat_rounded),
       ),
       body: Column(
         children: [
@@ -1439,8 +1512,47 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             child: ChatSearchField(
               controller: _find,
               focusNode: _findFocus,
+              hintText: _groups ? 'Search groups' : 'Search or start a chat',
               onChanged: (_) => setState(() {}),
-              onSubmitted: (value) => unawaited(_startTyped(value)),
+              onSubmitted: (value) {
+                if (_groups) return;
+                unawaited(_startTyped(value));
+              },
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            child: LiquidOrSegmented<bool>(
+              segments: [
+                ButtonSegment(
+                  value: false,
+                  label: Text(
+                    _sectionLabel('Chats', _sectionUnread(false)),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  icon: const Icon(Icons.chat_bubble_outline_rounded),
+                ),
+                ButtonSegment(
+                  value: true,
+                  label: Text(
+                    _sectionLabel('Groups', _sectionUnread(true)),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  icon: const Icon(Icons.groups_rounded),
+                ),
+              ],
+              selected: _groups,
+              onSelectionChanged: (value) {
+                final next = value.first;
+                if (next == _groups) return;
+                setState(() {
+                  _groups = next;
+                  _showArchived = false;
+                  _showBlocked = false;
+                });
+              },
             ),
           ),
           if (_error != null)
@@ -1452,7 +1564,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               ),
             ),
           Expanded(
-            child: _inboxList(wide, user, query, canStart, shown, scheme),
+            child: _inboxList(
+              wide,
+              user,
+              query,
+              canStart,
+              _groups,
+              shown,
+              scheme,
+            ),
           ),
         ],
       ),

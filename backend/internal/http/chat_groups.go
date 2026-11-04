@@ -106,6 +106,49 @@ func (c *chatRoom) joinGroup(ctx context.Context, user chatUser, code string) (c
 	return copy, nil
 }
 
+func (c *chatRoom) addGroupMember(ctx context.Context, user chatUser, threadID, username string) (chatThread, []string, error) {
+	peer := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(username, "@")))
+	if !chatUsernamePattern.MatchString(peer) {
+		return chatThread{}, nil, chatRejected("Enter a username.")
+	}
+	c.ensure(ctx)
+	c.mu.Lock()
+	thread := c.threadLocked(threadID)
+	if thread == nil || len(thread.Members) == 0 || !onThread(thread, user.ID) {
+		c.mu.Unlock()
+		return chatThread{}, nil, chatRejected("That group was not found.")
+	}
+	var peerID string
+	for _, person := range c.data.Users {
+		if person.Username == peer {
+			peerID = person.ID
+			break
+		}
+	}
+	if peerID == "" {
+		c.mu.Unlock()
+		return chatThread{}, nil, chatRejected("No Social Save user has that username.")
+	}
+	for _, id := range thread.Members {
+		if id == peerID {
+			copy := *thread
+			names := thread.MemberNames(c)
+			c.mu.Unlock()
+			return copy, names, nil
+		}
+	}
+	if len(thread.Members) >= chatGroupMax {
+		c.mu.Unlock()
+		return chatThread{}, nil, chatRejected("That group is full.")
+	}
+	thread.Members = append(thread.Members, peerID)
+	copy := *thread
+	names := thread.MemberNames(c)
+	c.mu.Unlock()
+	c.persist(ctx)
+	return copy, names, nil
+}
+
 func (c *chatRoom) leaveGroup(ctx context.Context, user chatUser, threadID string) error {
 	c.ensure(ctx)
 	c.mu.Lock()
@@ -291,6 +334,26 @@ func (s *Server) chatGroupGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	thread, names, err := s.chat.groupView(r.Context(), user, chi.URLParam(r, "id"))
+	if err != nil {
+		writeChatFailure(w, err)
+		return
+	}
+	writeGroup(w, thread, names)
+}
+
+func (s *Server) chatGroupAdd(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.chatActor(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Username string `json:"username"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 256)).Decode(&body); err != nil {
+		writeChatError(w, http.StatusBadRequest, "Enter a username.")
+		return
+	}
+	thread, names, err := s.chat.addGroupMember(r.Context(), user, chi.URLParam(r, "id"), body.Username)
 	if err != nil {
 		writeChatFailure(w, err)
 		return

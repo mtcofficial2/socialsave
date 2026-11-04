@@ -2221,6 +2221,11 @@ class _ChatThreadViewState extends State<ChatThreadView>
           name: group.name,
           code: group.code,
           members: group.members,
+          onAdd: (value) async {
+            final group = await _api.addMember(_threadId, value);
+            if (mounted) setState(() => _members = group.members);
+            return group.members;
+          },
           onRename: (value) async {
             final saved = await _api.renameGroup(_threadId, value);
             if (mounted && saved.isNotEmpty) {

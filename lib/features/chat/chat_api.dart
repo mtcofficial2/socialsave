@@ -968,6 +968,16 @@ class ChatApi {
     return _group(response);
   }
 
+  Future<ChatGroup> addMember(String id, String username) async {
+    final handle = username.trim().replaceFirst(RegExp(r'^@'), '');
+    final response = await _dio.post<dynamic>(
+      '/api/v1/chat/groups/$id/members',
+      data: {'username': handle},
+      options: await _auth(),
+    );
+    return _group(response);
+  }
+
   Future<String> renameGroup(String id, String name) async {
     final response = await _dio.post<dynamic>(
       '/api/v1/chat/groups/$id/name',

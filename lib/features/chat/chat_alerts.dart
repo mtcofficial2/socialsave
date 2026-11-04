@@ -225,7 +225,12 @@ class ChatAlerts {
       if (!notify || !grew || alert == null) continue;
       if (item.lastFrom.isEmpty || chatSameUser(item.lastFrom, me)) continue;
       if (holdOpen && item.id == openThread) continue;
-      if (ChatInboxFilter.isMuted(item.id)) continue;
+      if (ChatInboxFilter.skipsAlert(
+        group: item.group || item.id.startsWith('g'),
+        threadId: item.id,
+      )) {
+        continue;
+      }
       alert(item, chatAlertBody(item.lastText));
     }
   }
@@ -354,7 +359,12 @@ class ChatAlertWatch {
     final here = await _here();
     if (here && threadId == ChatAlerts.openThread) return;
     await ChatInboxFilter.ensure();
-    if (ChatInboxFilter.isMuted(threadId)) return;
+    if (ChatInboxFilter.skipsAlert(
+      group: threadId.startsWith('g'),
+      threadId: threadId,
+    )) {
+      return;
+    }
     final title = _alertTitle(threadId, message.name);
     chatAlertNow(
       threadId: threadId,

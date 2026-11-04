@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:social_save/features/chat/chat_api.dart';
+import 'package:social_save/features/chat/chat_ui.dart';
 
 void main() {
   test('a reaction, an edit, and a song stay on the message', () {
@@ -74,5 +75,44 @@ void main() {
     expect(info.id, 1);
     expect(info.editedAt, isNotNull);
     expect(info.readAt!.isAfter(info.deliveredAt!), isTrue);
+  });
+
+  test('chat and group notification mutes stay separate', () {
+    expect(
+      chatNotificationsMuted(
+        group: false,
+        threadMuted: false,
+        chatsMuted: true,
+        groupsMuted: false,
+      ),
+      isTrue,
+    );
+    expect(
+      chatNotificationsMuted(
+        group: true,
+        threadMuted: false,
+        chatsMuted: true,
+        groupsMuted: false,
+      ),
+      isFalse,
+    );
+    expect(
+      chatNotificationsMuted(
+        group: false,
+        threadMuted: false,
+        chatsMuted: false,
+        groupsMuted: true,
+      ),
+      isFalse,
+    );
+    expect(
+      chatNotificationsMuted(
+        group: true,
+        threadMuted: true,
+        chatsMuted: false,
+        groupsMuted: false,
+      ),
+      isTrue,
+    );
   });
 }

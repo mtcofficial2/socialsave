@@ -811,6 +811,23 @@ func TestChatGroupsReactionsBlockAndSong(t *testing.T) {
 	if joined.Code != http.StatusOK || !bytes.Contains(joined.Body.Bytes(), []byte(group.ID)) {
 		t.Fatalf("join %d %s", joined.Code, joined.Body.String())
 	}
+	cam := registerChat(t, app, `{"phone":"256711000003","username":"cam"}`)
+	added := postChat(app, "/api/v1/chat/groups/"+group.ID+"/members", ada.token, `{"username":"@cam"}`)
+	if added.Code != http.StatusOK || !bytes.Contains(added.Body.Bytes(), []byte("cam")) {
+		t.Fatalf("add %d %s", added.Code, added.Body.String())
+	}
+	camInbox := getChat(app, "/api/v1/chat/threads", cam.token)
+	if !bytes.Contains(camInbox.Body.Bytes(), []byte("Family")) {
+		t.Fatalf("added inbox %s", camInbox.Body.String())
+	}
+	missing := postChat(app, "/api/v1/chat/groups/"+group.ID+"/members", ada.token, `{"username":"nobody99"}`)
+	if missing.Code != http.StatusBadRequest {
+		t.Fatalf("missing user %d %s", missing.Code, missing.Body.String())
+	}
+	out := registerChat(t, app, `{"phone":"256711000004","username":"outsider"}`)
+	if postChat(app, "/api/v1/chat/groups/"+group.ID+"/members", out.token, `{"username":"ada"}`).Code == http.StatusOK {
+		t.Fatal("someone outside the group added a member")
+	}
 	note := postChat(app, "/api/v1/chat/threads/"+group.ID, ben.token, `{"text":"in the group"}`)
 	if note.Code != http.StatusOK {
 		t.Fatalf("group send %d %s", note.Code, note.Body.String())

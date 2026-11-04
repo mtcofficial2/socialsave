@@ -46,6 +46,18 @@ class ChatUiTokens {
   static Color searchFill(bool dark) => dark ? fieldDark : Colors.white;
 }
 
+/// A direct chat and a group can be silenced separately. One conversation
+/// can still be muted on its own.
+bool chatNotificationsMuted({
+  required bool group,
+  required bool threadMuted,
+  required bool chatsMuted,
+  required bool groupsMuted,
+}) {
+  if (threadMuted) return true;
+  return group ? groupsMuted : chatsMuted;
+}
+
 /// Local list choices. Archive and mute stay on this phone. A hidden chat
 /// comes back when a newer message arrives, so a delete cannot swallow it.
 class ChatInboxFilter {
@@ -54,10 +66,14 @@ class ChatInboxFilter {
   static const _archiveKey = 'chat.list.archived.v1';
   static const _muteKey = 'chat.list.muted.v1';
   static const _hideKey = 'chat.list.hidden.v1';
+  static const _muteChatsKey = 'chat.list.muteChats.v1';
+  static const _muteGroupsKey = 'chat.list.muteGroups.v1';
 
   static final ValueNotifier<int> revision = ValueNotifier<int>(0);
   static Set<String> archived = <String>{};
   static Set<String> muted = <String>{};
+  static bool muteChats = false;
+  static bool muteGroups = false;
   static final Map<String, int> hidden = <String, int>{};
   static Future<void>? _loading;
 
@@ -66,6 +82,30 @@ class ChatInboxFilter {
   }
 
   static bool isMuted(String id) => muted.contains(id);
+
+  static bool skipsAlert({required bool group, required String threadId}) {
+    return chatNotificationsMuted(
+      group: group,
+      threadMuted: isMuted(threadId),
+      chatsMuted: muteChats,
+      groupsMuted: muteGroups,
+    );
+  }
+
+  static Future<void> setKindMuted({
+    required bool group,
+    required bool on,
+  }) async {
+    await ensure();
+    if (group) {
+      muteGroups = on;
+    } else {
+      muteChats = on;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(group ? _muteGroupsKey : _muteChatsKey, on);
+    revision.value++;
+  }
 
   static bool hides(String id, int lastId) {
     final at = hidden[id];
@@ -111,6 +151,8 @@ class ChatInboxFilter {
     final prefs = await SharedPreferences.getInstance();
     archived = (prefs.getStringList(_archiveKey) ?? const <String>[]).toSet();
     muted = (prefs.getStringList(_muteKey) ?? const <String>[]).toSet();
+    muteChats = prefs.getBool(_muteChatsKey) ?? false;
+    muteGroups = prefs.getBool(_muteGroupsKey) ?? false;
     hidden.clear();
     for (final raw in prefs.getStringList(_hideKey) ?? const <String>[]) {
       final cut = raw.lastIndexOf(':');
@@ -138,10 +180,12 @@ class ChatSearchField extends StatelessWidget {
     required this.onChanged,
     required this.onSubmitted,
     this.focusNode,
+    this.hintText = 'Search or start a chat',
   });
 
   final TextEditingController controller;
   final FocusNode? focusNode;
+  final String hintText;
   final ValueChanged<String> onChanged;
   final ValueChanged<String> onSubmitted;
 
@@ -156,7 +200,7 @@ class ChatSearchField extends StatelessWidget {
       onSubmitted: onSubmitted,
       style: TextStyle(color: ChatUiTokens.text(dark), fontSize: 16),
       decoration: InputDecoration(
-        hintText: 'Search or start a chat',
+        hintText: hintText,
         prefixIcon: const Icon(Icons.search_rounded),
         filled: true,
         isDense: true,
@@ -211,6 +255,50 @@ class ChatEmptyInbox extends StatelessWidget {
             ),
             onPressed: onStart,
             child: const Text('Start a chat'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class ChatEmptyGroups extends StatelessWidget {
+  const ChatEmptyGroups({super.key, required this.onCreate});
+
+  final VoidCallback onCreate;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 72, 24, 24),
+      child: Column(
+        children: [
+          Icon(Icons.groups_outlined, size: 48, color: scheme.onSurfaceVariant),
+          const SizedBox(height: 12),
+          Text(
+            'No groups yet',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: scheme.onSurface,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Make a group, or join one with a code.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4),
+          ),
+          const SizedBox(height: 16),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: ChatUiTokens.brand,
+              foregroundColor: Colors.white,
+              minimumSize: const Size(48, 48),
+            ),
+            onPressed: onCreate,
+            child: const Text('New group'),
           ),
         ],
       ),
