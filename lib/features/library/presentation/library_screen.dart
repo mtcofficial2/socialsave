@@ -955,9 +955,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
                       );
                   }
                 },
-                itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'files', child: Text('Send files')),
-                  PopupMenuItem(value: 'folder', child: Text('Send a folder')),
+                itemBuilder: (_) => [
+                  const PopupMenuItem(value: 'files', child: Text('Send files')),
+                  const PopupMenuItem(value: 'folder', child: Text('Send a folder')),
                   PopupMenuItem(
                     value: 'received',
                     child: Text('Received files'),

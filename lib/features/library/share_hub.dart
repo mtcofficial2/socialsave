@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:social_save/core/platform/plat.dart';
+import 'package:social_save/features/library/app_share.dart';
 import 'package:social_save/features/library/bundle_ui.dart';
 import 'package:social_save/features/library/hotspot_share.dart';
 import 'package:social_save/features/library/nearby_service.dart';
@@ -31,6 +32,7 @@ class _ShareHubScreenState extends State<ShareHubScreen> with SingleTickerProvid
   void initState() {
     super.initState();
     NearbyService.ping();
+    if (Plat.isAndroid) unawaited(InstalledApps.warm());
     _rescan = Timer.periodic(const Duration(seconds: 6), (_) => NearbyService.ping());
   }
 

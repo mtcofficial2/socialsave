@@ -9,11 +9,12 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/shared/widgets/liquid_glass.dart';
+import 'package:social_save/features/library/app_share.dart';
 import 'package:social_save/features/library/device_media.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
 
 /// What the session picker can list.
-enum MediaKind { video, image, audio }
+enum MediaKind { video, image, audio, app }
 
 /// One item in the session media picker.
 class MediaEntry {
@@ -28,6 +29,9 @@ class MediaEntry {
     this.durationMs = 0,
     this.addedAt = 0,
     this.bucket = '',
+    this.iconPath = '',
+    this.system = false,
+    this.paths = const [],
   }) : lower = name.toLowerCase();
 
   final String key;
@@ -45,6 +49,15 @@ class MediaEntry {
 
   /// Folder name (MediaStore bucket on Android, parent folder on Windows).
   final String bucket;
+
+  /// Launcher icon for an app. Empty for videos, photos and music.
+  final String iconPath;
+
+  /// A system app. Hidden until the System apps chip is on.
+  final bool system;
+
+  /// Every APK that belongs to an app. Empty means [path] alone.
+  final List<String> paths;
 
   String get _p => (path ?? '').replaceAll('\\', '/').toLowerCase();
   bool get isSocialSave => _p.contains('/socialsave/') || bucket.toLowerCase() == 'socialsave';
@@ -88,6 +101,28 @@ class MediaCatalog {
 
   /// Streams the growing list (newest first) as pages arrive.
   static Stream<List<MediaEntry>> load(MediaKind kind) async* {
+    if (kind == MediaKind.app) {
+      if (!Plat.isAndroid) {
+        yield const [];
+        return;
+      }
+      final apps = await InstalledApps.load();
+      yield [
+        for (final app in apps)
+          if (app.apkPaths.isNotEmpty)
+            MediaEntry(
+              key: 'app:${app.packageName}',
+              kind: MediaKind.app,
+              name: app.name,
+              path: app.apkPaths.first,
+              paths: app.apkPaths,
+              size: app.size,
+              iconPath: app.iconPath,
+              system: app.system,
+            ),
+      ];
+      return;
+    }
     if (Plat.isWindows) {
       if (kind != MediaKind.video) {
         yield const [];
@@ -161,11 +196,12 @@ class MediaCatalog {
 
   /// Asks for read access to [kind]. Returns 'granted', 'limited' or 'denied'.
   static Future<String> ensureAccess(MediaKind kind) async {
-    if (!Plat.isAndroid) return 'granted';
+    if (!Plat.isAndroid || kind == MediaKind.app) return 'granted';
     final perm = switch (kind) {
       MediaKind.video => Permission.videos,
       MediaKind.image => Permission.photos,
       MediaKind.audio => Permission.audio,
+      MediaKind.app => Permission.storage,
     };
     final a = await perm.request();
     if (a.isGranted) return 'granted';
@@ -251,6 +287,7 @@ class _SessionMediaPickerState extends State<SessionMediaPicker> with AutomaticK
   void initState() {
     super.initState();
     unawaited(_load(MediaKind.video));
+    if (Plat.isAndroid) unawaited(InstalledApps.warm());
   }
 
   @override
@@ -304,13 +341,15 @@ class _SessionMediaPickerState extends State<SessionMediaPicker> with AutomaticK
     final q = _query.trim().toLowerCase();
     return [
       for (final e in _all)
-        if ((q.isEmpty || e.lower.contains(q)) &&
+        if ((q.isEmpty || e.lower.contains(q) || (_kind == MediaKind.app && e.key.toLowerCase().contains(q))) &&
+            (_kind != MediaKind.app || (_filter == 'system' ? e.system : !e.system)) &&
             switch (_filter) {
               'socialsave' => e.isSocialSave,
               'camera' => e.isCamera,
               'downloads' => e.isDownload,
               'whatsapp' => e.isWhatsApp,
               'folder' => _folder == null || e.bucket == _folder,
+              'system' => true,
               _ => true,
             })
           e,
@@ -327,10 +366,48 @@ class _SessionMediaPickerState extends State<SessionMediaPicker> with AutomaticK
     if (_selected.isEmpty || _sending) return;
     setState(() => _sending = true);
     try {
-      await widget.onSend(_selected.values.toList());
+      final picked = <MediaEntry>[];
+      for (final e in _selected.values) {
+        if (e.kind != MediaKind.app) {
+          picked.add(e);
+          continue;
+        }
+        final sources = e.paths.isEmpty ? [if (e.path != null && e.path!.isNotEmpty) e.path!] : e.paths;
+        final label = safeAppFileName(e.name);
+        for (var i = 0; i < sources.length; i++) {
+          final source = sources[i];
+          final title = sources.length == 1 ? '$label.apk' : '$label ${p.basename(source)}';
+          final file = await _namedApk(source, title);
+          picked.add(MediaEntry(
+            key: '${e.key}:$i',
+            kind: MediaKind.app,
+            name: p.basename(file.path),
+            path: file.path,
+            size: file.lengthSync(),
+          ));
+        }
+      }
+      await widget.onSend(picked);
       if (mounted) setState(_selected.clear);
     } finally {
       if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  /// A file the other device saves under [fileName], without renaming the installed app.
+  Future<File> _namedApk(String source, String fileName) async {
+    final safe = fileName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+    final dir = Directory(p.join((await getTemporaryDirectory()).path, 'app_send'));
+    await dir.create(recursive: true);
+    final dest = p.join(dir.path, safe);
+    final link = Link(dest);
+    if (link.existsSync()) await link.delete();
+    if (File(dest).existsSync()) await File(dest).delete();
+    try {
+      await link.create(source);
+      return File(dest);
+    } catch (_) {
+      return File(source).copy(dest);
     }
   }
 
@@ -384,6 +461,7 @@ class _SessionMediaPickerState extends State<SessionMediaPicker> with AutomaticK
                       MediaKind.video => 'Search videos',
                       MediaKind.image => 'Search photos',
                       MediaKind.audio => 'Search music',
+                      MediaKind.app => 'Search apps',
                     },
                     suffixIcon: _query.isEmpty
                         ? null
@@ -419,6 +497,7 @@ class _SessionMediaPickerState extends State<SessionMediaPicker> with AutomaticK
                 ButtonSegment(value: MediaKind.video, icon: Icon(Icons.movie_rounded), label: Text('Videos')),
                 ButtonSegment(value: MediaKind.image, icon: Icon(Icons.photo_rounded), label: Text('Photos')),
                 ButtonSegment(value: MediaKind.audio, icon: Icon(Icons.music_note_rounded), label: Text('Music')),
+                ButtonSegment(value: MediaKind.app, icon: Icon(Icons.apps_rounded), label: Text('Apps')),
               ],
               selected: _kind,
               onSelectionChanged: (s) {
@@ -437,16 +516,22 @@ class _SessionMediaPickerState extends State<SessionMediaPicker> with AutomaticK
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.fromLTRB(12, 6, 12, 2),
             children: [
-              chip('all', switch (_kind) {
-                MediaKind.video => 'All videos',
-                MediaKind.image => 'All photos',
-                MediaKind.audio => 'All music',
-              }),
-              if (_kind != MediaKind.audio) chip('socialsave', 'SocialSave', icon: Icons.bookmark_rounded),
-              if (Plat.isAndroid && _kind != MediaKind.audio) chip('camera', 'Camera', icon: Icons.photo_camera_rounded),
-              chip('downloads', 'Downloads', icon: Icons.download_rounded),
-              if (Plat.isAndroid) chip('whatsapp', 'WhatsApp', icon: Icons.chat_rounded),
-              chip('folder', _folder == null ? 'Folders' : _folder!, icon: Icons.folder_rounded),
+              if (_kind == MediaKind.app) ...[
+                chip('all', 'All apps'),
+                chip('system', 'System apps'),
+              ] else ...[
+                chip('all', switch (_kind) {
+                  MediaKind.video => 'All videos',
+                  MediaKind.image => 'All photos',
+                  MediaKind.audio => 'All music',
+                  MediaKind.app => 'All apps',
+                }),
+                if (_kind != MediaKind.audio) chip('socialsave', 'SocialSave', icon: Icons.bookmark_rounded),
+                if (Plat.isAndroid && _kind != MediaKind.audio) chip('camera', 'Camera', icon: Icons.photo_camera_rounded),
+                chip('downloads', 'Downloads', icon: Icons.download_rounded),
+                if (Plat.isAndroid) chip('whatsapp', 'WhatsApp', icon: Icons.chat_rounded),
+                chip('folder', _folder == null ? 'Folders' : _folder!, icon: Icons.folder_rounded),
+              ],
             ],
           ),
         ),
@@ -496,8 +581,13 @@ class _SessionMediaPickerState extends State<SessionMediaPicker> with AutomaticK
               Expanded(
                 child: Text(
                   loading && _all.isEmpty
-                      ? 'Loading…'
-                      : '${visible.length} ${_kind == MediaKind.video ? 'videos' : _kind == MediaKind.image ? 'photos' : 'songs'}'
+                      ? (_kind == MediaKind.app ? 'Scanning apps…' : 'Loading…')
+                      : '${visible.length} ${switch (_kind) {
+                          MediaKind.video => 'videos',
+                          MediaKind.image => 'photos',
+                          MediaKind.audio => 'songs',
+                          MediaKind.app => 'apps',
+                        }}'
                           '${loading ? ' · loading more…' : ''}'
                           '${_selected.isEmpty ? '' : ' · ${_selected.length} selected'}',
                   style: theme.textTheme.bodySmall,
@@ -528,17 +618,24 @@ class _SessionMediaPickerState extends State<SessionMediaPicker> with AutomaticK
           child: access == 'denied'
               ? _Empty(
                   icon: Icons.lock_outline_rounded,
-                  text: 'SocialSave needs permission to show your ${_kind == MediaKind.video ? 'videos' : _kind == MediaKind.image ? 'photos' : 'music'}.',
+                  text: 'SocialSave needs permission to show your ${switch (_kind) {
+                    MediaKind.video => 'videos',
+                    MediaKind.image => 'photos',
+                    MediaKind.audio => 'music',
+                    MediaKind.app => 'apps',
+                  }}.',
                   action: TextButton(onPressed: openAppSettings, child: const Text('Open settings')),
                 )
               : visible.isEmpty
                   ? (loading
                       ? const Center(child: CircularProgressIndicator())
                       : _Empty(
-                          icon: Icons.search_off_rounded,
-                          text: _query.isEmpty ? 'Nothing here' : 'No match for "$_query"',
+                          icon: _kind == MediaKind.app ? Icons.apps_rounded : Icons.search_off_rounded,
+                          text: _query.isEmpty
+                              ? (_kind == MediaKind.app ? 'No apps on this phone yet.' : 'Nothing here')
+                              : 'No match for "$_query"',
                         ))
-                  : _kind == MediaKind.audio
+                  : _kind == MediaKind.audio || _kind == MediaKind.app
                       ? ListView.builder(
                           padding: const EdgeInsets.fromLTRB(8, 4, 8, 96),
                           itemCount: visible.length,
@@ -546,15 +643,22 @@ class _SessionMediaPickerState extends State<SessionMediaPicker> with AutomaticK
                             final e = visible[i];
                             final on = _selected.containsKey(e.key);
                             return ListTile(
-                              leading: CircleAvatar(
-                                backgroundColor: on ? scheme.primary : scheme.secondaryContainer,
-                                child: Icon(on ? Icons.check_rounded : Icons.music_note_rounded,
-                                    color: on ? scheme.onPrimary : scheme.onSecondaryContainer),
-                              ),
+                              leading: e.kind == MediaKind.app
+                                  ? _AppMark(path: e.iconPath, selected: on)
+                                  : CircleAvatar(
+                                      backgroundColor: on ? scheme.primary : scheme.secondaryContainer,
+                                      child: Icon(on ? Icons.check_rounded : Icons.music_note_rounded,
+                                          color: on ? scheme.onPrimary : scheme.onSecondaryContainer),
+                                    ),
                               title: Text(e.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-                              subtitle: Text([_duration(e.durationMs), formatBytes(e.size), e.bucket]
-                                  .where((s) => s.isNotEmpty)
-                                  .join(' · ')),
+                              subtitle: Text([
+                                if (e.kind != MediaKind.app) _duration(e.durationMs),
+                                formatBytes(e.size),
+                                if (e.kind != MediaKind.app) e.bucket,
+                              ].where((s) => s.isNotEmpty).join(' · ')),
+                              trailing: e.kind == MediaKind.app
+                                  ? Icon(on ? Icons.check_circle_rounded : Icons.circle_outlined, color: on ? scheme.primary : scheme.outline)
+                                  : null,
                               onTap: () => _toggle(e),
                             );
                           },
@@ -618,6 +722,43 @@ class _SessionMediaPickerState extends State<SessionMediaPicker> with AutomaticK
                 ),
         ),
       ],
+    );
+  }
+}
+
+class _AppMark extends StatelessWidget {
+  const _AppMark({required this.path, required this.selected});
+  final String path;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final file = path.isEmpty ? null : File(path);
+    final image = file != null && file.existsSync();
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: image
+              ? Image.file(file, width: 44, height: 44, fit: BoxFit.cover, errorBuilder: (_, __, ___) => _fallback(scheme))
+              : _fallback(scheme),
+        ),
+        if (selected)
+          Positioned(
+            right: -4,
+            bottom: -4,
+            child: Icon(Icons.check_circle_rounded, size: 18, color: scheme.primary),
+          ),
+      ],
+    );
+  }
+
+  Widget _fallback(ColorScheme scheme) {
+    return ColoredBox(
+      color: scheme.secondaryContainer,
+      child: SizedBox(width: 44, height: 44, child: Icon(Icons.android_rounded, color: scheme.onSecondaryContainer)),
     );
   }
 }

@@ -2620,9 +2620,9 @@ class NearbyShareBar extends StatelessWidget {
                         showConnectPicker(context);
                     }
                   },
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(value: 'connect', child: ListTile(leading: Icon(Icons.link_rounded), title: Text('Connect (send both ways)'))),
-                    PopupMenuItem(value: 'files', child: ListTile(leading: Icon(Icons.file_present_rounded), title: Text('Send files'))),
+                  itemBuilder: (_) => [
+                    const PopupMenuItem(value: 'connect', child: ListTile(leading: Icon(Icons.link_rounded), title: Text('Connect (send both ways)'))),
+                    const PopupMenuItem(value: 'files', child: ListTile(leading: Icon(Icons.file_present_rounded), title: Text('Send files'))),
                     PopupMenuItem(value: 'folder', child: ListTile(leading: Icon(Icons.drive_folder_upload_rounded), title: Text('Send a folder'))),
                     PopupMenuItem(value: 'received', child: ListTile(leading: Icon(Icons.inventory_2_rounded), title: Text('Received files'))),
                   ],

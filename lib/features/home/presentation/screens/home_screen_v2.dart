@@ -25,6 +25,7 @@ import 'package:social_save/features/home/presentation/widgets/supported_platfor
 import 'package:social_save/features/home/presentation/widgets/url_input_card.dart';
 import 'package:social_save/core/utils/set_link.dart';
 import 'package:social_save/features/home/presentation/widgets/link_offer.dart';
+import 'package:social_save/features/library/app_share.dart';
 import 'package:social_save/features/library/hotspot_share.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:social_save/features/library/presentation/library_screen.dart'
@@ -65,6 +66,7 @@ class _HomeScreenV2State extends ConsumerState<HomeScreenV2> with WidgetsBinding
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    if (Plat.isAndroid) unawaited(InstalledApps.warm());
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (Plat.isWeb) {
         final code = Uri.base.queryParameters['receive'];

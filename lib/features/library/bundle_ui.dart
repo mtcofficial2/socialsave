@@ -96,6 +96,11 @@ Future<void> chooseTargetAndSend(BuildContext context, SendBundle bundle) async 
   await _sendWithProgress(context, bundle, target);
 }
 
+/// Sends [bundle] to a device that was already chosen.
+Future<void> sendBundleWithProgress(BuildContext context, SendBundle bundle, NearbyDevice device) {
+  return _sendWithProgress(context, bundle, device);
+}
+
 Future<void> _sendWithProgress(BuildContext context, SendBundle bundle, Object target) async {
   final name = target is NearbyDevice ? target.name : 'code ${target.toString().toUpperCase()}';
   final status = ValueNotifier<String>('Connecting to $name…');

@@ -217,5 +217,10 @@
             <action android:name="android.intent.action.SEND"/>
             <data android:mimeType="video/*"/>
         </intent>
+        <!-- Launchable apps, so Send can list them without seeing every package. -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
     </queries>
 </manifest>

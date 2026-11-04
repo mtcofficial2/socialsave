@@ -787,6 +787,14 @@ class MainActivity : FlutterFragmentActivity() {
                     result.success(secure)
                 }
                 "apkPath" -> result.success(applicationInfo.sourceDir)
+                "installedApps" -> io.execute {
+                    val out = try {
+                        InstalledApps.scan(applicationContext)
+                    } catch (_: Exception) {
+                        emptyList<Map<String, Any?>>()
+                    }
+                    runOnUiThread { result.success(out) }
+                }
                 "log" -> {
                     android.util.Log.i("SocialSaveSession", call.argument<String>("m") ?: "")
                     result.success(null)
