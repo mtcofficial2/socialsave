@@ -145,12 +145,16 @@ object PhoneEngine {
     }
 
     private val ytId = Regex("""(?:youtu\.be/|[?&]v=|/(?:shorts|embed|live|v)/)([A-Za-z0-9_-]{11})""")
+    private val tiktokId = Regex("""/(?:video|photo|v)/(\d{8,})""")
     private val trackingParam = Regex("""^(si|feature|pp|utm_[a-z]+|igsh|igshid|is_from_webapp|sender_device|_r|_t)=""")
 
     /** One key per video: shorts, youtu.be, watch and embed links (with or without si=) match. */
     private fun cacheKey(url: String): String {
         val u = url.trim()
         if (isYouTube(u)) ytId.find(u)?.let { return "yt:" + it.groupValues[1] }
+        // A share link and the full /video/ link are the same post. Keying the
+        // whole URL made the save miss the analyze and open the page again.
+        tiktokId.find(u)?.let { return "tt:" + it.groupValues[1] }
         val q = u.indexOf('?')
         if (q < 0) return u.removeSuffix("/")
         val kept = u.substring(q + 1).split('&').filter { it.isNotEmpty() && !trackingParam.containsMatchIn(it) }
@@ -159,11 +163,21 @@ object PhoneEngine {
     }
 
     private fun cachedInfo(url: String): File? {
-        val hit = infoCache[cacheKey(url)] ?: return null
-        if (SystemClock.elapsedRealtime() - hit.first > INFO_TTL_MS || !hit.second.isFile) {
-            infoCache.remove(cacheKey(url)); return null
+        val key = cacheKey(url)
+        val hit = infoCache[key]
+        if (hit != null) {
+            if (SystemClock.elapsedRealtime() - hit.first > INFO_TTL_MS || !hit.second.isFile) {
+                infoCache.remove(key)
+                return null
+            }
+            return hit.second
         }
-        return hit.second
+        // The file outlives the in-memory map, so a save still skips a second
+        // TikTok page fetch after the process has been backgrounded.
+        val file = infoFile(key)
+        if (!file.isFile || System.currentTimeMillis() - file.lastModified() > INFO_TTL_MS) return null
+        infoCache[key] = SystemClock.elapsedRealtime() to file
+        return file
     }
 
     private fun <T> background(result: MethodChannel.Result, work: () -> T) {
@@ -195,14 +209,25 @@ object PhoneEngine {
         }
     }
 
+    private fun infoFile(key: String): File {
+        val dir = File(app.cacheDir, "phone_engine_info").apply { mkdirs() }
+        return File(dir, "i${key.hashCode().toUInt()}.json")
+    }
+
     private fun remember(url: String, out: String) {
         try {
             val start = out.indexOf('{')
             if (start < 0) return
-            val dir = File(app.cacheDir, "phone_engine_info").apply { mkdirs() }
-            val file = File(dir, "i${cacheKey(url).hashCode().toUInt()}.json")
-            file.writeText(out.substring(start))
-            infoCache[cacheKey(url)] = SystemClock.elapsedRealtime() to file
+            val json = out.substring(start)
+            // The save is asked with the canonical /video/ link, even when the
+            // paste was a short vm.tiktok.com link. Index both.
+            val id = tiktokId.find(json)?.groupValues?.get(1) ?: tiktokId.find(url)?.groupValues?.get(1)
+            val primary = if (id != null) "tt:$id" else cacheKey(url)
+            val file = infoFile(primary)
+            file.writeText(json)
+            val now = SystemClock.elapsedRealtime()
+            infoCache[primary] = now to file
+            infoCache[cacheKey(url)] = now to file
         } catch (_: Throwable) {}
     }
 
