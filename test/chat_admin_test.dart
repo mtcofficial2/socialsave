@@ -35,4 +35,32 @@ void main() {
     expect(chatUserIsAdmin(otherName), isFalse);
     expect(chatUserIsAdmin(null), isFalse);
   });
+
+  test('a private name replaces the username only on this account', () {
+    const named = ChatThreadSummary(id: 't1', username: 'ben7', name: 'Benny');
+    const plain = ChatThreadSummary(id: 't1', username: 'ben7');
+    expect(named.label, 'Benny');
+    expect(plain.label, 'ben7');
+    expect(named.copyWith(name: '').label, 'ben7');
+  });
+
+  test('the people list reads last seen and whether a password is set', () {
+    final row = ChatDirectoryEntry.fromJson({
+      'username': 'ada',
+      'phone': '256700000111',
+      'email': '',
+      'created': 1700000000000,
+      'lastSeen': 1700000001000,
+      'hasPassword': true,
+    });
+    expect(row.username, 'ada');
+    expect(row.hasPassword, isTrue);
+    expect(row.lastSeen, DateTime.fromMillisecondsSinceEpoch(1700000001000));
+    final open = ChatDirectoryEntry.fromJson({
+      'username': 'ben',
+      'created': 1,
+    });
+    expect(open.hasPassword, isFalse);
+    expect(open.lastSeen, isNull);
+  });
 }

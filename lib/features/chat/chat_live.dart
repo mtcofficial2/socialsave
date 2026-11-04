@@ -16,6 +16,7 @@ class ChatLiveEvent {
     this.id = 0,
     this.at = 0,
     this.photoId = '',
+    this.pinned = const [],
   });
 
   final String type;
@@ -26,6 +27,7 @@ class ChatLiveEvent {
   final int id;
   final int at;
   final String photoId;
+  final List<int> pinned;
 }
 
 /// One live connection for messages, typing, and pictures.
@@ -216,6 +218,12 @@ class ChatLive {
     if (rawMessage is Map) {
       message = ChatMessage.fromJson(Map<String, dynamic>.from(rawMessage));
     }
+    final rawPinned = data['pinned'];
+    final pinned = <int>[
+      if (rawPinned is List)
+        for (final item in rawPinned)
+          if (item is num && item > 0) item.toInt(),
+    ];
     if (type == 'typing' || type == 'recording') {
       final book = type == 'recording' ? _recordingUntil : _typingUntil;
       if (on) {
@@ -243,6 +251,7 @@ class ChatLive {
         id: id,
         at: at,
         photoId: photoId,
+        pinned: pinned,
       ),
     );
   }

@@ -1,5 +1,6 @@
 import 'package:animations/animations.dart';
 import 'package:social_save/features/audio/music_screen.dart';
+import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_screen.dart';
 import 'package:social_save/features/chat/chat_thread_screen.dart';
 import 'package:flutter/material.dart';
@@ -174,11 +175,24 @@ final appRouter = GoRouter(
       path: '/chat/:id',
       pageBuilder: (context, state) {
         final extra = state.extra;
+        final id = state.pathParameters['id'] ?? '';
+        final fromTarget = extra is ChatThreadTarget;
+        final rawUser = fromTarget
+            ? extra.username
+            : extra is String
+            ? extra
+            : '';
+        final seen = fromTarget ? extra.name : '';
+        final group = (fromTarget && extra.group) || id.startsWith('g');
         return _page(
           state,
           ChatThreadScreen(
-            threadId: state.pathParameters['id'] ?? '',
-            username: extra is String ? extra : '',
+            threadId: id,
+            username: group ? '' : rawUser,
+            seenName: group
+                ? (seen.trim().isNotEmpty ? seen.trim() : rawUser)
+                : seen,
+            group: group,
           ),
         );
       },

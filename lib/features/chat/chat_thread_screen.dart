@@ -4,7 +4,11 @@ import 'dart:io';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:path/path.dart' as p;
+import 'package:permission_handler/permission_handler.dart';
+import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/features/chat/chat_alerts.dart';
 import 'package:social_save/features/chat/chat_api.dart';
@@ -26,14 +30,27 @@ class ChatThreadScreen extends StatelessWidget {
     super.key,
     required this.threadId,
     required this.username,
+    this.seenName = '',
+    this.group = false,
   });
 
   final String threadId;
   final String username;
 
+  /// Private name for this chat. Blank shows [username].
+  final String seenName;
+
+  /// A group chat. The title is the group name, not a username.
+  final bool group;
+
   @override
   Widget build(BuildContext context) {
-    return ChatThreadView(threadId: threadId, username: username);
+    return ChatThreadView(
+      threadId: threadId,
+      username: username,
+      seenName: seenName,
+      group: group || threadId.startsWith('g'),
+    );
   }
 }
 
@@ -42,14 +59,22 @@ class ChatThreadView extends StatefulWidget {
     super.key,
     required this.threadId,
     required this.username,
+    this.seenName = '',
+    this.group = false,
     this.embedded = false,
     this.onRead,
+    this.onSeenName,
+    this.onLeft,
   });
 
   final String threadId;
   final String username;
+  final String seenName;
+  final bool group;
   final bool embedded;
   final void Function(String threadId, int lastId)? onRead;
+  final void Function(String threadId, String name)? onSeenName;
+  final void Function(String threadId)? onLeft;
 
   @override
   State<ChatThreadView> createState() => _ChatThreadViewState();
@@ -61,6 +86,8 @@ class _ChatThreadViewState extends State<ChatThreadView>
   // The server can lose a chat (restart without storage) and hand out a new
   // id for the same person, so the id can change while the screen is open.
   late String _threadId = widget.threadId;
+  late String _seenName = widget.seenName;
+  late bool _group = widget.group || widget.threadId.startsWith('g');
   bool _reopening = false;
   final ChatRecorder _recorder = ChatRecorder();
   final TextEditingController _text = TextEditingController();
@@ -95,6 +122,16 @@ class _ChatThreadViewState extends State<ChatThreadView>
   String _replyName = '';
   String _replyText = '';
   final Set<int> _selected = <int>{};
+  final TextEditingController _search = TextEditingController();
+  bool _searching = false;
+  bool _blocked = false;
+  List<int> _pinned = const [];
+  List<String> _members = const [];
+  int _syncedAt = 0;
+  int? _editingId;
+  int _pinCursor = 0;
+
+  bool get _isGroup => _group || widget.group || _threadId.startsWith('g');
 
   bool get _enterSends {
     switch (Theme.of(context).platform) {
@@ -107,6 +144,12 @@ class _ChatThreadViewState extends State<ChatThreadView>
       case TargetPlatform.macOS:
         return true;
     }
+  }
+
+  @override
+  void didUpdateWidget(ChatThreadView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.seenName != oldWidget.seenName) _seenName = widget.seenName;
   }
 
   @override
@@ -144,6 +187,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     unawaited(_recorder.dispose());
     _scroll.removeListener(_onScroll);
     _text.dispose();
+    _search.dispose();
     _scroll.dispose();
     _focus.dispose();
     super.dispose();
@@ -240,7 +284,14 @@ class _ChatThreadViewState extends State<ChatThreadView>
       if (event.id > 0) _drop(event.id);
       return;
     }
-    if (event.type == 'message' && event.message != null) {
+    if (event.type == 'pinned') {
+      setState(() => _pinned = event.pinned);
+      return;
+    }
+    if ((event.type == 'message' ||
+            event.type == 'reaction' ||
+            event.type == 'edited') &&
+        event.message != null) {
       _ingest(event.message!);
       return;
     }
@@ -383,7 +434,8 @@ class _ChatThreadViewState extends State<ChatThreadView>
     if (_refreshing || _threadId.isEmpty) return;
     _refreshing = true;
     try {
-      var sync = await _api.messages(_threadId, _after);
+      final started = DateTime.now().millisecondsSinceEpoch;
+      var sync = await _api.messages(_threadId, _after, since: _syncedAt);
       if (!mounted) return;
       if (sync.lastId >= 0 && sync.lastId < _after) {
         // The server's history is shorter than ours, so it lost or rolled
@@ -392,17 +444,30 @@ class _ChatThreadViewState extends State<ChatThreadView>
         sync = await _api.messages(_threadId, 0);
         if (!mounted) return;
       }
+      _syncedAt = started;
+      final nameChanged = sync.peerName != _seenName;
       final presenceChanged =
           sync.peerDelivered != _peerDelivered ||
           sync.peerRead != _peerRead ||
           sync.peerOnline != _peerOnline ||
           sync.peerPhotoRev != _peerPhoto ||
-          sync.peerLastSeen != _peerSeen;
+          sync.peerLastSeen != _peerSeen ||
+          sync.peerBlocked != _blocked ||
+          sync.peerGroup != _group ||
+          sync.peerMembers.join('\n') != _members.join('\n') ||
+          sync.pinned.join(',') != _pinned.join(',') ||
+          nameChanged;
       _peerDelivered = sync.peerDelivered;
       _peerRead = sync.peerRead;
       _peerOnline = sync.peerOnline;
       _peerSeen = sync.peerLastSeen;
       _peerPhoto = sync.peerPhotoRev;
+      _seenName = sync.peerName;
+      if (sync.peerGroup) _group = true;
+      _blocked = sync.peerBlocked;
+      _members = sync.peerMembers;
+      _pinned = sync.pinned;
+      if (nameChanged) widget.onSeenName?.call(_threadId, sync.peerName);
       final gone = sync.removed.toSet();
       if (gone.isNotEmpty) {
         final before = _messages.length;
@@ -464,7 +529,26 @@ class _ChatThreadViewState extends State<ChatThreadView>
       for (final item in fresh) {
         if (item.id > next) next = item.id;
       }
-      final changed = fresh.isNotEmpty || base.length != _messages.length;
+      final combined = [...base, ...fresh];
+      var touched = false;
+      for (final update in sync.updates) {
+        if (gone.contains(update.id)) continue;
+        final index = combined.indexWhere((item) => item.id == update.id);
+        if (index < 0) {
+          combined.add(update);
+          touched = true;
+          continue;
+        }
+        final next = update.withQuoteFrom(combined[index]);
+        if (next.text != combined[index].text ||
+            next.editedAt != combined[index].editedAt ||
+            next.reactions.length != combined[index].reactions.length) {
+          combined[index] = next;
+          touched = true;
+        }
+      }
+      final changed =
+          fresh.isNotEmpty || base.length != _messages.length || touched;
       if (!changed && !_starting) {
         if (presenceChanged || _error != null) setState(() => _error = null);
         if (presenceChanged) _remember();
@@ -480,7 +564,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
         _bannerAfter = hasUnread ? _seenAtOpen : -1;
       }
       setState(() {
-        _messages = [...base, ...fresh];
+        _messages = combined;
         _after = next;
         _error = null;
         _starting = false;
@@ -555,7 +639,13 @@ class _ChatThreadViewState extends State<ChatThreadView>
     if (local.pendingKind == 'photo') {
       return server.isPhoto && server.text == local.text;
     }
-    return !server.isVoice && !server.isPhoto && server.text == local.text;
+    if (local.pendingKind == 'song') {
+      return server.isSong && server.songName == local.songName;
+    }
+    return !server.isVoice &&
+        !server.isPhoto &&
+        !server.isSong &&
+        server.text == local.text;
   }
 
   Future<void> _noteRead() async {
@@ -594,6 +684,19 @@ class _ChatThreadViewState extends State<ChatThreadView>
   Future<void> _send() async {
     final text = _text.text.trim();
     if (text.isEmpty || _recording || _threadId.isEmpty) return;
+    final editing = _editingId;
+    if (editing != null) {
+      _clearComposer();
+      try {
+        final message = await _api.edit(_threadId, editing, text);
+        if (!mounted) return;
+        _ingest(message);
+      } catch (error) {
+        if (!mounted) return;
+        setState(() => _error = chatErrorText(error));
+      }
+      return;
+    }
     final reply = _replyId ?? 0;
     final replyName = _replyName;
     final replyText = _replyText;
@@ -651,7 +754,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     for (final item in _messages) {
       if (local != null && item.id == local.id) continue;
       if (item.id == message.id) {
-        next.add(item.withQuoteFrom(message));
+        next.add(message.withQuoteFrom(item));
         placed = true;
         continue;
       }
@@ -686,6 +789,13 @@ class _ChatThreadViewState extends State<ChatThreadView>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (Plat.isAndroid)
+                ListTile(
+                  leading: const Icon(Icons.photo_camera_outlined),
+                  title: const Text('Camera'),
+                  minTileHeight: 48,
+                  onTap: () => Navigator.pop(context, 'camera'),
+                ),
               ListTile(
                 leading: const Icon(Icons.photo_outlined),
                 title: const Text('Gallery'),
@@ -699,17 +809,180 @@ class _ChatThreadViewState extends State<ChatThreadView>
                 minTileHeight: 48,
                 onTap: () => Navigator.pop(context, 'document'),
               ),
+              ListTile(
+                leading: const Icon(Icons.music_note_outlined),
+                title: const Text('Saved song'),
+                subtitle: const Text('A song already saved in Social Save'),
+                minTileHeight: 48,
+                onTap: () => Navigator.pop(context, 'song'),
+              ),
             ],
           ),
         );
       },
     );
     if (!mounted || choice == null) return;
+    if (choice == 'camera') {
+      await _capturePhoto();
+      return;
+    }
     if (choice == 'document') {
       await _pickDocument();
       return;
     }
+    if (choice == 'song') {
+      await _pickSong();
+      return;
+    }
     await _pickPhoto();
+  }
+
+  Future<void> _capturePhoto() async {
+    if (!Plat.isAndroid || _recording || _threadId.isEmpty) return;
+    final status = await Permission.camera.request();
+    if (!mounted) return;
+    if (!status.isGranted) {
+      setState(() => _error = 'Allow the camera to take a photo.');
+      return;
+    }
+    String? path;
+    try {
+      path = await const MethodChannel(
+        'socialsave/media',
+      ).invokeMethod<String>('capturePhoto');
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = chatErrorText(error));
+      return;
+    }
+    if (path == null || path.isEmpty || !mounted) return;
+    try {
+      final raw = await File(path).readAsBytes();
+      final fitted = await fitChatImage(raw);
+      if (!mounted) return;
+      await _sendFittedPhoto(fitted);
+    } catch (error) {
+      if (!mounted) return;
+      setState(
+        () => _error = error is StateError
+            ? error.message
+            : chatErrorText(error),
+      );
+    }
+  }
+
+  Future<void> _pickSong() async {
+    if (_recording || _threadId.isEmpty) return;
+    List<({String title, String path, int ms, int size})> songs;
+    try {
+      final records = await ProviderScope.containerOf(
+        context,
+      ).read(downloadsRepositoryProvider).getAll();
+      const allowed = {
+        '.mp3',
+        '.m4a',
+        '.aac',
+        '.ogg',
+        '.wav',
+        '.opus',
+        '.flac',
+      };
+      songs = [];
+      for (final record in records) {
+        final path = record.localPath;
+        if (path == null || path.isEmpty) continue;
+        if (!allowed.contains(p.extension(path).toLowerCase())) continue;
+        final file = File(path);
+        if (!file.existsSync()) continue;
+        final size = file.lengthSync();
+        if (size <= 0 || size > 16 * 1024 * 1024) continue;
+        final ms = (record.durationSeconds ?? 0) * 1000;
+        if (ms > 20 * 60 * 1000) continue;
+        final title = record.title.trim().isEmpty ? 'Song' : record.title.trim();
+        songs.add((title: title, path: path, ms: ms, size: size));
+      }
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = chatErrorText(error));
+      return;
+    }
+    if (!mounted) return;
+    if (songs.isEmpty) {
+      setState(
+        () => _error = 'No saved song under 16 MB is on this device.',
+      );
+      return;
+    }
+    final picked = await showModalBottomSheet<({String title, String path, int ms})>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              for (final song in songs)
+                ListTile(
+                  leading: const Icon(Icons.music_note_rounded),
+                  title: Text(song.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  minTileHeight: 48,
+                  onTap: () => Navigator.pop(context, (
+                    title: song.title,
+                    path: song.path,
+                    ms: song.ms,
+                  )),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+    if (picked == null || !mounted) return;
+    await _sendSongFile(picked.path, picked.title, picked.ms);
+  }
+
+  Future<void> _sendSongFile(String path, String title, int milliseconds) async {
+    int? localId;
+    try {
+      final bytes = await File(path).readAsBytes();
+      if (bytes.length > 16 * 1024 * 1024) {
+        if (!mounted) return;
+        setState(() => _error = 'That song is too large to send in chat.');
+        return;
+      }
+      final reply = _replyId ?? 0;
+      final replyName = _replyName;
+      final replyText = _replyText;
+      final local = _pending(
+        text: title,
+        kind: 'song',
+        bytes: bytes,
+        songName: title,
+        songMs: milliseconds,
+        reply: reply,
+        replyName: replyName,
+        replyText: replyText,
+      );
+      localId = local.id;
+      _clearComposer();
+      _accept(local);
+      final message = await _api.sendSong(
+        _threadId,
+        bytes,
+        name: title,
+        milliseconds: milliseconds,
+        reply: reply,
+      );
+      if (!mounted || !_messages.any((item) => item.id == local.id)) return;
+      _replaceLocal(local.id, message);
+    } catch (error) {
+      if (!mounted) return;
+      if (localId != null && _messages.any((item) => item.id == localId)) {
+        _mark(localId, 'failed');
+        return;
+      }
+      setState(() => _error = chatErrorText(error));
+    }
   }
 
   Future<void> _pickDocument() async {
@@ -819,6 +1092,14 @@ class _ChatThreadViewState extends State<ChatThreadView>
           message.voiceMs,
           reply: message.reply,
         );
+      } else if (message.pendingKind == 'song' && message.localBytes != null) {
+        sent = await _api.sendSong(
+          _threadId,
+          message.localBytes!,
+          name: message.songName.isEmpty ? message.text : message.songName,
+          milliseconds: message.songMs,
+          reply: message.reply,
+        );
       } else if (message.pendingKind == 'photo' && message.localBytes != null) {
         final caption = message.text == 'Photo' ? '' : message.text;
         final outgoing = await _api.sendPhoto(
@@ -852,6 +1133,8 @@ class _ChatThreadViewState extends State<ChatThreadView>
     String kind = '',
     Uint8List? bytes,
     int voiceMs = 0,
+    String songName = '',
+    int songMs = 0,
     int reply = 0,
     String replyName = '',
     String replyText = '',
@@ -866,6 +1149,8 @@ class _ChatThreadViewState extends State<ChatThreadView>
       at: DateTime.now(),
       status: 'sending',
       voiceMs: voiceMs,
+      songName: songName,
+      songMs: songMs,
       reply: reply,
       replyName: replyName,
       replyText: replyText,
@@ -879,6 +1164,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     _replyId = null;
     _replyName = '';
     _replyText = '';
+    _editingId = null;
     _typingIdle?.cancel();
     ChatLive.instance.typing(_threadId, on: false);
     unawaited(ChatDrafts.write(_threadId, ''));
@@ -906,6 +1192,9 @@ class _ChatThreadViewState extends State<ChatThreadView>
     if (merged.voice.isNotEmpty && bytes != null && bytes.isNotEmpty) {
       unawaited(ChatVoiceFiles.save(merged.voice, merged.voiceType, bytes));
     }
+    if (merged.song.isNotEmpty && bytes != null && bytes.isNotEmpty) {
+      unawaited(ChatSongFiles.save(merged.song, merged.songType, bytes));
+    }
     final next = <ChatMessage>[];
     for (final item in _messages) {
       if (item.id == merged.id) continue;
@@ -930,11 +1219,14 @@ class _ChatThreadViewState extends State<ChatThreadView>
     setState(() {
       _replyId = message.id;
       _replyName = message.name;
-      _replyText = chatQuoteLabel(
-        message.text,
-        voice: message.isVoice,
-        photo: message.isPhoto,
-      );
+      _replyText = message.isSong
+          ? (message.songName.trim().isEmpty ? 'Song' : message.songName.trim())
+          : chatQuoteLabel(
+              message.text,
+              voice: message.isVoice,
+              photo: message.isPhoto,
+            );
+      _editingId = null;
     });
     _focus.requestFocus();
   }
@@ -1076,6 +1368,13 @@ class _ChatThreadViewState extends State<ChatThreadView>
             ),
           ),
           if (one != null && one.id > 0)
+            for (final emoji in const ['👍', '❤️', '😂', '😮', '😢', '🙏'])
+              IconButton(
+                tooltip: emoji,
+                onPressed: () => unawaited(_react(one, emoji)),
+                icon: Text(emoji, style: const TextStyle(fontSize: 20)),
+              ),
+          if (one != null && one.id > 0)
             IconButton(
               tooltip: 'Reply',
               onPressed: () {
@@ -1091,10 +1390,33 @@ class _ChatThreadViewState extends State<ChatThreadView>
               onPressed: () => unawaited(_copyPicked()),
               icon: const Icon(Icons.copy_rounded),
             ),
+          if (one != null && _canEdit(one))
+            IconButton(
+              tooltip: 'Edit',
+              onPressed: () => _beginEdit(one),
+              icon: const Icon(Icons.edit_outlined),
+            ),
+          if (one != null && one.id > 0)
+            IconButton(
+              tooltip: _pinned.contains(one.id) ? 'Unpin' : 'Pin',
+              onPressed: () => unawaited(_togglePin(one)),
+              icon: Icon(
+                _pinned.contains(one.id)
+                    ? Icons.push_pin
+                    : Icons.push_pin_outlined,
+              ),
+            ),
+          if (one != null && one.id > 0 && one.name == _me && _me.isNotEmpty)
+            IconButton(
+              tooltip: 'Info',
+              onPressed: () => unawaited(_showInfo(one)),
+              icon: const Icon(Icons.info_outline_rounded),
+            ),
           if (one != null &&
               one.text.trim().isNotEmpty &&
               !one.isPhoto &&
-              !one.isVoice)
+              !one.isVoice &&
+              !one.isSong)
             IconButton(
               tooltip: 'Forward',
               onPressed: () => unawaited(_forward(one)),
@@ -1124,6 +1446,89 @@ class _ChatThreadViewState extends State<ChatThreadView>
         ],
       ),
     );
+  }
+
+  bool _canEdit(ChatMessage message) {
+    if (message.id <= 0 || message.name != _me || _me.isEmpty) return false;
+    if (message.isVoice || message.isSong || message.isPhoto) return false;
+    if (message.text.trim().isEmpty) return false;
+    return DateTime.now().difference(message.at) < const Duration(hours: 24);
+  }
+
+  Future<void> _react(ChatMessage message, String emoji) async {
+    setState(_selected.clear);
+    try {
+      final updated = await _api.react(_threadId, message.id, emoji);
+      if (!mounted) return;
+      _ingest(updated);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = chatErrorText(error));
+    }
+  }
+
+  void _beginEdit(ChatMessage message) {
+    setState(() {
+      _selected.clear();
+      _editingId = message.id;
+      _replyId = null;
+      _replyName = '';
+      _replyText = '';
+      _text.text = message.text;
+      _text.selection = TextSelection.collapsed(offset: _text.text.length);
+    });
+    _focus.requestFocus();
+  }
+
+  Future<void> _togglePin(ChatMessage message) async {
+    setState(_selected.clear);
+    try {
+      final pinned = await _api.pin(_threadId, message.id);
+      if (!mounted) return;
+      setState(() => _pinned = pinned);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = chatErrorText(error));
+    }
+  }
+
+  Future<void> _showInfo(ChatMessage message) async {
+    setState(_selected.clear);
+    try {
+      final info = await _api.info(_threadId, message.id);
+      if (!mounted) return;
+      String line(String label, DateTime? at) {
+        if (at == null) return '';
+        final local = at.toLocal();
+        final clock = TimeOfDay.fromDateTime(local).format(context);
+        return '$label · ${chatDayLabel(at, DateTime.now())} $clock';
+      }
+
+      final lines = [
+        line('Sent', info.at),
+        if (info.editedAt != null) line('Edited', info.editedAt),
+        line('Delivered', info.deliveredAt),
+        line('Read', info.readAt),
+      ].where((item) => item.isNotEmpty).join('\n');
+      await showDialog<void>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text('Message info'),
+            content: Text(lines.isEmpty ? 'Sent' : lines),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Close'),
+              ),
+            ],
+          );
+        },
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = chatErrorText(error));
+    }
   }
 
   Future<void> _copyPicked() async {
@@ -1202,7 +1607,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
             children: [
               for (final item in others)
                 ListTile(
-                  title: Text(item.username),
+                  title: Text(item.label),
                   minTileHeight: 48,
                   onTap: () => Navigator.pop(context, item),
                 ),
@@ -1223,7 +1628,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     setState(_selected.clear);
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(SnackBar(content: Text('Forwarded to ${target.username}')));
+    ).showSnackBar(SnackBar(content: Text('Forwarded to ${target.label}')));
   }
 
   Future<bool> _confirm(String title, String body, String action) async {
@@ -1256,6 +1661,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       setState(() {
         _messages = next;
         _selected.remove(id);
+        _pinned = [for (final pinned in _pinned) if (pinned != id) pinned];
       });
     }
     if (_me.isEmpty || _threadId.isEmpty) return;
@@ -1267,8 +1673,11 @@ class _ChatThreadViewState extends State<ChatThreadView>
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final name = widget.username.replaceFirst(RegExp(r'^@'), '').trim();
-    final title = name.isEmpty ? 'Chat' : name;
+    final handle = widget.username.replaceFirst(RegExp(r'^@'), '').trim();
+    final title = _seenName.trim().isNotEmpty
+        ? _seenName.trim()
+        : (handle.isEmpty ? (_isGroup ? 'Group' : 'Chat') : handle);
+    final face = _isGroup ? title : (handle.isEmpty ? '?' : handle);
     final dark = scheme.brightness == Brightness.dark;
     final canvas = ChatUiTokens.canvas(dark);
     final selecting = _selected.isNotEmpty;
@@ -1282,11 +1691,18 @@ class _ChatThreadViewState extends State<ChatThreadView>
           ? ''
           : TimeOfDay.fromDateTime(_peerSeen!.toLocal()).format(context),
     );
+    final groupLine = _isGroup
+        ? [
+            if (_members.isNotEmpty)
+              _members.length == 1 ? '1 person' : '${_members.length} people',
+            if (_peerOnline) 'online',
+          ].join(' · ')
+        : presence;
     final subtitle = recording
         ? 'recording audio…'
         : peerTyping
         ? 'typing…'
-        : presence;
+        : groupLine;
     final body = Column(
       children: [
         AppBar(
@@ -1300,20 +1716,37 @@ class _ChatThreadViewState extends State<ChatThreadView>
                   icon: const Icon(Icons.close_rounded),
                 )
               : null,
-          title: selecting ? _selectionBar() : InkWell(
-            onTap: () => unawaited(
-              showChatProfile(
-                context,
-                username: title,
-                photoRev: _peerPhoto,
-                lastSeen: _peerSeen,
-                online: _peerOnline,
+          actions: [
+            if (!selecting)
+              IconButton(
+                tooltip: _searching ? 'Close search' : 'Search',
+                onPressed: () => setState(() {
+                  _searching = !_searching;
+                  if (!_searching) _search.clear();
+                }),
+                icon: Icon(
+                  _searching ? Icons.close_rounded : Icons.search_rounded,
+                ),
               ),
-            ),
+          ],
+          title: selecting
+              ? _selectionBar()
+              : _searching
+              ? TextField(
+                  controller: _search,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    hintText: 'Search this chat',
+                    border: InputBorder.none,
+                  ),
+                  onChanged: (_) => setState(() {}),
+                )
+              : InkWell(
+            onTap: () => unawaited(_openProfile(face, handle, title)),
             child: Row(
               children: [
                 ChatFace(
-                  name: title,
+                  name: face,
                   size: 36,
                   photoRev: _peerPhoto,
                   online: _peerOnline,
@@ -1376,14 +1809,43 @@ class _ChatThreadViewState extends State<ChatThreadView>
                     dark: scheme.brightness == Brightness.dark,
                   ),
                 ),
+                if (_pinned.isNotEmpty && !_searching)
+                  Positioned(
+                    top: 8,
+                    left: 12,
+                    right: 12,
+                    child: Material(
+                      color: scheme.brightness == Brightness.dark
+                          ? const Color(0xFF1F2C34)
+                          : Colors.white,
+                      elevation: 1,
+                      borderRadius: BorderRadius.circular(12),
+                      child: ListTile(
+                        dense: true,
+                        minTileHeight: 48,
+                        leading: const Icon(
+                          Icons.push_pin_rounded,
+                          color: Color(0xFF25D366),
+                        ),
+                        title: Text(
+                          _pinnedPreview(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onTap: _jumpPinned,
+                      ),
+                    ),
+                  ),
                 if (_starting)
                   const Center(child: CircularProgressIndicator())
-                else if (_messages.isEmpty)
+                else if (_shown.isEmpty)
                   Center(
                     child: Padding(
                       padding: const EdgeInsets.all(32),
                       child: Text(
-                        'No messages yet. Say hello, or paste a public link. Tap a link to save it.',
+                        _messages.isEmpty
+                            ? 'No messages yet. Say hello, or paste a public link. Tap a link to save it.'
+                            : 'No messages match that search.',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: scheme.onSurfaceVariant,
@@ -1398,7 +1860,12 @@ class _ChatThreadViewState extends State<ChatThreadView>
                       final rows = _rows();
                       return ListView.builder(
                         controller: _scroll,
-                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                        padding: EdgeInsets.fromLTRB(
+                          12,
+                          _pinned.isNotEmpty && !_searching ? 72 : 12,
+                          12,
+                          12,
+                        ),
                         itemCount: rows.length,
                         itemBuilder: (context, index) {
                           final row = rows[index];
@@ -1567,6 +2034,57 @@ class _ChatThreadViewState extends State<ChatThreadView>
                         ),
                       ),
                     ),
+                  if (_editingId != null)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 6),
+                      padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
+                      decoration: BoxDecoration(
+                        color: scheme.brightness == Brightness.dark
+                            ? const Color(0xFF1F2C34)
+                            : Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: const Border(
+                          left: BorderSide(color: Color(0xFF25D366), width: 3),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          const Expanded(
+                            child: Text(
+                              'Editing',
+                              style: TextStyle(
+                                color: Color(0xFF25D366),
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Cancel edit',
+                            onPressed: () => setState(() {
+                              _editingId = null;
+                              _text.clear();
+                            }),
+                            icon: const Icon(Icons.close_rounded, size: 20),
+                          ),
+                        ],
+                      ),
+                    ),
+                  if (_blocked && !_isGroup)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+                      child: Row(
+                        children: [
+                          const Expanded(
+                            child: Text('You blocked this person.'),
+                          ),
+                          TextButton(
+                            onPressed: () => unawaited(_setBlocked(false)),
+                            child: const Text('Unblock'),
+                          ),
+                        ],
+                      ),
+                    )
+                  else ...[
                   if (_replyText.isNotEmpty)
                     Container(
                       margin: const EdgeInsets.only(bottom: 6),
@@ -1635,6 +2153,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
                       onAttach: () => unawaited(_attach()),
                       showMic: !Plat.isWeb,
                     ),
+                  ],
                 ],
               ),
             ),
@@ -1646,16 +2165,120 @@ class _ChatThreadViewState extends State<ChatThreadView>
     return Scaffold(body: body);
   }
 
+  List<ChatMessage> get _shown {
+    final query = _search.text.trim().toLowerCase();
+    if (!_searching || query.isEmpty) return _messages;
+    return [
+      for (final message in _messages)
+        if (message.text.toLowerCase().contains(query) ||
+            message.replyText.toLowerCase().contains(query) ||
+            message.songName.toLowerCase().contains(query))
+          message,
+    ];
+  }
+
+  String _pinnedPreview() {
+    for (final id in _pinned.reversed) {
+      for (final message in _messages) {
+        if (message.id != id) continue;
+        if (message.isSong && message.songName.trim().isNotEmpty) {
+          return message.songName.trim();
+        }
+        final text = message.text.trim();
+        if (text.isNotEmpty) return text;
+      }
+    }
+    return _pinned.length == 1 ? 'Pinned message' : '${_pinned.length} pinned';
+  }
+
+  void _jumpPinned() {
+    if (_pinned.isEmpty) return;
+    final id = _pinned[_pinCursor % _pinned.length];
+    setState(() => _pinCursor++);
+    _scrollToMessage(id);
+  }
+
+  Future<void> _setBlocked(bool on) async {
+    final handle = widget.username.replaceFirst(RegExp(r'^@'), '').trim();
+    if (handle.isEmpty) return;
+    try {
+      final blocked = await _api.block(handle, on: on);
+      if (!mounted) return;
+      setState(() => _blocked = blocked);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = chatErrorText(error));
+    }
+  }
+
+  Future<void> _openProfile(String face, String handle, String title) async {
+    if (_isGroup) {
+      try {
+        final group = await _api.group(_threadId);
+        if (!mounted) return;
+        await showChatGroup(
+          context,
+          name: group.name,
+          code: group.code,
+          members: group.members,
+          onRename: (value) async {
+            final saved = await _api.renameGroup(_threadId, value);
+            if (mounted && saved.isNotEmpty) {
+              setState(() => _seenName = saved);
+              widget.onSeenName?.call(_threadId, saved);
+            }
+            return saved;
+          },
+          onLeave: () async {
+            await _api.leaveGroup(_threadId);
+            if (!mounted) return;
+            widget.onLeft?.call(_threadId);
+            if (!widget.embedded && context.canPop()) context.pop();
+          },
+        );
+      } catch (error) {
+        if (!mounted) return;
+        setState(() => _error = chatErrorText(error));
+      }
+      return;
+    }
+    await showChatProfile(
+      context,
+      username: face == '?' ? title : handle,
+      seenName: _seenName,
+      photoRev: _peerPhoto,
+      lastSeen: _peerSeen,
+      online: _peerOnline,
+      blocked: _blocked,
+      onBlock: handle.isEmpty
+          ? null
+          : (on) async {
+              final blocked = await _api.block(handle, on: on);
+              if (mounted) setState(() => _blocked = blocked);
+              return blocked;
+            },
+      onSeenName: handle.isEmpty
+          ? null
+          : (value) async {
+              final saved = await _api.setSeenName(handle, value);
+              if (mounted) setState(() => _seenName = saved);
+              widget.onSeenName?.call(_threadId, saved);
+              return saved;
+            },
+    );
+  }
+
   List<_Row> _rows() {
     final rows = <_Row>[];
     DateTime? previous;
     final now = DateTime.now();
+    final shown = _shown;
     var markedNew = false;
     var newCount = 0;
-    for (final message in _messages) {
+    for (final message in shown) {
       if (message.name != _me && message.id > _seenAtOpen) newCount++;
     }
-    for (final message in _messages) {
+    for (final message in shown) {
       final local = message.at.toLocal();
       final day = DateTime(local.year, local.month, local.day);
       if (previous == null || day != previous) {
@@ -1868,8 +2491,10 @@ class ChatBubble extends StatelessWidget {
             tick,
             tickColor: tickColor,
             onRetry: onRetry,
+            edited: message.isEdited,
           );
           final caption = message.text.trim();
+          final reserve = message.isEdited ? (mine ? 118.0 : 98.0) : (mine ? 78.0 : 58.0);
           final barePhoto =
               message.isPhoto && (caption.isEmpty || caption == 'Photo');
           final Widget body;
@@ -1923,6 +2548,7 @@ class ChatBubble extends StatelessWidget {
                                 tickColor: overlayTick,
                                 onRetry: onRetry,
                                 onDark: true,
+                                edited: message.isEdited,
                               ),
                             ),
                           ),
@@ -1938,11 +2564,29 @@ class ChatBubble extends StatelessWidget {
                         color: fg,
                         linkColor: link,
                         onLink: onLink,
-                        reserve: mine ? 78 : 58,
+                        reserve: reserve,
                       ),
                       stamp: stamp,
                     ),
                   ],
+                ],
+              ),
+            );
+          } else if (message.isSong) {
+            body = SizedBox(
+              width: voiceWidth,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ?quote,
+                  ChatSongBubble(
+                    message: message,
+                    api: api,
+                    mine: mine,
+                    dark: dark,
+                  ),
+                  stamp,
                 ],
               ),
             );
@@ -1962,7 +2606,7 @@ class ChatBubble extends StatelessWidget {
                       color: fg,
                       linkColor: link,
                       onLink: onLink,
-                      reserve: mine ? 78 : 58,
+                      reserve: reserve,
                     ),
                     stamp: stamp,
                   ),
@@ -1983,7 +2627,7 @@ class ChatBubble extends StatelessWidget {
                       color: fg,
                       linkColor: link,
                       onLink: onLink,
-                      reserve: mine ? 78 : 58,
+                      reserve: reserve,
                     ),
                     stamp: stamp,
                   ),
@@ -2030,7 +2674,27 @@ class ChatBubble extends StatelessWidget {
                               ),
                             ],
                     ),
-                    child: body,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        body,
+                        if (message.reactions.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Wrap(
+                              spacing: 4,
+                              runSpacing: 2,
+                              children: [
+                                for (final chip in _reactionChips(
+                                  message.reactions,
+                                ))
+                                  chip,
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
                   if (tail)
                     Positioned(
@@ -2099,6 +2763,30 @@ class _BubbleTail extends CustomPainter {
   bool shouldRepaint(_BubbleTail old) => old.color != color || old.mine != mine;
 }
 
+List<Widget> _reactionChips(List<ChatReaction> reactions) {
+  final counts = <String, int>{};
+  for (final item in reactions) {
+    if (item.emoji.isEmpty) continue;
+    counts[item.emoji] = (counts[item.emoji] ?? 0) + 1;
+  }
+  return [
+    for (final entry in counts.entries)
+      DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0x14000000),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+          child: Text(
+            entry.value > 1 ? '${entry.key} ${entry.value}' : entry.key,
+            style: const TextStyle(fontSize: 13),
+          ),
+        ),
+      ),
+  ];
+}
+
 Widget _stamp(
   String time,
   Color timeColor,
@@ -2106,6 +2794,7 @@ Widget _stamp(
   Color? tickColor,
   VoidCallback? onRetry,
   bool onDark = false,
+  bool edited = false,
 }) {
   final IconData? icon;
   var iconColor = tickColor ?? timeColor;
@@ -2140,6 +2829,18 @@ Widget _stamp(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
+        if (edited) ...[
+          Text(
+            'edited',
+            style: TextStyle(
+              fontSize: 11,
+              height: 1.1,
+              color: timeColor,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+          const SizedBox(width: 3),
+        ],
         Text(
           time,
           style: TextStyle(

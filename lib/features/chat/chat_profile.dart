@@ -14,14 +14,19 @@ Future<void> showChatProfile(
   BuildContext context, {
   required String username,
   String contact = '',
+  String seenName = '',
   int photoRev = 0,
   DateTime? lastSeen,
   bool online = false,
   void Function(int photoRev)? onPhoto,
   void Function()? onLogOut,
+  Future<String> Function(String name)? onSeenName,
+  bool blocked = false,
+  Future<bool> Function(bool on)? onBlock,
 }) {
   final name = username.replaceFirst(RegExp(r'^@'), '').trim();
   final mine = contact.trim().isNotEmpty;
+  var shown = seenName.trim();
   return showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
@@ -29,6 +34,7 @@ Future<void> showChatProfile(
       final scheme = Theme.of(context).colorScheme;
       var rev = photoRev;
       var busy = false;
+      var blockedNow = blocked;
       String? problem;
       final presence = chatPresenceLabel(
         lastSeen,
@@ -54,7 +60,9 @@ Future<void> showChatProfile(
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    name.isEmpty ? 'Chat' : name,
+                    shown.isNotEmpty
+                        ? shown
+                        : (name.isEmpty ? 'Chat' : name),
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       fontSize: 22,
@@ -62,6 +70,17 @@ Future<void> showChatProfile(
                       letterSpacing: -0.3,
                     ),
                   ),
+                  if (!mine && shown.isNotEmpty && shown != name) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      '@$name',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: scheme.onSurfaceVariant,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
                   if (!mine && presence.isNotEmpty) ...[
                     const SizedBox(height: 6),
                     Text(
@@ -133,6 +152,77 @@ Future<void> showChatProfile(
                           : const Icon(Icons.photo_camera_rounded),
                       label: const Text('Change photo'),
                     ),
+                  if (!mine && onSeenName != null) ...[
+                    const SizedBox(height: 8),
+                    FilledButton.tonalIcon(
+                      onPressed: busy
+                          ? null
+                          : () async {
+                              final next = await _askProfileName(
+                                context,
+                                username: name,
+                                current: shown,
+                              );
+                              if (next == null || !context.mounted) return;
+                              final typed = next.trim();
+                              final send = typed == name ? '' : typed;
+                              setSheet(() {
+                                busy = true;
+                                problem = null;
+                              });
+                              try {
+                                final saved = await onSeenName(send);
+                                if (!context.mounted) return;
+                                setSheet(() {
+                                  busy = false;
+                                  shown = saved.trim();
+                                });
+                              } catch (error) {
+                                if (!context.mounted) return;
+                                setSheet(() {
+                                  busy = false;
+                                  problem = chatErrorText(error);
+                                });
+                              }
+                            },
+                      icon: const Icon(Icons.edit_rounded),
+                      label: const Text('Edit name'),
+                    ),
+                  ],
+                  if (!mine && onBlock != null) ...[
+                    const SizedBox(height: 8),
+                    FilledButton.tonalIcon(
+                      onPressed: busy
+                          ? null
+                          : () async {
+                              final block = onBlock;
+                              setSheet(() {
+                                busy = true;
+                                problem = null;
+                              });
+                              try {
+                                final next = await block(!blockedNow);
+                                if (!context.mounted) return;
+                                setSheet(() {
+                                  busy = false;
+                                  blockedNow = next;
+                                });
+                              } catch (error) {
+                                if (!context.mounted) return;
+                                setSheet(() {
+                                  busy = false;
+                                  problem = chatErrorText(error);
+                                });
+                              }
+                            },
+                      icon: Icon(
+                        blockedNow
+                            ? Icons.lock_open_rounded
+                            : Icons.block_rounded,
+                      ),
+                      label: Text(blockedNow ? 'Unblock' : 'Block'),
+                    ),
+                  ],
                   if (mine) const SizedBox(height: 8),
                   if (mine && onLogOut != null) ...[
                     TextButton.icon(
@@ -177,6 +267,45 @@ Future<void> showChatProfile(
   );
 }
 
+Future<String?> _askProfileName(
+  BuildContext context, {
+  required String username,
+  required String current,
+}) {
+  final controller = TextEditingController(
+    text: current.trim().isEmpty ? username : current.trim(),
+  );
+  return showDialog<String>(
+    context: context,
+    builder: (context) {
+      return AlertDialog(
+        title: const Text('Name you see'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 40,
+          textCapitalization: TextCapitalization.words,
+          onSubmitted: (value) => Navigator.pop(context, value),
+          decoration: InputDecoration(
+            labelText: 'Name you see',
+            helperText: 'Leave blank to show @$username',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('Save'),
+          ),
+        ],
+      );
+    },
+  ).whenComplete(controller.dispose);
+}
+
 Future<int?> _pickChatPhoto(String username) async {
   final picked = await openFile(
     acceptedTypeGroups: const [
@@ -189,6 +318,220 @@ Future<int?> _pickChatPhoto(String username) async {
   final rev = await ChatApi().setPhoto(fitted);
   ChatPhotos.remember(username, rev, fitted);
   return rev;
+}
+
+/// Members, the join code, and leave. Rename is offered to everyone; the
+/// server keeps it for the person who made the group.
+Future<void> showChatGroup(
+  BuildContext context, {
+  required String name,
+  required String code,
+  required List<String> members,
+  required Future<String> Function(String name) onRename,
+  required Future<void> Function() onLeave,
+}) {
+  var shown = name.trim();
+  return showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    isScrollControlled: true,
+    builder: (context) {
+      final scheme = Theme.of(context).colorScheme;
+      var busy = false;
+      String? problem;
+      return StatefulBuilder(
+        builder: (context, setSheet) {
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ChatFace(name: shown.isEmpty ? 'Group' : shown, size: 96),
+                  const SizedBox(height: 16),
+                  Text(
+                    shown.isEmpty ? 'Group' : shown,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.3,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    members.length == 1
+                        ? '1 person'
+                        : '${members.length} people',
+                    style: TextStyle(color: scheme.onSurfaceVariant),
+                  ),
+                  if (code.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Code $code',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.5,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  if (members.isNotEmpty)
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 180),
+                      child: ListView(
+                        shrinkWrap: true,
+                        children: [
+                          for (final member in members)
+                            ListTile(
+                              dense: true,
+                              minTileHeight: 40,
+                              leading: ChatFace(name: member, size: 32),
+                              title: Text('@$member'),
+                            ),
+                        ],
+                      ),
+                    ),
+                  const SizedBox(height: 8),
+                  if (code.isNotEmpty)
+                    FilledButton.tonalIcon(
+                      onPressed: () async {
+                        await Clipboard.setData(ClipboardData(text: code));
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Group code copied')),
+                        );
+                      },
+                      icon: const Icon(Icons.copy_rounded),
+                      label: const Text('Copy code'),
+                    ),
+                  const SizedBox(height: 8),
+                  FilledButton.tonalIcon(
+                    onPressed: busy
+                        ? null
+                        : () async {
+                            final next = await _askGroupName(context, shown);
+                            if (next == null || !context.mounted) return;
+                            setSheet(() {
+                              busy = true;
+                              problem = null;
+                            });
+                            try {
+                              final saved = await onRename(next.trim());
+                              if (!context.mounted) return;
+                              setSheet(() {
+                                busy = false;
+                                if (saved.trim().isNotEmpty) shown = saved.trim();
+                              });
+                            } catch (error) {
+                              if (!context.mounted) return;
+                              setSheet(() {
+                                busy = false;
+                                problem = chatErrorText(error);
+                              });
+                            }
+                          },
+                    icon: const Icon(Icons.edit_rounded),
+                    label: const Text('Rename group'),
+                  ),
+                  const SizedBox(height: 8),
+                  TextButton.icon(
+                    onPressed: busy
+                        ? null
+                        : () async {
+                            final yes = await showDialog<bool>(
+                              context: context,
+                              builder: (context) {
+                                return AlertDialog(
+                                  title: const Text('Leave group'),
+                                  content: const Text(
+                                    'You will stop seeing messages in this group.',
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () =>
+                                          Navigator.pop(context, false),
+                                      child: const Text('Cancel'),
+                                    ),
+                                    TextButton(
+                                      onPressed: () =>
+                                          Navigator.pop(context, true),
+                                      child: const Text('Leave'),
+                                    ),
+                                  ],
+                                );
+                              },
+                            );
+                            if (yes != true || !context.mounted) return;
+                            setSheet(() {
+                              busy = true;
+                              problem = null;
+                            });
+                            try {
+                              await onLeave();
+                              if (!context.mounted) return;
+                              Navigator.pop(context);
+                            } catch (error) {
+                              if (!context.mounted) return;
+                              setSheet(() {
+                                busy = false;
+                                problem = chatErrorText(error);
+                              });
+                            }
+                          },
+                    icon: Icon(Icons.logout_rounded, color: scheme.error),
+                    label: Text(
+                      'Leave group',
+                      style: TextStyle(color: scheme.error),
+                    ),
+                  ),
+                  if (problem != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      problem!,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: scheme.error, height: 1.35),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          );
+        },
+      );
+    },
+  );
+}
+
+Future<String?> _askGroupName(BuildContext context, String current) {
+  final controller = TextEditingController(text: current);
+  return showDialog<String>(
+    context: context,
+    builder: (context) {
+      return AlertDialog(
+        title: const Text('Group name'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 40,
+          textCapitalization: TextCapitalization.words,
+          onSubmitted: (value) => Navigator.pop(context, value),
+          decoration: const InputDecoration(labelText: 'Name'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('Save'),
+          ),
+        ],
+      );
+    },
+  ).whenComplete(controller.dispose);
 }
 
 bool _jpegOrPng(Uint8List raw) {

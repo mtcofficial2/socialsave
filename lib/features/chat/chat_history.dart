@@ -368,8 +368,14 @@ class ChatHistory {
     if (local.pendingKind == 'photo') {
       return server.isPhoto && local.text == server.text;
     }
+    if (local.pendingKind == 'song') {
+      return server.isSong && server.songName == local.songName;
+    }
     if (local.pendingKind.isNotEmpty) return false;
-    return !server.isVoice && !server.isPhoto && local.text == server.text;
+    return !server.isVoice &&
+        !server.isPhoto &&
+        !server.isSong &&
+        local.text == server.text;
   }
 }
 
@@ -466,6 +472,7 @@ class _Book {
     final row = ChatThreadSummary(
       id: threadId,
       username: username,
+      name: current?.name ?? '',
       lastText: message.text,
       lastAt: message.at,
       lastId: message.id,
@@ -494,6 +501,7 @@ class _Book {
       threads[index] = ChatThreadSummary(
         id: current.id,
         username: current.username,
+        name: current.name,
         lastSeen: current.lastSeen,
         photoRev: current.photoRev,
         unread: current.unread,
@@ -503,6 +511,7 @@ class _Book {
     threads[index] = ChatThreadSummary(
       id: current.id,
       username: current.username,
+      name: current.name,
       lastText: last.text,
       lastAt: last.at,
       lastId: last.id,
@@ -544,27 +553,7 @@ class _Book {
         }
         if (message.id < 0) {
           final bytes = await _pendingBytes(message.id);
-          if (bytes != null) {
-            message = ChatMessage(
-              id: message.id,
-              from: message.from,
-              name: message.name,
-              text: message.text,
-              links: message.links,
-              at: message.at,
-              status: message.status,
-              voice: message.voice,
-              voiceMs: message.voiceMs,
-              voiceType: message.voiceType,
-              reply: message.reply,
-              replyName: message.replyName,
-              replyText: message.replyText,
-              photo: message.photo,
-              photoType: message.photoType,
-              localBytes: bytes,
-              pendingKind: message.pendingKind,
-            );
-          }
+          if (bytes != null) message = message.withBytes(bytes);
         }
         messages.add(message);
       }

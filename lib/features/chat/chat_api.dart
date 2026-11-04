@@ -137,12 +137,16 @@ class ChatDirectoryEntry {
     required this.phone,
     required this.email,
     required this.created,
+    this.lastSeen,
+    this.hasPassword = false,
   });
 
   final String username;
   final String phone;
   final String email;
   final DateTime? created;
+  final DateTime? lastSeen;
+  final bool hasPassword;
 
   String get contact {
     if (phone.isNotEmpty && email.isNotEmpty) return '$phone · $email';
@@ -151,13 +155,92 @@ class ChatDirectoryEntry {
 
   factory ChatDirectoryEntry.fromJson(Map<String, dynamic> json) {
     final at = (json['created'] as num?)?.toInt() ?? 0;
+    final seen = (json['lastSeen'] as num?)?.toInt() ?? 0;
     return ChatDirectoryEntry(
       username: (json['username'] as String?)?.trim() ?? '',
       phone: (json['phone'] as String?)?.trim() ?? '',
       email: (json['email'] as String?)?.trim() ?? '',
       created: at > 0 ? DateTime.fromMillisecondsSinceEpoch(at) : null,
+      lastSeen: seen > 0 ? DateTime.fromMillisecondsSinceEpoch(seen) : null,
+      hasPassword: json['hasPassword'] == true,
     );
   }
+}
+
+/// What a chat route was opened with. [name] is the private label, if any.
+class ChatThreadTarget {
+  const ChatThreadTarget({
+    required this.username,
+    this.name = '',
+    this.group = false,
+  });
+
+  final String username;
+  final String name;
+  final bool group;
+}
+
+class ChatReaction {
+  const ChatReaction({required this.user, required this.emoji});
+
+  final String user;
+  final String emoji;
+
+  factory ChatReaction.fromJson(Map<String, dynamic> json) {
+    return ChatReaction(
+      user: (json['user'] as String?)?.trim() ?? '',
+      emoji: (json['emoji'] as String?)?.trim() ?? '',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {'user': user, 'emoji': emoji};
+}
+
+class ChatMessageInfo {
+  const ChatMessageInfo({
+    required this.id,
+    required this.at,
+    this.editedAt,
+    this.deliveredAt,
+    this.readAt,
+  });
+
+  final int id;
+  final DateTime at;
+  final DateTime? editedAt;
+  final DateTime? deliveredAt;
+  final DateTime? readAt;
+
+  factory ChatMessageInfo.fromJson(Map<String, dynamic> json) {
+    DateTime? atOf(String key) {
+      final value = (json[key] as num?)?.toInt() ?? 0;
+      if (value <= 0) return null;
+      return DateTime.fromMillisecondsSinceEpoch(value);
+    }
+
+    return ChatMessageInfo(
+      id: (json['id'] as num?)?.toInt() ?? 0,
+      at: atOf('at') ?? DateTime.fromMillisecondsSinceEpoch(0),
+      editedAt: atOf('editedAt'),
+      deliveredAt: atOf('deliveredAt'),
+      readAt: atOf('readAt'),
+    );
+  }
+}
+
+/// A group the signed-in account belongs to. [members] are usernames.
+class ChatGroup {
+  const ChatGroup({
+    required this.id,
+    required this.name,
+    required this.code,
+    this.members = const [],
+  });
+
+  final String id;
+  final String name;
+  final String code;
+  final List<String> members;
 }
 
 /// True only for @daniel256 on 256703487378. The people list is still refused
@@ -186,6 +269,9 @@ class ChatThreadSummary {
     this.online = false,
     this.photoRev = 0,
     this.name = '',
+    this.blocked = false,
+    this.group = false,
+    this.members = 0,
   });
 
   final String id;
@@ -204,6 +290,9 @@ class ChatThreadSummary {
   final DateTime? lastSeen;
   final bool online;
   final int photoRev;
+  final bool blocked;
+  final bool group;
+  final int members;
 
   ChatThreadSummary copyWith({
     String? lastText,
@@ -216,6 +305,9 @@ class ChatThreadSummary {
     bool? online,
     int? photoRev,
     String? name,
+    bool? blocked,
+    bool? group,
+    int? members,
   }) {
     return ChatThreadSummary(
       id: id,
@@ -230,6 +322,9 @@ class ChatThreadSummary {
       lastSeen: lastSeen ?? this.lastSeen,
       online: online ?? this.online,
       photoRev: photoRev ?? this.photoRev,
+      blocked: blocked ?? this.blocked,
+      group: group ?? this.group,
+      members: members ?? this.members,
     );
   }
 
@@ -249,6 +344,9 @@ class ChatThreadSummary {
       lastSeen: seen > 0 ? DateTime.fromMillisecondsSinceEpoch(seen) : null,
       online: json['online'] == true && seen > 0,
       photoRev: (json['photoRev'] as num?)?.toInt() ?? 0,
+      blocked: json['blocked'] == true,
+      group: json['group'] == true,
+      members: (json['members'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -265,6 +363,9 @@ class ChatThreadSummary {
       'unread': unread,
       'lastSeen': lastSeen?.millisecondsSinceEpoch ?? 0,
       'photoRev': photoRev,
+      'blocked': blocked,
+      'group': group,
+      'members': members,
     };
   }
 }
@@ -273,24 +374,34 @@ class ChatThreadSummary {
 class ChatSync {
   const ChatSync({
     required this.messages,
+    this.updates = const [],
     this.removed = const [],
+    this.pinned = const [],
     this.peerDelivered = 0,
     this.peerRead = 0,
     this.peerLastSeen,
     this.peerOnline = false,
     this.peerPhotoRev = 0,
     this.peerName = '',
+    this.peerBlocked = false,
+    this.peerGroup = false,
+    this.peerMembers = const [],
     this.lastId = -1,
   });
 
   final List<ChatMessage> messages;
+  final List<ChatMessage> updates;
   final List<int> removed;
+  final List<int> pinned;
   final int peerDelivered;
   final int peerRead;
   final DateTime? peerLastSeen;
   final bool peerOnline;
   final int peerPhotoRev;
   final String peerName;
+  final bool peerBlocked;
+  final bool peerGroup;
+  final List<String> peerMembers;
 
   /// Newest message id on the server, or -1 from an older server.
   final int lastId;
@@ -313,6 +424,12 @@ class ChatMessage {
     this.replyText = '',
     this.photo = '',
     this.photoType = '',
+    this.song = '',
+    this.songName = '',
+    this.songMs = 0,
+    this.songType = '',
+    this.editedAt,
+    this.reactions = const [],
     this.localBytes,
     this.pendingKind = '',
   });
@@ -332,11 +449,19 @@ class ChatMessage {
   final String replyText;
   final String photo;
   final String photoType;
+  final String song;
+  final String songName;
+  final int songMs;
+  final String songType;
+  final DateTime? editedAt;
+  final List<ChatReaction> reactions;
   final Uint8List? localBytes;
   final String pendingKind;
 
   bool get isVoice => voice.isNotEmpty || pendingKind == 'voice';
   bool get isPhoto => photo.isNotEmpty || pendingKind == 'photo';
+  bool get isSong => song.isNotEmpty || pendingKind == 'song';
+  bool get isEdited => editedAt != null;
 
   ChatMessage copyWith({String? status}) {
     return ChatMessage(
@@ -355,6 +480,12 @@ class ChatMessage {
       replyText: replyText,
       photo: photo,
       photoType: photoType,
+      song: song,
+      songName: songName,
+      songMs: songMs,
+      songType: songType,
+      editedAt: editedAt,
+      reactions: reactions,
       localBytes: localBytes,
       pendingKind: pendingKind,
     );
@@ -364,7 +495,9 @@ class ChatMessage {
   ChatMessage withQuoteFrom(ChatMessage local) {
     final quote = replyText.isNotEmpty || local.replyText.isEmpty;
     final bytes = localBytes ?? local.localBytes;
-    if (quote && bytes == localBytes) return this;
+    if (quote && bytes == localBytes && identical(reactions, local.reactions)) {
+      return this;
+    }
     return ChatMessage(
       id: id,
       from: from,
@@ -381,6 +514,40 @@ class ChatMessage {
       replyText: quote ? replyText : local.replyText,
       photo: photo,
       photoType: photoType,
+      song: song,
+      songName: songName,
+      songMs: songMs,
+      songType: songType,
+      editedAt: editedAt,
+      reactions: reactions,
+      localBytes: bytes,
+      pendingKind: pendingKind,
+    );
+  }
+
+  ChatMessage withBytes(Uint8List bytes) {
+    return ChatMessage(
+      id: id,
+      from: from,
+      name: name,
+      text: text,
+      links: links,
+      at: at,
+      status: status,
+      voice: voice,
+      voiceMs: voiceMs,
+      voiceType: voiceType,
+      reply: reply,
+      replyName: replyName,
+      replyText: replyText,
+      photo: photo,
+      photoType: photoType,
+      song: song,
+      songName: songName,
+      songMs: songMs,
+      songType: songType,
+      editedAt: editedAt,
+      reactions: reactions,
       localBytes: bytes,
       pendingKind: pendingKind,
     );
@@ -388,6 +555,8 @@ class ChatMessage {
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
     final links = json['links'];
+    final rawReactions = json['reactions'];
+    final edited = (json['editedAt'] as num?)?.toInt() ?? 0;
     return ChatMessage(
       id: (json['id'] as num?)?.toInt() ?? 0,
       from: (json['from'] as String?)?.trim() ?? '',
@@ -413,6 +582,18 @@ class ChatMessage {
       replyText: (json['replyText'] as String?)?.trim() ?? '',
       photo: (json['photo'] as String?)?.trim() ?? '',
       photoType: (json['photoType'] as String?)?.trim() ?? '',
+      song: (json['song'] as String?)?.trim() ?? '',
+      songName: (json['songName'] as String?)?.trim() ?? '',
+      songMs: (json['songMs'] as num?)?.toInt() ?? 0,
+      songType: (json['songType'] as String?)?.trim() ?? '',
+      editedAt: edited > 0 ? DateTime.fromMillisecondsSinceEpoch(edited) : null,
+      reactions: rawReactions is List
+          ? [
+              for (final item in rawReactions)
+                if (item is Map)
+                  ChatReaction.fromJson(Map<String, dynamic>.from(item)),
+            ]
+          : const [],
       pendingKind: (json['pendingKind'] as String?)?.trim() ?? '',
     );
   }
@@ -434,6 +615,13 @@ class ChatMessage {
       'replyText': replyText,
       'photo': photo,
       'photoType': photoType,
+      if (song.isNotEmpty) 'song': song,
+      if (songName.isNotEmpty) 'songName': songName,
+      if (songMs > 0) 'songMs': songMs,
+      if (songType.isNotEmpty) 'songType': songType,
+      if (editedAt != null) 'editedAt': editedAt!.millisecondsSinceEpoch,
+      if (reactions.isNotEmpty)
+        'reactions': [for (final item in reactions) item.toJson()],
       if (pendingKind.isNotEmpty) 'pendingKind': pendingKind,
     };
   }
@@ -563,12 +751,15 @@ class ChatApi {
     ];
   }
 
-  Future<void> setSeenName(String username, String name) async {
-    await _dio.post<dynamic>(
+  /// Stores the name this account sees for [username]. Blank, or the username
+  /// itself, clears it. Returns the name the server kept.
+  Future<String> setSeenName(String username, String name) async {
+    final response = await _dio.post<dynamic>(
       '/api/v1/chat/saved',
       data: {'username': username, 'name': name},
       options: await _auth(),
     );
+    return (_object(response)['name'] as String?)?.trim() ?? '';
   }
 
   Future<ChatThreadSummary> openThread(
@@ -579,7 +770,7 @@ class ChatApi {
       '/api/v1/chat/threads',
       data: {
         'username': username,
-        if (seenName != null) 'name': seenName,
+        'name': ?seenName,
       },
       options: await _auth(),
     );
@@ -601,15 +792,20 @@ class ChatApi {
     );
   }
 
-  Future<ChatSync> messages(String id, int after) async {
+  Future<ChatSync> messages(String id, int after, {int since = 0}) async {
     final response = await _dio.get<dynamic>(
       '/api/v1/chat/threads/$id',
-      queryParameters: {'after': after},
+      queryParameters: {
+        'after': after,
+        if (since > 0) 'since': since,
+      },
       options: await _auth(),
     );
     final body = _object(response);
     final items = body['messages'];
+    final changed = body['updates'];
     final removed = body['removed'];
+    final pinned = body['pinned'];
     final peer = body['peer'];
     var delivered = 0;
     var read = 0;
@@ -617,6 +813,9 @@ class ChatApi {
     var online = false;
     var photoRev = 0;
     var peerName = '';
+    var peerBlocked = false;
+    var peerGroup = false;
+    final peerMembers = <String>[];
     if (peer is Map) {
       delivered = (peer['delivered'] as num?)?.toInt() ?? 0;
       read = (peer['read'] as num?)?.toInt() ?? 0;
@@ -625,7 +824,26 @@ class ChatApi {
       online = peer['online'] == true && seen != null;
       photoRev = (peer['photoRev'] as num?)?.toInt() ?? 0;
       peerName = (peer['name'] as String?)?.trim() ?? '';
+      peerBlocked = peer['blocked'] == true;
+      peerGroup = peer['group'] == true;
+      final names = peer['members'];
+      if (names is List) {
+        for (final name in names) {
+          if (name is String && name.trim().isNotEmpty) {
+            peerMembers.add(name.trim());
+          }
+        }
+      }
     }
+    List<ChatMessage> readMessages(Object? raw) {
+      if (raw is! List) return const [];
+      return [
+        for (final item in raw)
+          if (item is Map)
+            ChatMessage.fromJson(Map<String, dynamic>.from(item)),
+      ];
+    }
+
     return ChatSync(
       peerDelivered: delivered,
       peerRead: read,
@@ -633,18 +851,22 @@ class ChatApi {
       peerOnline: online,
       peerPhotoRev: photoRev,
       peerName: peerName,
+      peerBlocked: peerBlocked,
+      peerGroup: peerGroup,
+      peerMembers: peerMembers,
       lastId: (body['lastId'] as num?)?.toInt() ?? -1,
       removed: [
         if (removed is List)
           for (final item in removed)
             if (item is num && item > 0) item.toInt(),
       ],
-      messages: [
-        if (items is List)
-          for (final item in items)
-            if (item is Map)
-              ChatMessage.fromJson(Map<String, dynamic>.from(item)),
+      pinned: [
+        if (pinned is List)
+          for (final item in pinned)
+            if (item is num && item > 0) item.toInt(),
       ],
+      messages: readMessages(items),
+      updates: readMessages(changed),
     );
   }
 
@@ -653,6 +875,190 @@ class ChatApi {
       '/api/v1/chat/threads/$id/unsend',
       data: {'id': messageId},
       options: await _auth(),
+    );
+  }
+
+  Future<ChatMessage> react(String id, int messageId, String emoji) async {
+    final response = await _dio.post<dynamic>(
+      '/api/v1/chat/threads/$id/react',
+      data: {'id': messageId, 'emoji': emoji},
+      options: await _auth(),
+    );
+    return _message(response, 'That reaction could not be saved.');
+  }
+
+  Future<ChatMessage> edit(String id, int messageId, String text) async {
+    final response = await _dio.post<dynamic>(
+      '/api/v1/chat/threads/$id/edit',
+      data: {'id': messageId, 'text': text},
+      options: await _auth(),
+    );
+    return _message(response, 'That message could not be edited.');
+  }
+
+  Future<List<int>> pin(String id, int messageId) async {
+    final response = await _dio.post<dynamic>(
+      '/api/v1/chat/threads/$id/pin',
+      data: {'id': messageId},
+      options: await _auth(),
+    );
+    final raw = _object(response)['pinned'];
+    if (raw is! List) return const [];
+    return [
+      for (final item in raw)
+        if (item is num && item > 0) item.toInt(),
+    ];
+  }
+
+  Future<ChatMessageInfo> info(String id, int messageId) async {
+    final response = await _dio.get<dynamic>(
+      '/api/v1/chat/threads/$id/info',
+      queryParameters: {'id': messageId},
+      options: await _auth(),
+    );
+    final info = _object(response)['info'];
+    if (info is! Map) {
+      throw DioException(
+        requestOptions: response.requestOptions,
+        message: 'That message info could not be read.',
+      );
+    }
+    return ChatMessageInfo.fromJson(Map<String, dynamic>.from(info));
+  }
+
+  Future<bool> block(String username, {required bool on}) async {
+    final response = await _dio.post<dynamic>(
+      '/api/v1/chat/block',
+      data: {'username': username, 'on': on},
+      options: await _auth(),
+    );
+    return _object(response)['blocked'] == true;
+  }
+
+  Future<void> logout() async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/logout',
+      options: await _auth(),
+    );
+  }
+
+  Future<ChatGroup> createGroup(String name) async {
+    final response = await _dio.post<dynamic>(
+      '/api/v1/chat/groups',
+      data: {'name': name},
+      options: await _auth(),
+    );
+    return _group(response);
+  }
+
+  Future<ChatGroup> joinGroup(String code) async {
+    final response = await _dio.post<dynamic>(
+      '/api/v1/chat/groups/join',
+      data: {'code': code},
+      options: await _auth(),
+    );
+    return _group(response);
+  }
+
+  Future<ChatGroup> group(String id) async {
+    final response = await _dio.get<dynamic>(
+      '/api/v1/chat/groups/$id',
+      options: await _auth(),
+    );
+    return _group(response);
+  }
+
+  Future<String> renameGroup(String id, String name) async {
+    final response = await _dio.post<dynamic>(
+      '/api/v1/chat/groups/$id/name',
+      data: {'name': name},
+      options: await _auth(),
+    );
+    return (_object(response)['name'] as String?)?.trim() ?? '';
+  }
+
+  Future<void> leaveGroup(String id) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/groups/$id/leave',
+      options: await _auth(),
+    );
+  }
+
+  Future<ChatMessage> sendSong(
+    String id,
+    Uint8List bytes, {
+    required String name,
+    int milliseconds = 0,
+    int reply = 0,
+  }) async {
+    final auth = await _auth();
+    final headers = Map<String, dynamic>.from(auth.headers ?? {});
+    headers['Content-Type'] = 'application/octet-stream';
+    headers['X-Song-Name'] = Uri.encodeComponent(name.trim());
+    if (milliseconds > 0) headers['X-Song-Ms'] = '$milliseconds';
+    if (reply > 0) headers['X-Reply-Id'] = '$reply';
+    final response = await _dio.post<dynamic>(
+      '/api/v1/chat/threads/$id/song',
+      data: bytes,
+      options: auth.copyWith(
+        headers: headers,
+        contentType: 'application/octet-stream',
+        sendTimeout: const Duration(seconds: 90),
+        receiveTimeout: const Duration(seconds: 90),
+      ),
+    );
+    return _message(response, 'That song could not be sent.');
+  }
+
+  Future<Uint8List> song(String id) async {
+    final auth = await _auth();
+    final response = await _dio.get<dynamic>(
+      '/api/v1/chat/songs/$id',
+      options: auth.copyWith(
+        responseType: ResponseType.bytes,
+        receiveTimeout: const Duration(seconds: 90),
+      ),
+    );
+    final data = response.data;
+    if (data is Uint8List && data.isNotEmpty) return data;
+    if (data is List<int> && data.isNotEmpty) return Uint8List.fromList(data);
+    throw DioException(
+      requestOptions: response.requestOptions,
+      message: 'That song could not be played.',
+    );
+  }
+
+  ChatMessage _message(Response<dynamic> response, String missing) {
+    final message = _object(response)['message'];
+    if (message is! Map) {
+      throw DioException(
+        requestOptions: response.requestOptions,
+        message: missing,
+      );
+    }
+    return ChatMessage.fromJson(Map<String, dynamic>.from(message));
+  }
+
+  ChatGroup _group(Response<dynamic> response) {
+    final body = _object(response);
+    final id = (body['id'] as String?)?.trim() ?? '';
+    final name = (body['name'] as String?)?.trim() ?? '';
+    if (id.isEmpty || name.isEmpty) {
+      throw DioException(
+        requestOptions: response.requestOptions,
+        message: 'The chat server did not return that group.',
+      );
+    }
+    final raw = body['members'];
+    return ChatGroup(
+      id: id,
+      name: name,
+      code: (body['code'] as String?)?.trim() ?? '',
+      members: [
+        if (raw is List)
+          for (final item in raw)
+            if (item is String && item.trim().isNotEmpty) item.trim(),
+      ],
     );
   }
 

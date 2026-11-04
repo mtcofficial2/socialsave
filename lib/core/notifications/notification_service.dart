@@ -72,15 +72,19 @@ void keepChatFacesForNotifications() {
   };
 }
 
-Future<List<WindowsImage>> _windowsFace(Uint8List? picture, String name) async {
+Future<List<WindowsImage>> _windowsFace(
+  Uint8List? picture,
+  String fileName,
+  String alt,
+) async {
   if (picture == null || picture.isEmpty) return _windowsLogo();
   try {
-    final path = await saveNotificationPhoto(picture, name);
+    final path = await saveNotificationPhoto(picture, fileName);
     if (path != null && path.isNotEmpty) {
       return [
         WindowsImage(
           Uri.file(path),
-          altText: name,
+          altText: alt.trim().isEmpty ? fileName : alt.trim(),
           placement: WindowsImagePlacement.appLogoOverride,
           crop: WindowsImageCrop.circle,
         ),
@@ -88,6 +92,19 @@ Future<List<WindowsImage>> _windowsFace(Uint8List? picture, String name) async {
     }
   } catch (_) {}
   return _windowsLogo();
+}
+
+/// `chat|threadId|username` or `chat|threadId|username|name you see`.
+/// The photo and the open action stay on the username.
+String chatNotificationPayload({
+  required String threadId,
+  required String title,
+  String username = '',
+}) {
+  final handle = username.trim().isEmpty ? title.trim() : username.trim();
+  final label = title.trim();
+  if (label.isEmpty || label == handle) return 'chat|$threadId|$handle';
+  return 'chat|$threadId|$handle|$label';
 }
 
 List<WindowsImage> _windowsLogo() {
@@ -409,13 +426,19 @@ class NotificationService {
     required String threadId,
     required String title,
     required String body,
+    String username = '',
     bool sound = true,
     bool silent = false,
     Uint8List? picture,
   }) async {
     if (kIsWeb || threadId.isEmpty) return false;
     if (!_initialized) await init();
-    final payload = 'chat|$threadId|$title';
+    final handle = username.trim().isEmpty ? title.trim() : username.trim();
+    final payload = chatNotificationPayload(
+      threadId: threadId,
+      title: title,
+      username: handle,
+    );
     final id = threadId.hashCode & 0x7fffffff;
     final alert = sound && !silent;
     if (defaultTargetPlatform == TargetPlatform.android) {
@@ -445,7 +468,7 @@ class NotificationService {
         actions: [
           WindowsAction(content: 'Reply', arguments: payload, inputId: 'reply'),
         ],
-        images: await _windowsFace(picture, title),
+        images: await _windowsFace(picture, handle, title),
         silent: silent,
       );
     }

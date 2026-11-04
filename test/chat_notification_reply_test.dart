@@ -19,6 +19,21 @@ NotificationResponse _tap({
 }
 
 void main() {
+  test('a notification title can be a private name without replacing the username', () {
+    expect(
+      chatNotificationPayload(
+        threadId: 't1',
+        title: 'Benny',
+        username: 'ben7',
+      ),
+      'chat|t1|ben7|Benny',
+    );
+    expect(
+      chatNotificationPayload(threadId: 't1', title: 'ben7', username: 'ben7'),
+      'chat|t1|ben7',
+    );
+  });
+
   test('an Android reply keeps the chat and the typed text', () {
     final parts = chatNotificationReplyOf(
       _tap(actionId: 'reply', input: '  hello  ', payload: 'chat|abc|Ada'),

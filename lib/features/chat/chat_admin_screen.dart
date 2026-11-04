@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:social_save/features/chat/chat_api.dart';
+import 'package:social_save/features/chat/chat_format.dart';
 import 'package:social_save/features/chat/chat_thread_screen.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
 
@@ -14,6 +15,7 @@ class ChatAdminScreen extends StatefulWidget {
 
 class _ChatAdminScreenState extends State<ChatAdminScreen> {
   final ChatApi _api = ChatApi();
+  final TextEditingController _query = TextEditingController();
   List<ChatDirectoryEntry> _people = const [];
   String? _error;
   bool _loading = true;
@@ -22,6 +24,12 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _query.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -52,6 +60,18 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final count = _people.length;
+    final phones = _people.where((person) => person.phone.isNotEmpty).length;
+    final emails = _people.where((person) => person.email.isNotEmpty).length;
+    final passwords = _people.where((person) => person.hasPassword).length;
+    final query = _query.text.trim().toLowerCase();
+    final shown = [
+      for (final person in _people)
+        if (query.isEmpty ||
+            person.username.contains(query) ||
+            person.phone.contains(query) ||
+            person.email.toLowerCase().contains(query))
+          person,
+    ];
     return Scaffold(
       appBar: AppBar(
         title: Text(count == 0 ? 'Registered people' : '$count registered'),
@@ -66,6 +86,13 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
               'Everyone who signed up for chat on Social Save.',
               style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4),
             ),
+            if (!_loading && _error == null && count > 0) ...[
+              const SizedBox(height: 8),
+              Text(
+                '$count people · $phones with a phone · $emails with an email · $passwords with a password',
+                style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4),
+              ),
+            ],
             if (!_loading && _error == null && _api.lastStorage.isNotEmpty) ...[
               const SizedBox(height: 12),
               Text(
@@ -82,6 +109,19 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
               const SizedBox(height: 12),
               FilledButton(onPressed: _load, child: const Text('Try again')),
             ],
+            if (!_loading && _error == null && count > 0) ...[
+              const SizedBox(height: 12),
+              TextField(
+                controller: _query,
+                autocorrect: false,
+                onChanged: (_) => setState(() {}),
+                decoration: const InputDecoration(
+                  labelText: 'Search',
+                  hintText: 'Username, phone, or email',
+                  prefixIcon: Icon(Icons.search_rounded),
+                ),
+              ),
+            ],
             if (_loading)
               const Padding(
                 padding: EdgeInsets.only(top: 32),
@@ -97,8 +137,16 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
                   style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4),
                 ),
               )
+            else if (shown.isEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 24),
+                child: Text(
+                  'No one matches that search.',
+                  style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4),
+                ),
+              )
             else
-              for (final person in _people)
+              for (final person in shown)
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: ChatFace(name: person.username, size: 44),
@@ -106,7 +154,9 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
                   subtitle: Text(
                     [
                       if (person.contact.isNotEmpty) person.contact,
-                      if (person.created != null) _when(person.created!),
+                      if (person.created != null) 'Joined ${_when(person.created!)}',
+                      _seen(context, person.lastSeen),
+                      person.hasPassword ? 'Password set' : 'No password yet',
                     ].join('\n'),
                     style: const TextStyle(height: 1.35),
                   ),
@@ -116,6 +166,14 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
       ),
     );
   }
+}
+
+String _seen(BuildContext context, DateTime? at) {
+  if (at == null) return 'Not seen yet';
+  final clock = TimeOfDay.fromDateTime(at.toLocal()).format(context);
+  final label = chatPresenceLabel(at, false, DateTime.now(), clock);
+  if (label.isEmpty) return 'Not seen yet';
+  return label[0].toUpperCase() + label.substring(1);
 }
 
 String _storageText(String storage) {

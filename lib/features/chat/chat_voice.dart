@@ -756,3 +756,221 @@ class _BarsPainter extends CustomPainter {
   @override
   bool shouldRepaint(_BarsPainter old) => true;
 }
+
+/// A song kept on this phone after it has been sent or played.
+class ChatSongFiles {
+  static bool _safe(String id) => RegExp(r'^[a-z0-9]+$').hasMatch(id);
+
+  static String _ext(String type) {
+    switch (type) {
+      case 'flac':
+        return 'flac';
+      case 'ogg':
+        return 'ogg';
+      case 'wav':
+        return 'wav';
+      case 'm4a':
+      case 'mp4':
+        return 'm4a';
+      default:
+        return 'mp3';
+    }
+  }
+
+  static Future<File?> existing(String id, String type) async {
+    if (!_safe(id)) return null;
+    final file = await _place(id, type);
+    if (!await file.exists()) return null;
+    return file;
+  }
+
+  static Future<void> save(String id, String type, Uint8List bytes) async {
+    if (!_safe(id) || bytes.isEmpty) return;
+    final file = await _place(id, type);
+    await file.parent.create(recursive: true);
+    await file.writeAsBytes(bytes, flush: true);
+  }
+
+  static Future<File> _place(String id, String type) async {
+    final root = await getApplicationDocumentsDirectory();
+    return File(p.join(root.path, 'chat-songs', '$id.${_ext(type)}'));
+  }
+}
+
+class ChatSongBubble extends StatefulWidget {
+  const ChatSongBubble({
+    super.key,
+    required this.message,
+    required this.api,
+    required this.mine,
+    required this.dark,
+  });
+
+  final ChatMessage message;
+  final ChatApi api;
+  final bool mine;
+  final bool dark;
+
+  @override
+  State<ChatSongBubble> createState() => _ChatSongBubbleState();
+}
+
+class _ChatSongBubbleState extends State<ChatSongBubble> {
+  static _ChatSongBubbleState? _active;
+
+  Player? _player;
+  StreamSubscription<bool>? _playingSub;
+  StreamSubscription<bool>? _doneSub;
+  bool _busy = false;
+  bool _playing = false;
+
+  @override
+  void dispose() {
+    if (_active == this) _active = null;
+    unawaited(_close());
+    super.dispose();
+  }
+
+  Future<void> _close() async {
+    await _playingSub?.cancel();
+    await _doneSub?.cancel();
+    final player = _player;
+    _player = null;
+    await player?.dispose();
+  }
+
+  Future<void> _pause() async {
+    try {
+      await _player?.pause();
+    } catch (_) {}
+    if (mounted) setState(() => _playing = false);
+  }
+
+  Future<void> _toggle() async {
+    if (_busy) return;
+    if (_playing) {
+      await _pause();
+      return;
+    }
+    final previous = _active;
+    if (previous != null && previous != this) await previous._pause();
+    _active = this;
+    if (_player != null) {
+      try {
+        await _player!.play();
+      } catch (_) {
+        if (mounted) _fail();
+      }
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final path = await _file();
+      if (!mounted || path == null) {
+        _fail();
+        return;
+      }
+      final player = Player();
+      _playingSub = player.stream.playing.listen((value) {
+        if (mounted) setState(() => _playing = value);
+      });
+      _doneSub = player.stream.completed.listen((done) async {
+        if (!done || !mounted) return;
+        setState(() => _playing = false);
+        try {
+          await player.seek(Duration.zero);
+          await player.pause();
+        } catch (_) {}
+      });
+      _player = player;
+      await player.open(Media(path));
+    } catch (_) {
+      if (mounted) _fail();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<String?> _file() async {
+    final local = widget.message.localBytes;
+    if (local != null && local.isNotEmpty) {
+      final dir = await getTemporaryDirectory();
+      final path =
+          '${dir.path}${Platform.pathSeparator}ss-song-${widget.message.id}.bin';
+      final file = File(path);
+      if (!file.existsSync() || file.lengthSync() != local.length) {
+        await file.writeAsBytes(local, flush: true);
+      }
+      return path;
+    }
+    final id = widget.message.song;
+    if (id.isEmpty) return null;
+    final kept = await ChatSongFiles.existing(id, widget.message.songType);
+    if (kept != null) return kept.path;
+    final bytes = await widget.api.song(id);
+    await ChatSongFiles.save(id, widget.message.songType, bytes);
+    final stored = await ChatSongFiles.existing(id, widget.message.songType);
+    return stored?.path;
+  }
+
+  void _fail() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('That song could not be played.')),
+    );
+  }
+
+  String get _length {
+    final ms = widget.message.songMs;
+    if (ms <= 0) return '';
+    final total = (ms / 1000).round();
+    final minutes = total ~/ 60;
+    final seconds = (total % 60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final paint = _VoicePaint.of(mine: widget.mine, dark: widget.dark);
+    final title = widget.message.songName.trim().isEmpty
+        ? widget.message.text
+        : widget.message.songName.trim();
+    return Padding(
+      padding: const EdgeInsets.only(top: 3, bottom: 1),
+      child: Row(
+        children: [
+          _PlayButton(
+            busy: _busy,
+            playing: _playing,
+            paint: paint,
+            onPressed: () => unawaited(_toggle()),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: widget.dark
+                        ? const Color(0xFFE9EDEF)
+                        : const Color(0xFF111B21),
+                  ),
+                ),
+                Text(
+                  _length.isEmpty ? 'Song' : 'Song · $_length',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, color: paint.meta),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

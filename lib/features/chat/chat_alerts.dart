@@ -129,6 +129,7 @@ Future<void> _postChatAlert({
     threadId: threadId,
     title: title,
     body: body,
+    username: username,
     sound: sound,
     picture: saved.bytes,
   );
@@ -146,6 +147,7 @@ Future<void> _postChatAlert({
       threadId: threadId,
       title: title,
       body: body,
+      username: username,
       sound: sound,
       silent: true,
       picture: later,
@@ -169,12 +171,14 @@ class ChatAlerts {
   static bool seeded = false;
   static final Map<String, int> seen = {};
   static final Map<String, int> photoRevs = {};
+  static final Map<String, String> labels = {};
 
   static void reset() {
     lastInbox = null;
     seeded = false;
     seen.clear();
     photoRevs.clear();
+    labels.clear();
     openThread = '';
     ChatLive.instance.stop();
     unawaited(ChatPresence.sync());
@@ -198,7 +202,10 @@ class ChatAlerts {
   }) {
     lastInbox = DateTime.now();
     for (final item in items) {
-      if (item.id.isEmpty || item.photoRev <= 0) continue;
+      if (item.id.isEmpty) continue;
+      final label = item.label.trim();
+      if (label.isNotEmpty) labels[item.id] = label;
+      if (item.photoRev <= 0) continue;
       photoRevs[item.id] = item.photoRev;
     }
     if (!seeded) {
@@ -271,6 +278,14 @@ class ChatPresence {
   }
 }
 
+/// The name this account sees, or the username when no private name is set.
+String _alertTitle(String threadId, String fallback) {
+  final saved = ChatAlerts.labels[threadId]?.trim() ?? '';
+  if (saved.isNotEmpty) return saved;
+  final name = fallback.trim();
+  return name.isEmpty ? 'New message' : name;
+}
+
 /// Listens for messages for the life of the process, including after the
 /// window is hidden or the activity is gone.
 class ChatAlertWatch {
@@ -340,7 +355,7 @@ class ChatAlertWatch {
     if (here && threadId == ChatAlerts.openThread) return;
     await ChatInboxFilter.ensure();
     if (ChatInboxFilter.isMuted(threadId)) return;
-    final title = message.name.isEmpty ? 'New message' : message.name;
+    final title = _alertTitle(threadId, message.name);
     chatAlertNow(
       threadId: threadId,
       title: title,
@@ -354,10 +369,14 @@ class ChatAlertWatch {
     final parts = payload.split('|');
     if (parts.length < 3 || parts[0] != 'chat') return;
     final id = parts[1].trim();
-    final name = parts.sublist(2).join('|').trim();
+    final name = parts.length > 2 ? parts[2].trim() : '';
+    final seen = parts.length > 3 ? parts.sublist(3).join('|').trim() : '';
     if (id.isEmpty) return;
     if (Plat.isWindows) unawaited(DesktopTray.show());
-    appRouter.push('/chat/$id', extra: name);
+    appRouter.push(
+      '/chat/$id',
+      extra: ChatThreadTarget(username: name, name: seen),
+    );
   }
 
   Future<bool> _here() {
@@ -404,7 +423,7 @@ class ChatAlertWatch {
         notify: true,
         holdOpen: here,
         alert: (item, body) {
-          final title = item.username.isEmpty ? 'New message' : item.username;
+          final title = _alertTitle(item.id, item.label);
           chatAlertNow(
             threadId: item.id,
             title: title,

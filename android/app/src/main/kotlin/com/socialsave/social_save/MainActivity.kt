@@ -142,6 +142,43 @@ class MainActivity : FlutterFragmentActivity() {
      */
     private var pickVideoResult: MethodChannel.Result? = null
     private var pickImageResult: MethodChannel.Result? = null
+    private var capturePhotoResult: MethodChannel.Result? = null
+    private val takePhoto = registerForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap ->
+        val pending = capturePhotoResult
+        capturePhotoResult = null
+        if (pending == null) return@registerForActivityResult
+        if (bitmap == null) {
+            pending.success(null)
+            return@registerForActivityResult
+        }
+        io.execute {
+            try {
+                val scaled = scaleChatPhoto(bitmap)
+                val dir = File(cacheDir, "chat-camera").apply { mkdirs() }
+                val file = File(dir, "shot-${System.currentTimeMillis()}.jpg")
+                FileOutputStream(file).use { scaled.compress(Bitmap.CompressFormat.JPEG, 74, it) }
+                if (scaled !== bitmap) scaled.recycle()
+                bitmap.recycle()
+                runOnUiThread { pending.success(file.absolutePath) }
+            } catch (error: Exception) {
+                if (!bitmap.isRecycled) bitmap.recycle()
+                runOnUiThread { pending.error("camera", error.message, null) }
+            }
+        }
+    }
+
+    /** Chat photos stay small enough to send. The longest side is 1280. */
+    private fun scaleChatPhoto(source: Bitmap): Bitmap {
+        val width = source.width
+        val height = source.height
+        if (width <= 0 || height <= 0) return source
+        val longest = maxOf(width, height)
+        if (longest <= 1280) return source
+        val scale = 1280f / longest
+        val nextWidth = (width * scale).toInt().coerceAtLeast(1)
+        val nextHeight = (height * scale).toInt().coerceAtLeast(1)
+        return Bitmap.createScaledBitmap(source, nextWidth, nextHeight, true)
+    }
     private val openImage = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val pending = pickImageResult
         pickImageResult = null
@@ -882,6 +919,19 @@ class MainActivity : FlutterFragmentActivity() {
                     }
                     pickImageResult = result
                     openImage.launch(arrayOf("image/*"))
+                }
+                "capturePhoto" -> {
+                    if (capturePhotoResult != null) {
+                        result.error("busy", "The camera is already open", null)
+                        return@setMethodCallHandler
+                    }
+                    capturePhotoResult = result
+                    try {
+                        takePhoto.launch(null)
+                    } catch (error: Exception) {
+                        capturePhotoResult = null
+                        result.error("camera", error.message, null)
+                    }
                 }
                 "stampDevicePhoto" -> {
                     val path = call.argument<String>("path")

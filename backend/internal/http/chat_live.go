@@ -125,6 +125,12 @@ func (c *chatRoom) announce(ctx context.Context, a, b, threadID string, item cha
 	if c.live == nil {
 		return
 	}
+	ids := []string{a, b}
+	c.mu.Lock()
+	if thread := c.threadLocked(threadID); thread != nil && len(thread.Members) > 0 {
+		ids = append([]string(nil), thread.Members...)
+	}
+	c.mu.Unlock()
 	body, err := json.Marshal(map[string]any{
 		"type":    "message",
 		"thread":  threadID,
@@ -133,11 +139,15 @@ func (c *chatRoom) announce(ctx context.Context, a, b, threadID string, item cha
 	if err != nil {
 		return
 	}
-	if c.live.send(a, body) && a != item.From {
-		c.markPushed(ctx, a, threadID, item.ID, b)
-	}
-	if a != b && c.live.send(b, body) && b != item.From {
-		c.markPushed(ctx, b, threadID, item.ID, a)
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		if c.live.send(id, body) && id != item.From {
+			c.markPushed(ctx, id, threadID, item.ID, a)
+		}
 	}
 }
 
@@ -167,9 +177,14 @@ func (c *chatRoom) markPushed(ctx context.Context, userID, threadID string, id i
 		c.mu.Unlock()
 		return
 	}
+	now := time.Now().UnixMilli()
 	cur.Delivered = id
+	cur.DeliveredAt = now
 	if cur.Delivered < cur.Read {
 		cur.Delivered = cur.Read
+		if cur.DeliveredAt == 0 {
+			cur.DeliveredAt = now
+		}
 	}
 	thread.Seen[userID] = cur
 	c.mu.Unlock()
@@ -203,12 +218,7 @@ func (c *chatRoom) announcePresence(userID string, online bool) {
 	others := make([]string, 0)
 	for i := range c.data.Threads {
 		thread := &c.data.Threads[i]
-		switch userID {
-		case thread.A:
-			others = append(others, thread.B)
-		case thread.B:
-			others = append(others, thread.A)
-		}
+		others = append(others, thread.others(userID)...)
 	}
 	c.mu.Unlock()
 	body, err := json.Marshal(map[string]any{
@@ -257,14 +267,11 @@ func (c *chatRoom) liveSignal(user chatUser, threadID, kind string, on bool) {
 	}
 	c.mu.Lock()
 	thread := c.threadLocked(threadID)
-	if thread == nil || (thread.A != user.ID && thread.B != user.ID) {
+	if thread == nil || !onThread(thread, user.ID) {
 		c.mu.Unlock()
 		return
 	}
-	other := thread.B
-	if other == user.ID {
-		other = thread.A
-	}
+	others := thread.others(user.ID)
 	c.mu.Unlock()
 	body, err := json.Marshal(map[string]any{
 		"type":   kind,
@@ -275,7 +282,9 @@ func (c *chatRoom) liveSignal(user chatUser, threadID, kind string, on bool) {
 	if err != nil {
 		return
 	}
-	c.live.send(other, body)
+	for _, other := range others {
+		c.live.send(other, body)
+	}
 }
 
 func (c *chatRoom) announceRemoved(a, b, threadID string, id int64) {
@@ -290,9 +299,19 @@ func (c *chatRoom) announceRemoved(a, b, threadID string, id int64) {
 	if err != nil {
 		return
 	}
-	c.live.send(a, body)
-	if a != b {
-		c.live.send(b, body)
+	ids := []string{a, b}
+	c.mu.Lock()
+	if thread := c.threadLocked(threadID); thread != nil && len(thread.Members) > 0 {
+		ids = append([]string(nil), thread.Members...)
+	}
+	c.mu.Unlock()
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		c.live.send(id, body)
 	}
 }
 
@@ -302,7 +321,7 @@ func (c *chatRoom) notePhotoHave(user chatUser, threadID, photoID string) {
 	}
 	c.mu.Lock()
 	thread := c.threadLocked(threadID)
-	if thread == nil || (thread.A != user.ID && thread.B != user.ID) {
+	if thread == nil || !onThread(thread, user.ID) {
 		c.mu.Unlock()
 		return
 	}
@@ -331,7 +350,7 @@ func (c *chatRoom) notePhotoNeed(user chatUser, threadID, photoID string) {
 	}
 	c.mu.Lock()
 	thread := c.threadLocked(threadID)
-	if thread == nil || (thread.A != user.ID && thread.B != user.ID) {
+	if thread == nil || !onThread(thread, user.ID) {
 		c.mu.Unlock()
 		return
 	}
@@ -363,7 +382,7 @@ func (c *chatRoom) relayPhoto(fromID, threadID, photoID string, body []byte) boo
 	}
 	c.mu.Lock()
 	thread := c.threadLocked(threadID)
-	if thread == nil || (thread.A != fromID && thread.B != fromID) {
+	if thread == nil || !onThread(thread, fromID) {
 		c.mu.Unlock()
 		return false
 	}
@@ -375,15 +394,19 @@ func (c *chatRoom) relayPhoto(fromID, threadID, photoID string, body []byte) boo
 			break
 		}
 	}
-	other := thread.B
-	if other == fromID {
-		other = thread.A
-	}
+	others := thread.others(fromID)
 	c.mu.Unlock()
-	if !owned || other == fromID {
+	if !owned || len(others) == 0 {
 		return false
 	}
-	return c.live.sendBinary(other, encodePhotoFrame(threadID, photoID, body))
+	frame := encodePhotoFrame(threadID, photoID, body)
+	sent := false
+	for _, other := range others {
+		if c.live.sendBinary(other, frame) {
+			sent = true
+		}
+	}
+	return sent
 }
 
 func (c *chatRoom) relayIncomingPhoto(from chatUser, payload []byte) {

@@ -18,13 +18,14 @@ func cleanSeenName(raw string) (string, error) {
 }
 
 // saveSeenLocked stores the name this person wants to see for a username.
-// A blank name, or the username itself, clears the custom name.
+// A blank name, or the username with the same letters and capitals, clears it.
+// A different capitalisation is kept, so "Ben" is not forced back to "ben".
 func saveSeenLocked(data *chatData, userID, peer, raw string) (string, error) {
 	label, err := cleanSeenName(raw)
 	if err != nil {
 		return "", err
 	}
-	if strings.EqualFold(label, peer) {
+	if label == peer {
 		label = ""
 	}
 	for i := range data.Users {

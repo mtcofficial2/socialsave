@@ -404,7 +404,9 @@ object ChatReply {
     private fun titleOf(payload: String): String {
         val parts = payload.split('|')
         if (parts.size < 3 || parts[0] != "chat") return "Social Save"
-        val title = parts.drop(2).joinToString("|").trim()
+        val seen = if (parts.size > 3) parts.drop(3).joinToString("|").trim() else ""
+        if (seen.isNotEmpty()) return seen
+        val title = parts[2].trim()
         return if (title.isEmpty()) "Social Save" else title
     }
 

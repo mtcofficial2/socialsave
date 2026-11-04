@@ -141,10 +141,18 @@ func TestChatLoginAndAdminList(t *testing.T) {
 		t.Fatalf("login %#v token %q", again.user, again.token)
 	}
 	stale := getChat(app, "/api/v1/chat/me", ada.token)
-	if stale.Code != http.StatusUnauthorized {
-		t.Fatalf("old token %d %s", stale.Code, stale.Body.String())
+	if stale.Code != http.StatusOK {
+		t.Fatalf("first device stayed signed in %d %s", stale.Code, stale.Body.String())
 	}
-	fresh := getChat(app, "/api/v1/chat/me", again.token)
+	third := registerChat(t, app, `{"phone":"256700000111","username":"ada"}`)
+	oldest := getChat(app, "/api/v1/chat/me", ada.token)
+	if oldest.Code != http.StatusUnauthorized {
+		t.Fatalf("third sign-in drops the oldest device %d %s", oldest.Code, oldest.Body.String())
+	}
+	if getChat(app, "/api/v1/chat/me", again.token).Code != http.StatusOK {
+		t.Fatal("the second device stays signed in")
+	}
+	fresh := getChat(app, "/api/v1/chat/me", third.token)
 	if fresh.Code != http.StatusOK || !bytes.Contains(fresh.Body.Bytes(), []byte(`"username":"ada"`)) {
 		t.Fatalf("new token %d %s", fresh.Code, fresh.Body.String())
 	}
@@ -194,8 +202,15 @@ func TestChatLoginAndAdminList(t *testing.T) {
 	if signedIn.token == "" || signedIn.token == admin.token {
 		t.Fatalf("admin login token %q", signedIn.token)
 	}
+	if getChat(app, "/api/v1/chat/admin/users", admin.token).Code != http.StatusOK {
+		t.Fatal("the first admin device stays signed in")
+	}
+	extra := registerChat(t, app, `{"phone":"256703487378","username":"daniel256"}`)
 	if getChat(app, "/api/v1/chat/admin/users", admin.token).Code != http.StatusUnauthorized {
-		t.Fatal("old admin token still listed people")
+		t.Fatal("a third sign-in drops the oldest device")
+	}
+	if extra.token == "" {
+		t.Fatal("third admin token")
 	}
 	if getChat(app, "/api/v1/chat/admin/users", signedIn.token).Code != http.StatusOK {
 		t.Fatal("new admin token could not list people")
@@ -737,5 +752,78 @@ func TestChatThreadReportsLastIDSoClientsCanResetTheirCursor(t *testing.T) {
 	}
 	if got.LastID != 2 || len(got.Messages) != 0 {
 		t.Fatalf("lastId %d messages %d", got.LastID, len(got.Messages))
+	}
+}
+
+func TestChatGroupsReactionsBlockAndSong(t *testing.T) {
+	app := testApp(t)
+	app.chat.file = filepath.Join(t.TempDir(), "groups.json")
+	ada := registerChat(t, app, `{"phone":"256711000001","username":"ada"}`)
+	ben := registerChat(t, app, `{"phone":"256711000002","username":"ben"}`)
+	opened := postChat(app, "/api/v1/chat/threads", ada.token, `{"username":"ben"}`)
+	var thread struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(opened.Body.Bytes(), &thread); err != nil || thread.ID == "" {
+		t.Fatalf("open %s", opened.Body.String())
+	}
+	sent := postChat(app, "/api/v1/chat/threads/"+thread.ID, ada.token, `{"text":"hello"}`)
+	if sent.Code != http.StatusOK {
+		t.Fatalf("send %d %s", sent.Code, sent.Body.String())
+	}
+	react := postChat(app, "/api/v1/chat/threads/"+thread.ID+"/react", ben.token, `{"id":1,"emoji":"👍"}`)
+	if react.Code != http.StatusOK || !bytes.Contains(react.Body.Bytes(), []byte("👍")) {
+		t.Fatalf("react %d %s", react.Code, react.Body.String())
+	}
+	edited := postChat(app, "/api/v1/chat/threads/"+thread.ID+"/edit", ada.token, `{"id":1,"text":"hello there"}`)
+	if edited.Code != http.StatusOK || !bytes.Contains(edited.Body.Bytes(), []byte("hello there")) {
+		t.Fatalf("edit %d %s", edited.Code, edited.Body.String())
+	}
+	pinned := postChat(app, "/api/v1/chat/threads/"+thread.ID+"/pin", ada.token, `{"id":1}`)
+	if pinned.Code != http.StatusOK || !bytes.Contains(pinned.Body.Bytes(), []byte(`[1]`)) {
+		t.Fatalf("pin %d %s", pinned.Code, pinned.Body.String())
+	}
+	info := getChat(app, "/api/v1/chat/threads/"+thread.ID+"/info?id=1", ada.token)
+	if info.Code != http.StatusOK || !bytes.Contains(info.Body.Bytes(), []byte(`"id":1`)) {
+		t.Fatalf("info %d %s", info.Code, info.Body.String())
+	}
+	blocked := postChat(app, "/api/v1/chat/block", ada.token, `{"username":"ben","on":true}`)
+	if blocked.Code != http.StatusOK {
+		t.Fatalf("block %d %s", blocked.Code, blocked.Body.String())
+	}
+	denied := postChat(app, "/api/v1/chat/threads/"+thread.ID, ada.token, `{"text":"still here"}`)
+	if denied.Code != http.StatusBadRequest || !bytes.Contains(denied.Body.Bytes(), []byte("blocked")) {
+		t.Fatalf("blocked send %d %s", denied.Code, denied.Body.String())
+	}
+	if postChat(app, "/api/v1/chat/block", ada.token, `{"username":"ben","on":false}`).Code != http.StatusOK {
+		t.Fatal("unblock")
+	}
+
+	made := postChat(app, "/api/v1/chat/groups", ada.token, `{"name":"Family"}`)
+	var group struct {
+		ID   string `json:"id"`
+		Code string `json:"code"`
+	}
+	if made.Code != http.StatusOK || json.Unmarshal(made.Body.Bytes(), &group) != nil || len(group.Code) != 6 {
+		t.Fatalf("group %d %s", made.Code, made.Body.String())
+	}
+	joined := postChat(app, "/api/v1/chat/groups/join", ben.token, `{"code":"`+group.Code+`"}`)
+	if joined.Code != http.StatusOK || !bytes.Contains(joined.Body.Bytes(), []byte(group.ID)) {
+		t.Fatalf("join %d %s", joined.Code, joined.Body.String())
+	}
+	note := postChat(app, "/api/v1/chat/threads/"+group.ID, ben.token, `{"text":"in the group"}`)
+	if note.Code != http.StatusOK {
+		t.Fatalf("group send %d %s", note.Code, note.Body.String())
+	}
+	inbox := getChat(app, "/api/v1/chat/threads", ada.token)
+	if !bytes.Contains(inbox.Body.Bytes(), []byte(`"group":true`)) || !bytes.Contains(inbox.Body.Bytes(), []byte("Family")) {
+		t.Fatalf("inbox %s", inbox.Body.String())
+	}
+	if postChat(app, "/api/v1/chat/groups/"+group.ID+"/leave", ben.token, `{}`).Code != http.StatusOK {
+		t.Fatal("leave")
+	}
+	song := postChatRaw(app, "/api/v1/chat/threads/"+thread.ID+"/song", ada.token, []byte("RIFF\x24\x00\x00\x00WAVEfmt "), "X-Song-Name", "Hello")
+	if song.Code != http.StatusOK || !bytes.Contains(song.Body.Bytes(), []byte(`"song"`)) {
+		t.Fatalf("song %d %s", song.Code, song.Body.String())
 	}
 }
