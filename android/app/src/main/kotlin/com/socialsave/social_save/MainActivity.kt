@@ -1,11 +1,9 @@
 package com.socialsave.social_save
 
-import android.app.AppOpsManager
 import android.app.PictureInPictureParams
 import android.content.ClipData
 import android.content.ContentUris
 import android.content.ContentValues
-import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -76,22 +74,6 @@ class MainActivity : FlutterFragmentActivity() {
         val pending = deleteResult
         deleteResult = null
         pending?.success(if (r.resultCode == RESULT_OK) deleteDone + deleteAsked else deleteDone)
-    }
-
-    /** True when Android 13+ is blocking this sideloaded app's accessibility switch. */
-    private fun restrictedSettingsBlocked(): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
-        return try {
-            val ops = getSystemService(AppOpsManager::class.java) ?: return false
-            val mode = ops.unsafeCheckOpNoThrow(
-                "android:access_restricted_settings",
-                android.os.Process.myUid(),
-                packageName,
-            )
-            mode == AppOpsManager.MODE_IGNORED || mode == AppOpsManager.MODE_ERRORED
-        } catch (_: Throwable) {
-            false
-        }
     }
 
     /// MediaStore entry for a file: its content uri, video id, or a lookup by path.
@@ -727,29 +709,11 @@ class MainActivity : FlutterFragmentActivity() {
                     result.success(true)
                 }
                 "bgStatus" -> {
-                    val enabled = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
-                    val me = ComponentName(this, LinkWatcherService::class.java).flattenToString()
-                    val short = ComponentName(this, LinkWatcherService::class.java).flattenToShortString()
                     result.success(mapOf(
-                        "accessibility" to (enabled.contains(me) || enabled.contains(short)),
                         "overlay" to Settings.canDrawOverlays(this),
                         "bubble" to (BubbleService.instance != null),
                         "sdk" to Build.VERSION.SDK_INT,
-                        "restricted" to restrictedSettingsBlocked(),
                     ))
-                }
-                "openAccessibilitySettings" -> {
-                    val component = ComponentName(this, LinkWatcherService::class.java).flattenToString()
-                    val args = android.os.Bundle().apply {
-                        putString(":settings:fragment_args_key", component)
-                    }
-                    startActivity(
-                        Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            .putExtra(":settings:fragment_args_key", component)
-                            .putExtra(":settings:show_fragment_args", args),
-                    )
-                    result.success(true)
                 }
                 "openOverlaySettings" -> {
                     startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + packageName)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))

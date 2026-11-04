@@ -11,8 +11,8 @@ const _kEnabled = 'bgdetect.enabled';
 const _kBubble = 'bgdetect.bubble';
 const _kBubbleOpacity = 'bgdetect.bubbleOpacity';
 
-/// One-time setup and on/off switch for detecting copied links while the app is
-/// closed (Android accessibility service + optional floating bubble).
+/// On/off switch and setup for the floating download bubble and the
+/// Download copied link tile. Sharing a link into the app stays separate.
 class BackgroundDetectScreen extends ConsumerStatefulWidget {
   const BackgroundDetectScreen({super.key});
 
@@ -22,13 +22,9 @@ class BackgroundDetectScreen extends ConsumerStatefulWidget {
 
 class _BackgroundDetectScreenState extends ConsumerState<BackgroundDetectScreen> with WidgetsBindingObserver {
   bool _enabled = true;
-  bool _bubble = false;
   int _opacity = 45;
-  bool _accessibility = false;
   bool _overlay = false;
   bool _bubbleRunning = false;
-  bool _restricted = false;
-  int _sdk = 0;
   SharedPreferences? _prefs;
 
   @override
@@ -54,7 +50,6 @@ class _BackgroundDetectScreenState extends ConsumerState<BackgroundDetectScreen>
     _prefs = p;
     if (!p.containsKey(_kEnabled)) await p.setBool(_kEnabled, true);
     _enabled = p.getBool(_kEnabled) ?? true;
-    _bubble = p.getBool(_kBubble) ?? false;
     _opacity = (p.getInt(_kBubbleOpacity) ?? 45).clamp(20, 80);
     await _refresh();
   }
@@ -64,11 +59,8 @@ class _BackgroundDetectScreenState extends ConsumerState<BackgroundDetectScreen>
       final r = await MediaEvents.channel.invokeMethod<Map<dynamic, dynamic>>('bgStatus');
       if (!mounted || r == null) return;
       setState(() {
-        _accessibility = r['accessibility'] == true;
         _overlay = r['overlay'] == true;
         _bubbleRunning = r['bubble'] == true;
-        _restricted = r['restricted'] == true;
-        _sdk = (r['sdk'] as int?) ?? 0;
       });
     } catch (_) {
       if (mounted) setState(() {});
@@ -91,7 +83,6 @@ class _BackgroundDetectScreenState extends ConsumerState<BackgroundDetectScreen>
       await _call('openOverlaySettings');
       return;
     }
-    setState(() => _bubble = v);
     await _prefs?.setBool(_kBubble, v);
     await _call(v ? 'bubbleStart' : 'bubbleStop');
     await Future<void>.delayed(const Duration(milliseconds: 600));
@@ -103,41 +94,13 @@ class _BackgroundDetectScreenState extends ConsumerState<BackgroundDetectScreen>
     final scheme = Theme.of(context).colorScheme;
     final muted = scheme.onSurface.withValues(alpha: 0.6);
     final offerOn = ref.watch(settingsControllerProvider.select((s) => s.offerCopiedLinks));
-    final active = _accessibility && _enabled && offerOn;
+    final active = _enabled && offerOn && _overlay && _bubbleRunning;
 
     Widget dot(bool on) => Container(
           width: 10,
           height: 10,
           decoration: BoxDecoration(shape: BoxShape.circle, color: on ? const Color(0xFF3DDC84) : scheme.onSurface.withValues(alpha: 0.25)),
         );
-
-    Widget step(String title, String body, bool done, {required String button, required VoidCallback onTap, Widget? extra}) {
-      return Container(
-        margin: const EdgeInsets.only(bottom: 14),
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(color: scheme.onSurface.withValues(alpha: 0.05), borderRadius: BorderRadius.circular(24)),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            dot(done),
-            const SizedBox(width: 10),
-            Expanded(child: Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600))),
-            Text(done ? 'On' : 'Off', style: TextStyle(fontSize: 12.5, color: muted)),
-          ]),
-          const SizedBox(height: 8),
-          Text(body, style: TextStyle(fontSize: 13, height: 1.4, color: muted)),
-          if (extra != null) ...[const SizedBox(height: 10), extra],
-          const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: FilledButton.tonal(
-              onPressed: onTap,
-              style: FilledButton.styleFrom(shape: const StadiumBorder(), minimumSize: const Size(0, 44)),
-              child: Text(button),
-            ),
-          ),
-        ]),
-      );
-    }
 
     return Scaffold(
       body: SafeArea(
@@ -154,7 +117,9 @@ class _BackgroundDetectScreenState extends ConsumerState<BackgroundDetectScreen>
             Padding(
               padding: const EdgeInsets.fromLTRB(4, 0, 4, 18),
               child: Text(
-                active ? 'Active. Copy a video link in any app and SocialSave will offer to download it.' : 'Set this up once to get a download prompt when you copy a video link, even with SocialSave closed.',
+                active
+                    ? 'The bubble is on. Copy a video link, tap the bubble, and SocialSave offers to download it.'
+                    : 'Copy a video link, then tap the floating bubble or the Download copied link tile. You can also share the link into SocialSave.',
                 style: TextStyle(fontSize: 14, height: 1.4, color: muted),
               ),
             ),
@@ -186,41 +151,37 @@ class _BackgroundDetectScreenState extends ConsumerState<BackgroundDetectScreen>
                 const Text('What this can see', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 8),
                 Text(
-                  'Only a link you copy, and only to check whether it is a public video link from TikTok, Instagram, YouTube, Facebook, X, Reddit or Pinterest. It does not read your screen or messages. Nothing is stored or sent anywhere until you tap Download.',
+                  'Tapping the bubble or the Download copied link tile reads the link you just copied, only to check whether it is a public video from TikTok, Instagram, YouTube, Facebook, X, Reddit or Pinterest. It does not watch your screen. Nothing is stored or sent until you tap Download.',
                   style: TextStyle(fontSize: 13, height: 1.45, color: muted),
                 ),
               ]),
             ),
-            step(
-              '1. Accessibility service',
-              _restricted
-                  ? 'Android is blocking this switch because SocialSave was installed from an APK. The row "SocialSave link detection" stays grey until you allow restricted settings.'
-                  : 'Open Accessibility settings, find "SocialSave link detection" (under Downloaded apps or Installed services) and switch it on.',
-              _accessibility,
-              button: 'Open Accessibility settings',
-              onTap: () => _call('openAccessibilitySettings'),
-              extra: _restricted || _sdk >= 33
-                  ? Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(color: scheme.onSurface.withValues(alpha: 0.05), borderRadius: BorderRadius.circular(16)),
-                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text(_restricted ? 'Android is blocking this switch' : 'Switch is greyed out?', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Tap the grey "SocialSave link detection" row. Android shows "Restricted setting. For your security, this setting is currently unavailable." Tap OK. Then open App info and, if a three-dot menu is at the top right, choose "Allow restricted settings" and confirm with your screen lock. Go back and turn the switch on. If App info has no three-dot menu, this phone cannot allow the switch for an APK install. Share the link into SocialSave, or use the Download copied link tile and the bubble.',
-                          style: TextStyle(fontSize: 12.5, height: 1.4, color: muted),
-                        ),
-                        TextButton(onPressed: () => _call('openAppInfo'), child: const Text('Open App info')),
-                      ]),
-                    )
-                  : null,
-            ),
-            step(
-              '2. Floating bubble (recommended)',
-              'Android hides the clipboard from background apps, so Copy link cannot be noticed on its own. A small bubble stays on screen: copy a link in any app, tap the bubble, and the Download card appears at once. It pulses when you open a Copy menu. Needs "Display over other apps". You can also add the "Download copied link" tile to Quick Settings for the same one-tap action.',
-              _overlay && _bubbleRunning,
-              button: _overlay ? (_bubbleRunning ? 'Turn bubble off' : 'Turn bubble on') : 'Allow display over other apps',
-              onTap: () => _overlay ? _setBubble(!_bubbleRunning) : _call('openOverlaySettings'),
+            Container(
+              margin: const EdgeInsets.only(bottom: 14),
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(color: scheme.onSurface.withValues(alpha: 0.05), borderRadius: BorderRadius.circular(24)),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  dot(_overlay && _bubbleRunning),
+                  const SizedBox(width: 10),
+                  const Expanded(child: Text('Floating bubble', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600))),
+                  Text(_overlay && _bubbleRunning ? 'On' : 'Off', style: TextStyle(fontSize: 12.5, color: muted)),
+                ]),
+                const SizedBox(height: 8),
+                Text(
+                  'Android hides the clipboard from background apps, so a copy is not noticed on its own. A small bubble stays on screen: copy a link in any app, tap the bubble, and the Download card appears. It pulses when you open a Copy menu. Needs "Display over other apps". You can also add the "Download copied link" tile to Quick Settings for the same one-tap action.',
+                  style: TextStyle(fontSize: 13, height: 1.4, color: muted),
+                ),
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: FilledButton.tonal(
+                    onPressed: () => _overlay ? _setBubble(!_bubbleRunning) : _call('openOverlaySettings'),
+                    style: FilledButton.styleFrom(shape: const StadiumBorder(), minimumSize: const Size(0, 44)),
+                    child: Text(_overlay ? (_bubbleRunning ? 'Turn bubble off' : 'Turn bubble on') : 'Allow display over other apps'),
+                  ),
+                ),
+              ]),
             ),
             if (_overlay && _bubbleRunning)
               Padding(
@@ -247,7 +208,7 @@ class _BackgroundDetectScreenState extends ConsumerState<BackgroundDetectScreen>
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4),
               child: Text(
-                'The accessibility switch is only for noticing a copy while SocialSave is closed. Sharing a link into the app, the Download copied link quick-settings tile, and the bubble do not need that switch. You can turn the service off any time in Accessibility settings.',
+                'Sharing a link into SocialSave, and the Download copied link quick-settings tile, work without the bubble.',
                 style: TextStyle(fontSize: 12.5, height: 1.4, color: muted),
               ),
             ),

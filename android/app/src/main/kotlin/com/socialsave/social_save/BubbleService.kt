@@ -35,7 +35,7 @@ class BubbleService : Service() {
             if (Build.VERSION.SDK_INT >= 26) c.startForegroundService(i) else c.startService(i)
         }
 
-        /** Starts the bubble again when it is switched on (accessibility service start, app start). */
+        /** Starts the bubble again when the app opens, if the user left it on. */
         fun autostart(c: Context) {
             try {
                 val p = c.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)

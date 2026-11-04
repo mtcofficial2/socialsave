@@ -8,8 +8,8 @@ import android.os.SystemClock
 import android.view.WindowManager
 import android.widget.Toast
 
-/** Invisible activity started from a user tap (bubble, Quick Settings tile) or by the
- *  accessibility service: while it has focus Android lets the app read the clipboard.
+/** Invisible activity started from a user tap (bubble or Quick Settings tile).
+ *  While it has focus Android lets the app read the clipboard.
  *  It reads the link, closes at once and shows the Download card. */
 class ClipboardPeekActivity : Activity() {
     private var done = false
@@ -35,12 +35,9 @@ class ClipboardPeekActivity : Activity() {
             if (!fromWatcher) Toast.makeText(app, "Copy a video link first", Toast.LENGTH_SHORT).show()
             return
         }
-        val w = LinkWatcherService.instance
         val b = BubbleService.instance
         when {
-            fromWatcher && w != null -> w.offer(url, t0)
             b != null -> { LinkPrompt.t0 = t0; b.prompt(url) }
-            w != null -> w.promptNow(url, t0)
             BubbleService.canDraw(app) -> {
                 LinkPrompt.t0 = t0
                 LinkPrompt.show(app, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, url)
