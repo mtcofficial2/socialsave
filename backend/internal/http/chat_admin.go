@@ -2,8 +2,12 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"sort"
+	"strings"
+	"time"
 )
 
 const (
@@ -124,6 +128,142 @@ func (s *Server) chatAdminUsers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"users":   s.chat.adminUsers(r.Context()),
+		"devices": s.chat.adminDevices(r.Context()),
 		"storage": s.chat.storageState(),
 	})
+}
+
+const (
+	chatInstallKeep  = 2000
+	chatInstallQuiet = int64(2 * 60 * 1000)
+)
+
+func installIDOk(id string) bool {
+	if len(id) != 32 {
+		return false
+	}
+	for _, r := range id {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func installPlatformOk(value string) bool {
+	switch value {
+	case "android", "windows", "ios", "macos", "linux", "web":
+		return true
+	default:
+		return false
+	}
+}
+
+func installVersionOk(value string) bool {
+	if len(value) < 3 || len(value) > 16 || !strings.Contains(value, ".") {
+		return false
+	}
+	for _, r := range value {
+		if (r < '0' || r > '9') && r != '.' {
+			return false
+		}
+	}
+	return true
+}
+
+// noteInstall remembers that a copy of the app was opened. An existing id
+// updates in place. A new id is limited per network so the list cannot be
+// filled with made-up devices. False means the new device was refused.
+func (c *chatRoom) noteInstall(ctx context.Context, id, platform, version, username, ip string) bool {
+	c.ensure(ctx)
+	now := time.Now().UnixMilli()
+	c.mu.Lock()
+	for i := range c.data.Installs {
+		row := &c.data.Installs[i]
+		if row.ID != id {
+			continue
+		}
+		changed := row.Platform != platform || row.Version != version || (username != "" && row.Username != username)
+		stale := now-row.Seen >= chatInstallQuiet
+		row.Platform = platform
+		row.Version = version
+		row.Seen = now
+		if username != "" {
+			row.Username = username
+		}
+		c.mu.Unlock()
+		if changed || stale {
+			c.persist(ctx)
+		}
+		return true
+	}
+	if ip == "" {
+		ip = "unknown"
+	}
+	if !c.allowLocked(c.opens, ip, 8) {
+		c.mu.Unlock()
+		return false
+	}
+	c.data.Installs = append(c.data.Installs, chatInstall{
+		ID:       id,
+		Platform: platform,
+		Version:  version,
+		Username: username,
+		First:    now,
+		Seen:     now,
+	})
+	if len(c.data.Installs) > chatInstallKeep {
+		sort.Slice(c.data.Installs, func(i, j int) bool {
+			return c.data.Installs[i].Seen < c.data.Installs[j].Seen
+		})
+		c.data.Installs = append([]chatInstall(nil), c.data.Installs[len(c.data.Installs)-chatInstallKeep:]...)
+	}
+	c.mu.Unlock()
+	c.persist(ctx)
+	return true
+}
+
+func (c *chatRoom) adminDevices(ctx context.Context) []chatInstall {
+	c.ensure(ctx)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	rows := make([]chatInstall, len(c.data.Installs))
+	copy(rows, c.data.Installs)
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Seen != rows[j].Seen {
+			return rows[i].Seen > rows[j].Seen
+		}
+		return rows[i].ID < rows[j].ID
+	})
+	return rows
+}
+
+func (s *Server) appOpened(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID       string `json:"id"`
+		Platform string `json:"platform"`
+		Version  string `json:"version"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 512)).Decode(&body); err != nil {
+		writeChatError(w, http.StatusBadRequest, "That device could not be recorded.")
+		return
+	}
+	id := strings.ToLower(strings.TrimSpace(body.ID))
+	platform := strings.ToLower(strings.TrimSpace(body.Platform))
+	version := strings.TrimSpace(body.Version)
+	if !installIDOk(id) || !installPlatformOk(platform) || !installVersionOk(version) {
+		writeChatError(w, http.StatusBadRequest, "That device could not be recorded.")
+		return
+	}
+	username := ""
+	if token := strings.TrimSpace(r.Header.Get(chatTokenHeader)); token != "" {
+		if user, ok := s.chat.userByToken(r.Context(), token); ok {
+			username = user.Username
+		}
+	}
+	if !s.chat.noteInstall(r.Context(), id, platform, version, username, clientIP(r)) {
+		writeChatError(w, http.StatusTooManyRequests, "Too many new devices from this network. Try again in a minute.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }

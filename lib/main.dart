@@ -2,6 +2,7 @@ import 'dart:async';
 // ignore: unused_import
 import 'package:social_save/bg_main.dart' show bgMain;
 import 'package:social_save/core/engine/local_engine.dart';
+import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/library/desktop_tray.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/core/engine/phone_engine.dart';
@@ -357,6 +358,7 @@ Future<void> main(List<String> args) async {
     // background, so it is up by the time a link is pasted.
     unawaited(_wakeServer());
   }
+  unawaited(ChatApi().reportInstall());
 
   runApp(
     ProviderScope(
@@ -582,6 +584,7 @@ Future<void> _runWeb() async {
   try {
     await GoogleFonts.pendingFonts().timeout(const Duration(seconds: 4));
   } catch (_) {}
+  unawaited(ChatApi().reportInstall());
   runApp(
     ProviderScope(
       overrides: [

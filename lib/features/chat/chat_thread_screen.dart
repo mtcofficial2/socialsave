@@ -18,6 +18,7 @@ import 'package:social_save/features/chat/chat_history.dart';
 import 'package:social_save/features/chat/chat_image_store.dart';
 import 'package:social_save/features/chat/chat_link.dart';
 import 'package:social_save/features/chat/chat_live.dart';
+import 'package:social_save/features/chat/chat_prefs.dart';
 import 'package:social_save/features/chat/chat_profile.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
 import 'package:social_save/features/chat/chat_voice.dart';
@@ -133,17 +134,15 @@ class _ChatThreadViewState extends State<ChatThreadView>
 
   bool get _isGroup => _group || widget.group || _threadId.startsWith('g');
 
-  bool get _enterSends {
-    switch (Theme.of(context).platform) {
-      case TargetPlatform.android:
-      case TargetPlatform.iOS:
-      case TargetPlatform.fuchsia:
-        return false;
-      case TargetPlatform.windows:
-      case TargetPlatform.linux:
-      case TargetPlatform.macOS:
-        return true;
-    }
+  bool get _keyboardSends => ChatPrefs.keyboardSends;
+
+  bool get _imeSends => ChatPrefs.imeSends(
+    keyboardSends: _keyboardSends,
+    platform: Theme.of(context).platform,
+  );
+
+  void _onPrefs() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -156,6 +155,8 @@ class _ChatThreadViewState extends State<ChatThreadView>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    ChatPrefs.revision.addListener(_onPrefs);
+    unawaited(ChatPrefs.ensure());
     ChatAlerts.holdThread(_threadId);
     _live = ChatLive.instance.events.listen(_onLive);
     ChatLive.revision.addListener(_onTypingClock);
@@ -171,6 +172,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    ChatPrefs.revision.removeListener(_onPrefs);
     ChatAlerts.releaseThread(_threadId);
     _live?.cancel();
     ChatLive.revision.removeListener(_onTypingClock);
@@ -1329,7 +1331,11 @@ class _ChatThreadViewState extends State<ChatThreadView>
   }
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
-    if (!_enterSends || event is! KeyDownEvent) return KeyEventResult.ignored;
+    final hardware = ChatPrefs.hardwareEnterSends(
+      keyboardSends: _keyboardSends,
+      platform: Theme.of(context).platform,
+    );
+    if (!hardware || event is! KeyDownEvent) return KeyEventResult.ignored;
     if (event.logicalKey != LogicalKeyboardKey.enter) {
       return KeyEventResult.ignored;
     }
@@ -1709,7 +1715,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
           toolbarHeight: 64,
           elevation: 0,
           scrolledUnderElevation: 0,
-          backgroundColor: scheme.surface,
+          backgroundColor: canvas,
           surfaceTintColor: Colors.transparent,
           automaticallyImplyLeading: !selecting && !widget.embedded,
           titleSpacing: widget.embedded ? 16 : 0,
@@ -1766,7 +1772,8 @@ class _ChatThreadViewState extends State<ChatThreadView>
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontSize: 16,
-                          fontWeight: FontWeight.w700,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: -0.2,
                         ),
                       ),
                       if (subtitle.isNotEmpty)
@@ -1811,6 +1818,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
                 Positioned.fill(
                   child: ChatWallpaper(
                     dark: scheme.brightness == Brightness.dark,
+                    pattern: ChatPrefs.pattern,
                   ),
                 ),
                 if (_pinned.isNotEmpty && !_searching)
@@ -1822,8 +1830,8 @@ class _ChatThreadViewState extends State<ChatThreadView>
                       color: scheme.brightness == Brightness.dark
                           ? const Color(0xFF1F2C34)
                           : Colors.white,
-                      elevation: 1,
-                      borderRadius: BorderRadius.circular(12),
+                      elevation: 0,
+                      borderRadius: BorderRadius.circular(16),
                       child: ListTile(
                         dense: true,
                         minTileHeight: 48,
@@ -1999,19 +2007,12 @@ class _ChatThreadViewState extends State<ChatThreadView>
             ),
           ),
         ),
-        DecoratedBox(
-          decoration: BoxDecoration(
-            color: scheme.surface,
-            border: Border(
-              top: BorderSide(
-                color: scheme.outlineVariant.withValues(alpha: 0.55),
-              ),
-            ),
-          ),
+        ColoredBox(
+          color: canvas,
           child: SafeArea(
             top: false,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+              padding: const EdgeInsets.fromLTRB(6, 4, 6, 8),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -2156,7 +2157,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
                     ChatComposer(
                       controller: _text,
                       focusNode: _focus,
-                      enterSends: _enterSends,
+                      imeSends: _imeSends,
                       onKey: _onKey,
                       onChanged: _onTyped,
                       onSend: () => unawaited(_send()),
@@ -2652,10 +2653,14 @@ class ChatBubble extends StatelessWidget {
             );
           }
           final radius = BorderRadius.only(
-            topLeft: Radius.circular(tight && !mine ? 6 : 8),
-            topRight: Radius.circular(tight && mine ? 6 : 8),
-            bottomLeft: Radius.circular(!tail || mine ? 8 : 0),
-            bottomRight: Radius.circular(!tail || !mine ? 8 : 0),
+            topLeft: Radius.circular(tight && !mine ? 6 : 18),
+            topRight: Radius.circular(tight && mine ? 6 : 18),
+            bottomLeft: Radius.circular(
+              tail && !mine ? 2 : (tight && !mine ? 6 : 18),
+            ),
+            bottomRight: Radius.circular(
+              tail && mine ? 2 : (tight && mine ? 6 : 18),
+            ),
           );
           return GestureDetector(
             onLongPressStart: onLongPress,
@@ -2672,10 +2677,10 @@ class ChatBubble extends StatelessWidget {
                   Container(
                     constraints: BoxConstraints(maxWidth: max),
                     padding: EdgeInsets.fromLTRB(
-                      barePhoto ? 3 : 8,
-                      barePhoto ? 3 : 6,
+                      barePhoto ? 3 : 11,
                       barePhoto ? 3 : 7,
-                      barePhoto ? 3 : 4,
+                      barePhoto ? 3 : 9,
+                      barePhoto ? 3 : 5,
                     ),
                     decoration: BoxDecoration(
                       color: bg,

@@ -8,6 +8,7 @@ import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_drafts.dart';
 import 'package:social_save/features/chat/chat_history.dart';
 import 'package:social_save/features/chat/chat_live.dart';
+import 'package:social_save/features/chat/chat_prefs.dart';
 import 'package:social_save/features/chat/chat_profile.dart';
 import 'package:social_save/features/chat/chat_settings.dart';
 import 'package:social_save/features/chat/chat_thread_screen.dart';
@@ -71,6 +72,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _live = ChatLive.instance.events.listen(_onLiveEvent);
     unawaited(ChatDrafts.ensure());
     unawaited(ChatInboxFilter.ensure());
+    unawaited(ChatPrefs.ensure());
     unawaited(_boot());
   }
 
@@ -91,6 +93,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_api.reportInstall());
+    }
     if (!_signedIn) return;
     if (state == AppLifecycleState.resumed) {
       _poll?.cancel();
@@ -144,6 +149,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         username: user.username,
         contact: user.contact,
       );
+      unawaited(_api.reportInstall(force: true));
       unawaited(ChatPresence.sync());
       if (!mounted) return;
       setState(() {
@@ -276,6 +282,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         username: created.user.username,
         contact: created.user.contact,
       );
+      unawaited(_api.reportInstall(force: true));
       unawaited(ChatPresence.sync());
       if (!mounted) return;
       _contact.clear();
@@ -1179,6 +1186,37 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     });
   }
 
+  void _openSavedFold({required bool blocked, required bool groups}) {
+    final hits = [
+      for (final item in _threads)
+        if (!ChatInboxFilter.hides(item.id, item.lastId))
+          if ((item.group || item.id.startsWith('g')) == groups)
+            if (blocked
+                ? item.blocked
+                : !item.blocked &&
+                      ChatInboxFilter.archived.contains(item.id))
+              item,
+    ];
+    if (!mounted) return;
+    if (hits.isEmpty) {
+      final label = blocked
+          ? 'No blocked people.'
+          : groups
+          ? 'No archived groups.'
+          : 'No archived chats.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(label)),
+      );
+      return;
+    }
+    setState(() {
+      _tab = groups ? _ChatTab.groups : _ChatTab.chats;
+      _showArchived = !blocked;
+      _showBlocked = blocked;
+      _find.clear();
+    });
+  }
+
   Widget _navIcon(IconData icon, int unread) {
     final glyph = Icon(icon);
     if (unread <= 0) return glyph;
@@ -1556,6 +1594,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       backgroundColor: ground,
       appBar: AppBar(
         title: Text(_tabTitle),
+        titleTextStyle: TextStyle(
+          color: scheme.onSurface,
+          fontSize: 22,
+          fontWeight: FontWeight.w600,
+          letterSpacing: -0.4,
+        ),
         backgroundColor: ground,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
@@ -1652,6 +1696,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     onProfile: () => unawaited(_openOwnProfile()),
                     onNewGroup: () => unawaited(_newGroup()),
                     onJoin: () => unawaited(_joinGroup()),
+                    onArchivedChats: () => _openSavedFold(
+                      blocked: false,
+                      groups: false,
+                    ),
+                    onArchivedGroups: () => _openSavedFold(
+                      blocked: false,
+                      groups: true,
+                    ),
+                    onBlocked: () => _openSavedFold(blocked: true, groups: false),
                     onPeople: () => unawaited(_openAdmin()),
                     onLogOut: () => unawaited(_logOut()),
                   ),

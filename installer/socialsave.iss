@@ -6,7 +6,7 @@
 ; yt-dlp, ffmpeg/ffprobe and deno in Release\engine\.)
 ; Then compile this script with Inno Setup (ISCC).
 
-#define AppVersion "1.0.83"
+#define AppVersion "1.0.84"
 #define SourceDir "..\build\windows\x64\runner\Release"
 
 [Setup]
@@ -34,7 +34,10 @@ PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-CloseApplications=yes
+; Restart Manager treats the tray app and the bundled adb server as files
+; it must replace, then DeleteFile fails with access denied. The setup
+; stops Social Save itself and leaves an existing adb folder alone.
+CloseApplications=no
 RestartApplications=no
 MinVersion=10.0
 VersionInfoVersion={#AppVersion}.0
@@ -43,7 +46,10 @@ VersionInfoProductName=SocialSave
 VersionInfoDescription=SocialSave installer
 
 [Files]
-Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "adb\*"; Flags: ignoreversion recursesubdirs createallsubdirs
+; adb.exe stays locked while any phone tool is using it. Copy it only
+; when this PC does not already have the folder.
+Source: "{#SourceDir}\adb\*"; DestDir: "{app}\adb"; Flags: ignoreversion recursesubdirs createallsubdirs onlyifdoesntexist
 
 [UninstallDelete]
 ; yt-dlp updates and the engine log (the bundled engine is under {app}).
@@ -81,3 +87,26 @@ Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.m4v\OpenWithProgid
 
 [Run]
 Filename: "{app}\SocialSave.exe"; Description: "Open SocialSave"; Flags: nowait postinstall skipifsilent
+
+[Code]
+// Closing the window hides Social Save in the tray, so the plugin DLLs
+// stay open. Stop the app and its engine before the files are replaced.
+// adb is not stopped; that folder is left in place when it already exists.
+procedure StopSocialSave;
+var
+  ResultCode: Integer;
+  Killer: String;
+begin
+  Killer := ExpandConstant('{sysnative}\taskkill.exe');
+  if not FileExists(Killer) then
+    Killer := ExpandConstant('{sys}\taskkill.exe');
+  Exec(Killer, '/F /T /IM SocialSave.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(Killer, '/F /T /IM socialsave-engine.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(800);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  StopSocialSave;
+  Result := '';
+end;

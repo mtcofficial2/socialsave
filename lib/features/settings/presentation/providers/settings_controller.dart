@@ -49,6 +49,14 @@ class SettingsController extends Notifier<AppSettings> {
     return _commit(state.copyWith(autoPlayNextInGallery: value));
   }
 
+  Future<void> setAutoPip(bool value) {
+    return _commit(state.copyWith(autoPip: value));
+  }
+
+  Future<void> setAutoPipOnBlur(bool value) {
+    return _commit(state.copyWith(autoPipOnBlur: value));
+  }
+
   Future<void> setLastChosenQuality(String quality) {
     return _commit(state.copyWith(lastChosenQuality: quality));
   }

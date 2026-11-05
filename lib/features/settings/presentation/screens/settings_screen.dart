@@ -202,7 +202,7 @@ class SettingsScreen extends ConsumerWidget {
             ),
                   ],
                 )),
-                _Sec(title: 'Download Preferences', keys: 'download wifi location quality resolution', child: Column(
+                _Sec(title: 'Download Preferences', keys: 'download wifi location quality resolution start queue', child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
             _groupTitle(context, Icons.download_for_offline_outlined, 'Download Preferences'),
@@ -223,6 +223,15 @@ class SettingsScreen extends ConsumerWidget {
                           : 'Conserve mobile cellular bandwidth',
                       value: settings.wifiOnly,
                       onChanged: controller.setWifiOnly,
+                    ),
+                    const SizedBox(height: 16),
+                    _toggleRow(
+                      context,
+                      icon: Icons.play_arrow_rounded,
+                      title: 'Start saves immediately',
+                      subtitle: 'Off keeps a new save in the queue until you start it',
+                      value: settings.autoStartDownloads,
+                      onChanged: controller.setAutoStart,
                     ),
                     const SizedBox(height: 16),
                     _toggleRow(
@@ -263,23 +272,59 @@ class SettingsScreen extends ConsumerWidget {
             ),
                   ],
                 )),
-                _Sec(title: 'Player', keys: 'player play next library', child: Column(
+                _Sec(title: 'Player', keys: 'player play next library picture pip window', child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
             _groupTitle(context, Icons.play_circle_outline, 'Player'),
             GlassCard(
               child: Padding(
                 padding: const EdgeInsets.all(16),
-                child: _toggleRow(
-                  context,
-                  icon: Icons.skip_next_rounded,
-                  title: 'Play next in Library',
-                  subtitle:
-                      DesktopSupport.isWindows
-                          ? 'When a video ends, count down 5 seconds to the next one. Click Rewatch to play it again.'
-                          : 'When a video ends, count down 5 seconds to the next one. Tap Rewatch to play it again.',
-                  value: settings.autoPlayNextInGallery,
-                  onChanged: controller.setAutoPlayNextInGallery,
+                child: Column(
+                  children: [
+                    _toggleRow(
+                      context,
+                      icon: Icons.skip_next_rounded,
+                      title: 'Play next in Library',
+                      subtitle:
+                          DesktopSupport.isWindows
+                              ? 'When a video ends, count down 5 seconds to the next one. Click Rewatch to play it again.'
+                              : 'When a video ends, count down 5 seconds to the next one. Tap Rewatch to play it again.',
+                      value: settings.autoPlayNextInGallery,
+                      onChanged: controller.setAutoPlayNextInGallery,
+                    ),
+                    if (DesktopSupport.isWindows) ...[
+                      const SizedBox(height: 16),
+                      _toggleRow(
+                        context,
+                        icon: Icons.picture_in_picture_alt_rounded,
+                        title: 'Picture in picture',
+                        subtitle:
+                            'A playing video shrinks to a small window when this window is minimized',
+                        value: settings.autoPip,
+                        onChanged: (on) async {
+                          await controller.setAutoPip(on);
+                          if (!on && settings.autoPipOnBlur) {
+                            await controller.setAutoPipOnBlur(false);
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      _toggleRow(
+                        context,
+                        icon: Icons.tab_unselected_rounded,
+                        title: 'Also when another window is in front',
+                        subtitle:
+                            'The small window appears when you switch to another app',
+                        value: settings.autoPipOnBlur,
+                        onChanged: (on) async {
+                          if (on && !settings.autoPip) {
+                            await controller.setAutoPip(true);
+                          }
+                          await controller.setAutoPipOnBlur(on);
+                        },
+                      ),
+                    ],
+                  ],
                 ),
               ),
             ),

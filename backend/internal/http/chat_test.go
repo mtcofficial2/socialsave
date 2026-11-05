@@ -296,6 +296,41 @@ func TestChatPasswordAndSeenName(t *testing.T) {
 	_ = ben
 }
 
+func TestAdminDevices(t *testing.T) {
+	app := testApp(t)
+	app.chat.file = filepath.Join(t.TempDir(), "accounts.json")
+	const id = "0123456789abcdef0123456789abcdef"
+
+	bad := postChat(app, "/api/v1/app/opened", "", `{"id":"nope","platform":"android","version":"1.0.83"}`)
+	if bad.Code != http.StatusBadRequest {
+		t.Fatalf("bad id %d %s", bad.Code, bad.Body.String())
+	}
+	opened := postChat(app, "/api/v1/app/opened", "", `{"id":"`+id+`","platform":"android","version":"1.0.83"}`)
+	if opened.Code != http.StatusOK {
+		t.Fatalf("opened %d %s", opened.Code, opened.Body.String())
+	}
+
+	ada := registerChat(t, app, `{"phone":"+256 700 000 111","username":"ada"}`)
+	hidden := getChat(app, "/api/v1/chat/admin/users", ada.token)
+	if hidden.Code != http.StatusForbidden || bytes.Contains(hidden.Body.Bytes(), []byte(id)) {
+		t.Fatalf("hidden devices %d %s", hidden.Code, hidden.Body.String())
+	}
+
+	admin := registerChat(t, app, `{"phone":"+256 703 487 378","username":"@daniel256"}`)
+	named := postChat(app, "/api/v1/app/opened", admin.token, `{"id":"`+id+`","platform":"windows","version":"1.0.83"}`)
+	if named.Code != http.StatusOK {
+		t.Fatalf("named %d %s", named.Code, named.Body.String())
+	}
+	list := getChat(app, "/api/v1/chat/admin/users", admin.token)
+	body := list.Body.Bytes()
+	if list.Code != http.StatusOK || !bytes.Contains(body, []byte(`"platform":"windows"`)) || !bytes.Contains(body, []byte(`"username":"daniel256"`)) {
+		t.Fatalf("devices %d %s", list.Code, body)
+	}
+	if bytes.Contains(body, []byte(admin.token)) || bytes.Contains(body, []byte("tokenHash")) {
+		t.Fatalf("devices leaked a token %s", body)
+	}
+}
+
 func postChat(app *Server, path, token, body string) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body))
 	if token != "" {

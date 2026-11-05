@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:social_save/features/chat/chat_prefs.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
 
 /// Account and chat controls. One quiet page, reached from the Settings tab.
-class ChatSettingsPage extends StatelessWidget {
+class ChatSettingsPage extends StatefulWidget {
   const ChatSettingsPage({
     super.key,
     required this.username,
@@ -13,6 +16,9 @@ class ChatSettingsPage extends StatelessWidget {
     required this.onProfile,
     required this.onNewGroup,
     required this.onJoin,
+    required this.onArchivedChats,
+    required this.onArchivedGroups,
+    required this.onBlocked,
     required this.onPeople,
     required this.onLogOut,
   });
@@ -24,101 +30,167 @@ class ChatSettingsPage extends StatelessWidget {
   final VoidCallback onProfile;
   final VoidCallback onNewGroup;
   final VoidCallback onJoin;
+  final VoidCallback onArchivedChats;
+  final VoidCallback onArchivedGroups;
+  final VoidCallback onBlocked;
   final VoidCallback onPeople;
   final VoidCallback onLogOut;
+
+  @override
+  State<ChatSettingsPage> createState() => _ChatSettingsPageState();
+}
+
+class _ChatSettingsPageState extends State<ChatSettingsPage> {
+  @override
+  void initState() {
+    super.initState();
+    ChatPrefs.revision.addListener(_refresh);
+    unawaited(ChatPrefs.ensure());
+  }
+
+  @override
+  void dispose() {
+    ChatPrefs.revision.removeListener(_refresh);
+    super.dispose();
+  }
+
+  void _refresh() {
+    if (mounted) setState(() {});
+  }
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final dark = ChatUiTokens.dark(context);
-    final name = username.replaceFirst(RegExp(r'^@'), '').trim();
+    final name = widget.username.replaceFirst(RegExp(r'^@'), '').trim();
     final shown = name.isEmpty ? 'Your profile' : '@$name';
+    final quiet = dark ? ChatUiTokens.timeDark : scheme.onSurfaceVariant;
     return ListView(
       padding: pagePadding(context, top: 8, bottom: 28, maxWidth: 520),
       children: [
-        const SizedBox(height: 8),
-        _Panel(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 22, 16, 10),
-            child: Column(
-              children: [
-                Semantics(
-                  button: true,
-                  label: 'Edit profile for $shown',
-                  child: InkWell(
-                    customBorder: const CircleBorder(),
-                    onTap: onProfile,
-                    child: avatar,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                Text(
-                  shown,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.3,
-                  ),
-                ),
-                if (contact.trim().isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    contact.trim(),
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: scheme.onSurfaceVariant,
-                      height: 1.3,
-                    ),
-                  ),
-                ],
-                TextButton(
-                  onPressed: onProfile,
-                  style: TextButton.styleFrom(
-                    foregroundColor: ChatUiTokens.brand,
-                    minimumSize: const Size(48, 48),
-                  ),
-                  child: const Text('Edit profile'),
-                ),
-              ],
-            ),
+        const SizedBox(height: 12),
+        Semantics(
+          button: true,
+          label: 'Edit profile for $shown',
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: widget.onProfile,
+            child: widget.avatar,
           ),
         ),
-        const _Heading('Chats'),
-        _SettingRow(
-          icon: Icons.group_add_outlined,
-          title: 'New group',
-          onTap: onNewGroup,
+        const SizedBox(height: 12),
+        Text(
+          shown,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.w600,
+            letterSpacing: -0.4,
+          ),
         ),
-        _SettingRow(
-          icon: Icons.vpn_key_outlined,
-          title: 'Join with a code',
-          onTap: onJoin,
+        if (widget.contact.trim().isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(
+            widget.contact.trim(),
+            textAlign: TextAlign.center,
+            style: TextStyle(color: quiet, height: 1.3),
+          ),
+        ],
+        TextButton(
+          onPressed: widget.onProfile,
+          style: TextButton.styleFrom(
+            foregroundColor: ChatUiTokens.brand,
+            minimumSize: const Size(48, 44),
+          ),
+          child: const Text('Edit profile'),
+        ),
+        const _Heading('Chats'),
+        _Group(
+          children: [
+            _LinkRow(
+              icon: Icons.group_add_outlined,
+              title: 'New group',
+              onTap: widget.onNewGroup,
+            ),
+            _LinkRow(
+              icon: Icons.vpn_key_outlined,
+              title: 'Join with a code',
+              onTap: widget.onJoin,
+            ),
+            _LinkRow(
+              icon: Icons.archive_outlined,
+              title: 'Archived chats',
+              onTap: widget.onArchivedChats,
+            ),
+            _LinkRow(
+              icon: Icons.inventory_2_outlined,
+              title: 'Archived groups',
+              onTap: widget.onArchivedGroups,
+            ),
+            _LinkRow(
+              icon: Icons.block_rounded,
+              title: 'Blocked',
+              onTap: widget.onBlocked,
+            ),
+          ],
+        ),
+        const _Heading('Messages'),
+        _Group(
+          children: [
+            _SwitchRow(
+              icon: Icons.keyboard_return_rounded,
+              title: 'Enter key sends',
+              subtitle:
+                  'Enter sends. Shift+Enter starts a new line on a computer. Off uses Enter for a new line.',
+              value: ChatPrefs.keyboardSends,
+              onChanged: (on) => unawaited(ChatPrefs.setKeyboardSends(on)),
+            ),
+            _SwitchRow(
+              icon: Icons.volume_up_outlined,
+              title: 'Message sound',
+              subtitle:
+                  'A tone when a message arrives. A muted chat stays quiet, and the notice still shows.',
+              value: ChatPrefs.messageSound,
+              onChanged: (on) => unawaited(ChatPrefs.setMessageSound(on)),
+            ),
+            _SwitchRow(
+              icon: Icons.texture_outlined,
+              title: 'Pattern background',
+              subtitle: 'A faint pattern behind messages. Off keeps it plain.',
+              value: ChatPrefs.pattern,
+              onChanged: (on) => unawaited(ChatPrefs.setPattern(on)),
+            ),
+          ],
         ),
         const _Heading('Notifications'),
         Padding(
           padding: const EdgeInsets.fromLTRB(4, 0, 4, 4),
           child: Text(
             'Hold a chat, or tap Mute on its notification. Only that conversation goes quiet.',
-            style: TextStyle(
-              color: dark ? ChatUiTokens.timeDark : scheme.onSurfaceVariant,
-              height: 1.45,
-            ),
+            style: TextStyle(color: quiet, height: 1.45),
           ),
         ),
         const _Heading('Account'),
-        _SettingRow(
-          icon: Icons.logout_rounded,
-          title: 'Log out',
-          destructive: true,
-          onTap: onLogOut,
+        _Group(
+          children: [
+            _LinkRow(
+              icon: Icons.logout_rounded,
+              title: 'Log out',
+              destructive: true,
+              onTap: widget.onLogOut,
+            ),
+          ],
         ),
-        if (admin) ...[
+        if (widget.admin) ...[
           const _Heading('People'),
-          _SettingRow(
-            icon: Icons.people_outline_rounded,
-            title: 'Registered people',
-            onTap: onPeople,
+          _Group(
+            children: [
+              _LinkRow(
+                icon: Icons.people_outline_rounded,
+                title: 'People and devices',
+                onTap: widget.onPeople,
+              ),
+            ],
           ),
         ],
       ],
@@ -126,23 +198,33 @@ class ChatSettingsPage extends StatelessWidget {
   }
 }
 
-class _Panel extends StatelessWidget {
-  const _Panel({required this.child});
+class _Group extends StatelessWidget {
+  const _Group({required this.children});
 
-  final Widget child;
+  final List<Widget> children;
 
   @override
   Widget build(BuildContext context) {
     final dark = ChatUiTokens.dark(context);
-    return Material(
-      color: dark ? const Color(0xFF111B21) : Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(20),
-        side: BorderSide(
-          color: dark ? const Color(0xFF1F2C34) : const Color(0xFFE4E7EA),
+    final line = dark ? const Color(0xFF1F2C34) : const Color(0xFFE4E7EA);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: dark ? const Color(0xFF111B21) : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: line),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: Column(
+          children: [
+            for (var i = 0; i < children.length; i++) ...[
+              children[i],
+              if (i != children.length - 1)
+                Divider(height: 0.6, thickness: 0.6, indent: 52, color: line),
+            ],
+          ],
         ),
       ),
-      child: child,
     );
   }
 }
@@ -160,17 +242,17 @@ class _Heading extends StatelessWidget {
         label,
         style: TextStyle(
           color: Theme.of(context).colorScheme.onSurfaceVariant,
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.4,
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          letterSpacing: -0.1,
         ),
       ),
     );
   }
 }
 
-class _SettingRow extends StatelessWidget {
-  const _SettingRow({
+class _LinkRow extends StatelessWidget {
+  const _LinkRow({
     required this.icon,
     required this.title,
     required this.onTap,
@@ -185,48 +267,95 @@ class _SettingRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final dark = ChatUiTokens.dark(context);
     final color = destructive ? scheme.error : scheme.onSurface;
-    final shape = RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(16),
-      side: BorderSide(
-        color: dark ? const Color(0xFF1F2C34) : const Color(0xFFE4E7EA),
+    return InkWell(
+      onTap: onTap,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 52),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          child: Row(
+            children: [
+              Icon(icon, color: color, size: 22),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+              ),
+              if (!destructive)
+                Icon(Icons.chevron_right_rounded, color: scheme.onSurfaceVariant),
+            ],
+          ),
+        ),
       ),
     );
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Material(
-        color: dark ? const Color(0xFF111B21) : Colors.white,
-        shape: shape,
-        child: InkWell(
-          customBorder: shape,
-          onTap: onTap,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 56),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              child: Row(
+  }
+}
+
+class _SwitchRow extends StatelessWidget {
+  const _SwitchRow({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 64),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 8, 6, 8),
+        child: Row(
+          children: [
+            Icon(icon, size: 22, color: scheme.onSurface),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(icon, color: color, size: 22),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Text(
-                      title,
-                      style: TextStyle(
-                        color: color,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: -0.2,
                     ),
                   ),
-                  Icon(
-                    Icons.chevron_right_rounded,
-                    color: scheme.onSurfaceVariant,
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      fontSize: 13,
+                      height: 1.35,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                 ],
               ),
             ),
-          ),
+            Switch(
+              value: value,
+              onChanged: onChanged,
+              activeThumbColor: Colors.white,
+              activeTrackColor: ChatUiTokens.brand,
+            ),
+          ],
         ),
       ),
     );

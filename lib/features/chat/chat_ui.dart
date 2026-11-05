@@ -156,10 +156,9 @@ class ChatSearchField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = ChatUiTokens.dark(context);
-    final line = dark ? const Color(0xFF2A3942) : const Color(0xFFE4E7EA);
     final border = OutlineInputBorder(
-      borderRadius: BorderRadius.circular(24),
-      borderSide: BorderSide(color: line),
+      borderRadius: BorderRadius.circular(22),
+      borderSide: BorderSide.none,
     );
     return TextField(
       controller: controller,
@@ -176,8 +175,8 @@ class ChatSearchField extends StatelessWidget {
         ),
         filled: true,
         isDense: true,
-        fillColor: ChatUiTokens.searchFill(dark),
-        constraints: const BoxConstraints(minHeight: 48),
+        fillColor: dark ? const Color(0xFF1F2C34) : const Color(0xFFF0F2F5),
+        constraints: const BoxConstraints(minHeight: 44),
         contentPadding: const EdgeInsets.symmetric(vertical: 12),
         border: border,
         enabledBorder: border,
@@ -653,7 +652,8 @@ class _RowBody extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 16,
-                    fontWeight: unread ? FontWeight.w700 : FontWeight.w600,
+                    letterSpacing: -0.2,
+                    fontWeight: unread ? FontWeight.w600 : FontWeight.w500,
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -742,11 +742,13 @@ class _RowBody extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
+                            fontSize: 14,
+                            height: 1.2,
                             color: unread
                                 ? scheme.onSurface
                                 : scheme.onSurfaceVariant,
                             fontWeight: unread
-                                ? FontWeight.w700
+                                ? FontWeight.w600
                                 : FontWeight.w400,
                           ),
                         ),
@@ -766,7 +768,7 @@ class _RowBody extends StatelessWidget {
                   stamp,
                   style: TextStyle(
                     fontSize: 12,
-                    fontWeight: unread ? FontWeight.w700 : FontWeight.w500,
+                    fontWeight: unread ? FontWeight.w600 : FontWeight.w400,
                     color: unread
                         ? ChatUiTokens.brand
                         : scheme.onSurfaceVariant,
@@ -815,8 +817,8 @@ class _CountBadge extends StatelessWidget {
         label,
         style: const TextStyle(
           color: Colors.white,
-          fontSize: 12,
-          fontWeight: FontWeight.w800,
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
         ),
       ),
     );
@@ -829,7 +831,7 @@ class ChatComposer extends StatelessWidget {
     super.key,
     required this.controller,
     required this.focusNode,
-    required this.enterSends,
+    required this.imeSends,
     required this.onKey,
     required this.onChanged,
     required this.onSend,
@@ -840,7 +842,9 @@ class ChatComposer extends StatelessWidget {
 
   final TextEditingController controller;
   final FocusNode focusNode;
-  final bool enterSends;
+  /// The on-screen Send key. A computer leaves this off so Shift+Enter
+  /// can stay a new line while the Enter key is handled separately.
+  final bool imeSends;
   final FocusOnKeyEventCallback onKey;
   final ValueChanged<String> onChanged;
   final VoidCallback onSend;
@@ -885,10 +889,10 @@ class ChatComposer extends StatelessWidget {
                     onChanged: onChanged,
                     minLines: 1,
                     maxLines: 5,
-                    textInputAction: enterSends
-                        ? TextInputAction.newline
-                        : TextInputAction.send,
-                    onSubmitted: enterSends ? null : (_) => onSend(),
+                    textInputAction: imeSends
+                        ? TextInputAction.send
+                        : TextInputAction.newline,
+                    onSubmitted: imeSends ? (_) => onSend() : null,
                     style: TextStyle(
                       fontSize: 16,
                       height: 1.25,

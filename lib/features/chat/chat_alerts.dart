@@ -11,6 +11,7 @@ import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/features/chat/chat_alert_policy.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_format.dart';
+import 'package:social_save/features/chat/chat_prefs.dart';
 import 'package:social_save/features/chat/chat_history.dart';
 import 'package:social_save/features/chat/chat_live.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
@@ -46,11 +47,13 @@ Future<void> _deliverChatAlert({
   required String username,
   required int photoRev,
 }) async {
+  await ChatPrefs.ensure();
+  final tones = ChatPrefs.messageSound;
   final here = chatUserIsHere(
     life: WidgetsBinding.instance.lifecycleState,
     screenOn: await _androidScreenOn(),
   );
-  if (Plat.isAndroid && here) {
+  if (tones && Plat.isAndroid && here) {
     unawaited(_playPhoneTone());
   }
   await _postChatAlert(
@@ -59,7 +62,7 @@ Future<void> _deliverChatAlert({
     body: body,
     username: username.trim().isEmpty ? title : username.trim(),
     photoRev: photoRev,
-    sound: !here,
+    sound: tones && !here,
   );
 }
 
@@ -133,7 +136,10 @@ Future<void> _postChatAlert({
     sound: sound,
     picture: saved.bytes,
   );
-  if (!shown && !kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
+  if (ChatPrefs.messageSound &&
+      !shown &&
+      !kIsWeb &&
+      defaultTargetPlatform == TargetPlatform.windows) {
     unawaited(SystemSound.play(SystemSoundType.alert));
   }
   if (saved.exact || username.isEmpty || username == 'New message') return;

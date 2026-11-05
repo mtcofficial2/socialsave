@@ -63,4 +63,20 @@ void main() {
     expect(open.hasPassword, isFalse);
     expect(open.lastSeen, isNull);
   });
+
+  test('a device row reads the platform, version, and last open', () {
+    final row = ChatDeviceEntry.fromJson({
+      'id': '0123456789abcdef0123456789abcdef',
+      'platform': 'android',
+      'version': '1.0.83',
+      'username': 'ada',
+      'first': 1700000000000,
+      'seen': 1700000001000,
+    });
+    expect(row.platform, 'android');
+    expect(row.version, '1.0.83');
+    expect(row.username, 'ada');
+    expect(row.seen, DateTime.fromMillisecondsSinceEpoch(1700000001000));
+    expect(chatDevicePlatform(), isNotNull);
+  });
 }

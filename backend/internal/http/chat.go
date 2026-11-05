@@ -56,9 +56,9 @@ type chatBlob interface {
 }
 
 type chatUser struct {
-	ID        string `json:"id"`
-	Phone     string `json:"phone,omitempty"`
-	Email     string `json:"email,omitempty"`
+	ID           string            `json:"id"`
+	Phone        string            `json:"phone,omitempty"`
+	Email        string            `json:"email,omitempty"`
 	Username     string            `json:"username"`
 	TokenHash    string            `json:"tokenHash"`
 	Sessions     []string          `json:"sessions,omitempty"`
@@ -71,19 +71,19 @@ type chatUser struct {
 }
 
 type chatMessage struct {
-	ID        int64    `json:"id"`
-	From      string   `json:"from"`
-	Name      string   `json:"name"`
-	Text      string   `json:"text"`
-	Links     []string `json:"links,omitempty"`
-	At        int64    `json:"at"`
-	Status    string   `json:"status,omitempty"`
-	Voice     string   `json:"voice,omitempty"`
-	VoiceMs   int      `json:"voiceMs,omitempty"`
-	VoiceType string   `json:"voiceType,omitempty"`
-	Reply     int64    `json:"reply,omitempty"`
-	ReplyName string   `json:"replyName,omitempty"`
-	ReplyText string   `json:"replyText,omitempty"`
+	ID        int64          `json:"id"`
+	From      string         `json:"from"`
+	Name      string         `json:"name"`
+	Text      string         `json:"text"`
+	Links     []string       `json:"links,omitempty"`
+	At        int64          `json:"at"`
+	Status    string         `json:"status,omitempty"`
+	Voice     string         `json:"voice,omitempty"`
+	VoiceMs   int            `json:"voiceMs,omitempty"`
+	VoiceType string         `json:"voiceType,omitempty"`
+	Reply     int64          `json:"reply,omitempty"`
+	ReplyName string         `json:"replyName,omitempty"`
+	ReplyText string         `json:"replyText,omitempty"`
 	Photo     string         `json:"photo,omitempty"`
 	PhotoType string         `json:"photoType,omitempty"`
 	Song      string         `json:"song,omitempty"`
@@ -136,10 +136,22 @@ type chatThread struct {
 	Pinned   []int64             `json:"pinned,omitempty"`
 }
 
+// chatInstall is one copy of the app. The id is random and made on that
+// device. It is not a hardware serial, and this record has no location.
+type chatInstall struct {
+	ID       string `json:"id"`
+	Platform string `json:"platform"`
+	Version  string `json:"version"`
+	Username string `json:"username,omitempty"`
+	First    int64  `json:"first"`
+	Seen     int64  `json:"seen"`
+}
+
 type chatData struct {
-	Schema  int          `json:"schema,omitempty"`
-	Users   []chatUser   `json:"users"`
-	Threads []chatThread `json:"threads"`
+	Schema   int           `json:"schema,omitempty"`
+	Users    []chatUser    `json:"users"`
+	Threads  []chatThread  `json:"threads"`
+	Installs []chatInstall `json:"installs,omitempty"`
 }
 
 type chatThreadSync struct {
@@ -185,20 +197,21 @@ type chatPeerView struct {
 }
 
 type chatRoom struct {
-	mu        sync.Mutex
-	saveMu    sync.Mutex
-	load      sync.Once
+	mu     sync.Mutex
+	saveMu sync.Mutex
+	load   sync.Once
 	// blobFailed is set when stored accounts could not be read, so a save
 	// does not replace them with a smaller list.
 	blobFailed bool
-	data      chatData
-	posts     map[string][]time.Time
-	joins     map[string][]time.Time
-	last      map[string]string
-	seenSaved map[string]int64
-	blob      chatBlob
-	file      string
-	live      *chatHub
+	data       chatData
+	posts      map[string][]time.Time
+	joins      map[string][]time.Time
+	opens      map[string][]time.Time
+	last       map[string]string
+	seenSaved  map[string]int64
+	blob       chatBlob
+	file       string
+	live       *chatHub
 }
 
 func newChatRoom(up storage.Uploader) *chatRoom {
@@ -210,6 +223,7 @@ func newChatRoom(up storage.Uploader) *chatRoom {
 	return &chatRoom{
 		posts:     map[string][]time.Time{},
 		joins:     map[string][]time.Time{},
+		opens:     map[string][]time.Time{},
 		last:      map[string]string{},
 		seenSaved: map[string]int64{},
 		blob:      blob,
@@ -1434,6 +1448,9 @@ func chatRicher(a, b chatData) bool {
 	if len(a.Users) != len(b.Users) {
 		return len(a.Users) > len(b.Users)
 	}
+	if len(a.Installs) != len(b.Installs) {
+		return len(a.Installs) > len(b.Installs)
+	}
 	return chatLatest(a) > chatLatest(b)
 }
 
@@ -1444,6 +1461,11 @@ func chatLatest(data chatData) int64 {
 			if item.At > last {
 				last = item.At
 			}
+		}
+	}
+	for _, install := range data.Installs {
+		if install.Seen > last {
+			last = install.Seen
 		}
 	}
 	return last
@@ -1458,6 +1480,7 @@ func (c *chatRoom) persist(ctx context.Context) {
 	blob := c.blob
 	failed := c.blobFailed
 	users := len(c.data.Users)
+	installs := len(c.data.Installs)
 	c.mu.Unlock()
 	if err != nil {
 		return
@@ -1474,9 +1497,12 @@ func (c *chatRoom) persist(ctx context.Context) {
 			slog.Warn("chat storage still unreadable; save skipped")
 			return
 		}
-		if getErr == nil && len(decodeChat(stored).Users) > users {
-			slog.Warn("chat storage has more accounts than memory; save skipped")
-			return
+		if getErr == nil {
+			storedData := decodeChat(stored)
+			if len(storedData.Users) > users || len(storedData.Installs) > installs {
+				slog.Warn("chat storage has more accounts than memory; save skipped")
+				return
+			}
 		}
 		c.mu.Lock()
 		c.blobFailed = false

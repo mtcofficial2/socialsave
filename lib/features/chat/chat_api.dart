@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -7,11 +8,14 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/config/build_flags.dart';
 import 'package:social_save/core/config/env_config.dart';
+import 'package:social_save/core/constants/app_constants.dart';
+import 'package:social_save/core/platform/plat.dart';
 
 const chatTokenKey = 'chat.token.v1';
 const chatUsernameKey = 'chat.username.v1';
 const chatContactKey = 'chat.contact.v1';
 const chatReadKey = 'chat.read.v1';
+const chatInstallKey = 'socialsave.install.v1';
 
 /// Last message id this device has opened, per conversation.
 class ChatReads {
@@ -165,6 +169,94 @@ class ChatDirectoryEntry {
       hasPassword: json['hasPassword'] == true,
     );
   }
+}
+
+/// People and devices for the admin monitor. Anyone else is refused.
+class ChatAdminSnapshot {
+  const ChatAdminSnapshot({
+    required this.people,
+    required this.devices,
+    required this.storage,
+  });
+
+  final List<ChatDirectoryEntry> people;
+  final List<ChatDeviceEntry> devices;
+  final String storage;
+}
+
+/// One install. [id] is a random id from that device, not a serial number.
+class ChatDeviceEntry {
+  const ChatDeviceEntry({
+    required this.id,
+    required this.platform,
+    required this.version,
+    required this.username,
+    required this.first,
+    required this.seen,
+  });
+
+  final String id;
+  final String platform;
+  final String version;
+  final String username;
+  final DateTime? first;
+  final DateTime? seen;
+
+  factory ChatDeviceEntry.fromJson(Map<String, dynamic> json) {
+    final first = (json['first'] as num?)?.toInt() ?? 0;
+    final seen = (json['seen'] as num?)?.toInt() ?? 0;
+    return ChatDeviceEntry(
+      id: (json['id'] as String?)?.trim() ?? '',
+      platform: (json['platform'] as String?)?.trim() ?? '',
+      version: (json['version'] as String?)?.trim() ?? '',
+      username: (json['username'] as String?)?.trim() ?? '',
+      first: first > 0 ? DateTime.fromMillisecondsSinceEpoch(first) : null,
+      seen: seen > 0 ? DateTime.fromMillisecondsSinceEpoch(seen) : null,
+    );
+  }
+}
+
+List<ChatDirectoryEntry> _directoryRows(Object? items) {
+  if (items is! List) return const [];
+  return [
+    for (final item in items)
+      if (item is Map)
+        ChatDirectoryEntry.fromJson(Map<String, dynamic>.from(item)),
+  ];
+}
+
+List<ChatDeviceEntry> _deviceRows(Object? items) {
+  if (items is! List) return const [];
+  return [
+    for (final item in items)
+      if (item is Map) ChatDeviceEntry.fromJson(Map<String, dynamic>.from(item)),
+  ];
+}
+
+/// A random 32-character id stored on this device. Null when one cannot be made.
+Future<String?> _installId() async {
+  final prefs = await SharedPreferences.getInstance();
+  final current = prefs.getString(chatInstallKey)?.trim().toLowerCase() ?? '';
+  if (RegExp(r'^[a-f0-9]{32}$').hasMatch(current)) return current;
+  final random = Random.secure();
+  final buffer = StringBuffer();
+  for (var i = 0; i < 16; i++) {
+    buffer.write(random.nextInt(256).toRadixString(16).padLeft(2, '0'));
+  }
+  final id = buffer.toString();
+  await prefs.setString(chatInstallKey, id);
+  return id;
+}
+
+/// The kind of device the server accepts. Null is not reported.
+String? chatDevicePlatform() {
+  if (Plat.isWeb) return 'web';
+  if (Plat.isAndroid) return 'android';
+  if (Plat.isIOS) return 'ios';
+  if (Plat.isWindows) return 'windows';
+  if (Plat.isMacOS) return 'macos';
+  if (Plat.isLinux) return 'linux';
+  return null;
 }
 
 /// What a chat route was opened with. [name] is the private label, if any.
@@ -706,20 +798,52 @@ class ChatApi {
   /// 's3', 's3-error', 'temporary', or empty when the server did not say.
   String lastStorage = '';
 
-  Future<List<ChatDirectoryEntry>> directory() async {
+  static DateTime? _reportedAt;
+
+  /// Tells the server this copy of the app was opened. The id is random.
+  /// A chat sign-in on this device attaches that username. Failures stay quiet.
+  Future<void> reportInstall({bool force = false}) async {
+    final now = DateTime.now();
+    final recent = _reportedAt;
+    if (!force &&
+        recent != null &&
+        now.difference(recent) < const Duration(minutes: 2)) {
+      return;
+    }
+    try {
+      final id = await _installId();
+      final platform = chatDevicePlatform();
+      if (id == null || platform == null) return;
+      final token = await ChatSession.token();
+      await _dio.post<dynamic>(
+        '/api/v1/app/opened',
+        data: {
+          'id': id,
+          'platform': platform,
+          'version': AppConstants.appVersion,
+        },
+        options: Options(
+          headers: {
+            if (token != null && token.isNotEmpty) 'X-Chat-Token': token,
+          },
+        ),
+      );
+      _reportedAt = DateTime.now();
+    } catch (_) {}
+  }
+
+  Future<ChatAdminSnapshot> directory() async {
     final response = await _dio.get<dynamic>(
       '/api/v1/chat/admin/users',
       options: await _auth(),
     );
     final body = _object(response);
     lastStorage = (body['storage'] as String?)?.trim() ?? '';
-    final items = body['users'];
-    if (items is! List) return const [];
-    return [
-      for (final item in items)
-        if (item is Map)
-          ChatDirectoryEntry.fromJson(Map<String, dynamic>.from(item)),
-    ];
+    return ChatAdminSnapshot(
+      people: _directoryRows(body['users']),
+      devices: _deviceRows(body['devices']),
+      storage: lastStorage,
+    );
   }
 
   Future<ChatUser> me() async {
