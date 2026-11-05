@@ -529,6 +529,45 @@ class NotificationService {
     return true;
   }
 
+  static const incomingCallId = 910085;
+
+  /// A ringing banner. The phone ringtone itself is played separately so the
+  /// notification sound does not cut the ring short.
+  Future<void> showIncomingCall(String name) async {
+    if (kIsWeb) return;
+    if (!_initialized) await init();
+    final who = name.trim().isEmpty ? 'Audio call' : name.trim();
+    const details = NotificationDetails(
+      android: AndroidNotificationDetails(
+        'calls_v1',
+        'Calls',
+        channelDescription: 'Incoming audio calls',
+        icon: 'ic_notification',
+        importance: Importance.max,
+        priority: Priority.max,
+        category: AndroidNotificationCategory.call,
+        fullScreenIntent: true,
+        ongoing: true,
+        playSound: false,
+        enableVibration: true,
+      ),
+      iOS: DarwinNotificationDetails(
+        presentAlert: true,
+        presentSound: true,
+        interruptionLevel: InterruptionLevel.timeSensitive,
+      ),
+    );
+    await _plugin.show(
+      incomingCallId,
+      who,
+      'Incoming audio call',
+      details,
+      payload: 'call|incoming',
+    );
+  }
+
+  Future<void> cancelIncomingCall() => _plugin.cancel(incomingCallId);
+
   Future<void> showDownloadComplete({
     required String id,
     required String title,

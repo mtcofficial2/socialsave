@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -414,6 +415,23 @@ func TestChatRecoverySessionsAndReports(t *testing.T) {
 	limited := postChat(app, "/api/v1/chat/threads/"+thread.ID, next.Token, `{"text":"second"}`)
 	if limited.Code != http.StatusTooManyRequests {
 		t.Fatalf("reported limit %d %s", limited.Code, limited.Body.String())
+	}
+}
+
+func TestCleanSDPKeepsATrailingLine(t *testing.T) {
+	got, err := cleanSDP("v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(got, "\r\n") || !strings.Contains(got, "m=audio 9") {
+		t.Fatalf("sdp %q", got)
+	}
+	again, err := cleanSDP(strings.TrimSpace(got))
+	if err != nil || again != got {
+		t.Fatalf("round trip %q %v", again, err)
+	}
+	if _, err := cleanSDP("not-sdp"); err == nil {
+		t.Fatal("accepted junk")
 	}
 }
 

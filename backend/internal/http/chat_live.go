@@ -66,6 +66,12 @@ func (h *chatHub) send(userID string, text []byte) bool {
 	return h.deliver(userID, liveFrame{opcode: 0x1, data: text})
 }
 
+// sendWait keeps a call signal when the live queue is busy. A dropped
+// invite was silent: the other phone never rang.
+func (h *chatHub) sendWait(userID string, text []byte) bool {
+	return h.deliverWait(userID, liveFrame{opcode: 0x1, data: text}, 2*time.Second)
+}
+
 func (h *chatHub) sendBinary(userID string, data []byte) bool {
 	return h.deliverWait(userID, liveFrame{opcode: 0x2, data: data}, 2*time.Second)
 }

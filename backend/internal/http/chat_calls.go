@@ -549,10 +549,21 @@ func cleanSDP(raw string) (string, error) {
 	if raw == "" {
 		return "", nil
 	}
-	if len(raw) > chatSDPMax || strings.ContainsRune(raw, 0) {
+	if strings.ContainsRune(raw, 0) {
 		return "", chatRejected("The call could not start.")
 	}
-	return raw, nil
+	raw = strings.ReplaceAll(raw, "\r\n", "\n")
+	raw = strings.ReplaceAll(raw, "\r", "\n")
+	raw = strings.Trim(raw, "\n")
+	if !strings.HasPrefix(raw, "v=0") {
+		return "", chatRejected("The call could not start.")
+	}
+	// libwebrtc rejects a description that does not end with CRLF.
+	ready := strings.ReplaceAll(raw, "\n", "\r\n") + "\r\n"
+	if len(ready) > chatSDPMax {
+		return "", chatRejected("The call could not start.")
+	}
+	return ready, nil
 }
 
 func (c *chatRoom) inviteCall(ctx context.Context, user chatUser, threadID, sdp string) (chatCall, error) {
@@ -808,7 +819,7 @@ func (c *chatRoom) pushCallTo(userID string, call chatCall) {
 	if err != nil {
 		return
 	}
-	c.live.send(userID, body)
+	c.live.sendWait(userID, body)
 }
 
 func (c *chatRoom) relayCallIce(user chatUser, callID, candidate string) {

@@ -15,6 +15,8 @@ import android.media.ThumbnailUtils
 import android.net.Uri
 import android.os.Build
 import android.os.CancellationSignal
+import android.os.Handler
+import android.os.Looper
 import android.os.Environment
 import android.provider.MediaStore
 import android.provider.OpenableColumns
@@ -49,6 +51,9 @@ class MainActivity : FlutterFragmentActivity() {
     private var pipHeight = 9
     private val io = Executors.newFixedThreadPool(3)
     private var messageTone: Ringtone? = null
+    private var callTone: Ringtone? = null
+    private val ringHandler = Handler(Looper.getMainLooper())
+    private var ringAgain: Runnable? = null
     private var backupResult: MethodChannel.Result? = null
     private var folderResult: MethodChannel.Result? = null
     private var phoneBody: PhoneBody? = null
@@ -530,6 +535,46 @@ class MainActivity : FlutterFragmentActivity() {
         }
     }
 
+    /** The phone ringtone, looping, until the call is answered or declined. */
+    private fun playCallRingtone() {
+        try {
+            stopCallRingtone()
+            val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+                ?: Settings.System.DEFAULT_RINGTONE_URI
+            val tone = RingtoneManager.getRingtone(applicationContext, uri) ?: return
+            callTone = tone
+            if (Build.VERSION.SDK_INT >= 28) {
+                tone.isLooping = true
+                tone.play()
+                return
+            }
+            val again = object : Runnable {
+                override fun run() {
+                    val current = callTone ?: return
+                    try {
+                        current.play()
+                    } catch (_: Exception) {
+                        return
+                    }
+                    ringHandler.postDelayed(this, 2800)
+                }
+            }
+            ringAgain = again
+            again.run()
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun stopCallRingtone() {
+        ringAgain?.let { ringHandler.removeCallbacks(it) }
+        ringAgain = null
+        try {
+            callTone?.stop()
+        } catch (_: Exception) {
+        }
+        callTone = null
+    }
+
     /** Back on the first screen while connected or listening for messages: stay alive. */
     override fun finish() {
         if ((SessionBridge.active || ChatListen.active) && isTaskRoot && moveTaskToBack(true)) return
@@ -555,6 +600,14 @@ class MainActivity : FlutterFragmentActivity() {
             when (call.method) {
                 "playNotificationSound" -> {
                     playNotificationSound()
+                    result.success(true)
+                }
+                "playCallRingtone" -> {
+                    playCallRingtone()
+                    result.success(true)
+                }
+                "stopCallRingtone" -> {
+                    stopCallRingtone()
                     result.success(true)
                 }
                 "deviceName" -> result.success(deviceLabel())

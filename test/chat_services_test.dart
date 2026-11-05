@@ -99,4 +99,34 @@ void main() {
     expect(live.live, isTrue);
     expect(saved.live, isFalse);
   });
+
+  test('a trimmed call offer gets its closing line back', () {
+    const offer = 'v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n'
+        'm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n';
+    final trimmed = callSdp(offer.trim());
+    expect(trimmed.endsWith('\r\n'), isTrue);
+    expect(trimmed.contains('m=audio 9'), isTrue);
+    expect(callSdp(trimmed), trimmed);
+    expect(callSdp('not an offer'), isEmpty);
+    expect(callSdp(r'v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n').contains('m=audio'), isTrue);
+  });
+
+  test('a ringing call from someone else is the one to answer', () {
+    final rows = [
+      const ChatCallRecord(id: 'c1', thread: 't1', state: 'ringing', fromName: 'ada'),
+      const ChatCallRecord(id: 'c2', thread: 't2', state: 'ringing', fromName: 'ben'),
+    ];
+    expect(incomingRing(rows, 'ada')?.id, 'c2');
+    expect(incomingRing(rows, '@Ada')?.id, 'c2');
+    expect(
+      incomingRing(
+        const [
+          ChatCallRecord(id: 'c1', thread: 't1', state: 'ringing', fromName: 'ada'),
+        ],
+        'ada',
+      ),
+      isNull,
+    );
+    expect(incomingRing(const [], 'ada'), isNull);
+  });
 }

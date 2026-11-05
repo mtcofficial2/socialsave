@@ -2,6 +2,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:social_save/features/updates/release_version.dart';
 
 void main() {
+  test('an open app looks again without a force stop', () {
+    final start = DateTime(2026, 11, 5, 19);
+    expect(updateLookDue(last: null, now: start), isTrue);
+    expect(updateLookDue(last: start, now: start.add(const Duration(seconds: 19)), force: true), isFalse);
+    expect(updateLookDue(last: start, now: start.add(updateLookSoonest), force: true), isTrue);
+    expect(updateLookDue(last: start, now: start.add(const Duration(seconds: 59))), isFalse);
+    expect(updateLookDue(last: start, now: start.add(updateLookEvery)), isTrue);
+    expect(updateLookDue(last: start.add(const Duration(minutes: 9)), now: start), isFalse);
+  });
+
   test('a newer GitHub tag is an update and the same tag is not', () {
     final update = newerRelease(
       current: '1.0.0',

@@ -1591,9 +1591,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           if (showStatus) {
             if (cursor == 0) {
               return ListTile(
-                leading: const Icon(Icons.timelapse_rounded),
-                title: const Text('Status'),
-                subtitle: const Text('Updates disappear after 24 hours'),
+                leading: Container(
+                  width: 52,
+                  height: 52,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: ChatUiTokens.brand, width: 2),
+                  ),
+                  child: const Icon(Icons.add_rounded, color: ChatUiTokens.brand),
+                ),
+                title: const Text('My status'),
+                subtitle: const Text('Tap to see updates'),
                 onTap: () => unawaited(showStatuses(context)),
               );
             }

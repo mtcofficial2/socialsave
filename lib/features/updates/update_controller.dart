@@ -45,16 +45,31 @@ final updateControllerProvider =
     NotifierProvider<UpdateController, UpdateState>(UpdateController.new);
 
 class UpdateController extends Notifier<UpdateState> {
-  var _checked = false;
+  DateTime? _lastLook;
+  Future<void>? _flight;
 
   @override
   UpdateState build() => const UpdateState();
 
-  Future<void> check() async {
-    if (_checked) return;
-    _checked = true;
-    // Releases ship an APK; the Windows build is installed separately.
-    if (!Plat.isAndroid) return;
+  /// Asks GitHub again while the app stays open. A failed look can be repeated.
+  Future<void> check({bool force = false}) {
+    if (!Plat.isAndroid) return Future<void>.value();
+    if (state.busy) return Future<void>.value();
+    final now = DateTime.now();
+    if (!updateLookDue(last: _lastLook, now: now, force: force)) {
+      return Future<void>.value();
+    }
+    final running = _flight;
+    if (running != null) return running;
+    _lastLook = now;
+    final job = _look();
+    _flight = job;
+    return job.whenComplete(() {
+      if (identical(_flight, job)) _flight = null;
+    });
+  }
+
+  Future<void> _look() async {
     try {
       final current = AppConstants.appVersion;
       final response = await Dio(
@@ -76,11 +91,21 @@ class UpdateController extends Notifier<UpdateState> {
         apkUrl: apk,
       );
       if (update == null || !update.downloadUrl.path.toLowerCase().endsWith('.apk')) {
+        if (state.update != null && !state.busy) state = const UpdateState();
+        return;
+      }
+      if (state.update?.version == update.version &&
+          state.update?.downloadUrl == update.downloadUrl) {
         return;
       }
       state = UpdateState(update: update);
+    } on DioException catch (error) {
+      final code = error.response?.statusCode;
+      if (code == 403 || code == 429) {
+        _lastLook = DateTime.now().add(const Duration(minutes: 9));
+      }
     } catch (_) {
-      // A failed check should not block the app.
+      // A failed check should not block the app. The next look tries again.
     }
   }
 

@@ -302,12 +302,13 @@ class ChatAlertWatch {
 
   final ChatApi _api = ChatApi();
   Timer? _poll;
+  Timer? _calls;
   bool _busy = false;
   bool _asked = false;
   String _me = '';
 
   void ensure() {
-    if (_poll != null) return;
+    if (_poll != null || _calls != null) return;
     NotificationService.attachChatOpen(_open);
     NotificationService.onReplySent = _keep;
     ChatLive.instance.start();
@@ -317,7 +318,12 @@ class ChatAlertWatch {
       const Duration(seconds: 12),
       (_) => unawaited(_check()),
     );
+    _calls = Timer.periodic(
+      const Duration(seconds: 4),
+      (_) => unawaited(ChatCalls.instance.syncIncoming()),
+    );
     unawaited(_check());
+    unawaited(ChatCalls.instance.syncIncoming());
   }
 
   void _onLive(ChatLiveEvent event) {

@@ -835,6 +835,30 @@ class ChatCallRecord {
   }
 }
 
+/// libwebrtc treats an offer with no trailing CRLF as empty. The stored
+/// offer is trimmed, which is why Accept failed with SessionDescription is NULL.
+String callSdp(String raw) {
+  var text = raw.replaceAll('\u0000', '');
+  if (!text.contains('\n') && text.contains(r'\n')) {
+    text = text.replaceAll(r'\r\n', '\n').replaceAll(r'\n', '\n').replaceAll(r'\r', '');
+  }
+  text = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n').trim();
+  if (!text.startsWith('v=0')) return '';
+  return '${text.replaceAll('\n', '\r\n')}\r\n';
+}
+
+/// A ringing call placed by someone else. The caller is not rung again.
+ChatCallRecord? incomingRing(List<ChatCallRecord> rows, String me) {
+  final mine = me.trim().replaceFirst(RegExp(r'^@'), '').toLowerCase();
+  for (final call in rows) {
+    if (call.state != 'ringing' || call.id.isEmpty) continue;
+    final who = call.fromName.trim().replaceFirst(RegExp(r'^@'), '').toLowerCase();
+    if (who.isEmpty || who == mine) continue;
+    return call;
+  }
+  return null;
+}
+
 class ChatMessage {
   const ChatMessage({
     required this.id,
@@ -2315,6 +2339,14 @@ String chatErrorText(Object error) {
       default:
         if (own.isNotEmpty && error.response == null) return own;
         break;
+    }
+  }
+  if (error is String) {
+    final text = error.toLowerCase();
+    if (text.contains('sessiondescription') ||
+        text.contains('set_remote_description') ||
+        text.contains('setremotedescription')) {
+      return 'The call offer could not be read. Ask them to call again.';
     }
   }
   // Keep the real reason visible so a failure can be diagnosed.

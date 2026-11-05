@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:social_save/features/chat/chat_api.dart';
+import 'package:social_save/features/chat/chat_status_screen.dart';
 import 'package:social_save/features/chat/chat_prefs.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
 import 'package:social_save/shared/routing/app_router.dart';
@@ -640,116 +641,9 @@ Future<void> showRotateRecovery(BuildContext context) async {
   }
 }
 
-Future<void> showStatuses(BuildContext context) async {
-  final api = ChatApi();
-  List<ChatStatusNote> rows = const [];
-  try {
-    rows = await api.statuses();
-  } catch (error) {
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(chatErrorText(error))),
-    );
-    return;
-  }
-  if (!context.mounted) return;
-  await showModalBottomSheet<void>(
-    context: context,
-    showDragHandle: true,
-    isScrollControlled: true,
-    builder: (context) {
-      var items = rows;
-      return StatefulBuilder(
-        builder: (context, setSheet) {
-          return SafeArea(
-            child: ListView(
-              shrinkWrap: true,
-              children: [
-                const ListTile(
-                  title: Text('Status', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
-                  subtitle: Text('Text updates disappear after 24 hours.'),
-                ),
-                if (items.isEmpty)
-                  const ListTile(title: Text('No updates right now.'))
-                else
-                  for (final item in items)
-                    ListTile(
-                      leading: CircleAvatar(
-                        child: Text(
-                          (item.name.isEmpty ? '?' : item.name).substring(0, 1).toUpperCase(),
-                        ),
-                      ),
-                      title: Text(item.name.isEmpty ? 'Status' : '@${item.name}'),
-                      subtitle: Text(item.text),
-                    ),
-                ListTile(
-                  leading: const Icon(Icons.add_rounded),
-                  title: const Text('New update'),
-                  onTap: () async {
-                    final text = await _askLine(context, 'Status', 'What should people see?');
-                    if (text == null || text.trim().isEmpty || !context.mounted) return;
-                    final audience = await _pickAudience(context);
-                    if (audience == null || !context.mounted) return;
-                    List<String> allow = const [];
-                    List<String> deny = const [];
-                    if (audience == 'only' || audience == 'except') {
-                      final names = await _askLine(
-                        context,
-                        audience == 'only' ? 'Who can see it' : 'Hide from',
-                        '@names, separated by spaces',
-                      );
-                      if (names == null) return;
-                      final parsed = [
-                        for (final part in names.split(RegExp(r'[\s,]+')))
-                          if (part.trim().isNotEmpty)
-                            part.trim().replaceFirst(RegExp(r'^@'), ''),
-                      ];
-                      if (audience == 'only') {
-                        allow = parsed;
-                      } else {
-                        deny = parsed;
-                      }
-                    }
-                    try {
-                      await api.postStatus(
-                        text: text.trim(),
-                        audience: audience,
-                        allow: allow,
-                        deny: deny,
-                      );
-                      final next = await api.statuses();
-                      setSheet(() => items = next);
-                    } catch (error) {
-                      if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(chatErrorText(error))),
-                      );
-                    }
-                  },
-                ),
-              ],
-            ),
-          );
-        },
-      );
-    },
-  );
-}
-
-Future<String?> _pickAudience(BuildContext context) {
-  return showDialog<String>(
-    context: context,
-    builder: (context) {
-      return SimpleDialog(
-        title: const Text('Who can see it'),
-        children: [
-          SimpleDialogOption(onPressed: () => Navigator.pop(context, 'all'), child: const Text('Everyone')),
-          SimpleDialogOption(onPressed: () => Navigator.pop(context, 'contacts'), child: const Text('Contacts')),
-          SimpleDialogOption(onPressed: () => Navigator.pop(context, 'only'), child: const Text('Selected people')),
-          SimpleDialogOption(onPressed: () => Navigator.pop(context, 'except'), child: const Text('Contacts, except some')),
-        ],
-      );
-    },
+Future<void> showStatuses(BuildContext context) {
+  return Navigator.of(context).push<void>(
+    MaterialPageRoute<void>(builder: (context) => const ChatStatusScreen()),
   );
 }
 

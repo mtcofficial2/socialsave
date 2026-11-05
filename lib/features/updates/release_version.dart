@@ -29,6 +29,23 @@ class ReleaseVersion implements Comparable<ReleaseVersion> {
   String toString() => '$major.$minor.$patch';
 }
 
+/// An open app asks GitHub this often. Coming back to the app can ask sooner.
+const updateLookEvery = Duration(seconds: 60);
+const updateLookSoonest = Duration(seconds: 20);
+
+/// True when the app should ask GitHub again. A force stop is not required.
+bool updateLookDue({
+  required DateTime? last,
+  required DateTime now,
+  bool force = false,
+}) {
+  if (last == null) return true;
+  if (now.isBefore(last)) return false;
+  final elapsed = now.difference(last);
+  if (force) return elapsed >= updateLookSoonest;
+  return elapsed >= updateLookEvery;
+}
+
 /// The release the installed app should offer, if it is newer.
 class AvailableUpdate {
   const AvailableUpdate({required this.version, required this.downloadUrl});
