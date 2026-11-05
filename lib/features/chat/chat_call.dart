@@ -318,7 +318,9 @@ class ChatCalls {
         return;
       }
       active = call;
-      if (call.fromName.isNotEmpty) peerName = call.fromName;
+      if (peerName.trim().isEmpty && call.fromName.isNotEmpty) {
+        peerName = call.fromName;
+      }
       _flushIce();
       _armClock();
     } catch (error) {
@@ -366,6 +368,7 @@ class ChatCalls {
       try {
         if (outgoing) {
           await _media.acceptAnswer(event.sdp);
+          _markAnswered();
         } else if (status == 'active') {
           final answer = await _media.acceptRestart(event.sdp);
           _sendSdp(answer);
@@ -401,19 +404,15 @@ class ChatCalls {
     }
     if (event.callState == 'active') {
       if (_finishing) return;
-      unawaited(_endRing());
-      status = 'active';
-      connectedAt ??= DateTime.now();
+      if (active != null && event.callId != active!.id) return;
       if (event.answer.isNotEmpty && outgoing && event.answer != _lastRemote) {
         _lastRemote = event.answer;
         try {
           await _media.acceptAnswer(event.answer);
         } catch (_) {}
       }
-      _armClock();
+      _markAnswered();
       _armWatch();
-      revision.value++;
-      _present();
       return;
     }
     if (callIsOver(event.callState)) {
@@ -472,6 +471,12 @@ class ChatCalls {
     try {
       final rows = await _api.calls();
       if (_finishing || active?.id != id) return;
+      for (final row in rows) {
+        if (row.id == id && row.state == 'active') {
+          _markAnswered();
+          break;
+        }
+      }
       if (!watchedCallFinished(rows, id)) return;
       var kind = 'ended';
       for (final row in rows) {
@@ -515,6 +520,7 @@ class ChatCalls {
       _flushIce();
       _armClock();
       _armWatch();
+      _present();
     } catch (error) {
       if (_finishing) return;
       moment = '';
@@ -604,6 +610,20 @@ class ChatCalls {
     for (final candidate in queued) {
       _sendIce(candidate);
     }
+  }
+
+  /// The other person picked up. Show the call screen even if the live frame was missed.
+  void _markAnswered() {
+    if (_finishing) return;
+    if (status != 'ringing' && status != 'active') return;
+    if (status != 'active') {
+      status = 'active';
+      connectedAt ??= DateTime.now();
+      unawaited(_endRing());
+      _armClock();
+      revision.value++;
+    }
+    _present();
   }
 
   void _armClock() {

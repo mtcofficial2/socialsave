@@ -152,7 +152,7 @@ void main() {
     expect(callExitLabel('cancelled'), 'Cancelled');
     expect(callExitLabel('ended'), 'Call ended');
     expect(callUsesFullScreen(outgoing: true, status: 'ringing'), isFalse);
-    expect(callUsesFullScreen(outgoing: true, status: 'active'), isFalse);
+    expect(callUsesFullScreen(outgoing: true, status: 'active'), isTrue);
     expect(callUsesFullScreen(outgoing: false, status: 'ringing'), isTrue);
     expect(callUsesFullScreen(outgoing: false, status: 'active'), isTrue);
   });

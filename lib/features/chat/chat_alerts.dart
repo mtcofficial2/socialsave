@@ -502,12 +502,7 @@ class _ChatAlertHostState extends State<ChatAlertHost> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    return const Align(
-      alignment: Alignment.topCenter,
-      child: ChatOutgoingBar(),
-    );
-  }
+  Widget build(BuildContext context) => const SizedBox.shrink();
 }
 
 /// A call this phone placed. It stays on top of the chat and does not cover it.
@@ -520,12 +515,10 @@ class ChatOutgoingBar extends StatelessWidget {
       valueListenable: ChatCalls.revision,
       builder: (context, _, _) {
         final call = ChatCalls.instance;
-        final live = call.outgoing &&
-            call.exitKind.isEmpty &&
-            (call.status == 'ringing' || call.status == 'active');
+        final live = call.outgoing && call.exitKind.isEmpty && call.status == 'ringing';
         if (!live) return const SizedBox.shrink();
         final name = call.peerName.trim().isEmpty ? 'Audio call' : call.peerName.trim();
-        final line = call.status == 'active' ? _outgoingClock(call.elapsed) : 'Calling…';
+        const line = 'Calling…';
         return SafeArea(
           bottom: false,
           child: Padding(
@@ -554,15 +547,6 @@ class ChatOutgoingBar extends StatelessWidget {
                         ],
                       ),
                     ),
-                    if (call.status == 'active')
-                      IconButton(
-                        tooltip: call.muted ? 'Unmute' : 'Mute',
-                        onPressed: () => unawaited(call.setMuted(!call.muted)),
-                        icon: Icon(
-                          call.muted ? Icons.mic_off_rounded : Icons.mic_rounded,
-                          color: Colors.white,
-                        ),
-                      ),
                     TextButton(
                       onPressed: () => unawaited(call.hangUp()),
                       child: const Text(
@@ -579,14 +563,6 @@ class ChatOutgoingBar extends StatelessWidget {
       },
     );
   }
-}
-
-String _outgoingClock(Duration elapsed) {
-  final minutes = elapsed.inMinutes.remainder(60).toString().padLeft(2, '0');
-  final seconds = elapsed.inSeconds.remainder(60).toString().padLeft(2, '0');
-  final hours = elapsed.inHours;
-  if (hours > 0) return '$hours:$minutes:$seconds';
-  return '$minutes:$seconds';
 }
 
 /// Usernames match without case or a leading @.

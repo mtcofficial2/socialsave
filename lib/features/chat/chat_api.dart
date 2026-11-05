@@ -878,9 +878,10 @@ bool watchedCallFinished(List<ChatCallRecord> rows, String id) {
   return true;
 }
 
-/// The full call screen is only for a call that arrived on this phone.
+/// Ringing out stays a small bar. A picked-up call, and a call arriving here, fill the screen.
 bool callUsesFullScreen({required bool outgoing, required String status}) {
-  return !outgoing && (status == 'ringing' || status == 'active');
+  if (status == 'active') return true;
+  return !outgoing && status == 'ringing';
 }
 
 /// Words shown while a call screen closes.

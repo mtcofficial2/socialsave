@@ -54,6 +54,13 @@ class SocialSaveApp extends ConsumerWidget {
               if (!kIsWeb) const NearbyIncomingCard(),
               if (!kIsWeb) const SessionPill(),
               if (!kIsWeb) const ChatAlertHost(),
+              if (!kIsWeb)
+                const Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: ChatOutgoingBar(),
+                ),
             ],
           ),
         );
