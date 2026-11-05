@@ -1707,6 +1707,10 @@ class _ChatThreadViewState extends State<ChatThreadView>
       children: [
         AppBar(
           toolbarHeight: 64,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          backgroundColor: scheme.surface,
+          surfaceTintColor: Colors.transparent,
           automaticallyImplyLeading: !selecting && !widget.embedded,
           titleSpacing: widget.embedded ? 16 : 0,
           leading: selecting
@@ -1995,12 +1999,19 @@ class _ChatThreadViewState extends State<ChatThreadView>
             ),
           ),
         ),
-        ColoredBox(
-          color: canvas,
+        DecoratedBox(
+          decoration: BoxDecoration(
+            color: scheme.surface,
+            border: Border(
+              top: BorderSide(
+                color: scheme.outlineVariant.withValues(alpha: 0.55),
+              ),
+            ),
+          ),
           child: SafeArea(
             top: false,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(6, 2, 6, 6),
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [

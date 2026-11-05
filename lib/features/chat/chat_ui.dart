@@ -136,8 +136,7 @@ class ChatInboxFilter {
   }
 }
 
-/// Search field with no outline. The app theme draws a box unless every
-/// border is cleared.
+/// Quiet search pill. The app theme draws a box unless every border is set.
 class ChatSearchField extends StatelessWidget {
   const ChatSearchField({
     super.key,
@@ -157,6 +156,11 @@ class ChatSearchField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = ChatUiTokens.dark(context);
+    final line = dark ? const Color(0xFF2A3942) : const Color(0xFFE4E7EA);
+    final border = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(24),
+      borderSide: BorderSide(color: line),
+    );
     return TextField(
       controller: controller,
       focusNode: focusNode,
@@ -166,18 +170,21 @@ class ChatSearchField extends StatelessWidget {
       style: TextStyle(color: ChatUiTokens.text(dark), fontSize: 16),
       decoration: InputDecoration(
         hintText: hintText,
-        prefixIcon: const Icon(Icons.search_rounded),
+        prefixIcon: Icon(
+          Icons.search_rounded,
+          color: dark ? ChatUiTokens.timeDark : ChatUiTokens.timeLight,
+        ),
         filled: true,
         isDense: true,
         fillColor: ChatUiTokens.searchFill(dark),
         constraints: const BoxConstraints(minHeight: 48),
         contentPadding: const EdgeInsets.symmetric(vertical: 12),
-        border: InputBorder.none,
-        enabledBorder: InputBorder.none,
-        focusedBorder: InputBorder.none,
-        disabledBorder: InputBorder.none,
-        errorBorder: InputBorder.none,
-        focusedErrorBorder: InputBorder.none,
+        border: border,
+        enabledBorder: border,
+        focusedBorder: border,
+        disabledBorder: border,
+        errorBorder: border,
+        focusedErrorBorder: border,
       ),
     );
   }
@@ -273,6 +280,8 @@ class ChatEmptyGroups extends StatelessWidget {
 
 /// Flat chat row. Typing state is local, so a typing tick does not rebuild
 /// the whole inbox.
+const double _chatRowHeight = 76;
+
 class ChatListTile extends StatefulWidget {
   const ChatListTile({
     super.key,
@@ -434,53 +443,53 @@ class _ChatListTileState extends State<ChatListTile> {
         : baseColor;
     final showActions = _dragging || _drag != 0;
     return SizedBox(
-      height: 72,
+      height: _chatRowHeight,
       child: Stack(
         children: [
           if (showActions)
-          Positioned.fill(
-            child: ColoredBox(
-              color: dark ? const Color(0xFF111B21) : const Color(0xFFF0F2F5),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  _SwipeAction(
-                    tooltip: widget.archived ? 'Unarchive' : 'Archive',
-                    icon: widget.archived
-                        ? Icons.unarchive_outlined
-                        : Icons.archive_outlined,
-                    color: const Color(0xFF53BDEB),
-                    onPressed: () {
-                      _close();
-                      widget.onArchive();
-                    },
-                  ),
-                  _SwipeAction(
-                    tooltip: widget.muted
-                        ? 'Unmute notifications'
-                        : 'Mute notifications',
-                    icon: widget.muted
-                        ? Icons.notifications_off_outlined
-                        : Icons.notifications_none_rounded,
-                    color: const Color(0xFF8696A0),
-                    onPressed: () {
-                      _close();
-                      widget.onMute();
-                    },
-                  ),
-                  _SwipeAction(
-                    tooltip: 'Delete',
-                    icon: Icons.delete_outline_rounded,
-                    color: const Color(0xFFEF5350),
-                    onPressed: () {
-                      _close();
-                      widget.onDelete();
-                    },
-                  ),
-                ],
+            Positioned.fill(
+              child: ColoredBox(
+                color: dark ? const Color(0xFF111B21) : const Color(0xFFF0F2F5),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    _SwipeAction(
+                      tooltip: widget.archived ? 'Unarchive' : 'Archive',
+                      icon: widget.archived
+                          ? Icons.unarchive_outlined
+                          : Icons.archive_outlined,
+                      color: const Color(0xFF53BDEB),
+                      onPressed: () {
+                        _close();
+                        widget.onArchive();
+                      },
+                    ),
+                    _SwipeAction(
+                      tooltip: widget.muted
+                          ? 'Unmute notifications'
+                          : 'Mute notifications',
+                      icon: widget.muted
+                          ? Icons.notifications_off_outlined
+                          : Icons.notifications_none_rounded,
+                      color: const Color(0xFF8696A0),
+                      onPressed: () {
+                        _close();
+                        widget.onMute();
+                      },
+                    ),
+                    _SwipeAction(
+                      tooltip: 'Delete',
+                      icon: Icons.delete_outline_rounded,
+                      color: const Color(0xFFEF5350),
+                      onPressed: () {
+                        _close();
+                        widget.onDelete();
+                      },
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
           Positioned.fill(
             child: GestureDetector(
               // A mouse click was counted as a swipe and uncovered Archive,
@@ -529,12 +538,30 @@ class _ChatListTileState extends State<ChatListTile> {
                           : row.localToGlobal(row.size.center(Offset.zero));
                       unawaited(_menuAt(at));
                     },
-                    child: _RowBody(
-                      item: widget.item,
-                      me: widget.me,
-                      live: _live,
-                      avatar: widget.avatar,
-                      muted: widget.muted,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        _RowBody(
+                          item: widget.item,
+                          me: widget.me,
+                          live: _live,
+                          avatar: widget.avatar,
+                          muted: widget.muted,
+                        ),
+                        Positioned(
+                          left: 80,
+                          right: 0,
+                          bottom: 0,
+                          height: 0.6,
+                          child: ColoredBox(
+                            color: dark
+                                ? const Color(
+                                    0xFFAEBAC1,
+                                  ).withValues(alpha: 0.16)
+                                : const Color(0xFFE4E7EA),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -564,7 +591,7 @@ class _SwipeAction extends StatelessWidget {
   Widget build(BuildContext context) {
     return SizedBox(
       width: 56,
-      height: 72,
+      height: _chatRowHeight,
       child: ColoredBox(
         color: color,
         child: IconButton(

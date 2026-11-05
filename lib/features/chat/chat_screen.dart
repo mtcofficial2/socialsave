@@ -9,13 +9,15 @@ import 'package:social_save/features/chat/chat_drafts.dart';
 import 'package:social_save/features/chat/chat_history.dart';
 import 'package:social_save/features/chat/chat_live.dart';
 import 'package:social_save/features/chat/chat_profile.dart';
+import 'package:social_save/features/chat/chat_settings.dart';
 import 'package:social_save/features/chat/chat_thread_screen.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
 import 'package:social_save/shared/widgets/app_logo.dart';
-import 'package:social_save/shared/widgets/liquid_glass.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
 
 enum _ContactKind { phone, email }
+
+enum _ChatTab { chats, groups, settings }
 
 /// Chats, in the shape of a messenger: a list, then a conversation.
 class ChatScreen extends StatefulWidget {
@@ -35,7 +37,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final FocusNode _findFocus = FocusNode();
   bool _showArchived = false;
   bool _showBlocked = false;
-  bool _groups = false;
+  _ChatTab _tab = _ChatTab.chats;
+
+  bool get _groups => _tab == _ChatTab.groups;
   Timer? _poll;
   StreamSubscription<ChatLiveEvent>? _live;
   ChatUser? _user;
@@ -444,7 +448,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _newGroup() async {
-    setState(() => _groups = true);
+    setState(() => _tab = _ChatTab.groups);
     final name = await _askLine(
       title: 'New group',
       label: 'Group name',
@@ -481,7 +485,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _joinGroup() async {
-    setState(() => _groups = true);
+    setState(() => _tab = _ChatTab.groups);
     final code = await _askLine(
       title: 'Join a group',
       label: '6-character code',
@@ -891,8 +895,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (_user == null) return _retryScaffold();
     final wide = _wide(context);
     final list = _inbox(wide);
-    if (!wide) return list;
+    // Settings is one full page. A wide window still splits Chats and Groups.
+    if (!wide || _tab == _ChatTab.settings) return list;
+    final ground = ChatUiTokens.dark(context)
+        ? ChatUiTokens.canvasDark
+        : Theme.of(context).colorScheme.surface;
     return Scaffold(
+      backgroundColor: ground,
       body: Row(
         children: [
           SizedBox(width: 380, child: list),
@@ -1132,6 +1141,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _selectedName = null;
       _selectedSeen = '';
       _selectedGroup = false;
+      _tab = _ChatTab.chats;
       _step = 0;
       _error = null;
       _busy = false;
@@ -1154,9 +1164,54 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     return count;
   }
 
-  String _sectionLabel(String name, int unread) {
-    if (unread <= 0) return name;
-    return '$name · ${unread > 99 ? '99+' : unread}';
+  String get _tabTitle => switch (_tab) {
+    _ChatTab.chats => 'Chats',
+    _ChatTab.groups => 'Groups',
+    _ChatTab.settings => 'Settings',
+  };
+
+  void _selectTab(_ChatTab next) {
+    if (next == _tab) return;
+    setState(() {
+      _tab = next;
+      _showArchived = false;
+      _showBlocked = false;
+    });
+  }
+
+  Widget _navIcon(IconData icon, int unread) {
+    final glyph = Icon(icon);
+    if (unread <= 0) return glyph;
+    final label = unread > 99 ? '99+' : '$unread';
+    return Badge(
+      label: Text(label),
+      backgroundColor: ChatUiTokens.brand,
+      textColor: Colors.white,
+      child: glyph,
+    );
+  }
+
+  String? _navTip(String name, int unread) {
+    if (unread <= 0) return null;
+    final label = unread > 99 ? '99+' : '$unread';
+    return '$name, $label unread';
+  }
+
+  Future<void> _openOwnProfile() {
+    final user = _user;
+    if (user == null) return Future<void>.value();
+    return showChatProfile(
+      context,
+      username: user.username,
+      contact: user.contact,
+      photoRev: user.photoRev,
+      onLogOut: () => unawaited(_logOut()),
+      onPhoto: (rev) {
+        final current = _user;
+        if (!mounted || current == null) return;
+        setState(() => _user = current.copyWith(photoRev: rev));
+      },
+    );
   }
 
   Future<void> _viewProfile(ChatThreadSummary item) async {
@@ -1491,132 +1546,156 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         query.isNotEmpty &&
         RegExp(r'^[a-z0-9_]{1,20}$').hasMatch(query) &&
         shown.every((item) => item.username != query);
+    final settings = _tab == _ChatTab.settings;
+    final ground = ChatUiTokens.dark(context)
+        ? ChatUiTokens.canvasDark
+        : scheme.surface;
+    final chatUnread = _sectionUnread(false);
+    final groupUnread = _sectionUnread(true);
     return Scaffold(
+      backgroundColor: ground,
       appBar: AppBar(
-        title: Text(_groups ? 'Groups' : 'Chats'),
-        actions: [
-          PopupMenuButton<String>(
-            tooltip: 'Account',
-            onSelected: (value) {
-              if (value == 'people') unawaited(_openAdmin());
-              if (value == 'group') unawaited(_newGroup());
-              if (value == 'join') unawaited(_joinGroup());
-              if (value == 'logout') unawaited(_logOut());
-            },
-            itemBuilder: (context) => [
-              if (user.isAdmin)
-                const PopupMenuItem(
-                  value: 'people',
-                  child: Text('Registered people'),
-                ),
-              const PopupMenuItem(value: 'group', child: Text('New group')),
-              const PopupMenuItem(value: 'join', child: Text('Join a group')),
-              const PopupMenuItem(value: 'logout', child: Text('Log out')),
-            ],
-          ),
-          IconButton(
-            tooltip: 'Your profile',
-            onPressed: () => unawaited(
-              showChatProfile(
-                context,
-                username: user.username,
-                contact: user.contact,
-                photoRev: user.photoRev,
-                onLogOut: () => unawaited(_logOut()),
-                onPhoto: (rev) {
-                  final current = _user;
-                  if (!mounted || current == null) return;
-                  setState(() => _user = current.copyWith(photoRev: rev));
-                },
+        title: Text(_tabTitle),
+        backgroundColor: ground,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+      ),
+      floatingActionButton: settings
+          ? null
+          : FloatingActionButton(
+              heroTag: 'chat-new',
+              tooltip: _groups ? 'New group' : 'New chat',
+              backgroundColor: ChatUiTokens.brand,
+              foregroundColor: Colors.white,
+              elevation: 1,
+              onPressed: _busy
+                  ? null
+                  : () => unawaited(_groups ? _newGroup() : _newChat()),
+              child: Icon(
+                _groups ? Icons.group_add_rounded : Icons.chat_rounded,
               ),
             ),
-            icon: ChatFace(
-              name: user.username,
-              size: 32,
-              photoRev: user.photoRev,
+      bottomNavigationBar: NavigationBarTheme(
+        data: NavigationBarThemeData(
+          height: 64,
+          elevation: 0,
+          backgroundColor: ground,
+          surfaceTintColor: Colors.transparent,
+          indicatorColor: ChatUiTokens.brand.withValues(alpha: 0.16),
+          iconTheme: WidgetStateProperty.resolveWith((states) {
+            final selected = states.contains(WidgetState.selected);
+            return IconThemeData(
+              color: selected ? ChatUiTokens.brand : scheme.onSurfaceVariant,
+            );
+          }),
+          labelTextStyle: WidgetStateProperty.resolveWith((states) {
+            final selected = states.contains(WidgetState.selected);
+            return TextStyle(
+              fontSize: 12,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              color: selected ? ChatUiTokens.brand : scheme.onSurfaceVariant,
+            );
+          }),
+        ),
+        child: NavigationBar(
+          selectedIndex: _tab.index,
+          height: 64,
+          elevation: 0,
+          backgroundColor: ground,
+          surfaceTintColor: Colors.transparent,
+          indicatorColor: ChatUiTokens.brand.withValues(alpha: 0.16),
+          labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+          onDestinationSelected: (index) => _selectTab(_ChatTab.values[index]),
+          destinations: [
+            NavigationDestination(
+              icon: _navIcon(Icons.chat_bubble_outline_rounded, chatUnread),
+              selectedIcon: _navIcon(Icons.chat_bubble_rounded, chatUnread),
+              label: 'Chats',
+              tooltip: _navTip('Chats', chatUnread),
             ),
-          ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton(
-        heroTag: 'chat-new',
-        tooltip: _groups ? 'New group' : 'New chat',
-        onPressed: _busy
-            ? null
-            : () => unawaited(_groups ? _newGroup() : _newChat()),
-        child: Icon(_groups ? Icons.group_add_rounded : Icons.chat_rounded),
-      ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-            child: ChatSearchField(
-              controller: _find,
-              focusNode: _findFocus,
-              hintText: _groups ? 'Search groups' : 'Search or start a chat',
-              onChanged: (_) => setState(() {}),
-              onSubmitted: (value) {
-                if (_groups) return;
-                unawaited(_startTyped(value));
-              },
+            NavigationDestination(
+              icon: _navIcon(Icons.groups_outlined, groupUnread),
+              selectedIcon: _navIcon(Icons.groups_rounded, groupUnread),
+              label: 'Groups',
+              tooltip: _navTip('Groups', groupUnread),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-            child: LiquidOrSegmented<bool>(
-              segments: [
-                ButtonSegment(
-                  value: false,
-                  label: Text(
-                    _sectionLabel('Chats', _sectionUnread(false)),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+            const NavigationDestination(
+              icon: Icon(Icons.settings_outlined),
+              selectedIcon: Icon(Icons.settings_rounded),
+              label: 'Settings',
+            ),
+          ],
+        ),
+      ),
+      body: settings
+          ? Column(
+              children: [
+                if (_error != null)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                    child: Text(
+                      _error!,
+                      style: TextStyle(color: scheme.error, height: 1.35),
+                    ),
                   ),
-                  icon: const Icon(Icons.chat_bubble_outline_rounded),
-                ),
-                ButtonSegment(
-                  value: true,
-                  label: Text(
-                    _sectionLabel('Groups', _sectionUnread(true)),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                Expanded(
+                  child: ChatSettingsPage(
+                    username: user.username,
+                    contact: user.contact,
+                    admin: user.isAdmin,
+                    avatar: ChatFace(
+                      name: user.username,
+                      size: 88,
+                      photoRev: user.photoRev,
+                    ),
+                    onProfile: () => unawaited(_openOwnProfile()),
+                    onNewGroup: () => unawaited(_newGroup()),
+                    onJoin: () => unawaited(_joinGroup()),
+                    onPeople: () => unawaited(_openAdmin()),
+                    onLogOut: () => unawaited(_logOut()),
                   ),
-                  icon: const Icon(Icons.groups_rounded),
                 ),
               ],
-              selected: _groups,
-              onSelectionChanged: (value) {
-                final next = value.first;
-                if (next == _groups) return;
-                setState(() {
-                  _groups = next;
-                  _showArchived = false;
-                  _showBlocked = false;
-                });
-              },
+            )
+          : Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                  child: ChatSearchField(
+                    controller: _find,
+                    focusNode: _findFocus,
+                    hintText: _groups
+                        ? 'Search groups'
+                        : 'Search or start a chat',
+                    onChanged: (_) => setState(() {}),
+                    onSubmitted: (value) {
+                      if (_groups) return;
+                      unawaited(_startTyped(value));
+                    },
+                  ),
+                ),
+                if (_error != null)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                    child: Text(
+                      _error!,
+                      style: TextStyle(color: scheme.error, height: 1.35),
+                    ),
+                  ),
+                Expanded(
+                  child: _inboxList(
+                    wide,
+                    user,
+                    query,
+                    canStart,
+                    _groups,
+                    shown,
+                    scheme,
+                  ),
+                ),
+              ],
             ),
-          ),
-          if (_error != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: Text(
-                _error!,
-                style: TextStyle(color: scheme.error, height: 1.35),
-              ),
-            ),
-          Expanded(
-            child: _inboxList(
-              wide,
-              user,
-              query,
-              canStart,
-              _groups,
-              shown,
-              scheme,
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

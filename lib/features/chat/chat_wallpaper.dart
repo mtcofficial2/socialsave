@@ -27,7 +27,7 @@ class _Doodles extends CustomPainter {
     final paint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.15
-      ..color = (dark ? const Color(0xFFE9EDEF) : const Color(0xFF6B5E53)).withValues(alpha: dark ? 0.055 : 0.07);
+      ..color = (dark ? const Color(0xFFE9EDEF) : const Color(0xFF6B5E53)).withValues(alpha: dark ? 0.028 : 0.038);
     const step = 80.0;
     for (var y = 0.0; y < size.height + step; y += step) {
       final shift = ((y / step).floor() % 2 == 0) ? 0.0 : step / 2;
