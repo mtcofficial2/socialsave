@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_prefs.dart';
+import 'package:social_save/features/chat/chat_status_screen.dart';
 
 void main() {
   test('quiet hours can pass midnight', () {
@@ -128,5 +129,48 @@ void main() {
       isNull,
     );
     expect(incomingRing(const [], 'ada'), isNull);
+  });
+
+  test('a call this phone is in ends when the other person declines', () {
+    const live = ChatCallRecord(id: 'c1', thread: 't1', state: 'ringing', fromName: 'ada');
+    expect(watchedCallFinished(const [live], 'c1'), isFalse);
+    expect(
+      watchedCallFinished(
+        const [ChatCallRecord(id: 'c1', thread: 't1', state: 'declined', fromName: 'ada')],
+        'c1',
+      ),
+      isTrue,
+    );
+    expect(watchedCallFinished(const [], 'c1'), isTrue);
+    expect(watchedCallFinished(const [live], ''), isFalse);
+    expect(callIsOver('ended'), isTrue);
+    expect(callIsOver('missed'), isTrue);
+    expect(callIsOver('cancelled'), isTrue);
+    expect(callIsOver('active'), isFalse);
+    expect(callExitLabel('declined'), 'Declined');
+    expect(callExitLabel('missed'), 'Missed call');
+    expect(callExitLabel('cancelled'), 'Cancelled');
+    expect(callExitLabel('ended'), 'Call ended');
+  });
+
+  test('a status view count is words and stays with the author', () {
+    expect(statusViewLabel(0), 'No views yet');
+    expect(statusViewLabel(1), '1 view');
+    expect(statusViewLabel(4), '4 views');
+    final note = ChatStatusNote.fromJson({
+      'id': 'st1',
+      'name': 'ada',
+      'text': 'out',
+      'at': 1,
+      'views': ['ben', 'cam'],
+    });
+    expect(note.views, ['ben', 'cam']);
+    final hidden = ChatStatusNote.fromJson({
+      'id': 'st1',
+      'name': 'ada',
+      'text': 'out',
+      'at': 1,
+    });
+    expect(hidden.views, isEmpty);
   });
 }

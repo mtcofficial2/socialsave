@@ -20,7 +20,8 @@ import (
 )
 
 const (
-	chatStatusLife  = 24 * time.Hour
+	chatStatusLife    = 24 * time.Hour
+	chatStatusViewMax = 200
 	chatCallRingFor = 45 * time.Second
 	chatStarMax     = 200
 	chatLabelMax    = 12
@@ -84,6 +85,7 @@ type chatStatusNote struct {
 	Audience string   `json:"audience,omitempty"`
 	Allow    []string `json:"allow,omitempty"`
 	Deny     []string `json:"deny,omitempty"`
+	Views    []string `json:"views,omitempty"`
 }
 
 type chatSchedule struct {
@@ -609,6 +611,18 @@ func (s *Server) chatStatusPut(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "status": note})
 }
 
+func (s *Server) chatStatusView(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.chatActor(w, r)
+	if !ok {
+		return
+	}
+	if err := s.chat.viewStatus(r.Context(), user, chi.URLParam(r, "id")); err != nil {
+		writeChatFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
 func cleanNames(values []string, max int) ([]string, error) {
 	out := make([]string, 0, len(values))
 	seen := map[string]bool{}
@@ -688,11 +702,56 @@ func (c *chatRoom) visibleStatuses(ctx context.Context, viewer chatUser) []chatS
 	c.pruneStatusesLocked()
 	out := make([]chatStatusNote, 0)
 	for _, note := range c.data.Statuses {
-		if c.statusVisibleLocked(viewer, note) {
-			out = append(out, note)
+		if !c.statusVisibleLocked(viewer, note) {
+			continue
 		}
+		shown := note
+		if note.From != viewer.ID {
+			shown.Views = nil
+		}
+		out = append(out, shown)
 	}
 	return out
+}
+
+func (c *chatRoom) viewStatus(ctx context.Context, viewer chatUser, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return chatRejected("That update is gone.")
+	}
+	c.ensure(ctx)
+	c.mu.Lock()
+	c.pruneStatusesLocked()
+	found := -1
+	for i := range c.data.Statuses {
+		if c.data.Statuses[i].ID == id {
+			found = i
+			break
+		}
+	}
+	if found < 0 || !c.statusVisibleLocked(viewer, c.data.Statuses[found]) {
+		c.mu.Unlock()
+		return chatRejected("That update is gone.")
+	}
+	note := &c.data.Statuses[found]
+	if note.From == viewer.ID {
+		c.mu.Unlock()
+		return nil
+	}
+	for _, name := range note.Views {
+		if strings.EqualFold(name, viewer.Username) {
+			c.mu.Unlock()
+			return nil
+		}
+	}
+	if len(note.Views) >= chatStatusViewMax {
+		c.mu.Unlock()
+		return nil
+	}
+	note.Views = append(note.Views, viewer.Username)
+	c.mu.Unlock()
+	c.persist(ctx)
+	return nil
 }
 
 func (c *chatRoom) statusVisibleLocked(viewer chatUser, note chatStatusNote) bool {

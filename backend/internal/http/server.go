@@ -126,6 +126,7 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requireKey).Post("/chat/privacy", s.chatPrivacyPut)
 		r.With(s.requireKey).Get("/chat/status", s.chatStatusList)
 		r.With(s.requireKey).Post("/chat/status", s.chatStatusPut)
+		r.With(s.requireKey).Post("/chat/status/{id}/view", s.chatStatusView)
 		r.With(s.requireKey).Post("/chat/groups/{id}/admins", s.chatGroupAdmin)
 		r.With(s.requireKey).Post("/chat/groups/{id}/remove", s.chatGroupRemove)
 		r.With(s.requireKey).Post("/chat/groups/{id}/transfer", s.chatGroupTransfer)

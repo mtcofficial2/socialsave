@@ -878,3 +878,26 @@ func (c *chatRoom) relayCallSDP(user chatUser, callID, sdp string) {
 	}
 	c.live.send(other, body)
 }
+
+func (c *chatRoom) relayCallHold(user chatUser, callID string, on bool) {
+	if c == nil || c.live == nil || callID == "" {
+		return
+	}
+	c.mu.Lock()
+	call := c.callPtrLocked(callID)
+	if call == nil || call.State != "active" || (user.ID != call.From && user.ID != call.To) {
+		c.mu.Unlock()
+		return
+	}
+	other := call.To
+	if user.ID == call.To {
+		other = call.From
+	}
+	id := call.ID
+	c.mu.Unlock()
+	body, err := json.Marshal(map[string]any{"type": "call-hold", "call": id, "on": on})
+	if err != nil {
+		return
+	}
+	c.live.sendWait(other, body)
+}

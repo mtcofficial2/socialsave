@@ -292,6 +292,8 @@ func (c *chatRoom) onLiveText(user chatUser, payload []byte) {
 		c.relayCallIce(user, body.Call, body.Candidate)
 	case "call-sdp":
 		c.relayCallSDP(user, body.Call, body.SDP)
+	case "call-hold":
+		c.relayCallHold(user, body.Call, body.On)
 	}
 }
 

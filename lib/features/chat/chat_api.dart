@@ -674,6 +674,7 @@ class ChatStatusNote {
     required this.text,
     required this.at,
     this.audience = 'all',
+    this.views = const [],
   });
 
   final String id;
@@ -681,14 +682,21 @@ class ChatStatusNote {
   final String text;
   final DateTime at;
   final String audience;
+  final List<String> views;
 
   factory ChatStatusNote.fromJson(Map<String, dynamic> json) {
+    final rawViews = json['views'];
     return ChatStatusNote(
       id: (json['id'] as String?)?.trim() ?? '',
       name: (json['name'] as String?)?.trim() ?? '',
       text: (json['text'] as String?)?.trim() ?? '',
       at: DateTime.fromMillisecondsSinceEpoch((json['at'] as num?)?.toInt() ?? 0),
       audience: (json['audience'] as String?)?.trim() ?? 'all',
+      views: [
+        if (rawViews is List)
+          for (final item in rawViews)
+            if (item is String && item.trim().isNotEmpty) item.trim(),
+      ],
     );
   }
 }
@@ -845,6 +853,43 @@ String callSdp(String raw) {
   text = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n').trim();
   if (!text.startsWith('v=0')) return '';
   return '${text.replaceAll('\n', '\r\n')}\r\n';
+}
+
+/// The server has closed this call. A live screen should leave.
+bool callIsOver(String state) {
+  switch (state) {
+    case 'declined':
+    case 'ended':
+    case 'missed':
+    case 'cancelled':
+      return true;
+    default:
+      return false;
+  }
+}
+
+/// True when the call this phone is in has finished, or that id is gone.
+bool watchedCallFinished(List<ChatCallRecord> rows, String id) {
+  if (id.isEmpty) return false;
+  for (final row in rows) {
+    if (row.id != id) continue;
+    return callIsOver(row.state);
+  }
+  return true;
+}
+
+/// Words shown while a call screen closes.
+String callExitLabel(String kind) {
+  switch (kind) {
+    case 'declined':
+      return 'Declined';
+    case 'missed':
+      return 'Missed call';
+    case 'cancelled':
+      return 'Cancelled';
+    default:
+      return 'Call ended';
+  }
 }
 
 /// A ringing call placed by someone else. The caller is not rung again.
@@ -1772,6 +1817,15 @@ class ChatApi {
         if (allow.isNotEmpty) 'allow': allow,
         if (deny.isNotEmpty) 'deny': deny,
       },
+      options: await _auth(),
+    );
+  }
+
+  Future<void> markStatusView(String id) async {
+    final clean = id.trim();
+    if (clean.isEmpty) return;
+    await _dio.post<dynamic>(
+      '/api/v1/chat/status/$clean/view',
       options: await _auth(),
     );
   }

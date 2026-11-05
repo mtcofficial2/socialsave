@@ -48,6 +48,13 @@ String statusAge(DateTime at, DateTime now) {
   return '${months[at.month - 1]} ${at.day}';
 }
 
+/// Words for how many people have opened a text status.
+String statusViewLabel(int count) {
+  if (count <= 0) return 'No views yet';
+  if (count == 1) return '1 view';
+  return '$count views';
+}
+
 class ChatStatusScreen extends StatefulWidget {
   const ChatStatusScreen({super.key});
 
@@ -118,12 +125,14 @@ class _ChatStatusScreenState extends State<ChatStatusScreen> {
   Future<void> _open(List<ChatStatusNote> notes, String title) async {
     final ordered = _sorted(notes);
     if (ordered.isEmpty || !mounted) return;
+    final own = ordered.every(_mine);
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
-        builder: (context) => _StatusViewer(notes: ordered, title: title),
+        builder: (context) => _StatusViewer(notes: ordered, title: title, own: own),
       ),
     );
     await _mark(ordered.map((note) => note.id));
+    if (own) await _load();
   }
 
   Future<void> _compose() async {
@@ -176,7 +185,7 @@ class _ChatStatusScreenState extends State<ChatStatusScreen> {
                     subtitle: Text(
                       latest == null
                           ? 'Tap to add a status update'
-                          : '${statusAge(latest.at, DateTime.now())} · ${latest.text}',
+                          : '${statusAge(latest.at, DateTime.now())} · ${statusViewLabel(latest.views.length)}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -286,10 +295,11 @@ class _StatusFace extends StatelessWidget {
 }
 
 class _StatusViewer extends StatefulWidget {
-  const _StatusViewer({required this.notes, required this.title});
+  const _StatusViewer({required this.notes, required this.title, required this.own});
 
   final List<ChatStatusNote> notes;
   final String title;
+  final bool own;
 
   @override
   State<_StatusViewer> createState() => _StatusViewerState();
@@ -297,6 +307,7 @@ class _StatusViewer extends StatefulWidget {
 
 class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderStateMixin {
   late final AnimationController _bar;
+  final Set<String> _reported = {};
   int _index = 0;
 
   @override
@@ -304,6 +315,18 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
     super.initState();
     _bar = AnimationController(vsync: this, duration: const Duration(seconds: 6));
     _arm();
+    _report(widget.notes.first);
+  }
+
+  void _report(ChatStatusNote note) {
+    if (widget.own || note.id.isEmpty || !_reported.add(note.id)) return;
+    unawaited(_sendView(note.id));
+  }
+
+  Future<void> _sendView(String id) async {
+    try {
+      await ChatApi().markStatusView(id);
+    } catch (_) {}
   }
 
   void _arm() {
@@ -323,7 +346,43 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
       return;
     }
     setState(() => _index = next);
+    _report(widget.notes[next]);
     _arm();
+  }
+
+  Future<void> _viewers(ChatStatusNote note) async {
+    if (!widget.own) return;
+    _bar.stop();
+    final names = note.views;
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: names.isEmpty
+              ? const Padding(
+                  padding: EdgeInsets.fromLTRB(24, 8, 24, 28),
+                  child: Text('No views yet'),
+                )
+              : ListView(
+                  shrinkWrap: true,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      child: Text('Viewed by', style: TextStyle(fontWeight: FontWeight.w700)),
+                    ),
+                    for (final name in names)
+                      ListTile(
+                        leading: const Icon(Icons.person_outline),
+                        title: Text(name.startsWith('@') ? name : '@$name'),
+                      ),
+                  ],
+                ),
+        );
+      },
+    );
+    if (mounted && !_bar.isCompleted) unawaited(_bar.forward());
   }
 
   @override
@@ -338,13 +397,7 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
     final color = statusTone(note.id);
     return Scaffold(
       backgroundColor: color,
-      body: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTapUp: (details) {
-          final width = MediaQuery.sizeOf(context).width;
-          _step(details.localPosition.dx < width / 3 ? -1 : 1);
-        },
-        child: SafeArea(
+      body: SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
             child: Column(
@@ -394,7 +447,9 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
                             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
                           ),
                           Text(
-                            statusAge(note.at, DateTime.now()),
+                            widget.own
+                                ? '${statusAge(note.at, DateTime.now())} · ${statusViewLabel(note.views.length)}'
+                                : statusAge(note.at, DateTime.now()),
                             style: const TextStyle(color: Colors.white70, fontSize: 12),
                           ),
                         ],
@@ -407,24 +462,39 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
                   ],
                 ),
                 Expanded(
-                  child: Center(
-                    child: Text(
-                      note.text,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 28,
-                        fontWeight: FontWeight.w700,
-                        height: 1.25,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTapUp: (details) {
+                      final width = MediaQuery.sizeOf(context).width;
+                      _step(details.localPosition.dx < width / 3 ? -1 : 1);
+                    },
+                    child: Center(
+                      child: Text(
+                        note.text,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 28,
+                          fontWeight: FontWeight.w700,
+                          height: 1.25,
+                        ),
                       ),
                     ),
                   ),
                 ),
+                if (widget.own)
+                  TextButton.icon(
+                    onPressed: () => unawaited(_viewers(note)),
+                    icon: const Icon(Icons.remove_red_eye_outlined, color: Colors.white),
+                    label: Text(
+                      statusViewLabel(note.views.length),
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                    ),
+                  ),
               ],
             ),
           ),
         ),
-      ),
     );
   }
 }

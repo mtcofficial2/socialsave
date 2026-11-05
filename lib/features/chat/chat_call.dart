@@ -228,18 +228,27 @@ class ChatCalls {
   bool outgoing = false;
   bool muted = false;
   bool speaker = false;
+  bool held = false;
+  bool remoteHeld = false;
   bool recovering = false;
+  String exitKind = '';
+  String moment = '';
   DateTime? connectedAt;
   bool _shown = false;
   bool _linked = true;
   bool _ringOn = false;
+  bool _finishing = false;
+  int _ringGen = 0;
+  int _callEpoch = 0;
   String _me = '';
   String _lastRemote = '';
   final List<String> _iceBeforeId = [];
+  final List<String> _closed = [];
   Timer? _recover;
   Timer? _clock;
   Timer? _presentRetry;
   Timer? _toneFallback;
+  Timer? _watch;
 
   Duration get elapsed {
     final start = connectedAt;
@@ -277,38 +286,64 @@ class ChatCalls {
   }
 
   Future<void> start(String threadId, String name) async {
+    if (_finishing) return;
     if (active?.live == true || status == 'ringing' || status == 'active') {
       _present();
       return;
     }
+    final epoch = ++_callEpoch;
     outgoing = true;
     peerName = name;
     status = 'ringing';
     problem = null;
     muted = false;
     speaker = false;
+    held = false;
+    remoteHeld = false;
+    exitKind = '';
+    moment = '';
     connectedAt = null;
     active = null;
     revision.value++;
     _present();
+    _armWatch();
     try {
       final sdp = await _media.offer(_sendIce);
+      if (_finishing || epoch != _callEpoch) return;
       final call = await _api.startCall(threadId, sdp: sdp);
+      if (_finishing || epoch != _callEpoch) {
+        try {
+          await _api.endCall(call.id);
+        } catch (_) {}
+        return;
+      }
       active = call;
       if (call.fromName.isNotEmpty) peerName = call.fromName;
       _flushIce();
       _armClock();
     } catch (error) {
+      if (_finishing || epoch != _callEpoch) return;
       problem = error is StateError ? error.message : chatErrorText(error);
       status = '';
       outgoing = false;
+      _watch?.cancel();
+      _watch = null;
       await _media.close();
     }
     revision.value++;
   }
 
   Future<void> onLive(ChatLiveEvent event) async {
+    if (_finishing && event.type != 'call') return;
     if (_me.isEmpty) _me = await ChatSession.username();
+    if (_finishing && event.type != 'call') return;
+    if (event.type == 'call-hold') {
+      if (event.callId.isEmpty || active == null || event.callId != active!.id) return;
+      if (status != 'active') return;
+      remoteHeld = event.on;
+      revision.value++;
+      return;
+    }
     if (event.type == 'call-ice') {
       if (event.candidate.isEmpty) return;
       if (active != null && event.callId.isNotEmpty && event.callId != active!.id) {
@@ -335,6 +370,7 @@ class ChatCalls {
     if (event.type != 'call' || event.callId.isEmpty) return;
     final mine = _sameCallUser(event.from, _me);
     if (event.callState == 'ringing' && !mine && !outgoing) {
+      if (_closed.contains(event.callId) || _finishing) return;
       active = ChatCallRecord(
         id: event.callId,
         thread: event.threadId,
@@ -346,14 +382,19 @@ class ChatCalls {
       status = 'ringing';
       outgoing = false;
       problem = null;
+      held = false;
+      remoteHeld = false;
+      exitKind = '';
       revision.value++;
       _present();
+      _armWatch();
       return;
     }
     if (active != null && event.callId != active!.id && event.callState == 'ringing') {
       return;
     }
     if (event.callState == 'active') {
+      if (_finishing) return;
       unawaited(_endRing());
       status = 'active';
       connectedAt ??= DateTime.now();
@@ -364,30 +405,43 @@ class ChatCalls {
         } catch (_) {}
       }
       _armClock();
+      _armWatch();
       revision.value++;
       _present();
       return;
     }
-    if (event.callState == 'ended' ||
-        event.callState == 'missed' ||
-        event.callState == 'declined' ||
-        event.callState == 'cancelled') {
+    if (callIsOver(event.callState)) {
       if (active != null && event.callId != active!.id) return;
-      await _finish();
+      if (active == null && status != 'ringing' && status != 'active') return;
+      await _finish(kind: event.callState);
     }
   }
 
   Future<void> syncIncoming() async {
-    if (outgoing || status == 'active') return;
+    if (_finishing) return;
+    if (outgoing || status == 'active') {
+      await _watchLive();
+      return;
+    }
     try {
       final me = _me.isEmpty ? await ChatSession.username() : _me;
+      if (_finishing || outgoing || status == 'active') return;
       _me = me;
       final rows = await _api.calls();
+      if (_finishing || outgoing || status == 'active') return;
       final call = incomingRing(rows, me);
       if (call == null) {
-        if (status == 'ringing' && !outgoing) await _finish();
+        if (status == 'ringing' && !outgoing) {
+          final id = active?.id ?? '';
+          var kind = 'missed';
+          for (final row in rows) {
+            if (row.id == id && callIsOver(row.state)) kind = row.state;
+          }
+          await _finish(kind: kind);
+        }
         return;
       }
+      if (_closed.contains(call.id)) return;
       if (active?.id == call.id && status == 'ringing') {
         _present();
         return;
@@ -397,15 +451,38 @@ class ChatCalls {
       status = 'ringing';
       outgoing = false;
       problem = null;
+      held = false;
+      remoteHeld = false;
+      exitKind = '';
       revision.value++;
       _present();
+      _armWatch();
+    } catch (_) {}
+  }
+
+  Future<void> _watchLive() async {
+    final id = active?.id ?? '';
+    if (id.isEmpty || _finishing) return;
+    try {
+      final rows = await _api.calls();
+      if (_finishing || active?.id != id) return;
+      if (!watchedCallFinished(rows, id)) return;
+      var kind = 'ended';
+      for (final row in rows) {
+        if (row.id == id && row.state.isNotEmpty) kind = row.state;
+      }
+      if (!callIsOver(kind)) kind = 'ended';
+      await _finish(kind: kind);
     } catch (_) {}
   }
 
   Future<void> accept() async {
     final call = active;
-    if (call == null || status != 'ringing') return;
+    if (call == null || status != 'ringing' || _finishing) return;
     await _endRing();
+    if (_finishing || active?.id != call.id) return;
+    moment = 'accept';
+    revision.value++;
     try {
       var offer = callSdp(call.offer);
       if (offer.isEmpty) {
@@ -417,18 +494,24 @@ class ChatCalls {
           }
         }
       }
+      if (_finishing || active?.id != call.id) return;
       if (offer.isEmpty) {
         throw StateError('The call offer did not arrive. Ask them to call again.');
       }
       final sdp = await _media.answer(offer, _sendIce);
       final next = await _api.answerCall(call.id, accept: true, sdp: sdp);
+      if (_finishing) return;
       active = next;
       status = 'active';
       connectedAt = DateTime.now();
       problem = null;
+      moment = '';
       _flushIce();
       _armClock();
+      _armWatch();
     } catch (error) {
+      if (_finishing) return;
+      moment = '';
       problem = error is StateError ? error.message : chatErrorText(error);
     }
     revision.value++;
@@ -436,31 +519,52 @@ class ChatCalls {
 
   Future<void> decline() async {
     final id = active?.id ?? '';
-    await _finish();
-    if (id.isEmpty) return;
-    try {
-      await _api.answerCall(id, accept: false);
-    } catch (_) {}
+    _remember(id);
+    final done = _finish(kind: 'declined');
+    if (id.isNotEmpty) {
+      try {
+        await _api.answerCall(id, accept: false);
+      } catch (_) {}
+    }
+    await done;
   }
 
   Future<void> hangUp() async {
     final id = active?.id ?? '';
     final wasRinging = status == 'ringing';
-    await _finish();
-    if (id.isEmpty) return;
-    try {
-      if (wasRinging && !outgoing) {
-        await _api.answerCall(id, accept: false);
-      } else {
-        await _api.endCall(id);
-      }
-    } catch (_) {}
+    final placedHere = outgoing;
+    final kind = !wasRinging ? 'ended' : (placedHere ? 'cancelled' : 'declined');
+    _remember(id);
+    final done = _finish(kind: kind);
+    if (id.isNotEmpty) {
+      try {
+        if (wasRinging && !placedHere) {
+          await _api.answerCall(id, accept: false);
+        } else {
+          await _api.endCall(id);
+        }
+      } catch (_) {}
+    }
+    await done;
   }
 
   Future<void> setMuted(bool on) async {
+    if (_finishing) return;
     muted = on;
-    await _media.setMuted(on);
+    await _media.setMuted(on || held);
     revision.value++;
+  }
+
+  Future<void> setHeld(bool on) async {
+    if (_finishing || status != 'active') return;
+    held = on;
+    revision.value++;
+    await _media.setMuted(on || muted);
+    final id = active?.id ?? '';
+    if (id.isEmpty || _finishing) return;
+    ChatLive.instance.sendText(
+      jsonEncode({'type': 'call-hold', 'call': id, 'on': on}),
+    );
   }
 
   Future<void> setSpeaker(bool on) async {
@@ -502,14 +606,39 @@ class ChatCalls {
     });
   }
 
-  Future<void> _finish() async {
+  void _remember(String id) {
+    if (id.isEmpty) return;
+    _closed.remove(id);
+    _closed.add(id);
+    if (_closed.length > 40) _closed.removeAt(0);
+  }
+
+  void _armWatch() {
+    if (_finishing) return;
+    _watch ??= Timer.periodic(const Duration(seconds: 2), (_) {
+      unawaited(syncIncoming());
+    });
+  }
+
+  Future<void> _finish({String kind = 'ended'}) async {
+    if (_finishing) return;
+    _finishing = true;
+    _callEpoch++;
+    _remember(active?.id ?? '');
     _recover?.cancel();
     _recover = null;
     _clock?.cancel();
     _clock = null;
     _presentRetry?.cancel();
     _presentRetry = null;
+    _watch?.cancel();
+    _watch = null;
+    exitKind = kind.isEmpty ? 'ended' : kind;
+    revision.value++;
     await _endRing();
+    if (_shown) {
+      await Future<void>.delayed(const Duration(milliseconds: 680));
+    }
     active = null;
     status = '';
     outgoing = false;
@@ -517,13 +646,19 @@ class ChatCalls {
     connectedAt = null;
     muted = false;
     speaker = false;
+    held = false;
+    remoteHeld = false;
+    moment = '';
+    problem = null;
     _lastRemote = '';
     _iceBeforeId.clear();
     await _media.close();
     revision.value++;
+    _finishing = false;
   }
 
   void _present() {
+    if (_finishing) return;
     if (status == 'ringing' && !outgoing) _beginRing();
     final quiet = problem == null || problem!.trim().isEmpty;
     if (_shown || (status != 'ringing' && status != 'active' && quiet)) {
@@ -547,29 +682,47 @@ class ChatCalls {
       pageBuilder: (context, _, _) => const ChatCallSheet(),
     ).whenComplete(() {
       _shown = false;
-      if (status == 'ringing' || status == 'active') _present();
+      if (status != 'ringing' && status != 'active') exitKind = '';
+      if (!_finishing && exitKind.isEmpty && (status == 'ringing' || status == 'active')) {
+        _present();
+      }
     });
   }
 
   void _beginRing() {
-    if (_ringOn || outgoing) return;
+    if (_ringOn || outgoing || _finishing || exitKind.isNotEmpty) return;
     _ringOn = true;
-    unawaited(_playRing());
-    unawaited(NotificationService().showIncomingCall(peerName));
+    final gen = ++_ringGen;
+    unawaited(_playRing(gen));
+    unawaited(_showIncoming(gen));
   }
 
-  Future<void> _playRing() async {
+  Future<void> _showIncoming(int gen) async {
+    await NotificationService().showIncomingCall(peerName);
+    if (gen != _ringGen || !_ringOn) {
+      await NotificationService().cancelIncomingCall();
+    }
+  }
+
+  Future<void> _playRing(int gen) async {
     try {
       await const MethodChannel('socialsave/media').invokeMethod<void>('playCallRingtone');
     } catch (_) {
+      if (gen != _ringGen || !_ringOn) return;
       _toneFallback ??= Timer.periodic(const Duration(seconds: 2), (_) {
         SystemSound.play(SystemSoundType.alert);
       });
+      return;
+    }
+    if (gen != _ringGen || !_ringOn) {
+      try {
+        await const MethodChannel('socialsave/media').invokeMethod<void>('stopCallRingtone');
+      } catch (_) {}
     }
   }
 
   Future<void> _endRing() async {
-    if (!_ringOn && _toneFallback == null) return;
+    _ringGen++;
     _ringOn = false;
     _toneFallback?.cancel();
     _toneFallback = null;
@@ -587,8 +740,69 @@ bool _sameCallUser(String a, String b) {
   return left.isNotEmpty && left == clean(b);
 }
 
-class ChatCallSheet extends StatelessWidget {
+class ChatCallSheet extends StatefulWidget {
   const ChatCallSheet({super.key});
+
+  @override
+  State<ChatCallSheet> createState() => _ChatCallSheetState();
+}
+
+class _ChatCallSheetState extends State<ChatCallSheet> with TickerProviderStateMixin {
+  late final AnimationController _pulse;
+  late final AnimationController _bloom;
+  late final AnimationController _exit;
+  late final AnimationController _hold;
+  bool _closing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 1800));
+    _bloom = AnimationController(vsync: this, duration: const Duration(milliseconds: 520));
+    _exit = AnimationController(vsync: this, duration: const Duration(milliseconds: 640));
+    _hold = AnimationController(vsync: this, duration: const Duration(milliseconds: 1600));
+    _exit.addStatusListener((state) {
+      if (state == AnimationStatus.completed && mounted) {
+        _closeIfDone(ChatCalls.instance);
+      }
+    });
+    ChatCalls.revision.addListener(_onRev);
+    _onRev();
+  }
+
+  void _onRev() {
+    final call = ChatCalls.instance;
+    final moving = (call.status == 'ringing' || call.recovering) && call.exitKind.isEmpty;
+    if (moving) {
+      if (!_pulse.isAnimating) _pulse.repeat();
+    } else if (_pulse.isAnimating) {
+      _pulse.stop();
+      _pulse.value = 0;
+    }
+    final holding = (call.held || call.remoteHeld) && call.exitKind.isEmpty;
+    if (holding) {
+      if (!_hold.isAnimating) _hold.repeat(reverse: true);
+    } else if (_hold.isAnimating) {
+      _hold.stop();
+      _hold.value = 0;
+    }
+    if (call.moment == 'accept' && _bloom.value == 0 && !_bloom.isAnimating) {
+      _bloom.forward(from: 0);
+    }
+    if (call.exitKind.isNotEmpty && _exit.value == 0 && !_exit.isAnimating) {
+      _exit.forward();
+    }
+  }
+
+  @override
+  void dispose() {
+    ChatCalls.revision.removeListener(_onRev);
+    _pulse.dispose();
+    _bloom.dispose();
+    _exit.dispose();
+    _hold.dispose();
+    super.dispose();
+  }
 
   String _clock(Duration elapsed) {
     final minutes = elapsed.inMinutes.remainder(60).toString().padLeft(2, '0');
@@ -598,108 +812,245 @@ class ChatCallSheet extends StatelessWidget {
     return '$minutes:$seconds';
   }
 
+  String _line(ChatCalls call) {
+    if (call.exitKind.isNotEmpty) return callExitLabel(call.exitKind);
+    final problem = call.problem?.trim() ?? '';
+    if (problem.isNotEmpty) return problem;
+    if (call.held) return 'On hold';
+    if (call.remoteHeld) return 'They held the call';
+    if (call.recovering) return 'Reconnecting…';
+    if (call.status == 'active') return _clock(call.elapsed);
+    if (call.outgoing) return 'Calling…';
+    return 'Incoming audio call';
+  }
+
+  Color _wash(String kind) {
+    switch (kind) {
+      case 'declined':
+        return const Color(0xFF4A1518);
+      case 'missed':
+      case 'cancelled':
+        return const Color(0xFF1C2833);
+      default:
+        return const Color(0xFF0B141A);
+    }
+  }
+
+  double _bloomScale(double t) {
+    if (t <= 0) return 1;
+    final up = t < 0.45 ? t / 0.45 : (1 - t) / 0.55;
+    return 1 + 0.14 * up.clamp(0.0, 1.0);
+  }
+
+  void _closeIfDone(ChatCalls call) {
+    final quiet = call.problem == null || call.problem!.trim().isEmpty;
+    final over = call.status != 'ringing' && call.status != 'active';
+    if (!over || !quiet || _closing) return;
+    if (call.exitKind.isNotEmpty && _exit.isAnimating) return;
+    _closing = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final nav = Navigator.of(context);
+      if (nav.canPop()) nav.pop();
+    });
+  }
+
+  Widget _face(String name, double scale, double pulse, bool holdOn, Color ringColor) {
+    final letter = name.isEmpty ? '?' : name.substring(0, 1).toUpperCase();
+    return SizedBox(
+      width: 220,
+      height: 220,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          if (pulse > 0) ...[
+            _ripple(pulse, ringColor),
+            _ripple((pulse + 0.5) % 1, ringColor),
+          ],
+          Transform.scale(
+            scale: scale,
+            child: Container(
+              width: 112,
+              height: 112,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xFF1F2C34),
+                boxShadow: [
+                  if (_bloom.value > 0)
+                    BoxShadow(
+                      color: ChatUiTokens.brand.withValues(
+                        alpha: (0.45 * (1 - (_bloom.value - 0.5).abs() * 2)).clamp(0.0, 1.0).toDouble(),
+                      ),
+                      blurRadius: 28,
+                      spreadRadius: 4,
+                    ),
+                ],
+              ),
+              child: Text(
+                letter,
+                style: const TextStyle(fontSize: 40, color: Colors.white, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ),
+          if (holdOn)
+            Positioned(
+              right: 58,
+              bottom: 58,
+              child: Container(
+                width: 36,
+                height: 36,
+                decoration: const BoxDecoration(color: Color(0xFFF9A825), shape: BoxShape.circle),
+                child: const Icon(Icons.pause_rounded, color: Colors.white, size: 22),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _ripple(double t, Color color) {
+    final size = 112 + 92 * t;
+    return IgnorePointer(
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: color.withValues(alpha: (1 - t) * 0.5), width: 2),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<int>(
       valueListenable: ChatCalls.revision,
       builder: (context, _, _) {
         final call = ChatCalls.instance;
+        _closeIfDone(call);
+        final leaving = call.exitKind.isNotEmpty;
         final live = call.status == 'ringing' || call.status == 'active';
-        if (!live && (call.problem == null || call.problem!.isEmpty)) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (context.mounted && Navigator.of(context).canPop()) {
-              Navigator.of(context).pop();
-            }
-          });
-        }
         final name = call.peerName.trim().isEmpty ? 'Audio call' : call.peerName.trim();
-        final line = call.problem?.trim().isNotEmpty == true
-            ? call.problem!.trim()
-            : call.recovering
-            ? 'Reconnecting…'
-            : call.status == 'active'
-            ? _clock(call.elapsed)
-            : call.outgoing
-            ? 'Calling…'
-            : 'Incoming audio call';
+        final holdOn = (call.held || call.remoteHeld) && !leaving;
         return PopScope(
           canPop: false,
-          child: Material(
-            color: const Color(0xFF0B141A),
-            child: SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(28, 48, 28, 36),
-                child: Column(
-                  children: [
-                    const Spacer(),
-                    CircleAvatar(
-                      radius: 52,
-                      backgroundColor: const Color(0xFF1F2C34),
-                      child: Text(
-                        name.substring(0, 1).toUpperCase(),
-                        style: const TextStyle(fontSize: 40, color: Colors.white, fontWeight: FontWeight.w600),
+          child: AnimatedBuilder(
+            animation: Listenable.merge([_pulse, _bloom, _exit, _hold]),
+            builder: (context, _) {
+              final fade = (1 - Curves.easeIn.transform(_exit.value)).clamp(0.0, 1.0);
+              final drop = 42.0 * Curves.easeIn.transform(_exit.value);
+              final pulse = (call.status == 'ringing' || call.recovering) && !leaving ? _pulse.value : 0.0;
+              final scale = leaving
+                  ? 1 - 0.1 * _exit.value
+                  : holdOn
+                  ? 1 - 0.045 * _hold.value
+                  : _bloomScale(_bloom.value);
+              final bg = Color.lerp(const Color(0xFF0B141A), _wash(call.exitKind), _exit.value) ??
+                  const Color(0xFF0B141A);
+              final beat = pulse <= 0.5 ? pulse * 2 : (1 - pulse) * 2;
+              final textOpacity = call.recovering && !leaving ? 0.45 + 0.55 * beat : 1.0;
+              final ringColor = call.outgoing ? const Color(0xFF53BDEB) : ChatUiTokens.brand;
+              return Material(
+                color: bg,
+                child: Opacity(
+                  opacity: fade,
+                  child: Transform.translate(
+                    offset: Offset(0, drop),
+                    child: SafeArea(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(28, 36, 28, 28),
+                        child: Column(
+                          children: [
+                            const Spacer(),
+                            _face(name, scale, pulse, holdOn, ringColor),
+                            Text(
+                              name,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontSize: 32,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.white,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Opacity(
+                              opacity: textOpacity,
+                              child: Text(
+                                _line(call),
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  color: leaving ? Colors.white : const Color(0xFFAEBAC1),
+                                  fontWeight: leaving ? FontWeight.w700 : FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                            const Spacer(),
+                            if (!leaving && call.status == 'ringing' && !call.outgoing)
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                                children: [
+                                  _CallAction(
+                                    color: const Color(0xFFE53935),
+                                    icon: Icons.call_end_rounded,
+                                    label: 'Decline',
+                                    onPressed: () => unawaited(call.decline()),
+                                  ),
+                                  _CallAction(
+                                    color: ChatUiTokens.brand,
+                                    icon: Icons.call_rounded,
+                                    label: 'Accept',
+                                    scale: 1 + 0.06 * beat,
+                                    onPressed: () => unawaited(call.accept()),
+                                  ),
+                                ],
+                              )
+                            else if (!leaving && live) ...[
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                                children: [
+                                  _CallAction(
+                                    color: const Color(0xFF1F2C34),
+                                    icon: call.muted ? Icons.mic_off_rounded : Icons.mic_rounded,
+                                    label: call.muted ? 'Unmute' : 'Mute',
+                                    onPressed: () => unawaited(call.setMuted(!call.muted)),
+                                  ),
+                                  if (call.status == 'active')
+                                    _CallAction(
+                                      color: call.held ? const Color(0xFFF9A825) : const Color(0xFF1F2C34),
+                                      icon: call.held ? Icons.play_arrow_rounded : Icons.pause_rounded,
+                                      label: call.held ? 'Resume' : 'Hold',
+                                      onPressed: () => unawaited(call.setHeld(!call.held)),
+                                    ),
+                                  _CallAction(
+                                    color: const Color(0xFF1F2C34),
+                                    icon: call.speaker ? Icons.volume_up_rounded : Icons.hearing_rounded,
+                                    label: call.speaker ? 'Speaker' : 'Earpiece',
+                                    onPressed: () => unawaited(call.setSpeaker(!call.speaker)),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 22),
+                              _CallAction(
+                                color: const Color(0xFFE53935),
+                                icon: Icons.call_end_rounded,
+                                label: 'End',
+                                onPressed: () => unawaited(call.hangUp()),
+                              ),
+                            ] else if (!leaving)
+                              TextButton(
+                                onPressed: () => Navigator.of(context).pop(),
+                                child: const Text('Close'),
+                              ),
+                          ],
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 22),
-                    Text(
-                      name,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w600, color: Colors.white),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(line, style: const TextStyle(fontSize: 16, color: Color(0xFFAEBAC1))),
-                    const Spacer(),
-                    if (call.status == 'ringing' && !call.outgoing)
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: [
-                          _CallAction(
-                            color: const Color(0xFFE53935),
-                            icon: Icons.call_end_rounded,
-                            label: 'Decline',
-                            onPressed: () => unawaited(call.decline()),
-                          ),
-                          _CallAction(
-                            color: ChatUiTokens.brand,
-                            icon: Icons.call_rounded,
-                            label: 'Accept',
-                            onPressed: () => unawaited(call.accept()),
-                          ),
-                        ],
-                      )
-                    else if (live)
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: [
-                          _CallAction(
-                            color: const Color(0xFF1F2C34),
-                            icon: call.muted ? Icons.mic_off_rounded : Icons.mic_rounded,
-                            label: call.muted ? 'Unmute' : 'Mute',
-                            onPressed: () => unawaited(call.setMuted(!call.muted)),
-                          ),
-                          _CallAction(
-                            color: const Color(0xFFE53935),
-                            icon: Icons.call_end_rounded,
-                            label: 'End',
-                            onPressed: () => unawaited(call.hangUp()),
-                          ),
-                          _CallAction(
-                            color: const Color(0xFF1F2C34),
-                            icon: call.speaker ? Icons.volume_up_rounded : Icons.hearing_rounded,
-                            label: call.speaker ? 'Speaker' : 'Earpiece',
-                            onPressed: () => unawaited(call.setSpeaker(!call.speaker)),
-                          ),
-                        ],
-                      )
-                    else
-                      TextButton(
-                        onPressed: () => Navigator.of(context).pop(),
-                        child: const Text('Close'),
-                      ),
-                  ],
+                  ),
                 ),
-              ),
-            ),
+              );
+            },
           ),
         );
       },
@@ -713,27 +1064,32 @@ class _CallAction extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.onPressed,
+    this.scale = 1,
   });
 
   final Color color;
   final IconData icon;
   final String label;
   final VoidCallback onPressed;
+  final double scale;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        IconButton.filled(
-          style: IconButton.styleFrom(
-            backgroundColor: color,
-            foregroundColor: Colors.white,
-            fixedSize: const Size(72, 72),
-            iconSize: 32,
+        Transform.scale(
+          scale: scale,
+          child: IconButton.filled(
+            style: IconButton.styleFrom(
+              backgroundColor: color,
+              foregroundColor: Colors.white,
+              fixedSize: const Size(68, 68),
+              iconSize: 30,
+            ),
+            onPressed: onPressed,
+            icon: Icon(icon),
           ),
-          onPressed: onPressed,
-          icon: Icon(icon),
         ),
         const SizedBox(height: 8),
         Text(label, style: const TextStyle(color: Colors.white)),

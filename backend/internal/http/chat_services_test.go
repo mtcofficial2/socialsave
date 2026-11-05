@@ -101,6 +101,39 @@ func TestChatPrivacyStatusAndRequests(t *testing.T) {
 	if bytesContain(getChat(app, "/api/v1/chat/status", cam.token).Body.Bytes(), "out today") {
 		t.Fatal("cam saw a private update")
 	}
+	var posted struct {
+		Status struct {
+			ID string `json:"id"`
+		} `json:"status"`
+	}
+	if err := json.Unmarshal(note.Body.Bytes(), &posted); err != nil || posted.Status.ID == "" {
+		t.Fatalf("status id %s", note.Body.String())
+	}
+	viewPath := "/api/v1/chat/status/" + posted.Status.ID + "/view"
+	if seen := postChat(app, viewPath, ben.token, `{}`); seen.Code != http.StatusOK {
+		t.Fatalf("view %d %s", seen.Code, seen.Body.String())
+	}
+	adaList := getChat(app, "/api/v1/chat/status", ada.token)
+	if !bytesContain(adaList.Body.Bytes(), `"views":["ben"]`) {
+		t.Fatalf("views %s", adaList.Body.String())
+	}
+	benList := getChat(app, "/api/v1/chat/status", ben.token)
+	if bytesContain(benList.Body.Bytes(), `"views"`) {
+		t.Fatalf("views leaked %s", benList.Body.String())
+	}
+	if postChat(app, viewPath, cam.token, `{}`).Code == http.StatusOK {
+		t.Fatal("cam viewed a private update")
+	}
+	if postChat(app, viewPath, ben.token, `{}`).Code != http.StatusOK {
+		t.Fatal("second view")
+	}
+	if postChat(app, viewPath, ada.token, `{}`).Code != http.StatusOK {
+		t.Fatal("author view")
+	}
+	adaAgain := getChat(app, "/api/v1/chat/status", ada.token)
+	if !bytesContain(adaAgain.Body.Bytes(), `"views":["ben"]`) || bytesContain(adaAgain.Body.Bytes(), `"views":["ben",`) {
+		t.Fatalf("view list changed %s", adaAgain.Body.String())
+	}
 	app.chat.mu.Lock()
 	for i := range app.chat.data.Statuses {
 		app.chat.data.Statuses[i].At = time.Now().Add(-25 * time.Hour).UnixMilli()
