@@ -199,6 +199,26 @@ void main() {
     expect(ready, contains('203.0.113.8 20000'));
     expect(ready, isNot(contains('.local')));
     expect(callSdpForPeer(sdp, '203.0.113.8'), sdp);
+    final bulky = 'v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n${List.filled(300, 'a=candidate:1 1 udp 1 192.168.0.2 9 typ host\r\n').join()}';
+    expect(bulky.length > 10000, isTrue);
+    final sent = callSdpToSend(bulky, null);
+    expect(sent.startsWith('v=0'), isTrue);
+    expect(sent.contains('m=audio'), isTrue);
+    expect(sent.contains('a=candidate'), isFalse);
+    const shortOffer = 'v=0\r\na=candidate:1 1 udp 1 1.2.3.4 9 typ host\r\n';
+    expect(callSdpToSend(shortOffer, null), shortOffer);
+    expect(
+      callRingShouldReset(currentId: 'c1', eventId: 'c1', status: 'active', answering: false),
+      isFalse,
+    );
+    expect(
+      callRingShouldReset(currentId: 'c1', eventId: 'c1', status: 'ringing', answering: true),
+      isFalse,
+    );
+    expect(
+      callRingShouldReset(currentId: 'c1', eventId: 'c1', status: 'ringing', answering: false),
+      isTrue,
+    );
   });
 
   test('a status view count is words and stays with the author', () {

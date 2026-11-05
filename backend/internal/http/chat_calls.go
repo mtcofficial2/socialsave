@@ -20,6 +20,8 @@ const (
 	chatCallKeep = 50
 	chatSDPMax   = 12000
 	chatICEMax   = 2000
+	// JSON escapes every newline, so the POST is larger than the SDP itself.
+	chatCallBodyMax = chatSDPMax*4 + 1024
 )
 
 func (c *chatRoom) hasRecovery(ctx context.Context, userID string) bool {
@@ -473,7 +475,7 @@ func (s *Server) chatCallInvite(w http.ResponseWriter, r *http.Request) {
 		Thread string `json:"thread"`
 		SDP    string `json:"sdp"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, chatSDPMax+512)).Decode(&body); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, chatCallBodyMax)).Decode(&body); err != nil {
 		writeChatError(w, http.StatusBadRequest, "The call could not start.")
 		return
 	}
@@ -494,7 +496,7 @@ func (s *Server) chatCallAnswer(w http.ResponseWriter, r *http.Request) {
 		Accept bool   `json:"accept"`
 		SDP    string `json:"sdp"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, chatSDPMax+512)).Decode(&body); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, chatCallBodyMax)).Decode(&body); err != nil {
 		writeChatError(w, http.StatusBadRequest, "The call could not be answered.")
 		return
 	}
@@ -843,7 +845,7 @@ func (c *chatRoom) relayCallIce(user chatUser, callID, candidate string) {
 	if err != nil || c.live == nil {
 		return
 	}
-	c.live.send(other, body)
+	c.live.sendWait(other, body)
 }
 
 func (c *chatRoom) relayCallSDP(user chatUser, callID, sdp string) {
@@ -876,7 +878,7 @@ func (c *chatRoom) relayCallSDP(user chatUser, callID, sdp string) {
 	if err != nil {
 		return
 	}
-	c.live.send(other, body)
+	c.live.sendWait(other, body)
 }
 
 func (c *chatRoom) relayCallHold(user chatUser, callID string, on bool) {

@@ -53,9 +53,8 @@ class ChatCallMedia {
       }
       if (event.track.kind == 'audio') {
         event.track.enabled = true;
-        // Windows never picks a speaker unless one is named. Without this the
-        // phone's voice is connected and silent.
-        if (Plat.isWindows) unawaited(Helper.setVolume(1, event.track));
+        unawaited(Helper.setVolume(1, event.track));
+        ChatCalls.instance.hear();
       }
     };
     pc.onIceCandidate = (candidate) {
@@ -87,12 +86,12 @@ class ChatCallMedia {
     for (final track in stream.getAudioTracks()) {
       await pc.addTrack(track, stream);
     }
-    if (Plat.isWindows) await _windowsPlayout();
+    if (Plat.isWindows) await playout();
   }
 
   /// getUserMedia records the mic and leaves playback unset. Pick a speaker
   /// or headset so the other person can be heard.
-  Future<void> _windowsPlayout() async {
+  Future<void> playout() async {
     try {
       final outputs = await Helper.audiooutputs;
       if (outputs.isEmpty) return;
@@ -152,10 +151,11 @@ class ChatCallMedia {
     return _localSdp(desc);
   }
 
-  Future<void> acceptAnswer(String sdp) async {
+  Future<bool> acceptAnswer(String sdp) async {
     final pc = _pc;
-    if (pc == null || sdp.isEmpty) return;
+    if (pc == null || sdp.isEmpty) return false;
     await _applyRemote(pc, sdp, 'answer');
+    return true;
   }
 
   Future<String> acceptRestart(String sdp) async {
@@ -270,6 +270,7 @@ class ChatCalls {
   bool _ringOn = false;
   bool _finishing = false;
   bool _answering = false;
+  bool _routeChosen = false;
   int _ringGen = 0;
   int _callEpoch = 0;
   String _me = '';
@@ -336,15 +337,19 @@ class ChatCalls {
     exitKind = '';
     moment = '';
     connectedAt = null;
+    _routeChosen = false;
     active = null;
     revision.value++;
     _present();
     _armWatch();
     try {
       await _rememberLan();
-      await _allowPcAudio();
+      unawaited(_allowPcAudio());
       if (_finishing || epoch != _callEpoch) return;
-      final sdp = callSdpForPeer(await _media.offer(_sendIce), _lanIp);
+      final sdp = callSdpToSend(await _media.offer(_sendIce), _lanIp);
+      if (sdp.isEmpty) {
+        throw StateError('The call could not start. Try again.');
+      }
       if (_finishing || epoch != _callEpoch) return;
       final call = await _api.startCall(threadId, sdp: sdp);
       if (_finishing || epoch != _callEpoch) {
@@ -400,22 +405,30 @@ class ChatCalls {
       if (event.callId.isEmpty || event.sdp.isEmpty) return;
       if (active != null && event.callId != active!.id) return;
       if (event.sdp == _lastRemote) return;
-      _lastRemote = event.sdp;
-      try {
-        if (outgoing) {
-          await _media.acceptAnswer(event.sdp);
-          _markAnswered();
-        } else if (status == 'active') {
+      if (outgoing) {
+        _markAnswered();
+        await _useAnswer(event.sdp);
+      } else if (status == 'active') {
+        try {
           final answer = await _media.acceptRestart(event.sdp);
+          _lastRemote = event.sdp;
           _sendSdp(answer);
-        }
-      } catch (_) {}
+        } catch (_) {}
+      }
       return;
     }
     if (event.type != 'call' || event.callId.isEmpty) return;
     final mine = _sameCallUser(event.from, _me);
     if (event.callState == 'ringing' && !mine && !outgoing) {
       if (_closed.contains(event.callId) || _finishing) return;
+      if (!callRingShouldReset(
+        currentId: active?.id ?? '',
+        eventId: event.callId,
+        status: status,
+        answering: _answering,
+      )) {
+        return;
+      }
       active = ChatCallRecord(
         id: event.callId,
         thread: event.threadId,
@@ -445,12 +458,7 @@ class ChatCalls {
         await _finish(kind: 'ended');
         return;
       }
-      if (event.answer.isNotEmpty && outgoing && event.answer != _lastRemote) {
-        _lastRemote = event.answer;
-        try {
-          await _media.acceptAnswer(event.answer);
-        } catch (_) {}
-      }
+      if (outgoing) await _useAnswer(event.answer);
       _markAnswered();
       _armWatch();
       return;
@@ -480,20 +488,18 @@ class ChatCalls {
           final id = active?.id ?? '';
           var kind = 'missed';
           var elsewhere = false;
-          var stay = false;
           for (final row in rows) {
             if (row.id != id) continue;
             if (row.state == 'active') {
               if (_answering) {
-                stay = true;
-              } else {
-                elsewhere = true;
+                _markAnswered();
+                return;
               }
+              elsewhere = true;
               break;
             }
             if (callIsOver(row.state)) kind = row.state;
           }
-          if (stay) return;
           await _finish(kind: elsewhere ? 'ended' : kind);
         }
         return;
@@ -524,10 +530,10 @@ class ChatCalls {
       final rows = await _api.calls();
       if (_finishing || active?.id != id) return;
       for (final row in rows) {
-        if (row.id == id && row.state == 'active') {
-          _markAnswered();
-          break;
-        }
+        if (row.id != id || row.state != 'active') continue;
+        if (outgoing) await _useAnswer(row.answer);
+        _markAnswered();
+        break;
       }
       if (!watchedCallFinished(rows, id)) return;
       var kind = 'ended';
@@ -541,20 +547,20 @@ class ChatCalls {
 
   Future<void> accept() async {
     final call = active;
-    if (call == null || status != 'ringing' || _finishing) return;
+    if (call == null || status != 'ringing' || _finishing || _answering) return;
     _answering = true;
-    await _endRing();
-    if (_finishing || active?.id != call.id) {
-      _answering = false;
-      return;
-    }
     moment = 'accept';
     revision.value++;
+    unawaited(_endRing());
+    if (_finishing || active?.id != call.id) {
+      _dropAccept();
+      return;
+    }
     try {
       await _rememberLan();
-      await _allowPcAudio();
+      unawaited(_allowPcAudio());
       if (_finishing || active?.id != call.id) {
-        _answering = false;
+        _dropAccept();
         return;
       }
       var offer = callSdp(call.offer);
@@ -568,13 +574,16 @@ class ChatCalls {
         }
       }
       if (_finishing || active?.id != call.id) {
-        if (!_finishing) _answering = false;
+        _dropAccept();
         return;
       }
       if (offer.isEmpty) {
         throw StateError('The call offer did not arrive. Ask them to call again.');
       }
-      final sdp = callSdpForPeer(await _media.answer(offer, _sendIce), _lanIp);
+      final sdp = callSdpToSend(await _media.answer(offer, _sendIce), _lanIp);
+      if (sdp.isEmpty) {
+        throw StateError('The call could not start. Try again.');
+      }
       final next = await _api.answerCall(call.id, accept: true, sdp: sdp);
       if (_finishing) return;
       active = next;
@@ -582,6 +591,7 @@ class ChatCalls {
       connectedAt = DateTime.now();
       problem = null;
       moment = '';
+      hear();
       _flushIce();
       _armClock();
       _armWatch();
@@ -646,6 +656,7 @@ class ChatCalls {
   }
 
   Future<void> setSpeaker(bool on) async {
+    _routeChosen = true;
     speaker = on;
     await _media.setSpeaker(on);
     revision.value++;
@@ -665,7 +676,7 @@ class ChatCalls {
   }
 
   void _sendSdp(String sdp) {
-    final ready = callSdpForPeer(sdp, _lanIp);
+    final ready = callSdpToSend(sdp, _lanIp);
     final id = active?.id ?? '';
     if (id.isEmpty || ready.isEmpty) return;
     sdp = ready;
@@ -682,6 +693,21 @@ class ChatCalls {
     }
   }
 
+  /// A failed answer must be tried again from the next live frame or the poll.
+  Future<void> _useAnswer(String sdp) async {
+    if (!outgoing || sdp.isEmpty || sdp == _lastRemote || _finishing) return;
+    try {
+      if (await _media.acceptAnswer(sdp)) _lastRemote = sdp;
+    } catch (_) {}
+  }
+
+  void _dropAccept() {
+    if (_finishing) return;
+    _answering = false;
+    if (moment == 'accept') moment = '';
+    revision.value++;
+  }
+
   /// The other person picked up. Show the call screen even if the live frame was missed.
   void _markAnswered() {
     if (_finishing) return;
@@ -693,7 +719,19 @@ class ChatCalls {
       _armClock();
       revision.value++;
     }
+    hear();
     _present();
+  }
+
+  /// Play the other person out loud. The earpiece stays silent on a lot of
+  /// phones until the speaker route is set, and Windows needs a named output.
+  void hear() {
+    if (status != 'active' || _finishing || _routeChosen) return;
+    final first = !speaker;
+    speaker = true;
+    unawaited(_media.setSpeaker(true));
+    if (Plat.isWindows) unawaited(_media.playout());
+    if (first) revision.value++;
   }
 
   void _armClock() {
@@ -720,6 +758,7 @@ class ChatCalls {
     if (_finishing) return;
     _finishing = true;
     _answering = false;
+    _routeChosen = false;
     _callEpoch++;
     _remember(active?.id ?? '');
     _recover?.cancel();
@@ -789,11 +828,10 @@ class ChatCalls {
   }
 
   void _beginRing() {
-    if (_ringOn || outgoing || _finishing || exitKind.isNotEmpty) return;
+    if (_ringOn || outgoing || _finishing || exitKind.isNotEmpty || _answering) return;
     _ringOn = true;
     final gen = ++_ringGen;
     _showWindow();
-    unawaited(_allowPcAudio());
     unawaited(_playRing(gen));
     unawaited(_showIncoming(gen));
   }
@@ -947,7 +985,8 @@ class _ChatCallSheetState extends State<ChatCallSheet> with TickerProviderStateM
 
   void _onRev() {
     final call = ChatCalls.instance;
-    final moving = (call.status == 'ringing' || call.recovering) && call.exitKind.isEmpty;
+    final moving = ((call.status == 'ringing' && call.moment != 'accept') || call.recovering) &&
+        call.exitKind.isEmpty;
     if (moving) {
       if (!_pulse.isAnimating) _pulse.repeat();
     } else if (_pulse.isAnimating) {
@@ -995,6 +1034,7 @@ class _ChatCallSheetState extends State<ChatCallSheet> with TickerProviderStateM
     if (call.remoteHeld) return 'They held the call';
     if (call.recovering) return 'Reconnecting…';
     if (call.status == 'active') return _clock(call.elapsed);
+    if (call.moment == 'accept') return 'Connecting…';
     if (call.outgoing) return 'Calling…';
     return 'Incoming audio call';
   }
@@ -1116,7 +1156,10 @@ class _ChatCallSheetState extends State<ChatCallSheet> with TickerProviderStateM
             builder: (context, _) {
               final fade = (1 - Curves.easeIn.transform(_exit.value)).clamp(0.0, 1.0);
               final drop = 42.0 * Curves.easeIn.transform(_exit.value);
-              final pulse = (call.status == 'ringing' || call.recovering) && !leaving ? _pulse.value : 0.0;
+              final pulse = ((call.status == 'ringing' && call.moment != 'accept') || call.recovering) &&
+                      !leaving
+                  ? _pulse.value
+                  : 0.0;
               final scale = leaving
                   ? 1 - 0.1 * _exit.value
                   : holdOn
@@ -1162,7 +1205,10 @@ class _ChatCallSheetState extends State<ChatCallSheet> with TickerProviderStateM
                               ),
                             ),
                             const Spacer(),
-                            if (!leaving && call.status == 'ringing' && !call.outgoing)
+                            if (!leaving &&
+                                call.status == 'ringing' &&
+                                !call.outgoing &&
+                                call.moment != 'accept')
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                                 children: [

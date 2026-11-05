@@ -900,6 +900,36 @@ String callCandidateForPeer(String encoded, String? lanIp) {
   return line.length > 2000 ? encoded : line;
 }
 
+/// Embedded candidates can push a desktop offer over the server limit.
+/// Trickle ICE still carries them. A short description is left as it is,
+/// so a phone call keeps the candidates it already sends.
+String callSdpToSend(String sdp, String? lanIp) {
+  final text = callSdpForPeer(sdp, lanIp);
+  if (text.length <= 10000) return text;
+  final kept = <String>[];
+  for (final line in text.split('\n')) {
+    if (line.trimLeft().startsWith('a=candidate')) continue;
+    kept.add(line);
+  }
+  final next = kept.join('\n');
+  if (!next.startsWith('v=0') || next.length > 12000) return '';
+  return next;
+}
+
+/// A ringing notice for a call this device already answered must not put the
+/// screen back on Ringing.
+bool callRingShouldReset({
+  required String currentId,
+  required String eventId,
+  required String status,
+  required bool answering,
+}) {
+  if (currentId.isNotEmpty && currentId == eventId && (status == 'active' || answering)) {
+    return false;
+  }
+  return true;
+}
+
 /// The same *.local swap for an offer or answer that already gathered candidates.
 String callSdpForPeer(String sdp, String? lanIp) {
   if (sdp.isEmpty || !callLanIpUsable(lanIp) || !sdp.contains('.local')) return sdp;
