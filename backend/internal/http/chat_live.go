@@ -220,32 +220,59 @@ func (c *chatRoom) announcePresence(userID string, online bool) {
 		thread := &c.data.Threads[i]
 		others = append(others, thread.others(userID)...)
 	}
-	c.mu.Unlock()
-	body, err := json.Marshal(map[string]any{
-		"type":     "presence",
-		"username": user.Username,
-		"online":   online,
-		"lastSeen": user.LastSeen,
-	})
-	if err != nil {
-		return
+	type presenceNote struct {
+		id   string
+		body []byte
 	}
+	notes := make([]presenceNote, 0, len(others))
+	seenIDs := map[string]bool{}
 	for _, id := range others {
-		c.live.send(id, body)
+		if id == "" || seenIDs[id] {
+			continue
+		}
+		seenIDs[id] = true
+		showOnline := online && c.sharesPresenceLocked(id, user, "online")
+		showSeen := user.LastSeen
+		if !c.sharesPresenceLocked(id, user, "lastSeen") {
+			showSeen = 0
+		}
+		if !showOnline && showSeen == 0 {
+			continue
+		}
+		body, err := json.Marshal(map[string]any{
+			"type":     "presence",
+			"username": user.Username,
+			"online":   showOnline,
+			"lastSeen": showSeen,
+		})
+		if err != nil {
+			continue
+		}
+		notes = append(notes, presenceNote{id: id, body: body})
+	}
+	c.mu.Unlock()
+	for _, note := range notes {
+		c.live.send(note.id, note.body)
 	}
 }
 
 func (c *chatRoom) onLiveText(user chatUser, payload []byte) {
-	if len(payload) == 0 || len(payload) > 2048 {
+	if len(payload) == 0 || len(payload) > 16000 {
 		return
 	}
 	var body struct {
-		Type   string `json:"type"`
-		Thread string `json:"thread"`
-		ID     string `json:"id"`
-		On     bool   `json:"on"`
+		Type      string `json:"type"`
+		Thread    string `json:"thread"`
+		ID        string `json:"id"`
+		Call      string `json:"call"`
+		On        bool   `json:"on"`
+		SDP       string `json:"sdp"`
+		Candidate string `json:"candidate"`
 	}
 	if json.Unmarshal(payload, &body) != nil {
+		return
+	}
+	if len(payload) > 2048 && !strings.HasPrefix(body.Type, "call") {
 		return
 	}
 	switch body.Type {
@@ -255,6 +282,10 @@ func (c *chatRoom) onLiveText(user chatUser, payload []byte) {
 		c.notePhotoHave(user, body.Thread, body.ID)
 	case "photo-need":
 		c.notePhotoNeed(user, body.Thread, body.ID)
+	case "call-ice":
+		c.relayCallIce(user, body.Call, body.Candidate)
+	case "call-sdp":
+		c.relayCallSDP(user, body.Call, body.SDP)
 	}
 }
 
@@ -504,6 +535,7 @@ func (s *Server) chatLive(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	go s.writeLive(ctx, conn, rw.Writer, lc)
 	s.chat.live.send(user.ID, []byte(`{"type":"ready"}`))
+	s.chat.pushPendingCalls(user)
 	s.chat.touch(r.Context(), user.ID)
 	s.chat.announcePresence(user.ID, true)
 	var fragOp byte

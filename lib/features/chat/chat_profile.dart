@@ -296,6 +296,33 @@ Future<void> showChatProfile(
                       ),
                       label: Text(blockedNow ? 'Unblock' : 'Block'),
                     ),
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      onPressed: busy
+                          ? null
+                          : () async {
+                              setSheet(() {
+                                busy = true;
+                                problem = null;
+                              });
+                              try {
+                                await ChatApi().reportUser(username);
+                                if (!context.mounted) return;
+                                setSheet(() => busy = false);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Report sent')),
+                                );
+                              } catch (error) {
+                                if (!context.mounted) return;
+                                setSheet(() {
+                                  busy = false;
+                                  problem = chatErrorText(error);
+                                });
+                              }
+                            },
+                      icon: const Icon(Icons.flag_outlined),
+                      label: const Text('Report'),
+                    ),
                   ],
                   if (mine) const SizedBox(height: 8),
                   if (mine && onLogOut != null) ...[
@@ -416,9 +443,8 @@ Future<int?> _pickChatPhoto(String username) async {
   return rev;
 }
 
-/// Members, the join code, and leave. Rename is offered to everyone; the
-/// server keeps it for the person who made the group. Any member can add a
-/// username that already has a Social Save account.
+/// Members, the join code, and leave. Add, rename, and the admin tools are
+/// for an admin. The server rejects them for anyone else.
 Future<void> showChatGroup(
   BuildContext context, {
   required String name,
@@ -427,9 +453,25 @@ Future<void> showChatGroup(
   required Future<String> Function(String name) onRename,
   required Future<List<String>> Function(String username) onAdd,
   required Future<void> Function() onLeave,
+  String about = '',
+  String rules = '',
+  bool announce = false,
+  bool canManage = true,
+  String owner = '',
+  List<String> admins = const [],
+  Future<void> Function(String username, {required bool on})? onAdmin,
+  Future<void> Function(String username)? onRemove,
+  Future<void> Function(String username)? onTransfer,
+  Future<String> Function(int hours)? onInvite,
+  Future<void> Function({String? about, String? rules, bool? announce})? onInfo,
 }) {
   var shown = name.trim();
   var people = List<String>.from(members);
+  var aboutText = about.trim();
+  var rulesText = rules.trim();
+  var announceOn = announce;
+  var adminNames = List<String>.from(admins);
+  var ownerName = owner.trim();
   return showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
@@ -441,6 +483,7 @@ Future<void> showChatGroup(
       return StatefulBuilder(
         builder: (context, setSheet) {
           return SafeArea(
+            child: SingleChildScrollView(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
               child: Column(
@@ -462,6 +505,23 @@ Future<void> showChatGroup(
                     people.length == 1 ? '1 person' : '${people.length} people',
                     style: TextStyle(color: scheme.onSurfaceVariant),
                   ),
+                  if (aboutText.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(aboutText, textAlign: TextAlign.center),
+                  ],
+                  if (rulesText.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      rulesText,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: scheme.onSurfaceVariant),
+                    ),
+                  ],
+                  if (announceOn)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 6),
+                      child: Text('Only admins can post'),
+                    ),
                   if (code.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     Text(
@@ -486,7 +546,87 @@ Future<void> showChatGroup(
                               minTileHeight: 40,
                               leading: ChatFace(name: member, size: 32),
                               title: Text('@$member'),
-                              trailing: const Icon(Icons.chevron_right_rounded),
+                              subtitle: member == ownerName || adminNames.contains(member)
+                                  ? const Text('Admin')
+                                  : null,
+                              trailing: !canManage ||
+                                      member == ownerName ||
+                                      (onAdmin == null &&
+                                          onRemove == null &&
+                                          onTransfer == null)
+                                  ? const Icon(Icons.chevron_right_rounded)
+                                  : PopupMenuButton<String>(
+                                      onSelected: (value) async {
+                                        setSheet(() {
+                                          busy = true;
+                                          problem = null;
+                                        });
+                                        try {
+                                          if (value == 'admin' && onAdmin != null) {
+                                            final on = !adminNames.contains(member);
+                                            await onAdmin(member, on: on);
+                                            setSheet(() {
+                                              busy = false;
+                                              adminNames = [
+                                                for (final name in adminNames)
+                                                  if (name != member) name,
+                                                if (on) member,
+                                              ];
+                                            });
+                                            return;
+                                          }
+                                          if (value == 'remove' && onRemove != null) {
+                                            await onRemove(member);
+                                            setSheet(() {
+                                              busy = false;
+                                              people = [
+                                                for (final name in people)
+                                                  if (name != member) name,
+                                              ];
+                                            });
+                                            return;
+                                          }
+                                          if (value == 'transfer' && onTransfer != null) {
+                                            await onTransfer(member);
+                                            setSheet(() {
+                                              busy = false;
+                                              ownerName = member;
+                                              if (!adminNames.contains(owner)) {
+                                                adminNames = [...adminNames, owner];
+                                              }
+                                            });
+                                            return;
+                                          }
+                                          setSheet(() => busy = false);
+                                        } catch (error) {
+                                          setSheet(() {
+                                            busy = false;
+                                            problem = chatErrorText(error);
+                                          });
+                                        }
+                                      },
+                                      itemBuilder: (context) => [
+                                        if (onAdmin != null && member != ownerName)
+                                          PopupMenuItem(
+                                            value: 'admin',
+                                            child: Text(
+                                              adminNames.contains(member)
+                                                  ? 'Dismiss admin'
+                                                  : 'Make admin',
+                                            ),
+                                          ),
+                                        if (onTransfer != null && member != ownerName)
+                                          const PopupMenuItem(
+                                            value: 'transfer',
+                                            child: Text('Make owner'),
+                                          ),
+                                        if (onRemove != null && member != ownerName)
+                                          const PopupMenuItem(
+                                            value: 'remove',
+                                            child: Text('Remove'),
+                                          ),
+                                      ],
+                                    ),
                               onTap: () => showChatProfile(
                                 context,
                                 username: member,
@@ -499,6 +639,127 @@ Future<void> showChatGroup(
                         ],
                       ),
                     ),
+                  if (canManage && onInfo != null) ...[
+                    const SizedBox(height: 8),
+                    FilledButton.tonalIcon(
+                      onPressed: busy
+                          ? null
+                          : () async {
+                              final next = await _askGroupName(context, aboutText);
+                              if (next == null || !context.mounted) return;
+                              final savedInfo = onInfo;
+                              setSheet(() {
+                                busy = true;
+                                problem = null;
+                              });
+                              try {
+                                await savedInfo(about: next.trim());
+                                setSheet(() {
+                                  busy = false;
+                                  aboutText = next.trim();
+                                });
+                              } catch (error) {
+                                setSheet(() {
+                                  busy = false;
+                                  problem = chatErrorText(error);
+                                });
+                              }
+                            },
+                      icon: const Icon(Icons.info_outline_rounded),
+                      label: const Text('Description'),
+                    ),
+                    const SizedBox(height: 8),
+                    FilledButton.tonalIcon(
+                      onPressed: busy
+                          ? null
+                          : () async {
+                              final next = await _askGroupName(context, rulesText);
+                              if (next == null || !context.mounted) return;
+                              final savedInfo = onInfo;
+                              setSheet(() {
+                                busy = true;
+                                problem = null;
+                              });
+                              try {
+                                await savedInfo(rules: next.trim());
+                                setSheet(() {
+                                  busy = false;
+                                  rulesText = next.trim();
+                                });
+                              } catch (error) {
+                                setSheet(() {
+                                  busy = false;
+                                  problem = chatErrorText(error);
+                                });
+                              }
+                            },
+                      icon: const Icon(Icons.rule_rounded),
+                      label: const Text('Rules'),
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Announcement mode'),
+                      subtitle: const Text('Only admins can post'),
+                      value: announceOn,
+                      onChanged: busy
+                          ? null
+                          : (value) async {
+                              final savedInfo = onInfo;
+                              setSheet(() {
+                                busy = true;
+                                problem = null;
+                              });
+                              try {
+                                await savedInfo(announce: value);
+                                setSheet(() {
+                                  busy = false;
+                                  announceOn = value;
+                                });
+                              } catch (error) {
+                                setSheet(() {
+                                  busy = false;
+                                  problem = chatErrorText(error);
+                                });
+                              }
+                            },
+                    ),
+                  ],
+                  if (canManage && onInvite != null) ...[
+                    const SizedBox(height: 8),
+                    FilledButton.tonalIcon(
+                      onPressed: busy
+                          ? null
+                          : () async {
+                              final savedInvite = onInvite;
+                              setSheet(() {
+                                busy = true;
+                                problem = null;
+                              });
+                              try {
+                                final next = await savedInvite(168);
+                                if (!context.mounted) return;
+                                setSheet(() => busy = false);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      next.isEmpty
+                                          ? 'Invite link replaced'
+                                          : 'New code $next, expires in 7 days',
+                                    ),
+                                  ),
+                                );
+                              } catch (error) {
+                                setSheet(() {
+                                  busy = false;
+                                  problem = chatErrorText(error);
+                                });
+                              }
+                            },
+                      icon: const Icon(Icons.link_rounded),
+                      label: const Text('New invite, 7 days'),
+                    ),
+                  ],
+                  if (canManage) ...[
                   const SizedBox(height: 8),
                   FilledButton.tonalIcon(
                     onPressed: busy
@@ -570,6 +831,7 @@ Future<void> showChatGroup(
                     icon: const Icon(Icons.edit_rounded),
                     label: const Text('Rename group'),
                   ),
+                  ],
                   const SizedBox(height: 8),
                   TextButton.icon(
                     onPressed: busy
@@ -631,6 +893,7 @@ Future<void> showChatGroup(
                   ],
                 ],
               ),
+            ),
             ),
           );
         },

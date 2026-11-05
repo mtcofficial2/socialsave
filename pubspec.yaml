@@ -48,6 +48,7 @@ dependencies:
   file_selector: ^1.0.3
   image: ^4.5.4
   record: ^5.2.1
+  flutter_webrtc: ^1.2.0
   # Windows: drop videos / link shortcuts on the window. 0.9 needs Flutter 3.47.
   desktop_drop: ^0.8.4
   win32: ^5.15.0

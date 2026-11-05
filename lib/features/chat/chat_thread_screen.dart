@@ -18,8 +18,10 @@ import 'package:social_save/features/chat/chat_history.dart';
 import 'package:social_save/features/chat/chat_image_store.dart';
 import 'package:social_save/features/chat/chat_link.dart';
 import 'package:social_save/features/chat/chat_live.dart';
+import 'package:social_save/features/chat/chat_call.dart';
 import 'package:social_save/features/chat/chat_prefs.dart';
 import 'package:social_save/features/chat/chat_profile.dart';
+import 'package:social_save/features/chat/chat_services.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
 import 'package:social_save/features/chat/chat_voice.dart';
 import 'package:social_save/features/chat/chat_wallpaper.dart';
@@ -126,8 +128,15 @@ class _ChatThreadViewState extends State<ChatThreadView>
   final TextEditingController _search = TextEditingController();
   bool _searching = false;
   bool _blocked = false;
+  bool _request = false;
   List<int> _pinned = const [];
   List<String> _members = const [];
+  String _about = '';
+  String _rules = '';
+  bool _announce = false;
+  String _owner = '';
+  List<String> _admins = const [];
+  int _vanish = 0;
   int _syncedAt = 0;
   int? _editingId;
   int _pinCursor = 0;
@@ -256,7 +265,11 @@ class _ChatThreadViewState extends State<ChatThreadView>
   }
 
   void _onLive(ChatLiveEvent event) {
-    if (!mounted || event.type == 'typing' || event.type == 'recording') {
+    if (!mounted ||
+        event.type == 'typing' ||
+        event.type == 'recording' ||
+        event.type == 'call' ||
+        event.type.startsWith('call-')) {
       return;
     }
     if (event.type == 'presence') {
@@ -458,6 +471,13 @@ class _ChatThreadViewState extends State<ChatThreadView>
           sync.peerGroup != _group ||
           sync.peerMembers.join('\n') != _members.join('\n') ||
           sync.pinned.join(',') != _pinned.join(',') ||
+          sync.peerRequest != _request ||
+          sync.groupAbout != _about ||
+          sync.groupRules != _rules ||
+          sync.groupAnnounce != _announce ||
+          sync.groupOwner != _owner ||
+          sync.groupAdmins.join('\n') != _admins.join('\n') ||
+          sync.vanish != _vanish ||
           nameChanged;
       _peerDelivered = sync.peerDelivered;
       _peerRead = sync.peerRead;
@@ -469,6 +489,13 @@ class _ChatThreadViewState extends State<ChatThreadView>
       _blocked = sync.peerBlocked;
       _members = sync.peerMembers;
       _pinned = sync.pinned;
+      _request = sync.peerRequest;
+      _about = sync.groupAbout;
+      _rules = sync.groupRules;
+      _announce = sync.groupAnnounce;
+      _owner = sync.groupOwner;
+      _admins = sync.groupAdmins;
+      _vanish = sync.vanish;
       if (nameChanged) widget.onSeenName?.call(_threadId, sync.peerName);
       final gone = sync.removed.toSet();
       if (gone.isNotEmpty) {
@@ -542,9 +569,14 @@ class _ChatThreadViewState extends State<ChatThreadView>
           continue;
         }
         final next = update.withQuoteFrom(combined[index]);
-        if (next.text != combined[index].text ||
-            next.editedAt != combined[index].editedAt ||
-            next.reactions.length != combined[index].reactions.length) {
+        final previous = combined[index];
+        if (next.text != previous.text ||
+            next.editedAt != previous.editedAt ||
+            next.reactions.length != previous.reactions.length ||
+            next.poll?.closed != previous.poll?.closed ||
+            next.poll?.votes.length != previous.poll?.votes.length ||
+            next.call != previous.call ||
+            next.callMs != previous.callMs) {
           combined[index] = next;
           touched = true;
         }
@@ -818,6 +850,48 @@ class _ChatThreadViewState extends State<ChatThreadView>
                 minTileHeight: 48,
                 onTap: () => Navigator.pop(context, 'song'),
               ),
+              ListTile(
+                leading: const Icon(Icons.poll_outlined),
+                title: const Text('Poll'),
+                minTileHeight: 48,
+                onTap: () => Navigator.pop(context, 'poll'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.contact_page_outlined),
+                title: const Text('Contact'),
+                minTileHeight: 48,
+                onTap: () => Navigator.pop(context, 'card'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.place_outlined),
+                title: const Text('Place'),
+                minTileHeight: 48,
+                onTap: () => Navigator.pop(context, 'place'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.schedule_send_outlined),
+                title: const Text('Schedule'),
+                minTileHeight: 48,
+                onTap: () => Navigator.pop(context, 'schedule'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.schedule_outlined),
+                title: const Text('Scheduled messages'),
+                minTileHeight: 48,
+                onTap: () => Navigator.pop(context, 'scheduled'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.timer_outlined),
+                title: const Text('Disappearing messages'),
+                minTileHeight: 48,
+                onTap: () => Navigator.pop(context, 'timer'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.notifications_outlined),
+                title: const Text('Notifications'),
+                minTileHeight: 48,
+                onTap: () => Navigator.pop(context, 'notify'),
+              ),
             ],
           ),
         );
@@ -834,6 +908,34 @@ class _ChatThreadViewState extends State<ChatThreadView>
     }
     if (choice == 'song') {
       await _pickSong();
+      return;
+    }
+    if (choice == 'poll') {
+      await _sendPoll();
+      return;
+    }
+    if (choice == 'card') {
+      await _sendCard();
+      return;
+    }
+    if (choice == 'place') {
+      await _sendPlace();
+      return;
+    }
+    if (choice == 'schedule') {
+      await _scheduleCurrent();
+      return;
+    }
+    if (choice == 'scheduled') {
+      await showScheduledMessages(context, _threadId);
+      return;
+    }
+    if (choice == 'timer') {
+      await _setVanish();
+      return;
+    }
+    if (choice == 'notify') {
+      await _setNotify();
       return;
     }
     await _pickPhoto();
@@ -1404,6 +1506,12 @@ class _ChatThreadViewState extends State<ChatThreadView>
             ),
           if (one != null && one.id > 0)
             IconButton(
+              tooltip: 'Star',
+              onPressed: () => unawaited(_star(one)),
+              icon: const Icon(Icons.star_outline_rounded),
+            ),
+          if (one != null && one.id > 0)
+            IconButton(
               tooltip: _pinned.contains(one.id) ? 'Unpin' : 'Pin',
               onPressed: () => unawaited(_togglePin(one)),
               icon: Icon(
@@ -1457,8 +1565,165 @@ class _ChatThreadViewState extends State<ChatThreadView>
   bool _canEdit(ChatMessage message) {
     if (message.id <= 0 || message.name != _me || _me.isEmpty) return false;
     if (message.isVoice || message.isSong || message.isPhoto) return false;
+    if (message.isPoll || message.isCard || message.isPlace || message.isCall) {
+      return false;
+    }
     if (message.text.trim().isEmpty) return false;
     return DateTime.now().difference(message.at) < const Duration(hours: 24);
+  }
+
+  bool _sameName(String value) {
+    final me = _me.replaceFirst(RegExp(r'^@'), '').trim().toLowerCase();
+    final other = value.replaceFirst(RegExp(r'^@'), '').trim().toLowerCase();
+    return me.isNotEmpty && me == other;
+  }
+
+  bool _canManageGroup(String owner, List<String> admins) {
+    if (_me.isEmpty) return false;
+    if (owner.isEmpty && admins.isEmpty) return true;
+    if (_sameName(owner)) return true;
+    return admins.any(_sameName);
+  }
+
+  Future<void> _sendPoll() async {
+    final poll = await askChatPoll(context);
+    if (poll == null || !mounted) return;
+    try {
+      final message = await _api.sendRich(_threadId, poll: poll);
+      if (!mounted) return;
+      _ingest(message);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = chatErrorText(error));
+    }
+  }
+
+  Future<void> _sendCard() async {
+    final card = await askChatCard(context);
+    if (card == null || !mounted) return;
+    try {
+      final message = await _api.sendRich(_threadId, card: card);
+      if (!mounted) return;
+      _ingest(message);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = chatErrorText(error));
+    }
+  }
+
+  Future<void> _sendPlace() async {
+    final place = await askChatPlace(context);
+    if (place == null || !mounted) return;
+    try {
+      final message = await _api.sendRich(_threadId, place: place);
+      if (!mounted) return;
+      _ingest(message);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = chatErrorText(error));
+    }
+  }
+
+  Future<void> _scheduleCurrent() async {
+    var text = _text.text.trim();
+    if (text.isEmpty) {
+      final asked = await _askScheduleText();
+      if (asked == null || asked.isEmpty || !mounted) return;
+      text = asked;
+    }
+    final when = await askSendTime(context);
+    if (when == null || !mounted) return;
+    try {
+      await _api.scheduleMessage(_threadId, text: text, sendAt: when, reply: _replyId ?? 0);
+      if (!mounted) return;
+      setState(() {
+        _text.clear();
+        _replyId = null;
+        _replyName = '';
+        _replyText = '';
+        _error = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Message scheduled')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = chatErrorText(error));
+    }
+  }
+
+  Future<String?> _askScheduleText() {
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Schedule a message'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: 'Message'),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, controller.text.trim()),
+              child: const Text('Next'),
+            ),
+          ],
+        );
+      },
+    ).whenComplete(controller.dispose);
+  }
+
+  Future<void> _setVanish() async {
+    final seconds = await askVanish(context);
+    if (seconds == null || !mounted) return;
+    try {
+      await _api.setTimer(_threadId, vanish: seconds);
+      if (!mounted) return;
+      setState(() => _vanish = seconds);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = chatErrorText(error));
+    }
+  }
+
+  Future<void> _setNotify() async {
+    final mode = await askNotifyMode(
+      context,
+      group: _isGroup,
+      current: ChatPrefs.modeFor(_threadId),
+    );
+    if (mode == null) return;
+    await ChatPrefs.setNotify(_threadId, mode);
+  }
+
+  Future<void> _vote(ChatMessage message, int? choice, bool close) async {
+    try {
+      final updated = await _api.votePoll(
+        _threadId,
+        message.id,
+        choice: choice,
+        close: close,
+      );
+      if (!mounted) return;
+      _ingest(updated);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = chatErrorText(error));
+    }
+  }
+
+  Future<void> _acceptRequest() async {
+    try {
+      await _api.acceptRequest(_threadId);
+      if (!mounted) return;
+      setState(() => _request = false);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = chatErrorText(error));
+    }
   }
 
   Future<void> _react(ChatMessage message, String emoji) async {
@@ -1484,6 +1749,20 @@ class _ChatThreadViewState extends State<ChatThreadView>
       _text.selection = TextSelection.collapsed(offset: _text.text.length);
     });
     _focus.requestFocus();
+  }
+
+  Future<void> _star(ChatMessage message) async {
+    setState(_selected.clear);
+    try {
+      await _api.setStar(_threadId, message.id, on: true);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Saved to starred messages')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = chatErrorText(error));
+    }
   }
 
   Future<void> _togglePin(ChatMessage message) async {
@@ -1727,6 +2006,14 @@ class _ChatThreadViewState extends State<ChatThreadView>
                 )
               : null,
           actions: [
+            if (!selecting && !_isGroup && !_searching)
+              IconButton(
+                tooltip: 'Audio call',
+                onPressed: () => unawaited(
+                  ChatCalls.instance.start(_threadId, title),
+                ),
+                icon: const Icon(Icons.call_rounded),
+              ),
             if (!selecting)
               IconButton(
                 tooltip: _searching ? 'Close search' : 'Search',
@@ -1921,6 +2208,9 @@ class _ChatThreadViewState extends State<ChatThreadView>
                               peerRead: _peerRead,
                               status: message.status,
                             ),
+                            me: _me,
+                            onPoll: (choice, close) =>
+                                unawaited(_vote(message, choice, close)),
                             onLink: _openLink,
                             onQuote: _scrollToMessage,
                             onRetry: message.status == 'failed'
@@ -2097,6 +2387,30 @@ class _ChatThreadViewState extends State<ChatThreadView>
                       ),
                     )
                   else ...[
+                  if (_request && !_isGroup)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+                      decoration: BoxDecoration(
+                        color: scheme.brightness == Brightness.dark
+                            ? const Color(0xFF1F2C34)
+                            : Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        children: [
+                          const Expanded(
+                            child: Text(
+                              'Message request. Accept to answer, or leave it until you reply.',
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: () => unawaited(_acceptRequest()),
+                            child: const Text('Accept'),
+                          ),
+                        ],
+                      ),
+                    ),
                   if (_replyText.isNotEmpty)
                     Container(
                       margin: const EdgeInsets.only(bottom: 6),
@@ -2251,6 +2565,45 @@ class _ChatThreadViewState extends State<ChatThreadView>
             if (!mounted) return;
             widget.onLeft?.call(_threadId);
             if (!widget.embedded && context.canPop()) context.pop();
+          },
+          about: group.about,
+          rules: group.rules,
+          announce: group.announce,
+          owner: group.owner,
+          admins: group.admins,
+          canManage: _canManageGroup(group.owner, group.admins),
+          onAdmin: (username, {required bool on}) {
+            return _api.setGroupAdmin(_threadId, username, on: on);
+          },
+          onRemove: (username) async {
+            await _api.removeMember(_threadId, username);
+            if (mounted) {
+              setState(() {
+                _members = [
+                  for (final name in _members)
+                    if (name != username) name,
+                ];
+              });
+            }
+          },
+          onTransfer: (username) async {
+            await _api.transferGroup(_threadId, username);
+            if (mounted) setState(() => _owner = username);
+          },
+          onInvite: (hours) => _api.rotateInvite(_threadId, hours: hours),
+          onInfo: ({String? about, String? rules, bool? announce}) async {
+            await _api.setGroupInfo(
+              _threadId,
+              about: about,
+              rules: rules,
+              announce: announce,
+            );
+            if (!mounted) return;
+            setState(() {
+              if (about != null) _about = about;
+              if (rules != null) _rules = rules;
+              if (announce != null) _announce = announce;
+            });
           },
         );
       } catch (error) {
@@ -2456,6 +2809,8 @@ class ChatBubble extends StatelessWidget {
     required this.tick,
     required this.onLink,
     required this.onLongPress,
+    this.me = '',
+    this.onPoll,
     this.tail = true,
     this.tight = false,
     this.onQuote,
@@ -2472,6 +2827,8 @@ class ChatBubble extends StatelessWidget {
   final ValueChanged<String> onLink;
   final ValueChanged<int>? onQuote;
   final ValueChanged<LongPressStartDetails>? onLongPress;
+  final String me;
+  final void Function(int? choice, bool close)? onPoll;
   final VoidCallback? onRetry;
 
   @override
@@ -2602,6 +2959,77 @@ class ChatBubble extends StatelessWidget {
                     api: api,
                     mine: mine,
                     dark: dark,
+                  ),
+                  stamp,
+                ],
+              ),
+            );
+          } else if (message.isPoll) {
+            body = SizedBox(
+              width: cardWidth,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ?quote,
+                  ChatPollView(
+                    message: message,
+                    me: me,
+                    onVote: (choice, close) => onPoll?.call(choice, close),
+                  ),
+                  stamp,
+                ],
+              ),
+            );
+          } else if (message.card != null) {
+            body = SizedBox(
+              width: cardWidth,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ?quote,
+                  ChatCardView(card: message.card!),
+                  stamp,
+                ],
+              ),
+            );
+          } else if (message.place != null) {
+            body = SizedBox(
+              width: cardWidth,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ?quote,
+                  ChatPlaceView(place: message.place!, onOpen: onLink),
+                  stamp,
+                ],
+              ),
+            );
+          } else if (message.isCall) {
+            final length = message.callMs <= 0
+                ? ''
+                : ' ${message.callMs ~/ 60}:${(message.callMs % 60).toString().padLeft(2, '0')}';
+            body = IntrinsicWidth(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ?quote,
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.call_rounded, size: 18),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          message.text.trim().isEmpty
+                              ? 'Audio call$length'
+                              : '${message.text}$length',
+                        ),
+                      ),
+                    ],
                   ),
                   stamp,
                 ],
@@ -2947,6 +3375,7 @@ class _ChatPictureState extends State<_ChatPicture> {
   Uint8List? _bytes;
   bool _waiting = false;
   bool _failed = false;
+  bool _held = false;
   DateTime? _startedAt;
 
   void _retry() {
@@ -2962,7 +3391,18 @@ class _ChatPictureState extends State<_ChatPicture> {
     super.initState();
     _bytes = _copy(widget.message.localBytes);
     ChatImageStore.revision.addListener(_onStore);
-    if (_bytes == null) _load();
+    ChatPrefs.revision.addListener(_onPrefs);
+    if (_bytes == null && ChatPrefs.dataSaver) {
+      _held = true;
+    } else if (_bytes == null) {
+      _load();
+    }
+  }
+
+  void _onPrefs() {
+    if (!mounted || !_held || ChatPrefs.dataSaver || _bytes != null) return;
+    setState(() => _held = false);
+    _load();
   }
 
   @override
@@ -2979,11 +3419,13 @@ class _ChatPictureState extends State<_ChatPicture> {
   @override
   void dispose() {
     ChatImageStore.revision.removeListener(_onStore);
+    ChatPrefs.revision.removeListener(_onPrefs);
     super.dispose();
   }
 
   void _onStore() {
-    if (_bytes == null) _load();
+    if (_held || _bytes != null) return;
+    _load();
   }
 
   Future<void> _load() async {
@@ -3063,6 +3505,17 @@ class _ChatPictureState extends State<_ChatPicture> {
                   ],
                 ),
               ),
+            ),
+          )
+        : bytes == null && _held
+        ? GestureDetector(
+            onTap: () {
+              setState(() => _held = false);
+              _load();
+            },
+            child: const SizedBox(
+              height: 180,
+              child: Center(child: Text('Tap to load this photo')),
             ),
           )
         : bytes == null

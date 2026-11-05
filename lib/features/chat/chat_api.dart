@@ -92,6 +92,10 @@ class ChatUser {
     required this.phone,
     required this.email,
     this.photoRev = 0,
+    this.onlinePrivacy = 'everyone',
+    this.seenPrivacy = 'everyone',
+    this.photoPrivacy = 'everyone',
+    this.receipts = 'everyone',
   });
 
   final String id;
@@ -100,13 +104,31 @@ class ChatUser {
   final String email;
   final int photoRev;
 
-  ChatUser copyWith({int? photoRev}) {
+  /// everyone, contacts, or nobody. Empty from the server means everyone.
+  final String onlinePrivacy;
+  final String seenPrivacy;
+  final String photoPrivacy;
+
+  /// everyone shows read receipts. nobody stores the read without announcing it.
+  final String receipts;
+
+  ChatUser copyWith({
+    int? photoRev,
+    String? onlinePrivacy,
+    String? seenPrivacy,
+    String? photoPrivacy,
+    String? receipts,
+  }) {
     return ChatUser(
       id: id,
       username: username,
       phone: phone,
       email: email,
       photoRev: photoRev ?? this.photoRev,
+      onlinePrivacy: onlinePrivacy ?? this.onlinePrivacy,
+      seenPrivacy: seenPrivacy ?? this.seenPrivacy,
+      photoPrivacy: photoPrivacy ?? this.photoPrivacy,
+      receipts: receipts ?? this.receipts,
     );
   }
 
@@ -119,21 +141,39 @@ class ChatUser {
   bool get isAdmin => chatUserIsAdmin(this);
 
   factory ChatUser.fromJson(Map<String, dynamic> json) {
+    final privacy = json['privacy'];
+    String audience(String key) {
+      if (privacy is! Map) return 'everyone';
+      final value = (privacy[key] as String?)?.trim() ?? '';
+      return value.isEmpty ? 'everyone' : value;
+    }
+
     return ChatUser(
       id: (json['id'] as String?)?.trim() ?? '',
       username: (json['username'] as String?)?.trim() ?? '',
       phone: (json['phone'] as String?)?.trim() ?? '',
       email: (json['email'] as String?)?.trim() ?? '',
       photoRev: (json['photoRev'] as num?)?.toInt() ?? 0,
+      onlinePrivacy: audience('online'),
+      seenPrivacy: audience('lastSeen'),
+      photoPrivacy: audience('photo'),
+      receipts: audience('receipts'),
     );
   }
 }
 
 class ChatRegistration {
-  const ChatRegistration({required this.token, required this.user});
+  const ChatRegistration({
+    required this.token,
+    required this.user,
+    this.recovery = '',
+  });
 
   final String token;
   final ChatUser user;
+
+  /// Shown once, when this account first gets a recovery code.
+  final String recovery;
 }
 
 /// One person who registered for chat. Only the admin request returns these.
@@ -345,12 +385,24 @@ class ChatGroup {
     required this.name,
     required this.code,
     this.members = const [],
+    this.about = '',
+    this.rules = '',
+    this.announce = false,
+    this.owner = '',
+    this.admins = const [],
+    this.inviteExp = 0,
   });
 
   final String id;
   final String name;
   final String code;
   final List<String> members;
+  final String about;
+  final String rules;
+  final bool announce;
+  final String owner;
+  final List<String> admins;
+  final int inviteExp;
 }
 
 /// True only for @daniel256 on 256703487378. The people list is still refused
@@ -382,6 +434,7 @@ class ChatThreadSummary {
     this.blocked = false,
     this.group = false,
     this.members = 0,
+    this.request = false,
   });
 
   final String id;
@@ -403,6 +456,7 @@ class ChatThreadSummary {
   final bool blocked;
   final bool group;
   final int members;
+  final bool request;
 
   ChatThreadSummary copyWith({
     String? lastText,
@@ -418,6 +472,7 @@ class ChatThreadSummary {
     bool? blocked,
     bool? group,
     int? members,
+    bool? request,
   }) {
     return ChatThreadSummary(
       id: id,
@@ -435,6 +490,7 @@ class ChatThreadSummary {
       blocked: blocked ?? this.blocked,
       group: group ?? this.group,
       members: members ?? this.members,
+      request: request ?? this.request,
     );
   }
 
@@ -457,6 +513,7 @@ class ChatThreadSummary {
       blocked: json['blocked'] == true,
       group: json['group'] == true,
       members: (json['members'] as num?)?.toInt() ?? 0,
+      request: json['request'] == true,
     );
   }
 
@@ -476,6 +533,7 @@ class ChatThreadSummary {
       'blocked': blocked,
       'group': group,
       'members': members,
+      'request': request,
     };
   }
 }
@@ -497,6 +555,14 @@ class ChatSync {
     this.peerGroup = false,
     this.peerMembers = const [],
     this.lastId = -1,
+    this.peerRequest = false,
+    this.groupAbout = '',
+    this.groupRules = '',
+    this.groupAnnounce = false,
+    this.groupOwner = '',
+    this.groupAdmins = const [],
+    this.inviteExp = 0,
+    this.vanish = 0,
   });
 
   final List<ChatMessage> messages;
@@ -515,6 +581,258 @@ class ChatSync {
 
   /// Newest message id on the server, or -1 from an older server.
   final int lastId;
+  final bool peerRequest;
+  final String groupAbout;
+  final String groupRules;
+  final bool groupAnnounce;
+  final String groupOwner;
+  final List<String> groupAdmins;
+  final int inviteExp;
+  final int vanish;
+}
+
+class ChatPoll {
+  const ChatPoll({
+    required this.question,
+    required this.choices,
+    this.votes = const {},
+    this.closes,
+    this.closed = false,
+  });
+
+  final String question;
+  final List<String> choices;
+  final Map<String, int> votes;
+  final DateTime? closes;
+  final bool closed;
+
+  factory ChatPoll.fromJson(Map<String, dynamic> json) {
+    final rawChoices = json['choices'];
+    final rawVotes = json['votes'];
+    final closes = (json['closes'] as num?)?.toInt() ?? 0;
+    return ChatPoll(
+      question: (json['question'] as String?)?.trim() ?? '',
+      choices: [
+        if (rawChoices is List)
+          for (final item in rawChoices)
+            if (item is String && item.trim().isNotEmpty) item.trim(),
+      ],
+      votes: {
+        if (rawVotes is Map)
+          for (final entry in rawVotes.entries)
+            if (entry.key is String && entry.value is num)
+              (entry.key as String): (entry.value as num).toInt(),
+      },
+      closes: closes > 0 ? DateTime.fromMillisecondsSinceEpoch(closes) : null,
+      closed: json['closed'] == true,
+    );
+  }
+}
+
+class ChatCard {
+  const ChatCard({required this.name, this.phone = '', this.username = ''});
+
+  final String name;
+  final String phone;
+  final String username;
+
+  factory ChatCard.fromJson(Map<String, dynamic> json) {
+    return ChatCard(
+      name: (json['name'] as String?)?.trim() ?? '',
+      phone: (json['phone'] as String?)?.trim() ?? '',
+      username: (json['username'] as String?)?.trim() ?? '',
+    );
+  }
+}
+
+class ChatPlace {
+  const ChatPlace({required this.lat, required this.lng, this.label = ''});
+
+  final double lat;
+  final double lng;
+  final String label;
+
+  String get link {
+    final la = lat.toStringAsFixed(5);
+    final ln = lng.toStringAsFixed(5);
+    return 'https://maps.google.com/?q=$la,$ln';
+  }
+
+  factory ChatPlace.fromJson(Map<String, dynamic> json) {
+    return ChatPlace(
+      lat: (json['lat'] as num?)?.toDouble() ?? 0,
+      lng: (json['lng'] as num?)?.toDouble() ?? 0,
+      label: (json['label'] as String?)?.trim() ?? '',
+    );
+  }
+}
+
+class ChatStatusNote {
+  const ChatStatusNote({
+    required this.id,
+    required this.name,
+    required this.text,
+    required this.at,
+    this.audience = 'all',
+  });
+
+  final String id;
+  final String name;
+  final String text;
+  final DateTime at;
+  final String audience;
+
+  factory ChatStatusNote.fromJson(Map<String, dynamic> json) {
+    return ChatStatusNote(
+      id: (json['id'] as String?)?.trim() ?? '',
+      name: (json['name'] as String?)?.trim() ?? '',
+      text: (json['text'] as String?)?.trim() ?? '',
+      at: DateTime.fromMillisecondsSinceEpoch((json['at'] as num?)?.toInt() ?? 0),
+      audience: (json['audience'] as String?)?.trim() ?? 'all',
+    );
+  }
+}
+
+class ChatScheduleNote {
+  const ChatScheduleNote({
+    required this.id,
+    required this.thread,
+    required this.text,
+    required this.sendAt,
+  });
+
+  final String id;
+  final String thread;
+  final String text;
+  final DateTime sendAt;
+
+  factory ChatScheduleNote.fromJson(Map<String, dynamic> json) {
+    return ChatScheduleNote(
+      id: (json['id'] as String?)?.trim() ?? '',
+      thread: (json['thread'] as String?)?.trim() ?? '',
+      text: (json['text'] as String?)?.trim() ?? '',
+      sendAt: DateTime.fromMillisecondsSinceEpoch(
+        (json['sendAt'] as num?)?.toInt() ?? 0,
+      ),
+    );
+  }
+}
+
+class ChatStarred {
+  const ChatStarred({
+    required this.thread,
+    required this.id,
+    required this.text,
+  });
+
+  final String thread;
+  final int id;
+  final String text;
+
+  factory ChatStarred.fromJson(Map<String, dynamic> json) {
+    return ChatStarred(
+      thread: (json['thread'] as String?)?.trim() ?? '',
+      id: (json['id'] as num?)?.toInt() ?? 0,
+      text: (json['text'] as String?)?.trim() ?? '',
+    );
+  }
+}
+
+class ChatFolder {
+  const ChatFolder({
+    required this.id,
+    required this.name,
+    this.threads = const [],
+  });
+
+  final String id;
+  final String name;
+  final List<String> threads;
+
+  factory ChatFolder.fromJson(Map<String, dynamic> json) {
+    final raw = json['threads'];
+    return ChatFolder(
+      id: (json['id'] as String?)?.trim() ?? '',
+      name: (json['name'] as String?)?.trim() ?? '',
+      threads: [
+        if (raw is List)
+          for (final item in raw)
+            if (item is String && item.trim().isNotEmpty) item.trim(),
+      ],
+    );
+  }
+}
+
+class ChatDeviceSession {
+  const ChatDeviceSession({
+    required this.id,
+    this.name = '',
+    this.platform = '',
+    this.current = false,
+    this.seen,
+  });
+
+  final String id;
+  final String name;
+  final String platform;
+  final bool current;
+  final DateTime? seen;
+
+  factory ChatDeviceSession.fromJson(Map<String, dynamic> json) {
+    final at = (json['seen'] as num?)?.toInt() ?? 0;
+    return ChatDeviceSession(
+      id: (json['id'] as String?)?.trim() ?? '',
+      name: (json['name'] as String?)?.trim() ?? '',
+      platform: (json['platform'] as String?)?.trim() ?? '',
+      current: json['current'] == true,
+      seen: at > 0 ? DateTime.fromMillisecondsSinceEpoch(at) : null,
+    );
+  }
+}
+
+class ChatCallRecord {
+  const ChatCallRecord({
+    required this.id,
+    required this.thread,
+    required this.state,
+    this.fromName = '',
+    this.fromId = '',
+    this.to = '',
+    this.offer = '',
+    this.answer = '',
+    this.dur = 0,
+  });
+
+  final String id;
+  final String thread;
+  final String state;
+  final String fromName;
+  final String fromId;
+  final String to;
+  final String offer;
+  final String answer;
+  final int dur;
+
+  bool get live => state == 'ringing' || state == 'active';
+
+  factory ChatCallRecord.fromJson(Map<String, dynamic> json) {
+    final named = (json['fromName'] as String?)?.trim() ?? '';
+    final fromIdField = (json['fromId'] as String?)?.trim() ?? '';
+    final from = (json['from'] as String?)?.trim() ?? '';
+    return ChatCallRecord(
+      id: (json['id'] as String?)?.trim() ?? '',
+      thread: (json['thread'] as String?)?.trim() ?? '',
+      state: (json['state'] as String?)?.trim() ?? '',
+      fromName: named.isNotEmpty
+          ? named
+          : (fromIdField.isNotEmpty ? from : ''),
+      fromId: fromIdField.isNotEmpty ? fromIdField : from,
+      to: (json['to'] as String?)?.trim() ?? '',
+      offer: (json['offer'] as String?)?.trim() ?? '',
+      answer: (json['answer'] as String?)?.trim() ?? '',
+      dur: (json['dur'] as num?)?.toInt() ?? 0,
+    );
+  }
 }
 
 class ChatMessage {
@@ -542,6 +860,12 @@ class ChatMessage {
     this.reactions = const [],
     this.localBytes,
     this.pendingKind = '',
+    this.poll,
+    this.card,
+    this.place,
+    this.expires,
+    this.call = '',
+    this.callMs = 0,
   });
 
   final int id;
@@ -567,11 +891,21 @@ class ChatMessage {
   final List<ChatReaction> reactions;
   final Uint8List? localBytes;
   final String pendingKind;
+  final ChatPoll? poll;
+  final ChatCard? card;
+  final ChatPlace? place;
+  final DateTime? expires;
+  final String call;
+  final int callMs;
 
   bool get isVoice => voice.isNotEmpty || pendingKind == 'voice';
   bool get isPhoto => photo.isNotEmpty || pendingKind == 'photo';
   bool get isSong => song.isNotEmpty || pendingKind == 'song';
   bool get isEdited => editedAt != null;
+  bool get isPoll => poll != null;
+  bool get isCard => card != null;
+  bool get isPlace => place != null;
+  bool get isCall => call.isNotEmpty;
 
   ChatMessage copyWith({String? status}) {
     return ChatMessage(
@@ -598,6 +932,12 @@ class ChatMessage {
       reactions: reactions,
       localBytes: localBytes,
       pendingKind: pendingKind,
+      poll: poll,
+      card: card,
+      place: place,
+      expires: expires,
+      call: call,
+      callMs: callMs,
     );
   }
 
@@ -632,6 +972,12 @@ class ChatMessage {
       reactions: reactions,
       localBytes: bytes,
       pendingKind: pendingKind,
+      poll: poll,
+      card: card,
+      place: place,
+      expires: expires,
+      call: call,
+      callMs: callMs,
     );
   }
 
@@ -660,6 +1006,12 @@ class ChatMessage {
       reactions: reactions,
       localBytes: bytes,
       pendingKind: pendingKind,
+      poll: poll,
+      card: card,
+      place: place,
+      expires: expires,
+      call: call,
+      callMs: callMs,
     );
   }
 
@@ -667,6 +1019,10 @@ class ChatMessage {
     final links = json['links'];
     final rawReactions = json['reactions'];
     final edited = (json['editedAt'] as num?)?.toInt() ?? 0;
+    final expiresAt = (json['expires'] as num?)?.toInt() ?? 0;
+    final rawPoll = json['poll'];
+    final rawCard = json['card'];
+    final rawPlace = json['place'];
     return ChatMessage(
       id: (json['id'] as num?)?.toInt() ?? 0,
       from: (json['from'] as String?)?.trim() ?? '',
@@ -705,6 +1061,20 @@ class ChatMessage {
             ]
           : const [],
       pendingKind: (json['pendingKind'] as String?)?.trim() ?? '',
+      poll: rawPoll is Map
+          ? ChatPoll.fromJson(Map<String, dynamic>.from(rawPoll))
+          : null,
+      card: rawCard is Map
+          ? ChatCard.fromJson(Map<String, dynamic>.from(rawCard))
+          : null,
+      place: rawPlace is Map
+          ? ChatPlace.fromJson(Map<String, dynamic>.from(rawPlace))
+          : null,
+      expires: expiresAt > 0
+          ? DateTime.fromMillisecondsSinceEpoch(expiresAt)
+          : null,
+      call: (json['call'] as String?)?.trim() ?? '',
+      callMs: (json['callMs'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -733,6 +1103,30 @@ class ChatMessage {
       if (reactions.isNotEmpty)
         'reactions': [for (final item in reactions) item.toJson()],
       if (pendingKind.isNotEmpty) 'pendingKind': pendingKind,
+      if (poll != null)
+        'poll': {
+          'question': poll!.question,
+          'choices': poll!.choices,
+          if (poll!.votes.isNotEmpty) 'votes': poll!.votes,
+          if (poll!.closes != null)
+            'closes': poll!.closes!.millisecondsSinceEpoch,
+          if (poll!.closed) 'closed': true,
+        },
+      if (card != null)
+        'card': {
+          'name': card!.name,
+          if (card!.phone.isNotEmpty) 'phone': card!.phone,
+          if (card!.username.isNotEmpty) 'username': card!.username,
+        },
+      if (place != null)
+        'place': {
+          'lat': place!.lat,
+          'lng': place!.lng,
+          if (place!.label.isNotEmpty) 'label': place!.label,
+        },
+      if (call.isNotEmpty) 'call': call,
+      if (callMs > 0) 'callMs': callMs,
+      if (expires != null) 'expires': expires!.millisecondsSinceEpoch,
     };
   }
 }
@@ -809,6 +1203,7 @@ class ChatApi {
     return ChatRegistration(
       token: token,
       user: ChatUser.fromJson(Map<String, dynamic>.from(user)),
+      recovery: (body['recovery'] as String?)?.trim() ?? '',
     );
   }
 
@@ -964,6 +1359,14 @@ class ChatApi {
     var peerBlocked = false;
     var peerGroup = false;
     final peerMembers = <String>[];
+    final groupAdmins = <String>[];
+    var peerRequest = false;
+    var groupAbout = '';
+    var groupRules = '';
+    var groupAnnounce = false;
+    var groupOwner = '';
+    var inviteExp = 0;
+    var vanish = 0;
     if (peer is Map) {
       delivered = (peer['delivered'] as num?)?.toInt() ?? 0;
       read = (peer['read'] as num?)?.toInt() ?? 0;
@@ -979,6 +1382,21 @@ class ChatApi {
         for (final name in names) {
           if (name is String && name.trim().isNotEmpty) {
             peerMembers.add(name.trim());
+          }
+        }
+      }
+      peerRequest = peer['request'] == true;
+      groupAbout = (peer['about'] as String?)?.trim() ?? '';
+      groupRules = (peer['rules'] as String?)?.trim() ?? '';
+      groupAnnounce = peer['announce'] == true;
+      groupOwner = (peer['ownerName'] as String?)?.trim() ?? '';
+      inviteExp = (peer['inviteExp'] as num?)?.toInt() ?? 0;
+      vanish = (peer['vanish'] as num?)?.toInt() ?? 0;
+      final admins = peer['admins'];
+      if (admins is List) {
+        for (final name in admins) {
+          if (name is String && name.trim().isNotEmpty) {
+            groupAdmins.add(name.trim());
           }
         }
       }
@@ -1003,6 +1421,14 @@ class ChatApi {
       peerGroup: peerGroup,
       peerMembers: peerMembers,
       lastId: (body['lastId'] as num?)?.toInt() ?? -1,
+      peerRequest: peerRequest,
+      groupAbout: groupAbout,
+      groupRules: groupRules,
+      groupAnnounce: groupAnnounce,
+      groupOwner: groupOwner,
+      groupAdmins: groupAdmins,
+      inviteExp: inviteExp,
+      vanish: vanish,
       removed: [
         if (removed is List)
           for (final item in removed)
@@ -1208,6 +1634,7 @@ class ChatApi {
       );
     }
     final raw = body['members'];
+    final rawAdmins = body['admins'];
     return ChatGroup(
       id: id,
       name: name,
@@ -1217,6 +1644,16 @@ class ChatApi {
           for (final item in raw)
             if (item is String && item.trim().isNotEmpty) item.trim(),
       ],
+      about: (body['about'] as String?)?.trim() ?? '',
+      rules: (body['rules'] as String?)?.trim() ?? '',
+      announce: body['announce'] == true,
+      owner: (body['owner'] as String?)?.trim() ?? '',
+      admins: [
+        if (rawAdmins is List)
+          for (final item in rawAdmins)
+            if (item is String && item.trim().isNotEmpty) item.trim(),
+      ],
+      inviteExp: (body['inviteExp'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -1226,6 +1663,433 @@ class ChatApi {
       data: {'id': messageId},
       options: await _auth(),
     );
+  }
+
+  Future<ChatMessage> sendRich(
+    String id, {
+    String text = '',
+    int reply = 0,
+    ChatPoll? poll,
+    ChatCard? card,
+    ChatPlace? place,
+  }) async {
+    final response = await _dio.post<dynamic>(
+      '/api/v1/chat/threads/$id',
+      data: {
+        if (text.trim().isNotEmpty) 'text': text.trim(),
+        if (reply > 0) 'reply': reply,
+        if (poll != null)
+          'poll': {
+            'question': poll.question,
+            'choices': poll.choices,
+            if (poll.closes != null)
+              'closes': poll.closes!.millisecondsSinceEpoch,
+          },
+        if (card != null)
+          'card': {
+            'name': card.name,
+            if (card.phone.isNotEmpty) 'phone': card.phone,
+            if (card.username.isNotEmpty) 'username': card.username,
+          },
+        if (place != null)
+          'place': {
+            'lat': place.lat,
+            'lng': place.lng,
+            if (place.label.isNotEmpty) 'label': place.label,
+          },
+      },
+      options: await _auth(),
+    );
+    return _message(response, 'That message could not be sent.');
+  }
+
+  Future<void> setPrivacy({
+    String? online,
+    String? lastSeen,
+    String? photo,
+    String? receipts,
+  }) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/privacy',
+      data: {
+        'online': ?online,
+        'lastSeen': ?lastSeen,
+        'photo': ?photo,
+        'receipts': ?receipts,
+      },
+      options: await _auth(),
+    );
+  }
+
+  Future<List<ChatStatusNote>> statuses() async {
+    final response = await _dio.get<dynamic>(
+      '/api/v1/chat/status',
+      options: await _auth(),
+    );
+    final raw = _object(response)['statuses'];
+    if (raw is! List) return const [];
+    return [
+      for (final item in raw)
+        if (item is Map) ChatStatusNote.fromJson(Map<String, dynamic>.from(item)),
+    ];
+  }
+
+  Future<void> postStatus({
+    required String text,
+    String audience = 'all',
+    List<String> allow = const [],
+    List<String> deny = const [],
+  }) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/status',
+      data: {
+        'text': text,
+        'audience': audience,
+        if (allow.isNotEmpty) 'allow': allow,
+        if (deny.isNotEmpty) 'deny': deny,
+      },
+      options: await _auth(),
+    );
+  }
+
+  Future<void> setGroupAdmin(String id, String username, {required bool on}) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/groups/$id/admins',
+      data: {'username': username, 'on': on},
+      options: await _auth(),
+    );
+  }
+
+  Future<void> removeMember(String id, String username) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/groups/$id/remove',
+      data: {'username': username},
+      options: await _auth(),
+    );
+  }
+
+  Future<void> transferGroup(String id, String username) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/groups/$id/transfer',
+      data: {'username': username},
+      options: await _auth(),
+    );
+  }
+
+  Future<String> rotateInvite(String id, {int hours = 0}) async {
+    final response = await _dio.post<dynamic>(
+      '/api/v1/chat/groups/$id/invite',
+      data: {'hours': hours},
+      options: await _auth(),
+    );
+    return (_object(response)['code'] as String?)?.trim() ?? '';
+  }
+
+  Future<void> setGroupInfo(
+    String id, {
+    String? about,
+    String? rules,
+    bool? announce,
+  }) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/groups/$id/info',
+      data: {
+        'about': ?about,
+        'rules': ?rules,
+        'announce': ?announce,
+      },
+      options: await _auth(),
+    );
+  }
+
+  Future<ChatMessage> votePoll(
+    String id,
+    int messageId, {
+    int? choice,
+    bool close = false,
+  }) async {
+    final response = await _dio.post<dynamic>(
+      '/api/v1/chat/threads/$id/poll',
+      data: {
+        'id': messageId,
+        'choice': ?choice,
+        if (close) 'close': true,
+      },
+      options: await _auth(),
+    );
+    return _message(response, 'That vote could not be saved.');
+  }
+
+  Future<void> scheduleMessage(
+    String id, {
+    required String text,
+    required DateTime sendAt,
+    int reply = 0,
+  }) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/threads/$id/schedule',
+      data: {
+        'thread': id,
+        'text': text,
+        'sendAt': sendAt.toUtc().millisecondsSinceEpoch,
+        'zone': DateTime.now().timeZoneName,
+        if (reply > 0) 'reply': reply,
+      },
+      options: await _auth(),
+    );
+  }
+
+  Future<void> editSchedule(
+    String scheduleId, {
+    required String text,
+    required DateTime sendAt,
+  }) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/schedules/edit',
+      data: {
+        'id': scheduleId,
+        'text': text,
+        'sendAt': sendAt.toUtc().millisecondsSinceEpoch,
+        'zone': DateTime.now().timeZoneName,
+      },
+      options: await _auth(),
+    );
+  }
+
+  Future<void> cancelSchedule(String scheduleId) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/schedules/cancel',
+      data: {'id': scheduleId},
+      options: await _auth(),
+    );
+  }
+
+  Future<List<ChatScheduleNote>> schedules() async {
+    final response = await _dio.get<dynamic>(
+      '/api/v1/chat/schedules',
+      options: await _auth(),
+    );
+    final raw = _object(response)['schedules'];
+    if (raw is! List) return const [];
+    return [
+      for (final item in raw)
+        if (item is Map)
+          ChatScheduleNote.fromJson(Map<String, dynamic>.from(item)),
+    ];
+  }
+
+  Future<void> setStar(String threadId, int messageId, {required bool on}) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/stars',
+      data: {'thread': threadId, 'id': messageId, 'on': on},
+      options: await _auth(),
+    );
+  }
+
+  Future<List<ChatStarred>> stars() async {
+    final response = await _dio.get<dynamic>(
+      '/api/v1/chat/stars',
+      options: await _auth(),
+    );
+    final raw = _object(response)['stars'];
+    if (raw is! List) return const [];
+    return [
+      for (final item in raw)
+        if (item is Map) ChatStarred.fromJson(Map<String, dynamic>.from(item)),
+    ];
+  }
+
+  Future<void> saveLabel({
+    String id = '',
+    required String name,
+    List<String> threads = const [],
+    bool delete = false,
+  }) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/labels',
+      data: {
+        if (id.isNotEmpty) 'id': id,
+        'name': name,
+        'threads': threads,
+        if (delete) 'delete': true,
+      },
+      options: await _auth(),
+    );
+  }
+
+  Future<List<ChatFolder>> labels() async {
+    final response = await _dio.get<dynamic>(
+      '/api/v1/chat/labels',
+      options: await _auth(),
+    );
+    final raw = _object(response)['labels'];
+    if (raw is! List) return const [];
+    return [
+      for (final item in raw)
+        if (item is Map) ChatFolder.fromJson(Map<String, dynamic>.from(item)),
+    ];
+  }
+
+  Future<void> setTimer(String id, {int vanish = 0, int clearHours = 0}) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/threads/$id/timer',
+      data: {'vanish': vanish, 'clearHours': clearHours},
+      options: await _auth(),
+    );
+  }
+
+  Future<void> acceptRequest(String id) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/threads/$id/accept',
+      options: await _auth(),
+    );
+  }
+
+  Future<void> reportUser(String username, {String reason = ''}) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/report',
+      data: {
+        'username': username,
+        if (reason.trim().isNotEmpty) 'reason': reason.trim(),
+      },
+      options: await _auth(),
+    );
+  }
+
+  Future<String> rotateRecovery() async {
+    final response = await _dio.post<dynamic>(
+      '/api/v1/chat/recovery',
+      options: await _auth(),
+    );
+    return (_object(response)['recovery'] as String?)?.trim() ?? '';
+  }
+
+  Future<ChatRegistration> recover({
+    required String username,
+    required String code,
+    required String password,
+  }) async {
+    final response = await _dio.post<dynamic>(
+      '/api/v1/chat/recover',
+      data: {'username': username, 'code': code, 'password': password},
+    );
+    final body = _object(response);
+    final token = (body['token'] as String?)?.trim() ?? '';
+    final user = body['user'];
+    if (token.isEmpty || user is! Map) {
+      throw DioException(
+        requestOptions: response.requestOptions,
+        message: 'That recovery code could not be used.',
+      );
+    }
+    return ChatRegistration(
+      token: token,
+      user: ChatUser.fromJson(Map<String, dynamic>.from(user)),
+      recovery: (body['recovery'] as String?)?.trim() ?? '',
+    );
+  }
+
+  Future<List<ChatDeviceSession>> deviceSessions() async {
+    final response = await _dio.get<dynamic>(
+      '/api/v1/chat/sessions',
+      options: await _auth(),
+    );
+    final raw = _object(response)['sessions'];
+    if (raw is! List) return const [];
+    return [
+      for (final item in raw)
+        if (item is Map)
+          ChatDeviceSession.fromJson(Map<String, dynamic>.from(item)),
+    ];
+  }
+
+  /// Names this signed-in device. A failure must not block opening chat.
+  Future<void> touchThisDevice() async {
+    try {
+      final name = await appDeviceName();
+      final platform = chatDevicePlatform() ?? '';
+      await touchDevice(name: name, platform: platform);
+    } catch (_) {}
+  }
+
+  Future<void> touchDevice({String name = '', String platform = ''}) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/sessions/touch',
+      data: {
+        if (name.trim().isNotEmpty) 'name': name.trim(),
+        if (platform.trim().isNotEmpty) 'platform': platform.trim(),
+      },
+      options: await _auth(),
+    );
+  }
+
+  Future<void> endDevice(String id) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/sessions/end',
+      data: {'id': id},
+      options: await _auth(),
+    );
+  }
+
+  Future<void> endOtherDevices() async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/sessions/others',
+      options: await _auth(),
+    );
+  }
+
+  Future<ChatCallRecord> startCall(String threadId, {String sdp = ''}) async {
+    final response = await _dio.post<dynamic>(
+      '/api/v1/chat/calls',
+      data: {'thread': threadId, if (sdp.isNotEmpty) 'sdp': sdp},
+      options: await _auth(),
+    );
+    return _call(response);
+  }
+
+  Future<ChatCallRecord> answerCall(
+    String id, {
+    required bool accept,
+    String sdp = '',
+  }) async {
+    final response = await _dio.post<dynamic>(
+      '/api/v1/chat/calls/$id/answer',
+      data: {'accept': accept, if (sdp.isNotEmpty) 'sdp': sdp},
+      options: await _auth(),
+    );
+    return _call(response);
+  }
+
+  Future<ChatCallRecord> endCall(String id) async {
+    final response = await _dio.post<dynamic>(
+      '/api/v1/chat/calls/$id/end',
+      options: await _auth(),
+    );
+    return _call(response);
+  }
+
+  Future<List<ChatCallRecord>> calls() async {
+    final response = await _dio.get<dynamic>(
+      '/api/v1/chat/calls',
+      options: await _auth(),
+    );
+    final raw = _object(response)['calls'];
+    if (raw is! List) return const [];
+    return [
+      for (final item in raw)
+        if (item is Map) ChatCallRecord.fromJson(Map<String, dynamic>.from(item)),
+    ];
+  }
+
+  ChatCallRecord _call(Response<dynamic> response) {
+    final raw = _object(response)['call'];
+    if (raw is! Map) {
+      throw DioException(
+        requestOptions: response.requestOptions,
+        message: 'That call could not be updated.',
+      );
+    }
+    return ChatCallRecord.fromJson(Map<String, dynamic>.from(raw));
   }
 
   Future<ChatMessage> send(String id, String text, {int reply = 0}) async {

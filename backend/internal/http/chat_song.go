@@ -86,6 +86,10 @@ func (c *chatRoom) postSong(ctx context.Context, user chatUser, threadID string,
 		c.mu.Unlock()
 		return chatMessage{}, err
 	}
+	if err := c.gatePostLocked(thread, user); err != nil {
+		c.mu.Unlock()
+		return chatMessage{}, err
+	}
 	replyName, replyText, err := replyOf(thread, reply)
 	if err != nil {
 		c.mu.Unlock()
@@ -103,6 +107,10 @@ func (c *chatRoom) postSong(ctx context.Context, user chatUser, threadID string,
 		return chatMessage{}, chatRejected("That chat was not found.")
 	}
 	if err := c.refuseDirectLocked(thread, user); err != nil {
+		c.mu.Unlock()
+		return chatMessage{}, err
+	}
+	if err := c.gatePostLocked(thread, user); err != nil {
 		c.mu.Unlock()
 		return chatMessage{}, err
 	}

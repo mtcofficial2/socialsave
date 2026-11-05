@@ -113,6 +113,9 @@ func (c *chatRoom) react(ctx context.Context, user chatUser, threadID string, id
 		thread.Messages[index].Reactions = append([]chatReaction(nil), kept...)
 	}
 	thread.Messages[index].Touched = now
+	if thread.Request == user.ID {
+		thread.Request = ""
+	}
 	item := thread.Messages[index]
 	item.Status = chatStatus(thread, user.ID, item)
 	a, b := thread.A, thread.B

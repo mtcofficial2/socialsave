@@ -17,6 +17,13 @@ class ChatLiveEvent {
     this.at = 0,
     this.photoId = '',
     this.pinned = const [],
+    this.callId = '',
+    this.callState = '',
+    this.candidate = '',
+    this.sdp = '',
+    this.offer = '',
+    this.answer = '',
+    this.callDur = 0,
   });
 
   final String type;
@@ -28,6 +35,13 @@ class ChatLiveEvent {
   final int at;
   final String photoId;
   final List<int> pinned;
+  final String callId;
+  final String callState;
+  final String candidate;
+  final String sdp;
+  final String offer;
+  final String answer;
+  final int callDur;
 }
 
 /// One live connection for messages, typing, and pictures.
@@ -208,8 +222,15 @@ class ChatLive {
     final from = named is String ? named.trim() : '';
     final on = data['on'] == true || data['online'] == true;
     final rawId = data['id'];
-    final id = rawId is num ? rawId.toInt() : 0;
-    final at = (data['lastSeen'] as num?)?.toInt() ?? 0;
+    final callish = type == 'call' || type.startsWith('call-');
+    final id = callish ? 0 : (rawId is num ? rawId.toInt() : 0);
+    final callId = type == 'call'
+        ? (rawId is String ? rawId.trim() : '')
+        : ((data['call'] as String?)?.trim() ?? '');
+    final at =
+        (data['lastSeen'] as num?)?.toInt() ??
+        (data['at'] as num?)?.toInt() ??
+        0;
     final photoId = type == 'photo-ok' || type == 'photo-wait'
         ? ((data['id'] as String?)?.trim() ?? '')
         : '';
@@ -252,6 +273,13 @@ class ChatLive {
         at: at,
         photoId: photoId,
         pinned: pinned,
+        callId: callId,
+        callState: (data['state'] as String?)?.trim() ?? '',
+        candidate: (data['candidate'] as String?)?.trim() ?? '',
+        sdp: (data['sdp'] as String?)?.trim() ?? '',
+        offer: (data['offer'] as String?)?.trim() ?? '',
+        answer: (data['answer'] as String?)?.trim() ?? '',
+        callDur: (data['dur'] as num?)?.toInt() ?? 0,
       ),
     );
   }

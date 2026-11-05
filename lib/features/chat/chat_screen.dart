@@ -10,6 +10,7 @@ import 'package:social_save/features/chat/chat_history.dart';
 import 'package:social_save/features/chat/chat_live.dart';
 import 'package:social_save/features/chat/chat_prefs.dart';
 import 'package:social_save/features/chat/chat_profile.dart';
+import 'package:social_save/features/chat/chat_services.dart';
 import 'package:social_save/features/chat/chat_settings.dart';
 import 'package:social_save/features/chat/chat_thread_screen.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
@@ -18,7 +19,7 @@ import 'package:social_save/shared/widgets/page_layout.dart';
 
 enum _ContactKind { phone, email }
 
-enum _ChatTab { chats, groups, settings }
+enum _ChatTab { chats, groups, calls, settings }
 
 /// Chats, in the shape of a messenger: a list, then a conversation.
 class ChatScreen extends StatefulWidget {
@@ -38,6 +39,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final FocusNode _findFocus = FocusNode();
   bool _showArchived = false;
   bool _showBlocked = false;
+  bool _showRequests = false;
+  String? _folderId;
+  Set<String> _folderThreads = const {};
   _ChatTab _tab = _ChatTab.chats;
 
   bool get _groups => _tab == _ChatTab.groups;
@@ -150,6 +154,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         contact: user.contact,
       );
       unawaited(_api.reportInstall(force: true));
+      unawaited(_api.touchThisDevice());
       unawaited(ChatPresence.sync());
       if (!mounted) return;
       setState(() {
@@ -277,27 +282,51 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         username: username,
         password: _password.text,
       );
-      await ChatSession.save(
-        token: created.token,
-        username: created.user.username,
-        contact: created.user.contact,
-      );
-      unawaited(_api.reportInstall(force: true));
-      unawaited(ChatPresence.sync());
+      await _enter(created);
       if (!mounted) return;
       _contact.clear();
       _username.clear();
       _password.clear();
+    } catch (error) {
+      if (!mounted) return;
       setState(() {
-        _user = created.user;
-        _signedIn = true;
         _busy = false;
-        _step = 0;
-        _threads = const [];
+        _error = chatErrorText(error);
       });
-      ChatLive.instance.start();
-      _startPoll();
-      await _loadThreads();
+    }
+  }
+
+  Future<void> _enter(ChatRegistration created) async {
+    await ChatSession.save(
+      token: created.token,
+      username: created.user.username,
+      contact: created.user.contact,
+    );
+    unawaited(_api.reportInstall(force: true));
+    unawaited(_api.touchThisDevice());
+    unawaited(ChatPresence.sync());
+    if (!mounted) return;
+    setState(() {
+      _user = created.user;
+      _signedIn = true;
+      _busy = false;
+      _step = 0;
+      _threads = const [];
+    });
+    ChatLive.instance.start();
+    _startPoll();
+    await _loadThreads();
+    if (!mounted || created.recovery.isEmpty) return;
+    await showRecoveryCode(context, created.recovery);
+  }
+
+  Future<void> _recover() async {
+    if (_busy) return;
+    final created = await showRecoverAccount(context);
+    if (created == null || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      await _enter(created);
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -708,7 +737,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   void _onLiveEvent(ChatLiveEvent event) {
-    if (!mounted) return;
+    if (!mounted || event.type == 'call' || event.type.startsWith('call-')) {
+      return;
+    }
     if (event.type == 'presence') {
       final name = event.from.trim().toLowerCase();
       if (name.isEmpty) return;
@@ -1057,11 +1088,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     )
                   : Text(step ? 'Next' : 'Continue'),
             ),
-            if (!step)
+            if (!step) ...[
               TextButton(
                 onPressed: _busy ? null : () => setState(() => _step = 0),
                 child: const Text('Change phone or email'),
               ),
+              TextButton(
+                onPressed: _busy ? null : () => unawaited(_recover()),
+                child: const Text('Use a recovery code'),
+              ),
+            ],
             if (_busy)
               Padding(
                 padding: const EdgeInsets.only(top: 12),
@@ -1174,6 +1210,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   String get _tabTitle => switch (_tab) {
     _ChatTab.chats => 'Chats',
     _ChatTab.groups => 'Groups',
+    _ChatTab.calls => 'Calls',
     _ChatTab.settings => 'Settings',
   };
 
@@ -1183,6 +1220,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _tab = next;
       _showArchived = false;
       _showBlocked = false;
+      _showRequests = false;
+    });
+  }
+
+  Future<void> _pickFolder() async {
+    final choice = await showChatFolders(context, chats: _threads);
+    if (!mounted || choice == null) return;
+    setState(() {
+      final folder = choice.folder;
+      if (choice.all || folder == null) {
+        _folderId = null;
+        _folderThreads = const {};
+      } else {
+        _folderId = folder.id;
+        _folderThreads = folder.threads.toSet();
+      }
     });
   }
 
@@ -1252,6 +1305,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
+  bool _groupAdmin(String owner, List<String> admins) {
+    final me = (_user?.username ?? '')
+        .replaceFirst(RegExp(r'^@'), '')
+        .trim()
+        .toLowerCase();
+    if (me.isEmpty) return false;
+    bool same(String value) =>
+        value.replaceFirst(RegExp(r'^@'), '').trim().toLowerCase() == me;
+    if (owner.isEmpty && admins.isEmpty) return true;
+    return same(owner) || admins.any(same);
+  }
+
   Future<void> _viewProfile(ChatThreadSummary item) async {
     final group = item.group || item.id.startsWith('g');
     if (group) {
@@ -1295,6 +1360,26 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 _selectedGroup = false;
               }
             });
+          },
+          about: info.about,
+          rules: info.rules,
+          announce: info.announce,
+          owner: info.owner,
+          admins: info.admins,
+          canManage: _groupAdmin(info.owner, info.admins),
+          onAdmin: (username, {required bool on}) {
+            return _api.setGroupAdmin(item.id, username, on: on);
+          },
+          onRemove: (username) => _api.removeMember(item.id, username),
+          onTransfer: (username) => _api.transferGroup(item.id, username),
+          onInvite: (hours) => _api.rotateInvite(item.id, hours: hours),
+          onInfo: ({String? about, String? rules, bool? announce}) {
+            return _api.setGroupInfo(
+              item.id,
+              about: about,
+              rules: rules,
+              announce: announce,
+            );
           },
         );
       } catch (error) {
@@ -1455,18 +1540,36 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 item,
           ]
         : visible;
+    final requests = [
+      for (final item in open)
+        if (!groups && query.isEmpty && item.request) item,
+    ];
+    final rest = [
+      for (final item in open)
+        if (!(!groups && query.isEmpty && item.request)) item,
+    ];
     final showHeader = query.isEmpty && archived.isNotEmpty;
     final showBlocked = query.isEmpty && blocked.isNotEmpty;
+    final showStatus = !groups && query.isEmpty;
+    final showRequests = requests.isNotEmpty;
+    final requestsShown = showRequests && _showRequests ? requests.length : 0;
     final archivedShown = showHeader && _showArchived ? archived.length : 0;
     final blockedShown = showBlocked && _showBlocked ? blocked.length : 0;
-    final empty = !canStart && open.isEmpty && !showHeader && !showBlocked;
+    final empty = !canStart &&
+        rest.isEmpty &&
+        !showHeader &&
+        !showBlocked &&
+        !showRequests;
     final count =
         (canStart ? 1 : 0) +
+        (showStatus ? 1 : 0) +
+        (showRequests ? 1 : 0) +
+        requestsShown +
         (showHeader ? 1 : 0) +
         archivedShown +
         (showBlocked ? 1 : 0) +
         blockedShown +
-        open.length +
+        rest.length +
         (empty ? 1 : 0);
     return RefreshIndicator(
       onRefresh: _loadThreads,
@@ -1484,6 +1587,36 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               );
             }
             cursor--;
+          }
+          if (showStatus) {
+            if (cursor == 0) {
+              return ListTile(
+                leading: const Icon(Icons.timelapse_rounded),
+                title: const Text('Status'),
+                subtitle: const Text('Updates disappear after 24 hours'),
+                onTap: () => unawaited(showStatuses(context)),
+              );
+            }
+            cursor--;
+          }
+          if (showRequests) {
+            if (cursor == 0) {
+              return ListTile(
+                leading: const Icon(Icons.mark_email_unread_outlined),
+                title: const Text('Requests'),
+                trailing: Icon(
+                  _showRequests
+                      ? Icons.expand_less_rounded
+                      : Icons.expand_more_rounded,
+                ),
+                onTap: () => setState(() => _showRequests = !_showRequests),
+              );
+            }
+            cursor--;
+            if (_showRequests && cursor < requests.length) {
+              return _threadTile(requests[cursor], user.username, wide);
+            }
+            if (_showRequests) cursor -= requests.length;
           }
           if (showHeader) {
             if (cursor == 0) {
@@ -1535,8 +1668,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             }
             if (_showBlocked) cursor -= blocked.length;
           }
-          if (cursor < open.length) {
-            return _threadTile(open[cursor], user.username, wide);
+          if (cursor < rest.length) {
+            return _threadTile(rest[cursor], user.username, wide);
           }
           if (query.isNotEmpty) {
             return Padding(
@@ -1572,11 +1705,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     ];
     final shown = [
       for (final item in section)
-        if (query.isEmpty ||
-            item.username.contains(query) ||
-            item.label.toLowerCase().contains(query) ||
-            item.lastText.toLowerCase().contains(query) ||
-            ChatDrafts.peek(item.id).toLowerCase().contains(query))
+        if ((_folderId == null ||
+                _groups ||
+                _folderThreads.contains(item.id)) &&
+            (query.isEmpty ||
+                item.username.contains(query) ||
+                item.label.toLowerCase().contains(query) ||
+                item.lastText.toLowerCase().contains(query) ||
+                ChatDrafts.peek(item.id).toLowerCase().contains(query)))
           item,
     ];
     final canStart =
@@ -1604,8 +1740,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
+        actions: [
+          if (_tab == _ChatTab.chats)
+            IconButton(
+              tooltip: 'Folders',
+              onPressed: () => unawaited(_pickFolder()),
+              icon: Icon(
+                _folderId == null
+                    ? Icons.folder_outlined
+                    : Icons.folder_rounded,
+              ),
+            ),
+        ],
       ),
-      floatingActionButton: settings
+      floatingActionButton: settings || _tab == _ChatTab.calls
           ? null
           : FloatingActionButton(
               heroTag: 'chat-new',
@@ -1665,6 +1813,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               tooltip: _navTip('Groups', groupUnread),
             ),
             const NavigationDestination(
+              icon: Icon(Icons.call_outlined),
+              selectedIcon: Icon(Icons.call_rounded),
+              label: 'Calls',
+            ),
+            const NavigationDestination(
               icon: Icon(Icons.settings_outlined),
               selectedIcon: Icon(Icons.settings_rounded),
               label: 'Settings',
@@ -1672,7 +1825,24 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           ],
         ),
       ),
-      body: settings
+      body: _tab == _ChatTab.calls
+          ? ChatCallHistory(
+              onOpen: (call) {
+                for (final item in _threads) {
+                  if (item.id != call.thread) continue;
+                  unawaited(_openSaved(item));
+                  return;
+                }
+                context.push(
+                  '/chat/${call.thread}',
+                  extra: ChatThreadTarget(
+                    username: call.fromName,
+                    name: call.fromName,
+                  ),
+                );
+              },
+            )
+          : settings
           ? Column(
               children: [
                 if (_error != null)

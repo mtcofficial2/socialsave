@@ -8,6 +8,9 @@ class ChatPrefs {
   static const _enterKey = 'chat.pref.enter.v1';
   static const _soundKey = 'chat.pref.sound.v1';
   static const _patternKey = 'chat.pref.pattern.v1';
+  static const _quietKey = 'chat.pref.quiet.v1';
+  static const _saverKey = 'chat.pref.saver.v1';
+  static const _notifyKey = 'chat.pref.notify.v1';
 
   static final ValueNotifier<int> revision = ValueNotifier<int>(0);
 
@@ -17,6 +20,16 @@ class ChatPrefs {
 
   /// A plain canvas is the default. The pattern is optional.
   static bool pattern = false;
+
+  /// Minutes from midnight. Equal or negative values mean quiet hours are off.
+  static int quietStart = -1;
+  static int quietEnd = -1;
+
+  /// Holds message photos until a tap, and checks for new messages less often.
+  static bool dataSaver = false;
+
+  /// Per conversation: all, mentions, or silent. Missing means all.
+  static final Map<String, String> notifyMode = {};
   static Future<void>? _loading;
 
   static Future<void> ensure() {
@@ -79,6 +92,84 @@ class ChatPrefs {
     revision.value++;
   }
 
+  /// [start] and [end] are minutes from midnight. The window can pass midnight.
+  static bool minutesQuiet(int start, int end, int minute) {
+    if (start < 0 || end < 0 || start >= 24 * 60 || end >= 24 * 60) {
+      return false;
+    }
+    if (start == end) return false;
+    if (start < end) return minute >= start && minute < end;
+    return minute >= start || minute < end;
+  }
+
+  static bool quietNow([DateTime? clock]) {
+    final now = clock ?? DateTime.now();
+    return minutesQuiet(quietStart, quietEnd, now.hour * 60 + now.minute);
+  }
+
+  static String modeFor(String threadId) => notifyMode[threadId] ?? 'all';
+
+  /// Mentions mode still notifies a direct chat. A group notifies on @name.
+  static bool showsNotice({
+    required String threadId,
+    required bool group,
+    required String text,
+    required String me,
+  }) {
+    if (modeFor(threadId) != 'mentions') return true;
+    if (!group) return true;
+    final name = me.replaceFirst(RegExp(r'^@'), '').trim().toLowerCase();
+    if (name.isEmpty) return false;
+    return text.toLowerCase().contains('@$name');
+  }
+
+  /// Quiet hours and a silent chat turn the tone off. The notice still shows.
+  static bool soundAllowed(String threadId) {
+    if (!messageSound || quietNow()) return false;
+    return modeFor(threadId) != 'silent';
+  }
+
+  static Future<void> setQuiet({required int start, required int end}) async {
+    await ensure();
+    quietStart = start;
+    quietEnd = end;
+    final prefs = await SharedPreferences.getInstance();
+    if (start < 0 || end < 0 || start == end) {
+      await prefs.remove(_quietKey);
+    } else {
+      await prefs.setString(_quietKey, '$start,$end');
+    }
+    revision.value++;
+  }
+
+  static Future<void> setDataSaver(bool on) async {
+    await ensure();
+    dataSaver = on;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_saverKey, on);
+    revision.value++;
+  }
+
+  static Future<void> setNotify(String threadId, String mode) async {
+    await ensure();
+    if (threadId.isEmpty) return;
+    if (mode == 'all') {
+      notifyMode.remove(threadId);
+    } else if (mode == 'mentions' || mode == 'silent') {
+      notifyMode[threadId] = mode;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    final lines = [
+      for (final entry in notifyMode.entries) '${entry.key}|${entry.value}',
+    ];
+    if (lines.isEmpty) {
+      await prefs.remove(_notifyKey);
+    } else {
+      await prefs.setString(_notifyKey, lines.join('\n'));
+    }
+    revision.value++;
+  }
+
   static Future<void> _read() async {
     final prefs = await SharedPreferences.getInstance();
     if (prefs.containsKey(_enterKey)) {
@@ -86,6 +177,26 @@ class ChatPrefs {
     }
     messageSound = prefs.getBool(_soundKey) ?? true;
     pattern = prefs.getBool(_patternKey) ?? false;
+    dataSaver = prefs.getBool(_saverKey) ?? false;
+    final quiet = prefs.getString(_quietKey) ?? '';
+    final parts = quiet.split(',');
+    if (parts.length == 2) {
+      quietStart = int.tryParse(parts[0]) ?? -1;
+      quietEnd = int.tryParse(parts[1]) ?? -1;
+    } else {
+      quietStart = -1;
+      quietEnd = -1;
+    }
+    notifyMode.clear();
+    final saved = prefs.getString(_notifyKey) ?? '';
+    for (final line in saved.split('\n')) {
+      final cut = line.split('|');
+      if (cut.length != 2) continue;
+      final id = cut[0].trim();
+      final mode = cut[1].trim();
+      if (id.isEmpty) continue;
+      if (mode == 'mentions' || mode == 'silent') notifyMode[id] = mode;
+    }
     revision.value++;
   }
 }

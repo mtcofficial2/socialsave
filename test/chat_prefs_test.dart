@@ -40,6 +40,19 @@ void main() {
     );
   });
 
+  test('quiet hours and a silent chat turn the tone off', () {
+    final previous = ChatPrefs.messageSound;
+    ChatPrefs.messageSound = true;
+    ChatPrefs.quietStart = -1;
+    ChatPrefs.quietEnd = -1;
+    ChatPrefs.notifyMode.clear();
+    expect(ChatPrefs.soundAllowed('t1'), isTrue);
+    ChatPrefs.notifyMode['t1'] = 'silent';
+    expect(ChatPrefs.soundAllowed('t1'), isFalse);
+    ChatPrefs.notifyMode.clear();
+    ChatPrefs.messageSound = previous;
+  });
+
   test('turning Enter off leaves a new line on both', () {
     expect(
       ChatPrefs.hardwareEnterSends(

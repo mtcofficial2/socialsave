@@ -9,6 +9,7 @@ import 'package:social_save/core/notifications/notification_photo_io.dart'
 import 'package:social_save/core/notifications/notification_service.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/features/chat/chat_alert_policy.dart';
+import 'package:social_save/features/chat/chat_call.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_format.dart';
 import 'package:social_save/features/chat/chat_prefs.dart';
@@ -48,7 +49,7 @@ Future<void> _deliverChatAlert({
   required int photoRev,
 }) async {
   await ChatPrefs.ensure();
-  final tones = ChatPrefs.messageSound;
+  final tones = ChatPrefs.soundAllowed(threadId);
   final here = chatUserIsHere(
     life: WidgetsBinding.instance.lifecycleState,
     screenOn: await _androidScreenOn(),
@@ -320,6 +321,10 @@ class ChatAlertWatch {
   }
 
   void _onLive(ChatLiveEvent event) {
+    if (event.type == 'call' || event.type.startsWith('call-')) {
+      unawaited(ChatCalls.instance.onLive(event));
+      return;
+    }
     if (event.type == 'removed') {
       if (event.id > 0 && event.threadId.isNotEmpty) {
         unawaited(_drop(event.threadId, event.id));
@@ -361,6 +366,15 @@ class ChatAlertWatch {
     if (here && threadId == ChatAlerts.openThread) return;
     await ChatInboxFilter.ensure();
     if (ChatInboxFilter.isMuted(threadId)) return;
+    await ChatPrefs.ensure();
+    if (!ChatPrefs.showsNotice(
+      threadId: threadId,
+      group: threadId.startsWith('g'),
+      text: message.text,
+      me: _me,
+    )) {
+      return;
+    }
     final title = _alertTitle(threadId, message.name);
     chatAlertNow(
       threadId: threadId,
@@ -397,9 +411,12 @@ class ChatAlertWatch {
   Future<void> _check() async {
     if (_busy) return;
     if (!chatInboxCheckRuns(WidgetsBinding.instance.lifecycleState)) return;
+    await ChatPrefs.ensure();
     final fresh = ChatAlerts.lastInbox;
-    if (fresh != null &&
-        DateTime.now().difference(fresh) < const Duration(seconds: 10)) {
+    final gap = ChatPrefs.dataSaver
+        ? const Duration(seconds: 30)
+        : const Duration(seconds: 10);
+    if (fresh != null && DateTime.now().difference(fresh) < gap) {
       unawaited(ChatPresence.sync());
       return;
     }
@@ -429,6 +446,15 @@ class ChatAlertWatch {
         notify: true,
         holdOpen: here,
         alert: (item, body) {
+          final group = item.group || item.id.startsWith('g');
+          if (!ChatPrefs.showsNotice(
+            threadId: item.id,
+            group: group,
+            text: body,
+            me: _me,
+          )) {
+            return;
+          }
           final title = _alertTitle(item.id, item.label);
           chatAlertNow(
             threadId: item.id,
@@ -440,9 +466,11 @@ class ChatAlertWatch {
         },
       );
       keepChatFacesForNotifications();
-      for (final item in items) {
-        if (item.username.isEmpty || item.photoRev <= 0) continue;
-        unawaited(ChatPhotos.fetch(item.username, item.photoRev));
+      if (!ChatPrefs.dataSaver) {
+        for (final item in items) {
+          if (item.username.isEmpty || item.photoRev <= 0) continue;
+          unawaited(ChatPhotos.fetch(item.username, item.photoRev));
+        }
       }
     } catch (_) {
       // The next pass tries again. A quiet miss is better than a banner on Home.

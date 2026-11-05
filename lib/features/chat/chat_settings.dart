@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:social_save/features/chat/chat_prefs.dart';
+import 'package:social_save/features/chat/chat_services.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
 
@@ -159,6 +160,49 @@ class _ChatSettingsPageState extends State<ChatSettingsPage> {
               subtitle: 'A faint pattern behind messages. Off keeps it plain.',
               value: ChatPrefs.pattern,
               onChanged: (on) => unawaited(ChatPrefs.setPattern(on)),
+            ),
+            _SwitchRow(
+              icon: Icons.data_saver_on_outlined,
+              title: 'Data saver',
+              subtitle:
+                  'Photos wait until you tap them, and new messages are checked less often.',
+              value: ChatPrefs.dataSaver,
+              onChanged: (on) => unawaited(ChatPrefs.setDataSaver(on)),
+            ),
+          ],
+        ),
+        const _Heading('Privacy'),
+        _Group(
+          children: [
+            _LinkRow(
+              icon: Icons.lock_outline_rounded,
+              title: 'Who can see you',
+              onTap: () => unawaited(showChatPrivacy(context)),
+            ),
+            _LinkRow(
+              icon: Icons.bedtime_outlined,
+              title: 'Quiet hours',
+              onTap: () => unawaited(showQuietHours(context)),
+            ),
+            _LinkRow(
+              icon: Icons.star_outline_rounded,
+              title: 'Starred messages',
+              onTap: () => unawaited(showStarredMessages(context)),
+            ),
+            _LinkRow(
+              icon: Icons.folder_outlined,
+              title: 'Folders',
+              onTap: () => unawaited(showChatFolders(context)),
+            ),
+            _LinkRow(
+              icon: Icons.devices_rounded,
+              title: 'Devices',
+              onTap: () => unawaited(showChatDevices(context)),
+            ),
+            _LinkRow(
+              icon: Icons.vpn_key_outlined,
+              title: 'Recovery code',
+              onTap: () => unawaited(showRotateRecovery(context)),
             ),
           ],
         ),

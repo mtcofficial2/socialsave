@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
@@ -88,6 +89,10 @@ func (c *chatRoom) joinGroup(ctx context.Context, user chatUser, code string) (c
 		c.mu.Unlock()
 		return chatThread{}, chatRejected("No group uses that code.")
 	}
+	if thread.InviteExp > 0 && time.Now().UnixMilli() > thread.InviteExp {
+		c.mu.Unlock()
+		return chatThread{}, chatRejected("That invite has expired.")
+	}
 	for _, id := range thread.Members {
 		if id == user.ID {
 			copy := *thread
@@ -117,6 +122,10 @@ func (c *chatRoom) addGroupMember(ctx context.Context, user chatUser, threadID, 
 	if thread == nil || len(thread.Members) == 0 || !onThread(thread, user.ID) {
 		c.mu.Unlock()
 		return chatThread{}, nil, chatRejected("That group was not found.")
+	}
+	if !threadAdmin(thread, user.ID) {
+		c.mu.Unlock()
+		return chatThread{}, nil, chatRejected("Only an admin can add someone.")
 	}
 	var peerID string
 	for _, person := range c.data.Users {
@@ -200,9 +209,9 @@ func (c *chatRoom) renameGroup(ctx context.Context, user chatUser, threadID, nam
 		c.mu.Unlock()
 		return "", chatRejected("That group was not found.")
 	}
-	if thread.Owner != user.ID {
+	if !threadAdmin(thread, user.ID) {
 		c.mu.Unlock()
-		return "", chatRejected("Only the person who made the group can rename it.")
+		return "", chatRejected("Only an admin can rename this group.")
 	}
 	thread.Title = title
 	c.mu.Unlock()
@@ -269,17 +278,35 @@ func (c *chatRoom) setBlocked(ctx context.Context, userID, username string, on b
 	return false, chatRejected("Sign in again.")
 }
 
-func writeGroup(w http.ResponseWriter, thread chatThread, members []string) {
+func (c *chatRoom) writeGroup(w http.ResponseWriter, thread chatThread, members []string) {
 	if members == nil {
 		members = []string{}
 	}
+	c.mu.Lock()
+	owner := ""
+	if person, ok := c.userLocked(thread.Owner); ok {
+		owner = person.Username
+	}
+	admins := make([]string, 0, len(thread.Admins))
+	for _, id := range thread.Admins {
+		if person, ok := c.userLocked(id); ok && person.Username != "" {
+			admins = append(admins, person.Username)
+		}
+	}
+	c.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"success": true,
-		"id":      thread.ID,
-		"name":    thread.Title,
-		"code":    thread.Code,
-		"group":   true,
-		"members": members,
+		"success":   true,
+		"id":        thread.ID,
+		"name":      thread.Title,
+		"code":      thread.Code,
+		"group":     true,
+		"members":   members,
+		"about":     thread.About,
+		"rules":     thread.Rules,
+		"announce":  thread.Announce,
+		"inviteExp": thread.InviteExp,
+		"owner":     owner,
+		"admins":    admins,
 	})
 }
 
@@ -300,7 +327,7 @@ func (s *Server) chatGroupCreate(w http.ResponseWriter, r *http.Request) {
 		writeChatFailure(w, err)
 		return
 	}
-	writeGroup(w, thread, []string{user.Username})
+	s.chat.writeGroup(w, thread, []string{user.Username})
 }
 
 func (s *Server) chatGroupJoin(w http.ResponseWriter, r *http.Request) {
@@ -325,7 +352,7 @@ func (s *Server) chatGroupJoin(w http.ResponseWriter, r *http.Request) {
 		writeChatFailure(w, err)
 		return
 	}
-	writeGroup(w, thread, names)
+	s.chat.writeGroup(w, thread, names)
 }
 
 func (s *Server) chatGroupGet(w http.ResponseWriter, r *http.Request) {
@@ -338,7 +365,7 @@ func (s *Server) chatGroupGet(w http.ResponseWriter, r *http.Request) {
 		writeChatFailure(w, err)
 		return
 	}
-	writeGroup(w, thread, names)
+	s.chat.writeGroup(w, thread, names)
 }
 
 func (s *Server) chatGroupAdd(w http.ResponseWriter, r *http.Request) {
@@ -358,7 +385,7 @@ func (s *Server) chatGroupAdd(w http.ResponseWriter, r *http.Request) {
 		writeChatFailure(w, err)
 		return
 	}
-	writeGroup(w, thread, names)
+	s.chat.writeGroup(w, thread, names)
 }
 
 func (s *Server) chatGroupName(w http.ResponseWriter, r *http.Request) {

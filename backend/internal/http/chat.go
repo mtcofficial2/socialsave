@@ -68,6 +68,13 @@ type chatUser struct {
 	Created      int64             `json:"created"`
 	PhotoRev     int64             `json:"photoRev,omitempty"`
 	LastSeen     int64             `json:"lastSeen,omitempty"`
+	Privacy      chatPrivacy       `json:"privacy,omitempty"`
+	RecoveryHash string            `json:"recoveryHash,omitempty"`
+	Stars        []chatStar        `json:"stars,omitempty"`
+	Labels       []chatLabel       `json:"labels,omitempty"`
+	Devices      []chatDevice      `json:"devices,omitempty"`
+	// RecoveryPlain is shown once to the person registering. It is never stored.
+	RecoveryPlain string `json:"-"`
 }
 
 type chatMessage struct {
@@ -93,6 +100,12 @@ type chatMessage struct {
 	EditedAt  int64          `json:"editedAt,omitempty"`
 	Touched   int64          `json:"touched,omitempty"`
 	Reactions []chatReaction `json:"reactions,omitempty"`
+	Poll      *chatPoll      `json:"poll,omitempty"`
+	Card      *chatCard      `json:"card,omitempty"`
+	Place     *chatPlace     `json:"place,omitempty"`
+	Expires   int64          `json:"expires,omitempty"`
+	Call      string         `json:"call,omitempty"`
+	CallMs    int            `json:"callMs,omitempty"`
 }
 
 // chatExtra is everything a message carries besides its text. ReplyName and
@@ -110,6 +123,11 @@ type chatExtra struct {
 	SongName  string
 	SongMs    int
 	SongType  string
+	Poll      *chatPoll
+	Card      *chatCard
+	Place     *chatPlace
+	Call      string
+	CallMs    int
 }
 
 // chatSeen is how far this person has received or opened the conversation.
@@ -122,18 +140,26 @@ type chatSeen struct {
 }
 
 type chatThread struct {
-	ID       string              `json:"id"`
-	A        string              `json:"a,omitempty"`
-	B        string              `json:"b,omitempty"`
-	Title    string              `json:"title,omitempty"`
-	Owner    string              `json:"owner,omitempty"`
-	Code     string              `json:"code,omitempty"`
-	Members  []string            `json:"members,omitempty"`
-	Next     int64               `json:"next"`
-	Messages []chatMessage       `json:"messages"`
-	Seen     map[string]chatSeen `json:"seen,omitempty"`
-	Removed  []int64             `json:"removed,omitempty"`
-	Pinned   []int64             `json:"pinned,omitempty"`
+	ID        string              `json:"id"`
+	A         string              `json:"a,omitempty"`
+	B         string              `json:"b,omitempty"`
+	Title     string              `json:"title,omitempty"`
+	Owner     string              `json:"owner,omitempty"`
+	Code      string              `json:"code,omitempty"`
+	Members   []string            `json:"members,omitempty"`
+	Next      int64               `json:"next"`
+	Messages  []chatMessage       `json:"messages"`
+	Seen      map[string]chatSeen `json:"seen,omitempty"`
+	Removed   []int64             `json:"removed,omitempty"`
+	Pinned    []int64             `json:"pinned,omitempty"`
+	Admins    []string            `json:"admins,omitempty"`
+	Announce  bool                `json:"announce,omitempty"`
+	About     string              `json:"about,omitempty"`
+	Rules     string              `json:"rules,omitempty"`
+	InviteExp int64               `json:"inviteExp,omitempty"`
+	Vanish    int                 `json:"vanish,omitempty"`
+	ClearAt   int64               `json:"clearAt,omitempty"`
+	Request   string              `json:"request,omitempty"`
 }
 
 // chatInstall is one copy of the app. The id is random and made on that
@@ -152,10 +178,14 @@ type chatInstall struct {
 }
 
 type chatData struct {
-	Schema   int           `json:"schema,omitempty"`
-	Users    []chatUser    `json:"users"`
-	Threads  []chatThread  `json:"threads"`
-	Installs []chatInstall `json:"installs,omitempty"`
+	Schema    int              `json:"schema,omitempty"`
+	Users     []chatUser       `json:"users"`
+	Threads   []chatThread     `json:"threads"`
+	Installs  []chatInstall    `json:"installs,omitempty"`
+	Statuses  []chatStatusNote `json:"statuses,omitempty"`
+	Schedules []chatSchedule   `json:"schedules,omitempty"`
+	Calls     []chatCall       `json:"calls,omitempty"`
+	Reports   []chatReport     `json:"reports,omitempty"`
 }
 
 type chatThreadSync struct {
@@ -182,19 +212,28 @@ type chatInboxItem struct {
 	Blocked    bool   `json:"blocked,omitempty"`
 	Group      bool   `json:"group,omitempty"`
 	Members    int    `json:"members,omitempty"`
+	Request    bool   `json:"request,omitempty"`
 }
 
 // chatPeerView is the other person, as far as ticks, presence, and photo go.
 type chatPeerView struct {
-	Delivered int64
-	Read      int64
-	LastSeen  int64
-	Online    bool
-	PhotoRev  int64
-	Name      string
-	Blocked   bool
-	Group     bool
-	Members   []string
+	Delivered  int64
+	Read       int64
+	LastSeen   int64
+	Online     bool
+	PhotoRev   int64
+	Name       string
+	Blocked    bool
+	Group      bool
+	Members    []string
+	Request    bool
+	About      string
+	Rules      string
+	Announce   bool
+	OwnerName  string
+	AdminNames []string
+	InviteExp  int64
+	Vanish     int
 	// LastID is the newest message id in the thread, so a client whose
 	// cursor is past it (the server lost or restored older data) can reset.
 	LastID int64
@@ -211,6 +250,8 @@ type chatRoom struct {
 	posts      map[string][]time.Time
 	joins      map[string][]time.Time
 	opens      map[string][]time.Time
+	fresh      map[string][]time.Time
+	rings      map[string][]time.Time
 	last       map[string]string
 	seenSaved  map[string]int64
 	blob       chatBlob
@@ -224,16 +265,20 @@ func newChatRoom(up storage.Uploader) *chatRoom {
 		blob = value
 	}
 	slog.Info("chat storage", "persistent", blob != nil)
-	return &chatRoom{
+	room := &chatRoom{
 		posts:     map[string][]time.Time{},
 		joins:     map[string][]time.Time{},
 		opens:     map[string][]time.Time{},
+		fresh:     map[string][]time.Time{},
+		rings:     map[string][]time.Time{},
 		last:      map[string]string{},
 		seenSaved: map[string]int64{},
 		blob:      blob,
 		file:      filepath.Join(os.TempDir(), "socialsave-chat-accounts.json"),
 		live:      newChatHub(),
 	}
+	go room.pumpSchedules()
+	return room
 }
 
 func (c *chatRoom) register(ctx context.Context, ip, phone, email, username, password string) (chatUser, string, error) {
@@ -268,12 +313,23 @@ func (c *chatRoom) register(ctx context.Context, ip, phone, email, username, pas
 			return chatUser{}, "", err
 		}
 		keepSession(&c.data.Users[i], hash)
+		c.data.Users[i].RecoveryPlain = ""
+		if code, _, err := ensureRecovery(&c.data.Users[i]); err != nil {
+			c.mu.Unlock()
+			return chatUser{}, "", err
+		} else if code != "" {
+			c.data.Users[i].RecoveryPlain = code
+		}
 		signed := c.data.Users[i]
+		c.data.Users[i].RecoveryPlain = ""
 		c.mu.Unlock()
 		c.persist(ctx)
 		signed.TokenHash = ""
+		signed.Sessions = nil
 		signed.PasswordHash = ""
+		signed.RecoveryHash = ""
 		signed.Saved = nil
+		signed.Devices = nil
 		return signed, plain, nil
 	}
 	user := chatUser{
@@ -289,12 +345,21 @@ func (c *chatRoom) register(ctx context.Context, ip, phone, email, username, pas
 		c.mu.Unlock()
 		return chatUser{}, "", err
 	}
+	if code, codeHash, err := ensureRecovery(&user); err != nil {
+		c.mu.Unlock()
+		return chatUser{}, "", err
+	} else if code != "" {
+		user.RecoveryPlain = code
+		_ = codeHash
+	}
 	c.data.Users = append(c.data.Users, user)
+	c.data.Users[len(c.data.Users)-1].RecoveryPlain = ""
 	c.mu.Unlock()
 	c.persist(ctx)
 	user.TokenHash = ""
 	user.PasswordHash = ""
 	user.Saved = nil
+	user.RecoveryHash = ""
 	return user, plain, nil
 }
 
@@ -312,6 +377,7 @@ func (c *chatRoom) userByToken(ctx context.Context, plain string) (chatUser, boo
 		user.Sessions = nil
 		user.PasswordHash = ""
 		user.Saved = nil
+		user.RecoveryHash = ""
 		return user, true
 	}
 	return chatUser{}, false
@@ -351,6 +417,29 @@ func keepSession(user *chatUser, hash string) {
 	}
 	user.Sessions = kept
 	user.TokenHash = hash
+	now := time.Now().UnixMilli()
+	found := false
+	for i := range user.Devices {
+		if user.Devices[i].Hash == hash {
+			user.Devices[i].Seen = now
+			found = true
+			break
+		}
+	}
+	if !found {
+		user.Devices = append(user.Devices, chatDevice{Hash: hash, Created: now, Seen: now})
+	}
+	alive := map[string]bool{}
+	for _, cur := range user.Sessions {
+		alive[cur] = true
+	}
+	nextDevices := make([]chatDevice, 0, len(user.Devices))
+	for _, device := range user.Devices {
+		if alive[device.Hash] {
+			nextDevices = append(nextDevices, device)
+		}
+	}
+	user.Devices = nextDevices
 }
 
 func (c *chatRoom) dropSession(ctx context.Context, plain string) {
@@ -384,6 +473,17 @@ func (c *chatRoom) dropSession(ctx context.Context, plain string) {
 		} else {
 			user.Sessions = next
 		}
+		alive := map[string]bool{}
+		for _, cur := range user.Sessions {
+			alive[cur] = true
+		}
+		devices := make([]chatDevice, 0, len(user.Devices))
+		for _, device := range user.Devices {
+			if alive[device.Hash] {
+				devices = append(devices, device)
+			}
+		}
+		user.Devices = devices
 		c.mu.Unlock()
 		c.persist(ctx)
 		return
@@ -418,6 +518,9 @@ func (c *chatRoom) inbox(ctx context.Context, userID string) []chatInboxItem {
 		if noteDelivered(thread, userID) {
 			dirty = true
 		}
+		if c.sweepThreadLocked(thread) {
+			dirty = true
+		}
 		var item chatInboxItem
 		if len(thread.Members) > 0 {
 			item = chatInboxItem{
@@ -442,6 +545,16 @@ func (c *chatRoom) inbox(ctx context.Context, userID string) []chatInboxItem {
 				Online:   chatOnline(other.LastSeen, now),
 				PhotoRev: other.PhotoRev,
 				Blocked:  chatNamed(c.userBlockedLocked(userID), other.Username),
+				Request:  thread.Request == userID,
+			}
+			if !c.sharesPresenceLocked(userID, other, "lastSeen") {
+				item.LastSeen = 0
+			}
+			if !c.sharesPresenceLocked(userID, other, "online") {
+				item.Online = false
+			}
+			if !c.sharesPresenceLocked(userID, other, "photo") {
+				item.PhotoRev = 0
 			}
 		}
 		if n := len(thread.Messages); n > 0 {
@@ -451,6 +564,9 @@ func (c *chatRoom) inbox(ctx context.Context, userID string) []chatInboxItem {
 			item.LastID = last.ID
 			item.LastFrom = last.Name
 			item.LastStatus = chatStatus(thread, userID, last)
+			if item.LastStatus == "read" && !c.receiptsSharedLocked(thread) {
+				item.LastStatus = "delivered"
+			}
 		}
 		out = append(out, item)
 	}
@@ -507,7 +623,7 @@ func (c *chatRoom) open(ctx context.Context, userID, username string, seen *stri
 			return thread, other.Username, label, nil
 		}
 	}
-	thread := chatThread{ID: newChatID("t"), A: userID, B: other.ID, Next: 1}
+	thread := chatThread{ID: newChatID("t"), A: userID, B: other.ID, Next: 1, Request: other.ID}
 	c.data.Threads = append(c.data.Threads, thread)
 	c.mu.Unlock()
 	c.persist(ctx)
@@ -526,10 +642,16 @@ func (c *chatRoom) since(ctx context.Context, userID, threadID string, after, si
 	if noteDelivered(thread, userID) {
 		dirty = true
 	}
+	if c.sweepThreadLocked(thread) {
+		dirty = true
+	}
 	out := make([]chatMessage, 0)
 	updates := make([]chatMessage, 0)
 	for _, item := range thread.Messages {
 		item.Status = chatStatus(thread, userID, item)
+		if item.Status == "read" && !c.receiptsSharedLocked(thread) {
+			item.Status = "delivered"
+		}
 		if item.ID > after {
 			out = append(out, item)
 			continue
@@ -548,6 +670,18 @@ func (c *chatRoom) since(ctx context.Context, userID, threadID string, after, si
 		peer.Name = thread.Title
 		peer.Group = true
 		peer.Members = append([]string(nil), thread.MemberNames(c)...)
+		peer.About = thread.About
+		peer.Rules = thread.Rules
+		peer.Announce = thread.Announce
+		peer.InviteExp = thread.InviteExp
+		if owner, ok := c.userLocked(thread.Owner); ok {
+			peer.OwnerName = owner.Username
+		}
+		for _, id := range thread.Admins {
+			if person, ok := c.userLocked(id); ok && person.Username != "" {
+				peer.AdminNames = append(peer.AdminNames, person.Username)
+			}
+		}
 		now := time.Now()
 		for _, id := range thread.others(userID) {
 			other, ok := c.userLocked(id)
@@ -570,9 +704,20 @@ func (c *chatRoom) since(ctx context.Context, userID, threadID string, after, si
 		peer.LastSeen = other.LastSeen
 		peer.Online = chatOnline(other.LastSeen, time.Now())
 		peer.PhotoRev = other.PhotoRev
+		if !c.sharesPresenceLocked(userID, other, "lastSeen") {
+			peer.LastSeen = 0
+		}
+		if !c.sharesPresenceLocked(userID, other, "online") {
+			peer.Online = false
+		}
+		if !c.sharesPresenceLocked(userID, other, "photo") {
+			peer.PhotoRev = 0
+		}
 		peer.Name = seenNameLocked(c.data, userID, other.Username)
 		peer.Blocked = chatNamed(c.userBlockedLocked(userID), other.Username)
+		peer.Request = thread.Request == userID
 	}
+	peer.Vanish = thread.Vanish
 	var removed []int64
 	if len(thread.Removed) > 0 {
 		removed = append([]int64(nil), thread.Removed...)
@@ -673,10 +818,13 @@ func (c *chatRoom) markRead(ctx context.Context, userID, threadID string, id int
 	others := thread.others(userID)
 	threadID = thread.ID
 	readAt := cur.Read
+	share := c.receiptsSharedLocked(thread)
 	c.mu.Unlock()
 	c.persist(ctx)
-	for _, other := range others {
-		c.announceRead(other, threadID, readAt)
+	if share {
+		for _, other := range others {
+			c.announceRead(other, threadID, readAt)
+		}
 	}
 	return nil
 }
@@ -702,6 +850,10 @@ func (c *chatRoom) post(ctx context.Context, user chatUser, threadID, text strin
 		return chatMessage{}, chatRejected("That chat was not found.")
 	}
 	if err := c.refuseDirectLocked(thread, user); err != nil {
+		c.mu.Unlock()
+		return chatMessage{}, err
+	}
+	if err := c.gatePostLocked(thread, user); err != nil {
 		c.mu.Unlock()
 		return chatMessage{}, err
 	}
@@ -748,6 +900,10 @@ func (c *chatRoom) postVoice(ctx context.Context, user chatUser, threadID string
 		c.mu.Unlock()
 		return chatMessage{}, err
 	}
+	if err := c.gatePostLocked(thread, user); err != nil {
+		c.mu.Unlock()
+		return chatMessage{}, err
+	}
 	if _, _, err := replyOf(thread, reply); err != nil {
 		c.mu.Unlock()
 		return chatMessage{}, err
@@ -765,6 +921,10 @@ func (c *chatRoom) postVoice(ctx context.Context, user chatUser, threadID string
 		return chatMessage{}, chatRejected("That chat was not found.")
 	}
 	if err := c.refuseDirectLocked(thread, user); err != nil {
+		c.mu.Unlock()
+		return chatMessage{}, err
+	}
+	if err := c.gatePostLocked(thread, user); err != nil {
 		c.mu.Unlock()
 		return chatMessage{}, err
 	}
@@ -813,6 +973,10 @@ func (c *chatRoom) postPhoto(ctx context.Context, user chatUser, threadID string
 		return chatMessage{}, chatRejected("That chat was not found.")
 	}
 	if err := c.refuseDirectLocked(thread, user); err != nil {
+		c.mu.Unlock()
+		return chatMessage{}, err
+	}
+	if err := c.gatePostLocked(thread, user); err != nil {
 		c.mu.Unlock()
 		return chatMessage{}, err
 	}
@@ -867,6 +1031,14 @@ func (c *chatRoom) appendMessageLocked(thread *chatThread, user chatUser, text s
 		SongName:  extra.SongName,
 		SongMs:    extra.SongMs,
 		SongType:  extra.SongType,
+		Poll:      extra.Poll,
+		Card:      extra.Card,
+		Place:     extra.Place,
+		Call:      extra.Call,
+		CallMs:    extra.CallMs,
+	}
+	if thread.Vanish > 0 && item.Call == "" {
+		item.Expires = item.At + int64(thread.Vanish)*1000
 	}
 	if extra.Voice == "" && extra.Photo == "" && extra.Song == "" {
 		item.Links = chatLinks(text)
@@ -909,18 +1081,24 @@ func (c *chatRoom) setPhoto(ctx context.Context, userID string, body []byte) (in
 	return rev, nil
 }
 
-func (c *chatRoom) photo(ctx context.Context, username string) ([]byte, string, error) {
+func (c *chatRoom) photo(ctx context.Context, viewerID, username string) ([]byte, string, error) {
 	c.ensure(ctx)
 	name := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(username, "@")))
 	c.mu.Lock()
 	var id string
 	var rev int64
+	var owner chatUser
 	for _, user := range c.data.Users {
 		if user.Username == name {
 			id = user.ID
 			rev = user.PhotoRev
+			owner = user
 			break
 		}
+	}
+	if id != "" && !c.sharesPresenceLocked(viewerID, owner, "photo") {
+		c.mu.Unlock()
+		return nil, "", os.ErrNotExist
 	}
 	c.mu.Unlock()
 	if id == "" || rev == 0 {
@@ -1680,11 +1858,15 @@ func (s *Server) chatRegister(w http.ResponseWriter, r *http.Request) {
 		writeChatFailure(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	payload := map[string]any{
 		"success": true,
 		"token":   token,
 		"user":    chatPublicUser(user, true),
-	})
+	}
+	if user.RecoveryPlain != "" {
+		payload["recovery"] = user.RecoveryPlain
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func (s *Server) chatMe(w http.ResponseWriter, r *http.Request) {
@@ -1693,8 +1875,9 @@ func (s *Server) chatMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"success": true,
-		"user":    chatPublicUser(user, true),
+		"success":     true,
+		"user":        chatPublicUser(user, true),
+		"hasRecovery": s.chat.hasRecovery(r.Context(), user.ID),
 	})
 }
 
@@ -1717,10 +1900,11 @@ func (s *Server) chatPhotoPost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) chatPhotoGet(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.chatActor(w, r); !ok {
+	user, ok := s.chatActor(w, r)
+	if !ok {
 		return
 	}
-	body, contentType, err := s.chat.photo(r.Context(), r.URL.Query().Get("username"))
+	body, contentType, err := s.chat.photo(r.Context(), user.ID, r.URL.Query().Get("username"))
 	if err != nil {
 		writeChatFailure(w, err)
 		return
@@ -1737,6 +1921,7 @@ func chatPublicUser(user chatUser, withContact bool) map[string]any {
 	if withContact {
 		out["phone"] = user.Phone
 		out["email"] = user.Email
+		out["privacy"] = user.Privacy
 	}
 	return out
 }
@@ -1837,9 +2022,33 @@ func (s *Server) chatThreadList(w http.ResponseWriter, r *http.Request) {
 	if peer.Blocked {
 		peerJSON["blocked"] = true
 	}
+	if peer.Request {
+		peerJSON["request"] = true
+	}
 	if peer.Group {
 		peerJSON["group"] = true
 		peerJSON["members"] = peer.Members
+		if peer.About != "" {
+			peerJSON["about"] = peer.About
+		}
+		if peer.Rules != "" {
+			peerJSON["rules"] = peer.Rules
+		}
+		if peer.Announce {
+			peerJSON["announce"] = true
+		}
+		if peer.OwnerName != "" {
+			peerJSON["ownerName"] = peer.OwnerName
+		}
+		if len(peer.AdminNames) > 0 {
+			peerJSON["admins"] = peer.AdminNames
+		}
+		if peer.InviteExp > 0 {
+			peerJSON["inviteExp"] = peer.InviteExp
+		}
+	}
+	if peer.Vanish > 0 {
+		peerJSON["vanish"] = peer.Vanish
 	}
 	payload := map[string]any{
 		"success":  true,
@@ -1985,15 +2194,12 @@ func (s *Server) chatThreadPost(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var body struct {
-		Text  string `json:"text"`
-		Reply int64  `json:"reply"`
-	}
+	var body chatPostBody
 	if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&body); err != nil {
 		writeChatError(w, http.StatusBadRequest, "Write a message first.")
 		return
 	}
-	item, err := s.chat.post(r.Context(), user, chi.URLParam(r, "id"), body.Text, body.Reply)
+	item, err := s.chat.postRich(r.Context(), user, chi.URLParam(r, "id"), body)
 	if err != nil {
 		writeChatFailure(w, err)
 		return
