@@ -106,6 +106,111 @@ try {
     }
   }
 
+  static bool _callDeclined = false;
+  static Future<void>? _callAsk;
+
+  /// True when SocialSave.exe may receive call audio. WebRTC binds a fresh
+  /// UDP port for every call, so the file-share ports are not enough.
+  /// A failed check does not block the call.
+  static Future<bool> callAudioOpen() async {
+    if (!Plat.isWindows) return true;
+    final script = '''
+\$exe = ${_q(exe)}
+\$ok = 'no'
+\$rules = @(Get-NetFirewallApplicationFilter -PolicyStore ActiveStore -ErrorAction SilentlyContinue |
+  Where-Object { \$_.Program -ieq \$exe } |
+  Get-NetFirewallRule -ErrorAction SilentlyContinue |
+  Where-Object { \$_.Direction -eq 'Inbound' -and \$_.Enabled -eq 'True' -and \$_.Action -eq 'Allow' })
+foreach (\$r in \$rules) {
+  \$pf = \$r | Get-NetFirewallPortFilter -ErrorAction SilentlyContinue
+  if (\$null -eq \$pf) { continue }
+  \$proto = [string]\$pf.Protocol
+  \$port = [string]\$pf.LocalPort
+  if (\$proto -ne 'UDP' -and \$proto -ne 'Any' -and \$proto -ne '17') { continue }
+  if (\$port -eq 'Any' -or \$port -eq '*') { \$ok = 'yes' }
+}
+"CALL=\$ok"
+''';
+    try {
+      final res = await Process.run('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        script,
+      ]).timeout(const Duration(seconds: 15));
+      final open = '${res.stdout}'.contains('CALL=yes');
+      debugPrint('[firewall] call audio ${open ? 'open' : 'blocked'}');
+      return open;
+    } catch (e) {
+      debugPrint('[firewall] call check failed: $e');
+      return true;
+    }
+  }
+
+  /// Adds an inbound UDP allow for this exe only, on private and public
+  /// networks. Returns null on success.
+  static Future<String?> allowCallAudio() async {
+    if (!Plat.isWindows) return null;
+    final inner = '''
+\$exe = ${_q(exe)}
+\$n = 'SocialSave audio calls (' + \$exe + ')'
+Get-NetFirewallRule -DisplayName \$n -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+New-NetFirewallRule -DisplayName \$n -Direction Inbound -Action Allow -Program \$exe -Protocol UDP -Profile Private,Public | Out-Null
+''';
+    final encoded = base64.encode(_utf16le(inner));
+    final outer = '''
+try {
+  \$p = Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -Wait -PassThru -ArgumentList '-NoProfile','-EncodedCommand','$encoded'
+  exit \$p.ExitCode
+} catch { exit 5 }
+''';
+    try {
+      final res = await Process.run('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        outer,
+      ]).timeout(const Duration(minutes: 3));
+      debugPrint('[firewall] call allow exit=${res.exitCode}');
+      if (res.exitCode == 5) {
+        return 'Windows did not get administrator permission, so call audio may stay blocked.';
+      }
+      if (await callAudioOpen()) return null;
+      return res.exitCode == 0
+          ? 'The call rule was added but Windows still reports it as blocked.'
+          : 'Could not allow call audio (code ${res.exitCode}).';
+    } catch (e) {
+      return 'Could not allow call audio: $e';
+    }
+  }
+
+  /// Asks once per run when a PC call needs a firewall hole. [ask] returns
+  /// true to open the Windows prompt, false to skip, or null when the
+  /// window is not ready yet.
+  static Future<void> ensureCallAudio(Future<bool?> Function() ask) {
+    if (!Plat.isWindows || _callDeclined) return Future<void>.value();
+    return _callAsk ??= _ensureCallAudio(ask);
+  }
+
+  static Future<void> _ensureCallAudio(Future<bool?> Function() ask) async {
+    try {
+      if (await callAudioOpen()) return;
+      final yes = await ask();
+      if (yes == null) return;
+      if (!yes) {
+        _callDeclined = true;
+        return;
+      }
+      final err = await allowCallAudio();
+      if (err != null) {
+        _callDeclined = true;
+        debugPrint('[firewall] $err');
+      }
+    } finally {
+      _callAsk = null;
+    }
+  }
+
   static List<int> _utf16le(String s) {
     final out = <int>[];
     for (final c in s.codeUnits) {

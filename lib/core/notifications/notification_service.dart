@@ -196,6 +196,9 @@ class NotificationService {
 
   /// A chat toast was tapped. The payload is chat|threadId|username.
   static void Function(String payload)? onChatOpen;
+
+  /// A Windows toast for an incoming call was clicked. The window comes forward.
+  static void Function()? onCallOpen;
   static String? _pendingChat;
 
   /// A reply typed into a notification was accepted by the server.
@@ -548,11 +551,21 @@ class NotificationService {
   static const incomingCallId = 910085;
 
   /// A ringing banner. The phone ringtone itself is played separately so the
-  /// notification sound does not cut the ring short.
+  /// notification sound does not cut the ring short. Windows has no call
+  /// channel, so the same words go out as a toast.
   Future<void> showIncomingCall(String name) async {
     if (kIsWeb) return;
     if (!_initialized) await init();
     final who = name.trim().isEmpty ? 'Audio call' : name.trim();
+    if (defaultTargetPlatform == TargetPlatform.windows) {
+      await _showWindows(
+        incomingCallId,
+        who,
+        'Incoming audio call',
+        payload: 'call|incoming',
+      );
+      return;
+    }
     const details = NotificationDetails(
       android: AndroidNotificationDetails(
         'calls_v1',
@@ -654,6 +667,7 @@ class NotificationService {
       return;
     }
     if (probe.startsWith('call|') || (response.payload ?? '').startsWith('call|')) {
+      onCallOpen?.call();
       return;
     }
     final muteThread = chatNotificationMuteThread(response);

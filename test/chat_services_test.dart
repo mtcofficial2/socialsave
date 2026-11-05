@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_prefs.dart';
@@ -155,6 +157,48 @@ void main() {
     expect(callUsesFullScreen(outgoing: true, status: 'active'), isTrue);
     expect(callUsesFullScreen(outgoing: false, status: 'ringing'), isTrue);
     expect(callUsesFullScreen(outgoing: false, status: 'active'), isTrue);
+    expect(
+      callPickedUpElsewhere(outgoing: false, answering: false, status: 'ringing'),
+      isTrue,
+    );
+    expect(
+      callPickedUpElsewhere(outgoing: true, answering: false, status: 'ringing'),
+      isFalse,
+    );
+    expect(
+      callPickedUpElsewhere(outgoing: false, answering: true, status: 'ringing'),
+      isFalse,
+    );
+    expect(
+      callPickedUpElsewhere(outgoing: false, answering: false, status: 'active'),
+      isFalse,
+    );
+  });
+
+  test('a PC candidate uses the Wi-Fi address instead of a hidden name', () {
+    const hidden = 'candidate:1 1 udp 2122260223 pc-host.local 53917 typ host';
+    final encoded = jsonEncode({
+      'candidate': hidden,
+      'sdpMid': '0',
+      'sdpMLineIndex': 0,
+    });
+    final swapped = jsonDecode(callCandidateForPeer(encoded, '192.168.1.40')) as Map;
+    expect(swapped['candidate'], contains('192.168.1.40'));
+    expect(swapped['candidate'], isNot(contains('.local')));
+    expect(callCandidateForPeer(encoded, '8.8.8.8'), encoded);
+    expect(callCandidateForPeer(encoded, null), encoded);
+    expect(callCandidateForPeer(encoded, '100.64.0.1'), encoded);
+    expect(callLanIpUsable('10.0.0.8'), isTrue);
+    expect(callLanIpUsable('172.16.0.2'), isTrue);
+    expect(callLanIpUsable('172.32.0.2'), isFalse);
+    const sdp = 'v=0\r\n'
+        'a=candidate:1 1 udp 2122260223 pc-host.local 53917 typ host\r\n'
+        'a=candidate:2 1 udp 1686052607 203.0.113.8 20000 typ srflx\r\n';
+    final ready = callSdpForPeer(sdp, '10.1.2.3');
+    expect(ready, contains('10.1.2.3 53917'));
+    expect(ready, contains('203.0.113.8 20000'));
+    expect(ready, isNot(contains('.local')));
+    expect(callSdpForPeer(sdp, '203.0.113.8'), sdp);
   });
 
   test('a status view count is words and stays with the author', () {

@@ -310,6 +310,9 @@ class ChatAlertWatch {
   void ensure() {
     if (_poll != null || _calls != null) return;
     NotificationService.attachChatOpen(_open);
+    NotificationService.onCallOpen = () {
+      if (Plat.isWindows) unawaited(DesktopTray.show());
+    };
     NotificationService.onReplySent = _keep;
     ChatLive.instance.start();
     unawaited(ChatInboxFilter.ensure());

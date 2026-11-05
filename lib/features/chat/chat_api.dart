@@ -855,6 +855,66 @@ String callSdp(String raw) {
   return '${text.replaceAll('\n', '\r\n')}\r\n';
 }
 
+/// A PC address a phone on the same Wi-Fi can reach. Public and link-local
+/// addresses are left alone so a mobile network keeps using its own path.
+bool callLanIpUsable(String? ip) {
+  if (ip == null) return false;
+  final parts = ip.split('.');
+  if (parts.length != 4) return false;
+  final nums = parts.map(int.tryParse).toList();
+  if (nums.any((n) => n == null || n < 0 || n > 255)) return false;
+  final a = nums[0]!;
+  final b = nums[1]!;
+  if (a == 10) return true;
+  if (a == 192 && b == 168) return true;
+  if (a == 172 && b >= 16 && b <= 31) return true;
+  return false;
+}
+
+String _swapMdnsHost(String line, String lanIp) {
+  final parts = line.split(' ');
+  if (parts.length < 6 || !parts[4].endsWith('.local')) return line;
+  parts[4] = lanIp;
+  return parts.join(' ');
+}
+
+/// Desktop WebRTC hides the PC as *.local. A phone cannot look that name up,
+/// so the same private address is written into the candidate before it is sent.
+String callCandidateForPeer(String encoded, String? lanIp) {
+  if (encoded.isEmpty || !callLanIpUsable(lanIp) || !encoded.contains('.local')) {
+    return encoded;
+  }
+  final ip = lanIp!;
+  try {
+    final decoded = jsonDecode(encoded);
+    if (decoded is Map && decoded['candidate'] is String) {
+      final line = _swapMdnsHost(decoded['candidate'] as String, ip);
+      if (line == decoded['candidate']) return encoded;
+      final next = Map<String, dynamic>.from(decoded);
+      next['candidate'] = line;
+      final out = jsonEncode(next);
+      return out.length > 2000 ? encoded : out;
+    }
+  } catch (_) {}
+  final line = _swapMdnsHost(encoded, ip);
+  return line.length > 2000 ? encoded : line;
+}
+
+/// The same *.local swap for an offer or answer that already gathered candidates.
+String callSdpForPeer(String sdp, String? lanIp) {
+  if (sdp.isEmpty || !callLanIpUsable(lanIp) || !sdp.contains('.local')) return sdp;
+  final ip = lanIp!;
+  final lines = sdp.split('\n');
+  for (var i = 0; i < lines.length; i++) {
+    final bare = lines[i].trimRight();
+    if (!bare.startsWith('a=candidate')) continue;
+    final swapped = _swapMdnsHost(bare, ip);
+    if (swapped == bare) continue;
+    lines[i] = lines[i].endsWith('\r') ? '$swapped\r' : swapped;
+  }
+  return lines.join('\n');
+}
+
 /// The server has closed this call. A live screen should leave.
 bool callIsOver(String state) {
   switch (state) {
@@ -882,6 +942,16 @@ bool watchedCallFinished(List<ChatCallRecord> rows, String id) {
 bool callUsesFullScreen({required bool outgoing, required String status}) {
   if (status == 'active') return true;
   return !outgoing && status == 'ringing';
+}
+
+/// The signed-in account answered on another device. This one stops ringing
+/// and does not open a call screen that has no audio.
+bool callPickedUpElsewhere({
+  required bool outgoing,
+  required bool answering,
+  required String status,
+}) {
+  return !outgoing && !answering && status == 'ringing';
 }
 
 /// Words shown while a call screen closes.

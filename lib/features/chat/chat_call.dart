@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,6 +11,8 @@ import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_live.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
 import 'package:social_save/core/platform/plat.dart';
+import 'package:social_save/features/library/desktop_tray.dart';
+import 'package:social_save/features/library/firewall_check.dart';
 import 'package:social_save/shared/routing/app_router.dart';
 
 const _callConfig = {
@@ -48,7 +51,12 @@ class ChatCallMedia {
       for (final stream in event.streams) {
         if (!_remote.contains(stream)) _remote.add(stream);
       }
-      if (event.track.kind == 'audio') event.track.enabled = true;
+      if (event.track.kind == 'audio') {
+        event.track.enabled = true;
+        // Windows never picks a speaker unless one is named. Without this the
+        // phone's voice is connected and silent.
+        if (Plat.isWindows) unawaited(Helper.setVolume(1, event.track));
+      }
     };
     pc.onIceCandidate = (candidate) {
       final line = candidate.candidate;
@@ -79,6 +87,29 @@ class ChatCallMedia {
     for (final track in stream.getAudioTracks()) {
       await pc.addTrack(track, stream);
     }
+    if (Plat.isWindows) await _windowsPlayout();
+  }
+
+  /// getUserMedia records the mic and leaves playback unset. Pick a speaker
+  /// or headset so the other person can be heard.
+  Future<void> _windowsPlayout() async {
+    try {
+      final outputs = await Helper.audiooutputs;
+      if (outputs.isEmpty) return;
+      var chosen = outputs.first;
+      for (final device in outputs) {
+        final label = device.label.toLowerCase();
+        if (label.contains('speaker') ||
+            label.contains('headphone') ||
+            label.contains('headset') ||
+            label.startsWith('default')) {
+          chosen = device;
+          break;
+        }
+      }
+      if (chosen.deviceId.isEmpty) return;
+      await Helper.selectAudioOutput(chosen.deviceId);
+    } catch (_) {}
   }
 
   Future<String> _localSdp(RTCSessionDescription desc) async {
@@ -238,9 +269,11 @@ class ChatCalls {
   bool _linked = true;
   bool _ringOn = false;
   bool _finishing = false;
+  bool _answering = false;
   int _ringGen = 0;
   int _callEpoch = 0;
   String _me = '';
+  String? _lanIp;
   String _lastRemote = '';
   final List<String> _iceBeforeId = [];
   final List<String> _closed = [];
@@ -308,7 +341,10 @@ class ChatCalls {
     _present();
     _armWatch();
     try {
-      final sdp = await _media.offer(_sendIce);
+      await _rememberLan();
+      await _allowPcAudio();
+      if (_finishing || epoch != _callEpoch) return;
+      final sdp = callSdpForPeer(await _media.offer(_sendIce), _lanIp);
       if (_finishing || epoch != _callEpoch) return;
       final call = await _api.startCall(threadId, sdp: sdp);
       if (_finishing || epoch != _callEpoch) {
@@ -405,6 +441,10 @@ class ChatCalls {
     if (event.callState == 'active') {
       if (_finishing) return;
       if (active != null && event.callId != active!.id) return;
+      if (callPickedUpElsewhere(outgoing: outgoing, answering: _answering, status: status)) {
+        await _finish(kind: 'ended');
+        return;
+      }
       if (event.answer.isNotEmpty && outgoing && event.answer != _lastRemote) {
         _lastRemote = event.answer;
         try {
@@ -439,10 +479,22 @@ class ChatCalls {
         if (status == 'ringing' && !outgoing) {
           final id = active?.id ?? '';
           var kind = 'missed';
+          var elsewhere = false;
+          var stay = false;
           for (final row in rows) {
-            if (row.id == id && callIsOver(row.state)) kind = row.state;
+            if (row.id != id) continue;
+            if (row.state == 'active') {
+              if (_answering) {
+                stay = true;
+              } else {
+                elsewhere = true;
+              }
+              break;
+            }
+            if (callIsOver(row.state)) kind = row.state;
           }
-          await _finish(kind: kind);
+          if (stay) return;
+          await _finish(kind: elsewhere ? 'ended' : kind);
         }
         return;
       }
@@ -490,11 +542,21 @@ class ChatCalls {
   Future<void> accept() async {
     final call = active;
     if (call == null || status != 'ringing' || _finishing) return;
+    _answering = true;
     await _endRing();
-    if (_finishing || active?.id != call.id) return;
+    if (_finishing || active?.id != call.id) {
+      _answering = false;
+      return;
+    }
     moment = 'accept';
     revision.value++;
     try {
+      await _rememberLan();
+      await _allowPcAudio();
+      if (_finishing || active?.id != call.id) {
+        _answering = false;
+        return;
+      }
       var offer = callSdp(call.offer);
       if (offer.isEmpty) {
         final rows = await _api.calls();
@@ -505,11 +567,14 @@ class ChatCalls {
           }
         }
       }
-      if (_finishing || active?.id != call.id) return;
+      if (_finishing || active?.id != call.id) {
+        if (!_finishing) _answering = false;
+        return;
+      }
       if (offer.isEmpty) {
         throw StateError('The call offer did not arrive. Ask them to call again.');
       }
-      final sdp = await _media.answer(offer, _sendIce);
+      final sdp = callSdpForPeer(await _media.answer(offer, _sendIce), _lanIp);
       final next = await _api.answerCall(call.id, accept: true, sdp: sdp);
       if (_finishing) return;
       active = next;
@@ -523,6 +588,7 @@ class ChatCalls {
       _present();
     } catch (error) {
       if (_finishing) return;
+      _answering = false;
       moment = '';
       problem = error is StateError ? error.message : chatErrorText(error);
     }
@@ -586,19 +652,23 @@ class ChatCalls {
   }
 
   void _sendIce(String candidate) {
+    final ready = callCandidateForPeer(candidate, _lanIp);
+    if (ready.isEmpty) return;
     final id = active?.id ?? '';
     if (id.isEmpty) {
-      _iceBeforeId.add(candidate);
+      _iceBeforeId.add(ready);
       return;
     }
     ChatLive.instance.sendText(
-      jsonEncode({'type': 'call-ice', 'call': id, 'candidate': candidate}),
+      jsonEncode({'type': 'call-ice', 'call': id, 'candidate': ready}),
     );
   }
 
   void _sendSdp(String sdp) {
+    final ready = callSdpForPeer(sdp, _lanIp);
     final id = active?.id ?? '';
-    if (id.isEmpty || sdp.isEmpty) return;
+    if (id.isEmpty || ready.isEmpty) return;
+    sdp = ready;
     ChatLive.instance.sendText(
       jsonEncode({'type': 'call-sdp', 'call': id, 'sdp': sdp}),
     );
@@ -649,6 +719,7 @@ class ChatCalls {
   Future<void> _finish({String kind = 'ended'}) async {
     if (_finishing) return;
     _finishing = true;
+    _answering = false;
     _callEpoch++;
     _remember(active?.id ?? '');
     _recover?.cancel();
@@ -702,6 +773,7 @@ class ChatCalls {
     _presentRetry?.cancel();
     _presentRetry = null;
     _shown = true;
+    _showWindow();
     showGeneralDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -720,8 +792,46 @@ class ChatCalls {
     if (_ringOn || outgoing || _finishing || exitKind.isNotEmpty) return;
     _ringOn = true;
     final gen = ++_ringGen;
+    _showWindow();
+    unawaited(_allowPcAudio());
     unawaited(_playRing(gen));
     unawaited(_showIncoming(gen));
+  }
+
+  void _showWindow() {
+    if (!Plat.isWindows) return;
+    unawaited(DesktopTray.show());
+  }
+
+  Future<void> _rememberLan() async {
+    if (!Plat.isWindows || _lanIp != null) return;
+    _lanIp = await _windowsLanIp();
+  }
+
+  Future<void> _allowPcAudio() {
+    if (!Plat.isWindows) return Future<void>.value();
+    return FirewallCheck.ensureCallAudio(_askCallFirewall);
+  }
+
+  Future<bool?> _askCallFirewall() async {
+    final context = appRouter.routerDelegate.navigatorKey.currentContext;
+    if (context == null || !context.mounted) return null;
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Allow call audio on this PC?'),
+        content: const Text(
+          'Windows Firewall is blocking audio between this PC and a phone. '
+          'SocialSave will allow inbound UDP for SocialSave.exe only. '
+          'Windows will ask for administrator permission next.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Not now')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Allow')),
+        ],
+      ),
+    );
   }
 
   Future<void> _showIncoming(int gen) async {
@@ -765,6 +875,44 @@ bool _sameCallUser(String a, String b) {
       value.trim().replaceFirst(RegExp(r'^@'), '').toLowerCase();
   final left = clean(a);
   return left.isNotEmpty && left == clean(b);
+}
+
+/// A private Wi-Fi address for this PC. Virtual adapters are skipped so a
+/// call is not pointed at a Hyper-V or WSL address the phone cannot reach.
+Future<String?> _windowsLanIp() async {
+  try {
+    final faces = await NetworkInterface.list(
+      type: InternetAddressType.IPv4,
+      includeLinkLocal: false,
+    );
+    String? pick;
+    for (final face in faces) {
+      final name = face.name.toLowerCase();
+      if (name.contains('virtual') ||
+          name.contains('vethernet') ||
+          name.contains('wsl') ||
+          name.contains('hyper-v') ||
+          name.contains('vmware') ||
+          name.contains('vbox') ||
+          name.contains('bluetooth')) {
+        continue;
+      }
+      for (final addr in face.addresses) {
+        final ip = addr.address;
+        if (!callLanIpUsable(ip)) continue;
+        pick ??= ip;
+        if (name.contains('wi-fi') ||
+            name.contains('wifi') ||
+            name.contains('wlan') ||
+            name.contains('ethernet')) {
+          return ip;
+        }
+      }
+    }
+    return pick;
+  } catch (_) {
+    return null;
+  }
 }
 
 class ChatCallSheet extends StatefulWidget {
