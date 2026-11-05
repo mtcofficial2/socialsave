@@ -329,6 +329,12 @@ class ChatCalls {
       _watch?.cancel();
       _watch = null;
       await _media.close();
+      final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
+      if (ctx != null && ctx.mounted) {
+        ScaffoldMessenger.maybeOf(ctx)?.showSnackBar(
+          SnackBar(content: Text(problem!)),
+        );
+      }
     }
     revision.value++;
   }
@@ -660,6 +666,7 @@ class ChatCalls {
   void _present() {
     if (_finishing) return;
     if (status == 'ringing' && !outgoing) _beginRing();
+    if (!callUsesFullScreen(outgoing: outgoing, status: status)) return;
     final quiet = problem == null || problem!.trim().isEmpty;
     if (_shown || (status != 'ringing' && status != 'active' && quiet)) {
       return;

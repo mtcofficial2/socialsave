@@ -116,6 +116,18 @@ void main() {
     expect(parts.$2, 'nope');
   });
 
+  test('an incoming call is not opened as a download link', () {
+    expect(linkOfferFromToast(null, 'call|incoming'), isNull);
+    expect(linkOfferFromToast('call|incoming', null), isNull);
+    expect(linkOfferFromToast('dismiss|https://youtu.be/abc', null), isNull);
+    expect(
+      linkOfferFromToast('download|https://youtu.be/abc', null),
+      'https://youtu.be/abc',
+    );
+    expect(linkOfferFromToast(null, 'https://youtu.be/abc'), 'https://youtu.be/abc');
+    expect(linkOfferFromToast(null, 'incoming'), isNull);
+  });
+
   test('a blank or unrelated reply is not sent', () async {
     await sendChatNotificationReply('chat|abc|Ada', '   ');
     await sendChatNotificationReply('usbshare|open', 'hello');

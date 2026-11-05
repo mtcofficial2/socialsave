@@ -878,6 +878,11 @@ bool watchedCallFinished(List<ChatCallRecord> rows, String id) {
   return true;
 }
 
+/// The full call screen is only for a call that arrived on this phone.
+bool callUsesFullScreen({required bool outgoing, required String status}) {
+  return !outgoing && (status == 'ringing' || status == 'active');
+}
+
 /// Words shown while a call screen closes.
 String callExitLabel(String kind) {
   switch (kind) {

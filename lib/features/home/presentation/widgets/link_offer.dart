@@ -446,13 +446,9 @@ class _LinkOfferWatcherState extends ConsumerState<LinkOfferWatcher> with Widget
 
   /// A Windows toast was tapped: "download|url", "dismiss|url" or the body.
   void _onToast(String? actionId, String? payload) {
-    final raw = (actionId != null && actionId.contains('|')) ? actionId : payload;
-    if (raw == null || raw.isEmpty) return;
-    final parts = raw.split('|');
-    final isDownload = parts.first == 'download';
-    final isDismiss = parts.first == 'dismiss';
-    final url = parts.length > 1 ? parts.sublist(1).join('|') : raw;
-    if (isDismiss) return;
+    final url = linkOfferFromToast(actionId, payload);
+    if (url == null) return;
+    final isDownload = (actionId ?? payload ?? '').trim().startsWith('download|');
     unawaited(() async {
       if (isDownload) {
         try {

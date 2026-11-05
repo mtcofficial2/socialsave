@@ -165,6 +165,22 @@ bool chatNotificationOpensChat(NotificationResponse response) {
   return _replyText(response) == null;
 }
 
+/// A toast that should open the download sheet. An incoming call is not a link.
+String? linkOfferFromToast(String? actionId, String? payload) {
+  final picked = (actionId != null && actionId.contains('|')) ? actionId : (payload ?? '');
+  final text = picked.trim();
+  if (text.isEmpty || text.startsWith('call|') || text.startsWith('dismiss|')) {
+    return null;
+  }
+  if (text.startsWith('download|')) {
+    final url = text.substring('download|'.length).trim();
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    return null;
+  }
+  if (text.startsWith('http://') || text.startsWith('https://')) return text;
+  return null;
+}
+
 class NotificationService {
   NotificationService({FlutterLocalNotificationsPlugin? plugin})
     : _plugin = plugin ?? FlutterLocalNotificationsPlugin();
@@ -546,7 +562,7 @@ class NotificationService {
         importance: Importance.max,
         priority: Priority.max,
         category: AndroidNotificationCategory.call,
-        fullScreenIntent: true,
+        fullScreenIntent: false,
         ongoing: true,
         playSound: false,
         enableVibration: true,
@@ -635,6 +651,9 @@ class NotificationService {
         : (response.payload ?? '');
     if (probe.startsWith('usbshare')) {
       onUsbShare?.call();
+      return;
+    }
+    if (probe.startsWith('call|') || (response.payload ?? '').startsWith('call|')) {
       return;
     }
     final muteThread = chatNotificationMuteThread(response);

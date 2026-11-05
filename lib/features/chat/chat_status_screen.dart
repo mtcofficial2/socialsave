@@ -55,6 +55,19 @@ String statusViewLabel(int count) {
   return '$count views';
 }
 
+/// Views on [me]'s newest text status. Null when there is no status.
+int? ownStatusViews(List<ChatStatusNote> notes, String me) {
+  final mine = me.trim().replaceFirst(RegExp(r'^@'), '').toLowerCase();
+  if (mine.isEmpty) return null;
+  ChatStatusNote? latest;
+  for (final note in notes) {
+    final name = note.name.trim().replaceFirst(RegExp(r'^@'), '').toLowerCase();
+    if (name != mine) continue;
+    if (latest == null || note.at.isAfter(latest.at)) latest = note;
+  }
+  return latest?.views.length;
+}
+
 class ChatStatusScreen extends StatefulWidget {
   const ChatStatusScreen({super.key});
 
@@ -174,6 +187,7 @@ class _ChatStatusScreenState extends State<ChatStatusScreen> {
                       child: Text(_problem!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
                     ),
                   ListTile(
+                    isThreeLine: latest != null,
                     contentPadding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
                     leading: _StatusFace(
                       letter: _me.isEmpty ? '+' : _me.substring(0, 1).toUpperCase(),
@@ -182,13 +196,23 @@ class _ChatStatusScreenState extends State<ChatStatusScreen> {
                       onBadge: _compose,
                     ),
                     title: const Text('My status', style: TextStyle(fontWeight: FontWeight.w600)),
-                    subtitle: Text(
-                      latest == null
-                          ? 'Tap to add a status update'
-                          : '${statusAge(latest.at, DateTime.now())} · ${statusViewLabel(latest.views.length)}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                    subtitle: latest == null
+                        ? const Text('Tap to add a status update')
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${statusAge(latest.at, DateTime.now())} · ${latest.text}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              Text(
+                                statusViewLabel(latest.views.length),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
                     onTap: latest == null ? _compose : () => unawaited(_open(mine, 'My status')),
                   ),
                   if (names.isNotEmpty)

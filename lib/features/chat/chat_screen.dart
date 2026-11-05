@@ -11,6 +11,7 @@ import 'package:social_save/features/chat/chat_live.dart';
 import 'package:social_save/features/chat/chat_prefs.dart';
 import 'package:social_save/features/chat/chat_profile.dart';
 import 'package:social_save/features/chat/chat_services.dart';
+import 'package:social_save/features/chat/chat_status_screen.dart';
 import 'package:social_save/features/chat/chat_settings.dart';
 import 'package:social_save/features/chat/chat_thread_screen.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
@@ -60,6 +61,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _signedIn = false;
   bool _busy = false;
   bool _refreshing = false;
+  int? _myStatusViews;
 
   bool _wide(BuildContext context) => MediaQuery.sizeOf(context).width >= 840;
 
@@ -106,6 +108,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _poll = null;
       _startPoll();
       unawaited(_loadThreads());
+      unawaited(_loadMyStatusViews());
     } else {
       _poll?.cancel();
       _poll = null;
@@ -164,6 +167,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       ChatLive.instance.start();
       _startPoll();
       await _loadThreads();
+      unawaited(_loadMyStatusViews());
     } catch (error) {
       if (!mounted) return;
       if (chatNeedsRegister(error)) {
@@ -174,6 +178,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           _signedIn = false;
           _user = null;
           _booting = false;
+          _myStatusViews = null;
           _error = null;
         });
         return;
@@ -250,6 +255,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           _signedIn = false;
           _user = null;
           _threads = const [];
+          _myStatusViews = null;
           _error = null;
         });
         return;
@@ -260,6 +266,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     } finally {
       _refreshing = false;
     }
+  }
+
+  Future<void> _loadMyStatusViews() async {
+    final me = _user?.username ?? '';
+    if (me.isEmpty) return;
+    try {
+      final count = ownStatusViews(await _api.statuses(), me);
+      if (!mounted || count == _myStatusViews) return;
+      setState(() => _myStatusViews = count);
+    } catch (_) {}
   }
 
   Future<void> _register() async {
@@ -316,6 +332,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     ChatLive.instance.start();
     _startPoll();
     await _loadThreads();
+    unawaited(_loadMyStatusViews());
     if (!mounted || created.recovery.isEmpty) return;
     await showRecoveryCode(context, created.recovery);
   }
@@ -1180,6 +1197,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _signedIn = false;
       _user = null;
       _threads = const [];
+      _myStatusViews = null;
       _selectedId = null;
       _selectedName = null;
       _selectedSeen = '';
@@ -1602,8 +1620,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   child: const Icon(Icons.add_rounded, color: ChatUiTokens.brand),
                 ),
                 title: const Text('My status'),
-                subtitle: const Text('Tap to see updates'),
-                onTap: () => unawaited(showStatuses(context)),
+                subtitle: Text(
+                  _myStatusViews == null
+                      ? 'Tap to see updates'
+                      : 'Tap to see updates · ${statusViewLabel(_myStatusViews!)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                onTap: () async {
+                  await showStatuses(context);
+                  if (mounted) unawaited(_loadMyStatusViews());
+                },
               );
             }
             cursor--;

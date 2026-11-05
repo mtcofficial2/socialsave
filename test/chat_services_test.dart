@@ -151,6 +151,10 @@ void main() {
     expect(callExitLabel('missed'), 'Missed call');
     expect(callExitLabel('cancelled'), 'Cancelled');
     expect(callExitLabel('ended'), 'Call ended');
+    expect(callUsesFullScreen(outgoing: true, status: 'ringing'), isFalse);
+    expect(callUsesFullScreen(outgoing: true, status: 'active'), isFalse);
+    expect(callUsesFullScreen(outgoing: false, status: 'ringing'), isTrue);
+    expect(callUsesFullScreen(outgoing: false, status: 'active'), isTrue);
   });
 
   test('a status view count is words and stays with the author', () {
@@ -172,5 +176,22 @@ void main() {
       'at': 1,
     });
     expect(hidden.views, isEmpty);
+    final older = ChatStatusNote(
+      id: 'old',
+      name: 'Ada',
+      text: 'earlier',
+      at: DateTime.fromMillisecondsSinceEpoch(1),
+      views: const ['ben'],
+    );
+    final newer = ChatStatusNote(
+      id: 'new',
+      name: '@ada',
+      text: 'later',
+      at: DateTime.fromMillisecondsSinceEpoch(5),
+      views: const ['ben', 'cam'],
+    );
+    expect(ownStatusViews([older, newer, note], 'ada'), 2);
+    expect(ownStatusViews(const [], 'ada'), isNull);
+    expect(ownStatusViews([newer], ''), isNull);
   });
 }

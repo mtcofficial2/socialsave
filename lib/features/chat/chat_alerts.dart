@@ -502,7 +502,91 @@ class _ChatAlertHostState extends State<ChatAlertHost> {
   }
 
   @override
-  Widget build(BuildContext context) => const SizedBox.shrink();
+  Widget build(BuildContext context) {
+    return const Align(
+      alignment: Alignment.topCenter,
+      child: ChatOutgoingBar(),
+    );
+  }
+}
+
+/// A call this phone placed. It stays on top of the chat and does not cover it.
+class ChatOutgoingBar extends StatelessWidget {
+  const ChatOutgoingBar({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<int>(
+      valueListenable: ChatCalls.revision,
+      builder: (context, _, _) {
+        final call = ChatCalls.instance;
+        final live = call.outgoing &&
+            call.exitKind.isEmpty &&
+            (call.status == 'ringing' || call.status == 'active');
+        if (!live) return const SizedBox.shrink();
+        final name = call.peerName.trim().isEmpty ? 'Audio call' : call.peerName.trim();
+        final line = call.status == 'active' ? _outgoingClock(call.elapsed) : 'Calling…';
+        return SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: Material(
+              color: const Color(0xFF1F2C34),
+              borderRadius: BorderRadius.circular(16),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 8, 6, 8),
+                child: Row(
+                  children: [
+                    const Icon(Icons.call_rounded, color: Color(0xFF53BDEB), size: 20),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                          ),
+                          Text(line, style: const TextStyle(color: Color(0xFFAEBAC1), fontSize: 13)),
+                        ],
+                      ),
+                    ),
+                    if (call.status == 'active')
+                      IconButton(
+                        tooltip: call.muted ? 'Unmute' : 'Mute',
+                        onPressed: () => unawaited(call.setMuted(!call.muted)),
+                        icon: Icon(
+                          call.muted ? Icons.mic_off_rounded : Icons.mic_rounded,
+                          color: Colors.white,
+                        ),
+                      ),
+                    TextButton(
+                      onPressed: () => unawaited(call.hangUp()),
+                      child: const Text(
+                        'End',
+                        style: TextStyle(color: Color(0xFFFF8A80), fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+String _outgoingClock(Duration elapsed) {
+  final minutes = elapsed.inMinutes.remainder(60).toString().padLeft(2, '0');
+  final seconds = elapsed.inSeconds.remainder(60).toString().padLeft(2, '0');
+  final hours = elapsed.inHours;
+  if (hours > 0) return '$hours:$minutes:$seconds';
+  return '$minutes:$seconds';
 }
 
 /// Usernames match without case or a leading @.
