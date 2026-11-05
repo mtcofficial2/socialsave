@@ -171,10 +171,31 @@ func installVersionOk(value string) bool {
 	return true
 }
 
+func cleanInstallName(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	var b strings.Builder
+	n := 0
+	for _, r := range value {
+		if r < 32 || r == 127 {
+			continue
+		}
+		b.WriteRune(r)
+		n++
+		if n >= 40 {
+			break
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
 // noteInstall remembers that a copy of the app was opened. An existing id
 // updates in place. A new id is limited per network so the list cannot be
 // filled with made-up devices. False means the new device was refused.
-func (c *chatRoom) noteInstall(ctx context.Context, id, platform, version, username, ip string) bool {
+// Name and model are labels. An empty one does not erase a label already stored.
+func (c *chatRoom) noteInstall(ctx context.Context, id, platform, version, name, model, username, ip string, download bool) bool {
 	c.ensure(ctx)
 	now := time.Now().UnixMilli()
 	c.mu.Lock()
@@ -183,13 +204,23 @@ func (c *chatRoom) noteInstall(ctx context.Context, id, platform, version, usern
 		if row.ID != id {
 			continue
 		}
-		changed := row.Platform != platform || row.Version != version || (username != "" && row.Username != username)
+		changed := row.Platform != platform || row.Version != version || (name != "" && row.Name != name) || (model != "" && row.Model != model) || (username != "" && row.Username != username) || download
 		stale := now-row.Seen >= chatInstallQuiet
 		row.Platform = platform
 		row.Version = version
 		row.Seen = now
+		if name != "" {
+			row.Name = name
+		}
+		if model != "" {
+			row.Model = model
+		}
 		if username != "" {
 			row.Username = username
+		}
+		if download {
+			row.Downloads++
+			row.LastDownload = now
 		}
 		c.mu.Unlock()
 		if changed || stale {
@@ -204,13 +235,23 @@ func (c *chatRoom) noteInstall(ctx context.Context, id, platform, version, usern
 		c.mu.Unlock()
 		return false
 	}
+	downloads := 0
+	var lastDownload int64
+	if download {
+		downloads = 1
+		lastDownload = now
+	}
 	c.data.Installs = append(c.data.Installs, chatInstall{
-		ID:       id,
-		Platform: platform,
-		Version:  version,
-		Username: username,
-		First:    now,
-		Seen:     now,
+		ID:           id,
+		Platform:     platform,
+		Version:      version,
+		Name:         name,
+		Model:        model,
+		Username:     username,
+		First:        now,
+		Seen:         now,
+		Downloads:    downloads,
+		LastDownload: lastDownload,
 	})
 	if len(c.data.Installs) > chatInstallKeep {
 		sort.Slice(c.data.Installs, func(i, j int) bool {
@@ -243,8 +284,11 @@ func (s *Server) appOpened(w http.ResponseWriter, r *http.Request) {
 		ID       string `json:"id"`
 		Platform string `json:"platform"`
 		Version  string `json:"version"`
+		Name     string `json:"name"`
+		Model    string `json:"model"`
+		Download bool   `json:"download"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 512)).Decode(&body); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&body); err != nil {
 		writeChatError(w, http.StatusBadRequest, "That device could not be recorded.")
 		return
 	}
@@ -261,7 +305,7 @@ func (s *Server) appOpened(w http.ResponseWriter, r *http.Request) {
 			username = user.Username
 		}
 	}
-	if !s.chat.noteInstall(r.Context(), id, platform, version, username, clientIP(r)) {
+	if !s.chat.noteInstall(r.Context(), id, platform, version, cleanInstallName(body.Name), cleanInstallName(body.Model), username, clientIP(r), body.Download) {
 		writeChatError(w, http.StatusTooManyRequests, "Too many new devices from this network. Try again in a minute.")
 		return
 	}

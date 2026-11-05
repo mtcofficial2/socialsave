@@ -9,6 +9,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/config/build_flags.dart';
 import 'package:social_save/core/config/env_config.dart';
 import 'package:social_save/core/constants/app_constants.dart';
+import 'package:social_save/core/platform/device_name_io.dart'
+    if (dart.library.html) 'package:social_save/core/platform/device_name_stub.dart';
 import 'package:social_save/core/platform/plat.dart';
 
 const chatTokenKey = 'chat.token.v1';
@@ -191,16 +193,24 @@ class ChatDeviceEntry {
     required this.platform,
     required this.version,
     required this.username,
+    this.name = '',
+    this.model = '',
+    this.downloads = 0,
     required this.first,
     required this.seen,
+    this.lastDownload,
   });
 
   final String id;
   final String platform;
   final String version;
   final String username;
+  final String name;
+  final String model;
+  final int downloads;
   final DateTime? first;
   final DateTime? seen;
+  final DateTime? lastDownload;
 
   factory ChatDeviceEntry.fromJson(Map<String, dynamic> json) {
     final first = (json['first'] as num?)?.toInt() ?? 0;
@@ -210,8 +220,16 @@ class ChatDeviceEntry {
       platform: (json['platform'] as String?)?.trim() ?? '',
       version: (json['version'] as String?)?.trim() ?? '',
       username: (json['username'] as String?)?.trim() ?? '',
+      name: (json['name'] as String?)?.trim() ?? '',
+      model: (json['model'] as String?)?.trim() ?? '',
+      downloads: (json['downloads'] as num?)?.toInt() ?? 0,
       first: first > 0 ? DateTime.fromMillisecondsSinceEpoch(first) : null,
       seen: seen > 0 ? DateTime.fromMillisecondsSinceEpoch(seen) : null,
+      lastDownload: ((json['lastDownload'] as num?)?.toInt() ?? 0) > 0
+          ? DateTime.fromMillisecondsSinceEpoch(
+              (json['lastDownload'] as num).toInt(),
+            )
+          : null,
     );
   }
 }
@@ -800,12 +818,13 @@ class ChatApi {
 
   static DateTime? _reportedAt;
 
-  /// Tells the server this copy of the app was opened. The id is random.
-  /// A chat sign-in on this device attaches that username. Failures stay quiet.
-  Future<void> reportInstall({bool force = false}) async {
+  /// Tells the server this copy of the app was used. Chat is optional.
+  /// [download] marks a save. The id is random. Failures stay quiet.
+  Future<void> reportInstall({bool force = false, bool download = false}) async {
     final now = DateTime.now();
     final recent = _reportedAt;
     if (!force &&
+        !download &&
         recent != null &&
         now.difference(recent) < const Duration(minutes: 2)) {
       return;
@@ -815,12 +834,17 @@ class ChatApi {
       final platform = chatDevicePlatform();
       if (id == null || platform == null) return;
       final token = await ChatSession.token();
+      final name = await appDeviceName();
+      final model = await appDeviceModel();
       await _dio.post<dynamic>(
         '/api/v1/app/opened',
         data: {
           'id': id,
           'platform': platform,
           'version': AppConstants.appVersion,
+          if (name.trim().isNotEmpty) 'name': name.trim(),
+          if (model.trim().isNotEmpty) 'model': model.trim(),
+          if (download) 'download': true,
         },
         options: Options(
           headers: {

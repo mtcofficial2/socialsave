@@ -70,12 +70,18 @@ void main() {
       'platform': 'android',
       'version': '1.0.83',
       'username': 'ada',
+      'name': 'AQUOS R7',
+      'model': 'SHARP A202SH',
+      'downloads': 2,
       'first': 1700000000000,
       'seen': 1700000001000,
     });
     expect(row.platform, 'android');
     expect(row.version, '1.0.83');
     expect(row.username, 'ada');
+    expect(row.name, 'AQUOS R7');
+    expect(row.model, 'SHARP A202SH');
+    expect(row.downloads, 2);
     expect(row.seen, DateTime.fromMillisecondsSinceEpoch(1700000001000));
     expect(chatDevicePlatform(), isNotNull);
   });

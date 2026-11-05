@@ -21,6 +21,7 @@ import 'package:social_save/features/downloader/data/repositories/routing_media_
 import 'package:social_save/core/storage/download_path_service.dart';
 import 'package:social_save/core/storage/media_store_service.dart';
 import 'package:social_save/core/errors/error_mapper.dart';
+import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
 import 'package:social_save/features/library/library_catalog.dart';
 import 'package:social_save/shared/models/social_platform.dart';
@@ -244,6 +245,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       await _persist();
     }
     unawaited(_noteQueued(media.sourceUrl));
+    unawaited(ChatApi().reportInstall(download: true));
     return state.byId(id) ?? task;
   }
 

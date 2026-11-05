@@ -88,6 +88,38 @@ class MainActivity : FlutterFragmentActivity() {
         return null
     }
 
+    /// Maker and model, such as "SHARP A202SH". Not a serial or an IMEI.
+    private fun deviceModel(): String {
+        val model = Build.MODEL?.trim().orEmpty()
+        val maker = Build.MANUFACTURER?.trim().orEmpty()
+        val hardware = when {
+            model.isEmpty() -> ""
+            maker.isEmpty() || model.startsWith(maker, ignoreCase = true) -> model
+            else -> "$maker $model"
+        }
+        return clipLabel(hardware)
+    }
+
+    /// The name a person gave this phone, or the maker and model. Not a serial.
+    private fun deviceLabel(): String {
+        val custom = try {
+            Settings.Global.getString(contentResolver, "device_name")?.trim().orEmpty()
+        } catch (_: Exception) {
+            ""
+        }
+        val hardware = deviceModel()
+        val label = when {
+            custom.isNotEmpty() -> custom
+            hardware.isNotEmpty() -> hardware
+            else -> "Android phone"
+        }
+        return clipLabel(label)
+    }
+
+    private fun clipLabel(value: String): String {
+        return if (value.length <= 40) value else value.substring(0, 40)
+    }
+
     private fun deleteMedia(items: List<Map<String, Any?>>, result: MethodChannel.Result) {
         io.execute {
             var done = 0
@@ -525,6 +557,8 @@ class MainActivity : FlutterFragmentActivity() {
                     playNotificationSound()
                     result.success(true)
                 }
+                "deviceName" -> result.success(deviceLabel())
+                "deviceModel" -> result.success(deviceModel())
                 "nearbyLock" -> {
                     // Lets UDP broadcast beacons from other SocialSave apps through.
                     try {
@@ -571,12 +605,6 @@ class MainActivity : FlutterFragmentActivity() {
                     } catch (e: Exception) {
                         result.success(false)
                     }
-                }
-                "deviceName" -> {
-                    val name = try {
-                        android.provider.Settings.Global.getString(contentResolver, "device_name")
-                    } catch (e: Exception) { null }
-                    result.success(if (name.isNullOrBlank()) "${Build.MANUFACTURER} ${Build.MODEL}" else name)
                 }
                 "scanFile" -> {
                     val path = call.argument<String>("path")

@@ -317,17 +317,21 @@ func TestAdminDevices(t *testing.T) {
 	}
 
 	admin := registerChat(t, app, `{"phone":"+256 703 487 378","username":"@daniel256"}`)
-	named := postChat(app, "/api/v1/app/opened", admin.token, `{"id":"`+id+`","platform":"windows","version":"1.0.83"}`)
+	named := postChat(app, "/api/v1/app/opened", admin.token, `{"id":"`+id+`","platform":"windows","version":"1.0.83","name":"Studio PC","model":"SHARP A202SH","imei":"490154203237518"}`)
 	if named.Code != http.StatusOK {
 		t.Fatalf("named %d %s", named.Code, named.Body.String())
 	}
+	saved := postChat(app, "/api/v1/app/opened", "", `{"id":"`+id+`","platform":"windows","version":"1.0.83","name":"Studio PC","download":true}`)
+	if saved.Code != http.StatusOK {
+		t.Fatalf("saved %d %s", saved.Code, saved.Body.String())
+	}
 	list := getChat(app, "/api/v1/chat/admin/users", admin.token)
 	body := list.Body.Bytes()
-	if list.Code != http.StatusOK || !bytes.Contains(body, []byte(`"platform":"windows"`)) || !bytes.Contains(body, []byte(`"username":"daniel256"`)) {
+	if list.Code != http.StatusOK || !bytes.Contains(body, []byte(`"platform":"windows"`)) || !bytes.Contains(body, []byte(`"username":"daniel256"`)) || !bytes.Contains(body, []byte(`"name":"Studio PC"`)) || !bytes.Contains(body, []byte(`"model":"SHARP A202SH"`)) || !bytes.Contains(body, []byte(`"downloads":1`)) {
 		t.Fatalf("devices %d %s", list.Code, body)
 	}
-	if bytes.Contains(body, []byte(admin.token)) || bytes.Contains(body, []byte("tokenHash")) {
-		t.Fatalf("devices leaked a token %s", body)
+	if bytes.Contains(body, []byte(admin.token)) || bytes.Contains(body, []byte("tokenHash")) || bytes.Contains(body, []byte("490154203237518")) {
+		t.Fatalf("devices leaked a token or a hardware id %s", body)
 	}
 }
 

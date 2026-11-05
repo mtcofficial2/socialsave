@@ -99,7 +99,7 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
           padding: pagePadding(context, top: 4, bottom: 28, maxWidth: 640),
           children: [
             Text(
-              'People who registered, and each phone or computer that has opened Social Save.',
+              'Every phone or computer that has opened Social Save, including ones that only save downloads.',
               style: TextStyle(
                 color: scheme.onSurfaceVariant,
                 height: 1.4,
@@ -193,6 +193,8 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
 bool _deviceMatches(ChatDeviceEntry device, String query) {
   final label = _deviceLabel(device.platform).toLowerCase();
   return label.contains(query) ||
+      device.name.toLowerCase().contains(query) ||
+      device.model.toLowerCase().contains(query) ||
       device.version.contains(query) ||
       device.username.toLowerCase().contains(query) ||
       device.id.contains(query);
@@ -319,12 +321,32 @@ class _DeviceRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final who = device.username.isEmpty ? 'No chat account' : '@${device.username}';
     final version = device.version.isEmpty ? 'Unknown version' : device.version;
+    final title = device.name.isNotEmpty
+        ? device.name
+        : device.model.isNotEmpty
+        ? device.model
+        : _deviceLabel(device.platform);
+    final model = device.model.isNotEmpty && device.model != title ? device.model : '';
+    final saves = device.downloads <= 0
+        ? ''
+        : device.downloads == 1
+        ? '1 save'
+        : '${device.downloads} saves';
+    final opened = device.first == null ? '' : 'First opened ${_when(device.first!)}';
     return _MonitorCard(
       icon: _deviceIcon(device.platform),
-      title: _deviceLabel(device.platform),
-      subtitle: '$version · $who',
+      title: title,
+      subtitle: [
+        if (model.isNotEmpty) model,
+        _deviceLabel(device.platform),
+        version,
+        who,
+      ].join(' · '),
       detail: _seen(context, device.seen),
-      foot: device.first == null ? '' : 'First opened ${_when(device.first!)}',
+      foot: [
+        if (saves.isNotEmpty) saves,
+        if (opened.isNotEmpty) opened,
+      ].join(' · '),
     );
   }
 }

@@ -139,12 +139,16 @@ type chatThread struct {
 // chatInstall is one copy of the app. The id is random and made on that
 // device. It is not a hardware serial, and this record has no location.
 type chatInstall struct {
-	ID       string `json:"id"`
-	Platform string `json:"platform"`
-	Version  string `json:"version"`
-	Username string `json:"username,omitempty"`
-	First    int64  `json:"first"`
-	Seen     int64  `json:"seen"`
+	ID           string `json:"id"`
+	Platform     string `json:"platform"`
+	Version      string `json:"version"`
+	Name         string `json:"name,omitempty"`
+	Model        string `json:"model,omitempty"`
+	Username     string `json:"username,omitempty"`
+	First        int64  `json:"first"`
+	Seen         int64  `json:"seen"`
+	Downloads    int    `json:"downloads,omitempty"`
+	LastDownload int64  `json:"lastDownload,omitempty"`
 }
 
 type chatData struct {
