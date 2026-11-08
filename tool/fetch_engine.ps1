@@ -53,8 +53,16 @@ Copy-Item -Force $ytdlp $engine
 $ffZip = Join-Path $Cache 'ffmpeg-win64-gpl-shared.zip'
 Get-File 'https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip' $ffZip
 $ffDir = Join-Path $Cache 'ff'
-if (-not (Test-Path $ffDir)) { Expand-Archive -Force $ffZip $ffDir }
-$bin = Get-ChildItem $ffDir -Recurse -Filter ffmpeg.exe | Select-Object -First 1 | ForEach-Object { $_.DirectoryName }
+$bin = $null
+if (Test-Path $ffDir) {
+  $bin = Get-ChildItem $ffDir -Recurse -Filter ffmpeg.exe -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object { $_.DirectoryName }
+}
+if (-not $bin) {
+  if (Test-Path $ffDir) { Remove-Item -Recurse -Force $ffDir }
+  Expand-Archive -Force $ffZip $ffDir
+  $bin = Get-ChildItem $ffDir -Recurse -Filter ffmpeg.exe | Select-Object -First 1 | ForEach-Object { $_.DirectoryName }
+}
+if (-not $bin) { throw 'ffmpeg.exe was not in the download' }
 Copy-Item -Force (Join-Path $bin 'ffmpeg.exe'), (Join-Path $bin 'ffprobe.exe') $engine
 Get-ChildItem $bin -Filter *.dll | Copy-Item -Destination $engine -Force
 

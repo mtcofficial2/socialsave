@@ -900,15 +900,79 @@ String callCandidateForPeer(String encoded, String? lanIp) {
   return line.length > 2000 ? encoded : line;
 }
 
+/// A candidate the other phone can actually reach. Hidden names, TCP, and
+/// public host addresses are left for trickle ICE. Extra private adapters
+/// (Hyper-V, WSL) are left out once the description is already too long,
+/// because those addresses fill the offer and the phone cannot reach them.
+bool callCandidateKeep(String line, String? lanIp) {
+  var bare = line.trim();
+  if (bare.endsWith('\r')) bare = bare.substring(0, bare.length - 1);
+  if (bare.startsWith('a=')) bare = bare.substring(2);
+  final parts = bare.split(' ');
+  if (parts.length < 8 || parts[6] != 'typ') return false;
+  if (parts[2].toLowerCase() != 'udp') return false;
+  final ip = parts[4];
+  if (ip.endsWith('.local')) return false;
+  final kind = parts[7];
+  if (kind == 'host') {
+    if (lanIp != null && callLanIpUsable(lanIp)) return ip == lanIp;
+    return callLanIpUsable(ip);
+  }
+  return kind == 'srflx';
+}
+
+String _candidateKey(String line) {
+  var bare = line.trim();
+  if (bare.endsWith('\r')) bare = bare.substring(0, bare.length - 1);
+  final parts = bare.split(' ');
+  if (parts.length < 8) return bare;
+  return '${parts[4]} ${parts[5]} ${parts[7]}';
+}
+
+int _candidateRank(String line, String? lanIp) {
+  final parts = line.trim().split(' ');
+  final ip = parts.length > 4 ? parts[4] : '';
+  final kind = parts.length > 7 ? parts[7] : '';
+  if (kind.startsWith('host') && lanIp != null && ip == lanIp) return 0;
+  if (kind.startsWith('host')) return 1;
+  return 2;
+}
+
+int _candidatePriority(String line) {
+  final parts = line.trim().split(' ');
+  if (parts.length < 4) return 0;
+  return int.tryParse(parts[3]) ?? 0;
+}
+
 /// Embedded candidates can push a desktop offer over the server limit.
-/// Trickle ICE still carries them. A short description is left as it is,
-/// so a phone call keeps the candidates it already sends.
+/// The Wi-Fi address and one public path stay in the description. The rest
+/// still travels as trickle ICE. A short description is left as it is, so a
+/// phone call keeps the candidates it already sends.
 String callSdpToSend(String sdp, String? lanIp) {
   final text = callSdpForPeer(sdp, lanIp);
   if (text.length <= 10000) return text;
   final kept = <String>[];
+  final extra = <String>[];
+  final seen = <String>{};
   for (final line in text.split('\n')) {
-    if (line.trimLeft().startsWith('a=candidate')) continue;
+    final bare = line.trimLeft();
+    if (bare.startsWith('a=end-of-candidates')) continue;
+    if (!bare.startsWith('a=candidate')) {
+      kept.add(line);
+      continue;
+    }
+    if (!callCandidateKeep(line, lanIp)) continue;
+    if (!seen.add(_candidateKey(line))) continue;
+    extra.add(line);
+  }
+  extra.sort((a, b) {
+    final rank = _candidateRank(a, lanIp).compareTo(_candidateRank(b, lanIp));
+    if (rank != 0) return rank;
+    return _candidatePriority(b).compareTo(_candidatePriority(a));
+  });
+  for (final line in extra) {
+    final next = '${kept.join('\n')}\n$line';
+    if (next.length > 10000) continue;
     kept.add(line);
   }
   final next = kept.join('\n');

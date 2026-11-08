@@ -144,7 +144,12 @@ class ChatLive {
     connected.value = false;
   }
 
-  void sendText(String text) => _sendText?.call(text);
+  bool sendText(String text) {
+    final send = _sendText;
+    if (send == null || text.isEmpty) return false;
+    send(text);
+    return true;
+  }
 
   void sendBinary(Uint8List bytes) => _sendBinary?.call(bytes);
 

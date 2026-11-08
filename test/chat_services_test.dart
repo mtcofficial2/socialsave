@@ -204,7 +204,33 @@ void main() {
     final sent = callSdpToSend(bulky, null);
     expect(sent.startsWith('v=0'), isTrue);
     expect(sent.contains('m=audio'), isTrue);
-    expect(sent.contains('a=candidate'), isFalse);
+    expect(sent.contains('192.168.0.2'), isTrue);
+    expect(sent.length <= 10000, isTrue);
+    final hiddenOnly = 'v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n'
+        '${List.filled(300, 'a=candidate:1 1 udp 1 pc-host.local 9 typ host\r\n').join()}';
+    expect(hiddenOnly.length > 10000, isTrue);
+    final stripped = callSdpToSend(hiddenOnly, null);
+    expect(stripped.contains('a=candidate'), isFalse);
+    expect(stripped.length <= 10000, isTrue);
+    final reached = callSdpToSend(hiddenOnly, '192.168.1.40');
+    expect(reached, contains('192.168.1.40'));
+    expect(reached, isNot(contains('.local')));
+    expect(reached.length <= 10000, isTrue);
+    final crowded = StringBuffer('v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n');
+    for (var i = 0; i < 250; i++) {
+      crowded.write(
+        'a=candidate:$i 1 udp ${2000000000 - i} 172.16.${i % 200}.$i ${10000 + i} typ host\r\n',
+      );
+    }
+    crowded.write('a=candidate:lan 1 udp 9 192.168.1.40 53917 typ host\r\n');
+    crowded.write('a=candidate:sx 1 udp 8 198.51.100.20 20000 typ srflx\r\n');
+    crowded.write('a=candidate:pub 1 udp 7 1.2.3.4 9 typ host\r\n');
+    final packed = callSdpToSend(crowded.toString(), '192.168.1.40');
+    expect(packed, contains('192.168.1.40 53917'));
+    expect(packed, contains('198.51.100.20 20000'));
+    expect(packed, isNot(contains('172.16.')));
+    expect(packed, isNot(contains('1.2.3.4')));
+    expect(packed.length <= 10000, isTrue);
     const shortOffer = 'v=0\r\na=candidate:1 1 udp 1 1.2.3.4 9 typ host\r\n';
     expect(callSdpToSend(shortOffer, null), shortOffer);
     expect(

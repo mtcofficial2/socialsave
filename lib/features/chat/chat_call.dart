@@ -69,45 +69,129 @@ class ChatCallMedia {
       onIce(encoded);
     };
     pc.onConnectionState = (state) {
-      if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected ||
-          state == RTCPeerConnectionState.RTCPeerConnectionStateConnecting) {
+      if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
         ChatCalls.instance.noteLink(up: true);
-      }
-      if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
+      } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
           state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
         ChatCalls.instance.noteLink(up: false);
       }
     };
-    final stream = await navigator.mediaDevices.getUserMedia({
-      'audio': true,
-      'video': false,
-    });
+    pc.onIceConnectionState = (state) {
+      if (state == RTCIceConnectionState.RTCIceConnectionStateConnected ||
+          state == RTCIceConnectionState.RTCIceConnectionStateCompleted) {
+        ChatCalls.instance.noteLink(up: true);
+      } else if (state == RTCIceConnectionState.RTCIceConnectionStateDisconnected ||
+          state == RTCIceConnectionState.RTCIceConnectionStateFailed) {
+        ChatCalls.instance.noteLink(up: false);
+      }
+    };
+    final constraints = await _audioConstraints();
+    MediaStream stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (_) {
+      if (constraints['audio'] == true) rethrow;
+      stream = await navigator.mediaDevices.getUserMedia({
+        'audio': true,
+        'video': false,
+      });
+    }
     _local = stream;
     for (final track in stream.getAudioTracks()) {
       await pc.addTrack(track, stream);
     }
-    if (Plat.isWindows) await playout();
+    if (Plat.isWindows) {
+      final mic = _pickedMic;
+      if (mic != null && mic.isNotEmpty) {
+        try {
+          await Helper.selectAudioInput(mic);
+        } catch (_) {}
+      }
+      await playout();
+    }
   }
 
-  /// getUserMedia records the mic and leaves playback unset. Pick a speaker
-  /// or headset so the other person can be heard.
-  Future<void> playout() async {
+  String? _pickedMic;
+
+  /// Windows records device 0 unless a source is named first. Device 0 is
+  /// often a virtual cable, so the phone hears silence.
+  Future<Map<String, dynamic>> _audioConstraints() async {
+    _pickedMic = null;
+    if (!Plat.isWindows) return {'audio': true, 'video': false};
+    try {
+      final devices = await navigator.mediaDevices.enumerateDevices();
+      MediaDeviceInfo? fallback;
+      MediaDeviceInfo? named;
+      MediaDeviceInfo? preferred;
+      for (final device in devices) {
+        if (device.kind != 'audioinput' || device.deviceId.isEmpty) continue;
+        final label = device.label.toLowerCase();
+        if (_skippedAudioLabel(label)) continue;
+        if (label.contains('speaker') &&
+            !label.contains('mic') &&
+            !label.contains('microphone')) {
+          continue;
+        }
+        fallback ??= device;
+        final mic = label.contains('microphone') ||
+            label.contains('headset') ||
+            label.contains('mic');
+        if (mic) named ??= device;
+        if (label.startsWith('default') && mic) {
+          preferred = device;
+          break;
+        }
+      }
+      final pick = preferred ?? named ?? fallback;
+      if (pick == null) return {'audio': true, 'video': false};
+      _pickedMic = pick.deviceId;
+      return {
+        'audio': {
+          'optional': [
+            {'sourceId': pick.deviceId},
+          ],
+        },
+        'video': false,
+      };
+    } catch (_) {
+      return {'audio': true, 'video': false};
+    }
+  }
+
+  /// getUserMedia records the mic and leaves playback unset. Pick a real
+  /// speaker or headset. Virtual cables are skipped so the voice is not sent
+  /// to a device that is not in the room.
+  Future<void> playout({bool preferSpeaker = true}) async {
     try {
       final outputs = await Helper.audiooutputs;
-      if (outputs.isEmpty) return;
-      var chosen = outputs.first;
-      for (final device in outputs) {
+      MediaDeviceInfo? chosen;
+      bool usable(MediaDeviceInfo device) {
         final label = device.label.toLowerCase();
-        if (label.contains('speaker') ||
-            label.contains('headphone') ||
+        if (device.deviceId.isEmpty) return false;
+        return !_skippedAudioLabel(label);
+      }
+
+      bool matches(MediaDeviceInfo device) {
+        final label = device.label.toLowerCase();
+        final ear = label.contains('headphone') ||
             label.contains('headset') ||
-            label.startsWith('default')) {
+            label.contains('earphone');
+        final speaker = label.contains('speaker') || label.startsWith('default');
+        if (preferSpeaker) return speaker && !ear;
+        return ear;
+      }
+
+      for (final device in outputs) {
+        if (!usable(device)) continue;
+        chosen ??= device;
+        if (matches(device)) {
           chosen = device;
           break;
         }
       }
-      if (chosen.deviceId.isEmpty) return;
-      await Helper.selectAudioOutput(chosen.deviceId);
+      final pick = chosen;
+      if (pick == null) return;
+      await Helper.selectAudioOutput(pick.deviceId);
     } catch (_) {}
   }
 
@@ -215,7 +299,9 @@ class ChatCallMedia {
     final queued = List<RTCIceCandidate>.from(_waiting);
     _waiting.clear();
     for (final candidate in queued) {
-      await pc.addCandidate(candidate);
+      try {
+        await pc.addCandidate(candidate);
+      } catch (_) {}
     }
   }
 
@@ -245,7 +331,9 @@ class ChatCallMedia {
 
 /// One audio call for this signed-in device.
 class ChatCalls {
-  ChatCalls._();
+  ChatCalls._() {
+    ChatLive.instance.connected.addListener(_onSocket);
+  }
 
   static final instance = ChatCalls._();
   static final revision = ValueNotifier<int>(0);
@@ -266,19 +354,23 @@ class ChatCalls {
   String moment = '';
   DateTime? connectedAt;
   bool _shown = false;
-  bool _linked = true;
+  bool _linked = false;
+  bool _hadAudio = false;
   bool _ringOn = false;
   bool _finishing = false;
   bool _answering = false;
   bool _routeChosen = false;
+  int _routeGen = 0;
   int _ringGen = 0;
   int _callEpoch = 0;
   String _me = '';
   String? _lanIp;
   String _lastRemote = '';
   final List<String> _iceBeforeId = [];
+  String _sdpPending = '';
   final List<String> _closed = [];
   Timer? _recover;
+  Timer? _speakerRetry;
   Timer? _clock;
   Timer? _presentRetry;
   Timer? _toneFallback;
@@ -291,32 +383,46 @@ class ChatCalls {
   }
 
   void noteLink({required bool up}) {
+    if (up) _hadAudio = true;
     _linked = up;
-    if (status != 'active') return;
-    if (up) {
+    _syncLink();
+  }
+
+  /// A dropped path during pickup used to be ignored, so the call stayed up
+  /// with no voice and never tried again. Checking is not a working path.
+  void _syncLink() {
+    if (status != 'active' || _finishing) return;
+    if (_linked) {
       _recover?.cancel();
       _recover = null;
+      if (!recovering) return;
       recovering = false;
       revision.value++;
       return;
     }
-    recovering = true;
-    revision.value++;
+    if (_hadAudio && !recovering) {
+      recovering = true;
+      revision.value++;
+    }
     if (!outgoing || _recover != null) return;
     _recover = Timer(const Duration(seconds: 12), () async {
       _recover = null;
-      if (status != 'active' || !outgoing || _linked) {
-        recovering = false;
+      if (status != 'active' || !outgoing || _linked || _finishing) return;
+      if (!recovering) {
+        recovering = true;
         revision.value++;
-        return;
       }
       try {
         final sdp = await _media.restartOffer();
         _sendSdp(sdp);
       } catch (_) {}
-      recovering = false;
-      revision.value++;
+      if (status == 'active' && outgoing && !_linked && !_finishing) _syncLink();
     });
+  }
+
+  void _onSocket() {
+    if (!ChatLive.instance.connected.value) return;
+    _flushIce();
   }
 
   Future<void> start(String threadId, String name) async {
@@ -338,6 +444,9 @@ class ChatCalls {
     moment = '';
     connectedAt = null;
     _routeChosen = false;
+    _linked = false;
+    _hadAudio = false;
+    _sdpPending = '';
     active = null;
     revision.value++;
     _present();
@@ -411,6 +520,7 @@ class ChatCalls {
       } else if (status == 'active') {
         try {
           final answer = await _media.acceptRestart(event.sdp);
+          if (answer.isEmpty) return;
           _lastRemote = event.sdp;
           _sendSdp(answer);
         } catch (_) {}
@@ -443,6 +553,9 @@ class ChatCalls {
       held = false;
       remoteHeld = false;
       exitKind = '';
+      _linked = false;
+      _hadAudio = false;
+      _sdpPending = '';
       revision.value++;
       _present();
       _armWatch();
@@ -517,6 +630,9 @@ class ChatCalls {
       held = false;
       remoteHeld = false;
       exitKind = '';
+      _linked = false;
+      _hadAudio = false;
+      _sdpPending = '';
       revision.value++;
       _present();
       _armWatch();
@@ -596,6 +712,7 @@ class ChatCalls {
       _armClock();
       _armWatch();
       _present();
+      _syncLink();
     } catch (error) {
       if (_finishing) return;
       _answering = false;
@@ -656,10 +773,21 @@ class ChatCalls {
   }
 
   Future<void> setSpeaker(bool on) async {
+    _routeGen++;
     _routeChosen = true;
+    _speakerRetry?.cancel();
     speaker = on;
-    await _media.setSpeaker(on);
+    if (Plat.isWindows) {
+      await _media.playout(preferSpeaker: on);
+    } else {
+      await _media.setSpeaker(on);
+    }
     revision.value++;
+  }
+
+  void _rememberIce(String ready) {
+    if (_iceBeforeId.length >= 40) _iceBeforeId.removeAt(0);
+    _iceBeforeId.add(ready);
   }
 
   void _sendIce(String candidate) {
@@ -667,25 +795,35 @@ class ChatCalls {
     if (ready.isEmpty) return;
     final id = active?.id ?? '';
     if (id.isEmpty) {
-      _iceBeforeId.add(ready);
+      _rememberIce(ready);
       return;
     }
-    ChatLive.instance.sendText(
-      jsonEncode({'type': 'call-ice', 'call': id, 'candidate': ready}),
-    );
+    final body = jsonEncode({'type': 'call-ice', 'call': id, 'candidate': ready});
+    if (!ChatLive.instance.sendText(body)) _rememberIce(ready);
   }
 
   void _sendSdp(String sdp) {
     final ready = callSdpToSend(sdp, _lanIp);
+    if (ready.isEmpty) return;
     final id = active?.id ?? '';
-    if (id.isEmpty || ready.isEmpty) return;
-    sdp = ready;
-    ChatLive.instance.sendText(
-      jsonEncode({'type': 'call-sdp', 'call': id, 'sdp': sdp}),
-    );
+    if (id.isEmpty) {
+      _sdpPending = ready;
+      return;
+    }
+    final body = jsonEncode({'type': 'call-sdp', 'call': id, 'sdp': ready});
+    if (!ChatLive.instance.sendText(body)) {
+      _sdpPending = ready;
+      return;
+    }
+    _sdpPending = '';
   }
 
   void _flushIce() {
+    final pending = _sdpPending;
+    if (pending.isNotEmpty) {
+      _sdpPending = '';
+      _sendSdp(pending);
+    }
     final queued = List<String>.from(_iceBeforeId);
     _iceBeforeId.clear();
     for (final candidate in queued) {
@@ -721,6 +859,7 @@ class ChatCalls {
     }
     hear();
     _present();
+    _syncLink();
   }
 
   /// Play the other person out loud. The earpiece stays silent on a lot of
@@ -729,9 +868,33 @@ class ChatCalls {
     if (status != 'active' || _finishing || _routeChosen) return;
     final first = !speaker;
     speaker = true;
-    unawaited(_media.setSpeaker(true));
-    if (Plat.isWindows) unawaited(_media.playout());
+    final gen = _routeGen;
+    _speakerRetry?.cancel();
+    unawaited(_pushSpeaker(gen));
+    _speakerRetry = Timer(const Duration(milliseconds: 400), () {
+      if (!_speakerStill(gen)) return;
+      unawaited(_pushSpeaker(gen));
+      _speakerRetry = Timer(const Duration(milliseconds: 800), () {
+        if (!_speakerStill(gen)) return;
+        unawaited(_pushSpeaker(gen));
+      });
+    });
     if (first) revision.value++;
+  }
+
+  bool _speakerStill(int gen) {
+    return gen == _routeGen &&
+        status == 'active' &&
+        !_finishing &&
+        !_routeChosen &&
+        speaker;
+  }
+
+  /// The first speaker request is often ignored until the voice track exists.
+  Future<void> _pushSpeaker(int gen) async {
+    await _media.setSpeaker(true);
+    if (!_speakerStill(gen) || !Plat.isWindows) return;
+    await _media.playout();
   }
 
   void _armClock() {
@@ -759,10 +922,13 @@ class ChatCalls {
     _finishing = true;
     _answering = false;
     _routeChosen = false;
+    _routeGen++;
     _callEpoch++;
     _remember(active?.id ?? '');
     _recover?.cancel();
     _recover = null;
+    _speakerRetry?.cancel();
+    _speakerRetry = null;
     _clock?.cancel();
     _clock = null;
     _presentRetry?.cancel();
@@ -787,6 +953,9 @@ class ChatCalls {
     moment = '';
     problem = null;
     _lastRemote = '';
+    _linked = false;
+    _hadAudio = false;
+    _sdpPending = '';
     _iceBeforeId.clear();
     await _media.close();
     revision.value++;
@@ -906,6 +1075,19 @@ class ChatCalls {
     } catch (_) {}
     unawaited(NotificationService().cancelIncomingCall());
   }
+}
+
+bool _skippedAudioLabel(String label) {
+  final name = label.toLowerCase();
+  if (name.contains('virtual') ||
+      name.contains('cable') ||
+      name.contains('steam') ||
+      name.contains('voicemeeter') ||
+      name.contains('blackhole') ||
+      name.contains('stereo mix')) {
+    return true;
+  }
+  return name.contains('nvidia') && name.contains('broadcast');
 }
 
 bool _sameCallUser(String a, String b) {
