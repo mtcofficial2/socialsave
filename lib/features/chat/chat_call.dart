@@ -29,6 +29,18 @@ class ChatCallMedia {
   final List<MediaStream> _remote = [];
   final List<RTCIceCandidate> _waiting = [];
   bool _remoteReady = false;
+  bool _played = false;
+  int _playGen = 0;
+  Future<void> _audioChain = Future<void>.value();
+
+  /// Windows device changes share one audio engine. Overlapping them freezes
+  /// the call screen, so Hang up never arrives.
+  Future<T> _runWindowsAudio<T>(Future<T> Function() job) {
+    if (!Plat.isWindows) return job();
+    final run = _audioChain.then((_) => job());
+    _audioChain = run.then((_) {}, onError: (_, _) {});
+    return run;
+  }
 
   Future<void> _open(void Function(String candidate) onIce) async {
     if (_pc != null) return;
@@ -53,8 +65,7 @@ class ChatCallMedia {
       }
       if (event.track.kind == 'audio') {
         event.track.enabled = true;
-        unawaited(Helper.setVolume(1, event.track));
-        ChatCalls.instance.hear();
+        unawaited(_startPlayback(event.track));
       }
     };
     pc.onIceCandidate = (candidate) {
@@ -85,38 +96,49 @@ class ChatCallMedia {
         ChatCalls.instance.noteLink(up: false);
       }
     };
-    final constraints = await _audioConstraints();
+    final constraints = await _runWindowsAudio(_audioConstraints);
     MediaStream stream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia(constraints);
+      stream = await _runWindowsAudio(
+        () => navigator.mediaDevices.getUserMedia(constraints),
+      );
     } catch (_) {
       if (constraints['audio'] == true) rethrow;
-      stream = await navigator.mediaDevices.getUserMedia({
-        'audio': true,
-        'video': false,
-      });
+      stream = await _runWindowsAudio(
+        () => navigator.mediaDevices.getUserMedia(windowsCallMic(null)),
+      );
     }
     _local = stream;
     for (final track in stream.getAudioTracks()) {
       await pc.addTrack(track, stream);
     }
-    if (Plat.isWindows) {
-      final mic = _pickedMic;
-      if (mic != null && mic.isNotEmpty) {
-        try {
-          await Helper.selectAudioInput(mic);
-        } catch (_) {}
-      }
-      await playout();
-    }
   }
 
-  String? _pickedMic;
+  /// Play the remote voice once, after the track exists, then set the level.
+  /// Switching the Windows speaker again flushes the buffer down to the last words.
+  Future<void> _startPlayback(MediaStreamTrack track) async {
+    final gen = _playGen;
+    try {
+      await _runWindowsAudio(() async {
+        if (gen != _playGen) return;
+        if (Plat.isWindows && !_played) {
+          await playout();
+          if (gen != _playGen) return;
+          _played = true;
+        }
+        if (gen != _playGen) return;
+        try {
+          await Helper.setVolume(1, track);
+        } catch (_) {}
+      });
+    } catch (_) {}
+    if (gen != _playGen) return;
+    ChatCalls.instance.hear();
+  }
 
   /// Windows records device 0 unless a source is named first. Device 0 is
-  /// often a virtual cable, so the phone hears silence.
+  /// often a virtual cable, so the phone hears silence. Processing stays off.
   Future<Map<String, dynamic>> _audioConstraints() async {
-    _pickedMic = null;
     if (!Plat.isWindows) return {'audio': true, 'video': false};
     try {
       final devices = await navigator.mediaDevices.enumerateDevices();
@@ -143,18 +165,9 @@ class ChatCallMedia {
         }
       }
       final pick = preferred ?? named ?? fallback;
-      if (pick == null) return {'audio': true, 'video': false};
-      _pickedMic = pick.deviceId;
-      return {
-        'audio': {
-          'optional': [
-            {'sourceId': pick.deviceId},
-          ],
-        },
-        'video': false,
-      };
+      return windowsCallMic(pick?.deviceId);
     } catch (_) {
-      return {'audio': true, 'video': false};
+      return windowsCallMic(null);
     }
   }
 
@@ -293,6 +306,20 @@ class ChatCallMedia {
     } catch (_) {}
   }
 
+  /// One speaker change, then restore the level a device switch clears.
+  Future<void> routePlayback({required bool preferSpeaker}) async {
+    await _runWindowsAudio(() async {
+      await playout(preferSpeaker: preferSpeaker);
+      for (final stream in List<MediaStream>.from(_remote)) {
+        for (final track in stream.getAudioTracks()) {
+          try {
+            await Helper.setVolume(1, track);
+          } catch (_) {}
+        }
+      }
+    });
+  }
+
   Future<void> _flush() async {
     final pc = _pc;
     if (pc == null) return;
@@ -306,26 +333,38 @@ class ChatCallMedia {
   }
 
   Future<void> close() async {
+    _played = false;
+    _playGen++;
     _waiting.clear();
     _remote.clear();
     _remoteReady = false;
     final local = _local;
     _local = null;
-    if (local != null) {
-      for (final track in local.getTracks()) {
-        await track.stop();
-      }
-      await local.dispose();
-    }
     final pc = _pc;
     _pc = null;
-    if (pc != null) {
-      await pc.close();
-      await pc.dispose();
-    }
-    try {
-      await Helper.setSpeakerphoneOn(false);
-    } catch (_) {}
+    await _runWindowsAudio(() async {
+      if (local != null) {
+        for (final track in local.getTracks()) {
+          try {
+            await track.stop();
+          } catch (_) {}
+        }
+        try {
+          await local.dispose();
+        } catch (_) {}
+      }
+      if (pc != null) {
+        try {
+          await pc.close();
+        } catch (_) {}
+        try {
+          await pc.dispose();
+        } catch (_) {}
+      }
+      try {
+        await Helper.setSpeakerphoneOn(false);
+      } catch (_) {}
+    });
   }
 }
 
@@ -350,6 +389,8 @@ class ChatCalls {
   bool held = false;
   bool remoteHeld = false;
   bool recovering = false;
+  bool pcAudioBlocked = false;
+  bool allowingPcAudio = false;
   String exitKind = '';
   String moment = '';
   DateTime? connectedAt;
@@ -442,6 +483,8 @@ class ChatCalls {
     remoteHeld = false;
     exitKind = '';
     moment = '';
+    pcAudioBlocked = false;
+    allowingPcAudio = false;
     connectedAt = null;
     _routeChosen = false;
     _linked = false;
@@ -453,7 +496,7 @@ class ChatCalls {
     _armWatch();
     try {
       await _rememberLan();
-      unawaited(_allowPcAudio());
+      unawaited(_notePcAudio());
       if (_finishing || epoch != _callEpoch) return;
       final sdp = callSdpToSend(await _media.offer(_sendIce), _lanIp);
       if (sdp.isEmpty) {
@@ -674,7 +717,7 @@ class ChatCalls {
     }
     try {
       await _rememberLan();
-      unawaited(_allowPcAudio());
+      unawaited(_notePcAudio());
       if (_finishing || active?.id != call.id) {
         _dropAccept();
         return;
@@ -778,7 +821,7 @@ class ChatCalls {
     _speakerRetry?.cancel();
     speaker = on;
     if (Plat.isWindows) {
-      await _media.playout(preferSpeaker: on);
+      await _media.routePlayback(preferSpeaker: on);
     } else {
       await _media.setSpeaker(on);
     }
@@ -863,11 +906,16 @@ class ChatCalls {
   }
 
   /// Play the other person out loud. The earpiece stays silent on a lot of
-  /// phones until the speaker route is set, and Windows needs a named output.
+  /// phones until the speaker route is set. Windows already chose its speaker
+  /// once, when the voice track arrived.
   void hear() {
     if (status != 'active' || _finishing || _routeChosen) return;
     final first = !speaker;
     speaker = true;
+    if (Plat.isWindows) {
+      if (first) revision.value++;
+      return;
+    }
     final gen = _routeGen;
     _speakerRetry?.cancel();
     unawaited(_pushSpeaker(gen));
@@ -893,8 +941,7 @@ class ChatCalls {
   /// The first speaker request is often ignored until the voice track exists.
   Future<void> _pushSpeaker(int gen) async {
     await _media.setSpeaker(true);
-    if (!_speakerStill(gen) || !Plat.isWindows) return;
-    await _media.playout();
+    if (!_speakerStill(gen)) return;
   }
 
   void _armClock() {
@@ -937,7 +984,9 @@ class ChatCalls {
     _watch = null;
     exitKind = kind.isEmpty ? 'ended' : kind;
     revision.value++;
-    await _endRing();
+    try {
+      await _endRing().timeout(const Duration(seconds: 2));
+    } catch (_) {}
     if (_shown) {
       await Future<void>.delayed(const Duration(milliseconds: 680));
     }
@@ -952,13 +1001,17 @@ class ChatCalls {
     remoteHeld = false;
     moment = '';
     problem = null;
+    pcAudioBlocked = false;
+    allowingPcAudio = false;
     _lastRemote = '';
     _linked = false;
     _hadAudio = false;
     _sdpPending = '';
     _iceBeforeId.clear();
-    await _media.close();
     revision.value++;
+    try {
+      await _media.close().timeout(const Duration(seconds: 4));
+    } catch (_) {}
     _finishing = false;
   }
 
@@ -1015,30 +1068,37 @@ class ChatCalls {
     _lanIp = await _windowsLanIp();
   }
 
-  Future<void> _allowPcAudio() {
-    if (!Plat.isWindows) return Future<void>.value();
-    return FirewallCheck.ensureCallAudio(_askCallFirewall);
+  /// A second dialog used to cover End. The call sheet shows Allow itself.
+  Future<void> _notePcAudio() async {
+    if (!Plat.isWindows) return;
+    try {
+      final open = await FirewallCheck.callAudioOpen();
+      if (_finishing || (status != 'ringing' && status != 'active')) return;
+      final blocked = !open;
+      if (pcAudioBlocked == blocked) return;
+      pcAudioBlocked = blocked;
+      revision.value++;
+    } catch (_) {}
   }
 
-  Future<bool?> _askCallFirewall() async {
-    final context = appRouter.routerDelegate.navigatorKey.currentContext;
-    if (context == null || !context.mounted) return null;
-    return showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text('Allow call audio on this PC?'),
-        content: const Text(
-          'Windows Firewall is blocking audio between this PC and a phone. '
-          'SocialSave will allow inbound UDP for SocialSave.exe only. '
-          'Windows will ask for administrator permission next.',
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Not now')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Allow')),
-        ],
-      ),
-    );
+  Future<void> allowPcAudio() async {
+    if (!Plat.isWindows || allowingPcAudio) return;
+    allowingPcAudio = true;
+    revision.value++;
+    try {
+      final err = await FirewallCheck.allowCallAudio();
+      if (_finishing) return;
+      if (err == null) {
+        pcAudioBlocked = false;
+      } else {
+        problem = err;
+      }
+    } catch (error) {
+      if (!_finishing) problem = chatErrorText(error);
+    } finally {
+      allowingPcAudio = false;
+      if (!_finishing) revision.value++;
+    }
   }
 
   Future<void> _showIncoming(int gen) async {
@@ -1359,95 +1419,127 @@ class _ChatCallSheetState extends State<ChatCallSheet> with TickerProviderStateM
                   child: Transform.translate(
                     offset: Offset(0, drop),
                     child: SafeArea(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(28, 36, 28, 28),
-                        child: Column(
-                          children: [
-                            const Spacer(),
-                            _face(name, scale, pulse, holdOn, ringColor),
-                            Text(
-                              name,
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                fontSize: 32,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.white,
-                              ),
+                      child: LayoutBuilder(
+                        builder: (context, box) {
+                          final short = box.maxHeight < 560;
+                          final end = _CallAction(
+                            color: const Color(0xFFE53935),
+                            icon: Icons.call_end_rounded,
+                            label: 'End',
+                            onPressed: () => unawaited(call.hangUp()),
+                          );
+                          final controls = <Widget>[
+                            _CallAction(
+                              color: const Color(0xFF1F2C34),
+                              icon: call.muted ? Icons.mic_off_rounded : Icons.mic_rounded,
+                              label: call.muted ? 'Unmute' : 'Mute',
+                              onPressed: () => unawaited(call.setMuted(!call.muted)),
                             ),
-                            const SizedBox(height: 8),
-                            Opacity(
-                              opacity: textOpacity,
-                              child: Text(
-                                _line(call),
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  color: leaving ? Colors.white : const Color(0xFFAEBAC1),
-                                  fontWeight: leaving ? FontWeight.w700 : FontWeight.w500,
-                                ),
-                              ),
-                            ),
-                            const Spacer(),
-                            if (!leaving &&
-                                call.status == 'ringing' &&
-                                !call.outgoing &&
-                                call.moment != 'accept')
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                                children: [
-                                  _CallAction(
-                                    color: const Color(0xFFE53935),
-                                    icon: Icons.call_end_rounded,
-                                    label: 'Decline',
-                                    onPressed: () => unawaited(call.decline()),
-                                  ),
-                                  _CallAction(
-                                    color: ChatUiTokens.brand,
-                                    icon: Icons.call_rounded,
-                                    label: 'Accept',
-                                    scale: 1 + 0.06 * beat,
-                                    onPressed: () => unawaited(call.accept()),
-                                  ),
-                                ],
-                              )
-                            else if (!leaving && live) ...[
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                                children: [
-                                  _CallAction(
-                                    color: const Color(0xFF1F2C34),
-                                    icon: call.muted ? Icons.mic_off_rounded : Icons.mic_rounded,
-                                    label: call.muted ? 'Unmute' : 'Mute',
-                                    onPressed: () => unawaited(call.setMuted(!call.muted)),
-                                  ),
-                                  if (call.status == 'active')
-                                    _CallAction(
-                                      color: call.held ? const Color(0xFFF9A825) : const Color(0xFF1F2C34),
-                                      icon: call.held ? Icons.play_arrow_rounded : Icons.pause_rounded,
-                                      label: call.held ? 'Resume' : 'Hold',
-                                      onPressed: () => unawaited(call.setHeld(!call.held)),
-                                    ),
-                                  _CallAction(
-                                    color: const Color(0xFF1F2C34),
-                                    icon: call.speaker ? Icons.volume_up_rounded : Icons.hearing_rounded,
-                                    label: call.speaker ? 'Speaker' : 'Earpiece',
-                                    onPressed: () => unawaited(call.setSpeaker(!call.speaker)),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 22),
+                            if (call.status == 'active')
                               _CallAction(
-                                color: const Color(0xFFE53935),
-                                icon: Icons.call_end_rounded,
-                                label: 'End',
-                                onPressed: () => unawaited(call.hangUp()),
+                                color: call.held ? const Color(0xFFF9A825) : const Color(0xFF1F2C34),
+                                icon: call.held ? Icons.play_arrow_rounded : Icons.pause_rounded,
+                                label: call.held ? 'Resume' : 'Hold',
+                                onPressed: () => unawaited(call.setHeld(!call.held)),
                               ),
-                            ] else if (!leaving)
-                              TextButton(
-                                onPressed: () => Navigator.of(context).pop(),
-                                child: const Text('Close'),
-                              ),
-                          ],
-                        ),
+                            _CallAction(
+                              color: const Color(0xFF1F2C34),
+                              icon: call.speaker ? Icons.volume_up_rounded : Icons.hearing_rounded,
+                              label: call.speaker ? 'Speaker' : 'Earpiece',
+                              onPressed: () => unawaited(call.setSpeaker(!call.speaker)),
+                            ),
+                            if (short) end,
+                          ];
+                          return Padding(
+                            padding: EdgeInsets.fromLTRB(28, short ? 12 : 36, 28, short ? 12 : 28),
+                            child: Column(
+                              children: [
+                                Expanded(
+                                  child: FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    child: SizedBox(
+                                      width: box.maxWidth > 80 ? box.maxWidth - 56 : box.maxWidth,
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          _face(name, scale, pulse, holdOn, ringColor),
+                                          Text(
+                                            name,
+                                            textAlign: TextAlign.center,
+                                            style: const TextStyle(
+                                              fontSize: 32,
+                                              fontWeight: FontWeight.w600,
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 8),
+                                          Opacity(
+                                            opacity: textOpacity,
+                                            child: Text(
+                                              _line(call),
+                                              textAlign: TextAlign.center,
+                                              style: TextStyle(
+                                                fontSize: 16,
+                                                color: leaving ? Colors.white : const Color(0xFFAEBAC1),
+                                                fontWeight: leaving ? FontWeight.w700 : FontWeight.w500,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                if (!leaving &&
+                                    call.status == 'ringing' &&
+                                    !call.outgoing &&
+                                    call.moment != 'accept')
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                                    children: [
+                                      _CallAction(
+                                        color: const Color(0xFFE53935),
+                                        icon: Icons.call_end_rounded,
+                                        label: 'Decline',
+                                        onPressed: () => unawaited(call.decline()),
+                                      ),
+                                      _CallAction(
+                                        color: ChatUiTokens.brand,
+                                        icon: Icons.call_rounded,
+                                        label: 'Accept',
+                                        scale: 1 + 0.06 * beat,
+                                        onPressed: () => unawaited(call.accept()),
+                                      ),
+                                    ],
+                                  )
+                                else if (!leaving && live) ...[
+                                  if (call.pcAudioBlocked)
+                                    TextButton(
+                                      onPressed: call.allowingPcAudio
+                                          ? null
+                                          : () => unawaited(call.allowPcAudio()),
+                                      child: Text(
+                                        call.allowingPcAudio ? 'Asking Windows…' : 'Allow call audio',
+                                        style: const TextStyle(color: Colors.white),
+                                      ),
+                                    ),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                                    children: controls,
+                                  ),
+                                  if (!short) ...[
+                                    const SizedBox(height: 22),
+                                    end,
+                                  ],
+                                ] else if (!leaving)
+                                  TextButton(
+                                    onPressed: () => Navigator.of(context).pop(),
+                                    child: const Text('Close'),
+                                  ),
+                              ],
+                            ),
+                          );
+                        },
                       ),
                     ),
                   ),

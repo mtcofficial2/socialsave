@@ -114,6 +114,21 @@ void main() {
     expect(callSdp(r'v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n').contains('m=audio'), isTrue);
   });
 
+  test('a PC mic leaves echo processing off', () {
+    final named = windowsCallMic('mic-1');
+    final audio = named['audio'] as Map<String, dynamic>;
+    expect(audio['echoCancellation'], isFalse);
+    expect(audio['noiseSuppression'], isFalse);
+    expect(audio['autoGainControl'], isFalse);
+    expect(named['video'], isFalse);
+    final optional = audio['optional'] as List<Map<String, dynamic>>;
+    expect(optional.single['sourceId'], 'mic-1');
+    final plain = windowsCallMic('  ');
+    final open = plain['audio'] as Map<String, dynamic>;
+    expect(open['optional'], isNull);
+    expect(open['echoCancellation'], isFalse);
+  });
+
   test('a ringing call from someone else is the one to answer', () {
     final rows = [
       const ChatCallRecord(id: 'c1', thread: 't1', state: 'ringing', fromName: 'ada'),

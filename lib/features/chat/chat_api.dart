@@ -1032,6 +1032,24 @@ bool watchedCallFinished(List<ChatCallRecord> rows, String id) {
   return true;
 }
 
+/// Windows software echo cancellation keeps only the last words of a PC mic
+/// and a noise floor from the phone. Name a real mic and leave processing off.
+/// Phones do not use this map.
+Map<String, dynamic> windowsCallMic(String? sourceId) {
+  final audio = <String, dynamic>{
+    'echoCancellation': false,
+    'noiseSuppression': false,
+    'autoGainControl': false,
+  };
+  final id = sourceId?.trim() ?? '';
+  if (id.isNotEmpty) {
+    audio['optional'] = <Map<String, dynamic>>[
+      {'sourceId': id},
+    ];
+  }
+  return {'audio': audio, 'video': false};
+}
+
 /// Ringing out stays a small bar. A picked-up call, and a call arriving here, fill the screen.
 bool callUsesFullScreen({required bool outgoing, required String status}) {
   if (status == 'active') return true;
