@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:social_save/core/engine/phone_engine.dart';
 import 'package:social_save/core/platform/phone_power.dart';
 import 'package:social_save/features/settings/domain/entities/app_settings.dart';
 
@@ -78,11 +79,15 @@ void main() {
     );
   });
 
-  test('new phone settings keep the old constructor defaults', () {
+  test('new phone settings leave the power pauses off', () {
     const settings = AppSettings();
     expect(settings.onlyWhileCharging, isFalse);
-    expect(settings.pauseBelowBattery, isTrue);
-    expect(settings.pocketPause, isTrue);
+    expect(settings.pauseBelowBattery, isFalse);
+    expect(settings.pocketPause, isFalse);
+    final fresh = AppSettings.fromMap(const {});
+    expect(fresh.onlyWhileCharging, isFalse);
+    expect(fresh.pauseBelowBattery, isFalse);
+    expect(fresh.pocketPause, isFalse);
     expect(settings.headsetControls, isTrue);
     expect(settings.volumeKeysSeek, isTrue);
     expect(settings.hapticAlerts, isTrue);
@@ -90,7 +95,8 @@ void main() {
 
     final restored = AppSettings.fromMap(settings.toMap());
     expect(restored.onlyWhileCharging, isFalse);
-    expect(restored.pauseBelowBattery, isTrue);
+    expect(restored.pauseBelowBattery, isFalse);
+    expect(restored.pocketPause, isFalse);
     expect(restored.saveTreeUri, isNull);
 
     final withFolder = AppSettings.fromMap({
@@ -101,5 +107,12 @@ void main() {
     expect(withFolder.saveTreeUri, 'content://tree/downloads');
     expect(withFolder.onlyWhileCharging, isTrue);
     expect(withFolder.copyWith(clearSaveTree: true).saveTreeUri, isNull);
+  });
+
+  test('a new phone downloads here until the switch is saved', () {
+    expect(phoneDownloadOnThisPhone(stored: null, supported: true), isTrue);
+    expect(phoneDownloadOnThisPhone(stored: null, supported: false), isFalse);
+    expect(phoneDownloadOnThisPhone(stored: false, supported: true), isFalse);
+    expect(phoneDownloadOnThisPhone(stored: true, supported: false), isTrue);
   });
 }

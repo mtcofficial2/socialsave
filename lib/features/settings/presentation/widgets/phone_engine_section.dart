@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:social_save/core/engine/phone_engine.dart';
 import 'package:social_save/shared/widgets/glass.dart';
 
-/// Android: "Download on this phone (no server)". Off by default.
+/// Android: "Download on this phone (no server)". On by default when the phone can run it.
 class PhoneEngineSection extends StatefulWidget {
   const PhoneEngineSection({super.key, required this.title});
 

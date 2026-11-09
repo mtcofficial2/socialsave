@@ -37,9 +37,10 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
   static const _offerCopiedLinks = '${AppConstants.settingsPrefsPrefix}offerCopiedLinks';
   static const _onlyWhileCharging =
       '${AppConstants.settingsPrefsPrefix}onlyWhileCharging';
+  // New keys so an update does not keep the old on-by-default values.
   static const _pauseBelowBattery =
-      '${AppConstants.settingsPrefsPrefix}pauseBelowBattery';
-  static const _pocketPause = '${AppConstants.settingsPrefsPrefix}pocketPause';
+      '${AppConstants.settingsPrefsPrefix}pauseBelowBatteryV2';
+  static const _pocketPause = '${AppConstants.settingsPrefsPrefix}pocketPauseV2';
   static const _backgroundPlay = '${AppConstants.settingsPrefsPrefix}backgroundPlay';
   static const _autoPip = '${AppConstants.settingsPrefsPrefix}autoPip';
   static const _autoPipOnBlur = '${AppConstants.settingsPrefsPrefix}autoPipOnBlur';

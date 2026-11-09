@@ -11,6 +11,13 @@ import 'package:social_save/shared/models/download_ticket.dart';
 import 'package:social_save/shared/models/media_format.dart';
 import 'package:social_save/shared/models/media_info.dart';
 
+/// A missing switch is on when this phone can run downloads itself.
+/// A saved choice is kept, including an explicit off.
+bool phoneDownloadOnThisPhone({required bool? stored, required bool supported}) {
+  if (stored != null) return stored;
+  return supported;
+}
+
 /// Marks an error that came from the on-phone engine, so the UI can offer
 /// "Try with server" (never done automatically while the switch is on).
 class PhoneEngineFailure {
@@ -19,8 +26,9 @@ class PhoneEngineFailure {
 
 /// Android "Download on this phone (no server)": yt-dlp, Python, ffmpeg and
 /// QuickJS run on the phone (youtubedl-android, as in Seal) through the
-/// `socialsave/phone_engine` channel. Off by default. Ordinary downloads stay
-/// on the server. A TikTok-ready yes on a 64-bit phone uses this engine
+/// `socialsave/phone_engine` channel. On by default on a phone that can run
+/// it, until the person turns the switch off. Ordinary downloads stay
+/// on the server while it is off. A TikTok-ready yes on a 64-bit phone uses this engine
 /// without turning the switch on, and falls back to the server if it fails.
 class PhoneEngine {
   PhoneEngine._();
@@ -38,7 +46,11 @@ class PhoneEngine {
     if (!Plat.isAndroid) return false;
     if (!_loaded) {
       final prefs = await SharedPreferences.getInstance();
-      enabled.value = prefs.getBool(_enabledKey) ?? false;
+      final stored = prefs.getBool(_enabledKey);
+      enabled.value = phoneDownloadOnThisPhone(
+        stored: stored,
+        supported: stored == null ? await canRunOnThisPhone() : true,
+      );
       _loaded = true;
     }
     return enabled.value;
