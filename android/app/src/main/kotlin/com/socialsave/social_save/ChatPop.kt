@@ -38,6 +38,21 @@ object ChatPop {
 
     fun canDraw(context: Context): Boolean = Settings.canDrawOverlays(context)
 
+    /// Missing keeps the card. Off in chat settings removes it.
+    fun wanted(context: Context): Boolean {
+        val prefs = context.applicationContext.getSharedPreferences(
+            "FlutterSharedPreferences",
+            Context.MODE_PRIVATE,
+        )
+        val key = "flutter.chat.pref.popup.v1"
+        if (!prefs.contains(key)) return true
+        return try {
+            prefs.getBoolean(key, true)
+        } catch (_: Exception) {
+            true
+        }
+    }
+
     fun show(
         context: Context,
         id: Int,
@@ -48,7 +63,7 @@ object ChatPop {
         token: String,
     ) {
         val app = context.applicationContext
-        if (!canDraw(app)) return
+        if (!wanted(app) || !canDraw(app)) return
         handler.post {
             try {
                 dismiss(cancelNotice = false)
@@ -241,7 +256,7 @@ object ChatPop {
                 isEnabled = false
                 Thread {
                     val sent = try {
-                        ChatReply.post(api, token, payload, text)
+                        ChatReply.send(context, api, token, payload, text)
                     } catch (_: Exception) {
                         false
                     }
@@ -323,6 +338,10 @@ class ChatPopActivity : Activity() {
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
+        if (!ChatPop.wanted(this)) {
+            finish()
+            return
+        }
         if (Build.VERSION.SDK_INT >= 27) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)

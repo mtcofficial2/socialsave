@@ -7,6 +7,7 @@ class ChatPrefs {
 
   static const _enterKey = 'chat.pref.enter.v1';
   static const _soundKey = 'chat.pref.sound.v1';
+  static const _popupKey = 'chat.pref.popup.v1';
   static const _patternKey = 'chat.pref.pattern.v1';
   static const _quietKey = 'chat.pref.quiet.v1';
   static const _saverKey = 'chat.pref.saver.v1';
@@ -17,6 +18,9 @@ class ChatPrefs {
   /// Null keeps the keyboard behavior this app already ships.
   static bool? enterOverride;
   static bool messageSound = true;
+
+  /// The green card over other apps. Off leaves the normal notification.
+  static bool messagePopup = true;
 
   /// A plain canvas is the default. The pattern is optional.
   static bool pattern = false;
@@ -81,6 +85,17 @@ class ChatPrefs {
     messageSound = on;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_soundKey, on);
+    revision.value++;
+  }
+
+  /// Missing means the green card still shows.
+  static bool messagePopupValue(bool? stored) => stored ?? true;
+
+  static Future<void> setMessagePopup(bool on) async {
+    await ensure();
+    messagePopup = on;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_popupKey, on);
     revision.value++;
   }
 
@@ -176,6 +191,7 @@ class ChatPrefs {
       enterOverride = prefs.getBool(_enterKey);
     }
     messageSound = prefs.getBool(_soundKey) ?? true;
+    messagePopup = messagePopupValue(prefs.getBool(_popupKey));
     pattern = prefs.getBool(_patternKey) ?? false;
     dataSaver = prefs.getBool(_saverKey) ?? false;
     final quiet = prefs.getString(_quietKey) ?? '';

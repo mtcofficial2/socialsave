@@ -3,6 +3,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:social_save/features/chat/chat_prefs.dart';
 
 void main() {
+  test('the green card stays until it is turned off', () {
+    expect(ChatPrefs.messagePopupValue(null), isTrue);
+    expect(ChatPrefs.messagePopupValue(true), isTrue);
+    expect(ChatPrefs.messagePopupValue(false), isFalse);
+  });
+
   test('keyboard sends until the person turns it off', () {
     expect(ChatPrefs.keyboardSendsValue(null), isTrue);
     expect(ChatPrefs.keyboardSendsValue(true), isTrue);

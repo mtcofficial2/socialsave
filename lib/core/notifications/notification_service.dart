@@ -55,30 +55,49 @@ DateTime? _recentReplyAt;
 }
 
 /// Sends [text] into the chat named by a `chat|threadId|name` payload.
+///
+/// Returns false when the text or the chat is missing, or the server
+/// refused it. A duplicate of the same reply inside four seconds counts
+/// as already sent.
+Future<bool> deliverChatNotificationReply(String payload, String text) async {
+  final clean = text.trim();
+  final parts = payload.split('|');
+  if (parts.length < 2 || parts.first != 'chat') return false;
+  final id = parts[1].trim();
+  if (id.isEmpty || !_chatThreadId.hasMatch(id) || clean.isEmpty) return false;
+  final key = '$id|$clean';
+  final now = DateTime.now();
+  if (_recentReplyKey == key &&
+      _recentReplyAt != null &&
+      now.difference(_recentReplyAt!) < const Duration(seconds: 4)) {
+    return true;
+  }
+  _recentReplyKey = key;
+  _recentReplyAt = now;
+  try {
+    final sent = await ChatApi().send(id, clean);
+    try {
+      final keep = NotificationService.onReplySent;
+      if (keep != null) await keep(id, sent);
+    } catch (_) {}
+    return true;
+  } catch (_) {
+    if (_recentReplyKey == key) {
+      _recentReplyKey = null;
+      _recentReplyAt = null;
+    }
+    return false;
+  }
+}
+
+/// Sends [text] into the chat named by a `chat|threadId|name` payload.
 Future<void> sendChatNotificationReply(String payload, String text) async {
   final clean = text.trim();
   final parts = payload.split('|');
   if (parts.length < 2 || parts.first != 'chat') return;
   final id = parts[1].trim();
   if (id.isEmpty || clean.isEmpty) return;
-  final key = '$id|$clean';
-  final now = DateTime.now();
-  if (_recentReplyKey == key &&
-      _recentReplyAt != null &&
-      now.difference(_recentReplyAt!) < const Duration(seconds: 4)) {
-    return;
-  }
-  _recentReplyKey = key;
-  _recentReplyAt = now;
-  try {
-    final sent = await ChatApi().send(id, clean);
-    final keep = NotificationService.onReplySent;
-    if (keep != null) await keep(id, sent);
-  } catch (_) {
-    if (_recentReplyKey == key) {
-      _recentReplyKey = null;
-      _recentReplyAt = null;
-    }
+  if (!await deliverChatNotificationReply(payload, text)) {
     await NotificationService().showReplyFailed();
   }
 }
@@ -376,6 +395,11 @@ class NotificationService {
           if (_chatThreadId.hasMatch(id)) {
             unawaited(ChatInboxFilter.setMuted(id, on: true));
           }
+        } else if (call.method == 'reply' && call.arguments is Map) {
+          final raw = Map<Object?, Object?>.from(call.arguments as Map);
+          final payload = raw['payload']?.toString() ?? '';
+          final text = raw['text']?.toString() ?? '';
+          return deliverChatNotificationReply(payload, text);
         }
       });
       try {

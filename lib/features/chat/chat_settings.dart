@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:social_save/features/chat/chat_prefs.dart';
 import 'package:social_save/features/chat/chat_services.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
@@ -59,6 +60,14 @@ class _ChatSettingsPageState extends State<ChatSettingsPage> {
     if (mounted) setState(() {});
   }
 
+  Future<void> _setMessagePopup(bool on) async {
+    await ChatPrefs.setMessagePopup(on);
+    if (on) return;
+    try {
+      await const MethodChannel('socialsave/chat_notify').invokeMethod<void>('hidePop');
+    } catch (_) {}
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -66,6 +75,7 @@ class _ChatSettingsPageState extends State<ChatSettingsPage> {
     final name = widget.username.replaceFirst(RegExp(r'^@'), '').trim();
     final shown = name.isEmpty ? 'Your profile' : '@$name';
     final quiet = dark ? ChatUiTokens.timeDark : scheme.onSurfaceVariant;
+    final android = Theme.of(context).platform == TargetPlatform.android;
     return ListView(
       padding: pagePadding(context, top: 8, bottom: 28, maxWidth: 520),
       children: [
@@ -154,6 +164,15 @@ class _ChatSettingsPageState extends State<ChatSettingsPage> {
               value: ChatPrefs.messageSound,
               onChanged: (on) => unawaited(ChatPrefs.setMessageSound(on)),
             ),
+            if (android)
+              _SwitchRow(
+                icon: Icons.chat_bubble_outline_rounded,
+                title: 'Green message card',
+                subtitle:
+                    'The green card over other apps. Off keeps the normal notification.',
+                value: ChatPrefs.messagePopup,
+                onChanged: (on) => unawaited(_setMessagePopup(on)),
+              ),
             _SwitchRow(
               icon: Icons.texture_outlined,
               title: 'Pattern background',

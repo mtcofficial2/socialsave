@@ -38,7 +38,10 @@ import io.flutter.plugin.common.MethodChannel
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -85,6 +88,10 @@ object ChatReplyBridge {
                 }
                 "cancelCall" -> {
                     ChatCallNotice.cancel(context.applicationContext)
+                    result.success(null)
+                }
+                "hidePop" -> {
+                    ChatPop.dismiss(cancelNotice = false)
                     result.success(null)
                 }
                 else -> result.notImplemented()
@@ -134,6 +141,59 @@ object ChatReplyBridge {
         } catch (_: Exception) {
         }
     }
+
+    enum class EngineReply { Sent, Refused, Away }
+
+    /// Asks the already-running app to send. A second engine is not started.
+    /// Sent and Refused are final. Away means the app process is not listening,
+    /// so the caller sends over HTTP itself.
+    fun ask(payload: String, text: String): EngineReply {
+        val messenger = channel
+        if (!listening || messenger == null) return EngineReply.Away
+        if (Looper.myLooper() == Looper.getMainLooper()) return EngineReply.Away
+        val latch = CountDownLatch(1)
+        val box = AtomicReference(EngineReply.Away)
+        Handler(Looper.getMainLooper()).post {
+            try {
+                messenger.invokeMethod(
+                    "reply",
+                    mapOf("payload" to payload, "text" to text),
+                    object : MethodChannel.Result {
+                        override fun success(result: Any?) {
+                            box.set(
+                                if (result == true) EngineReply.Sent else EngineReply.Refused,
+                            )
+                            latch.countDown()
+                        }
+
+                        override fun error(
+                            errorCode: String,
+                            errorMessage: String?,
+                            errorDetails: Any?,
+                        ) {
+                            latch.countDown()
+                        }
+
+                        override fun notImplemented() {
+                            latch.countDown()
+                        }
+                    },
+                )
+            } catch (_: Exception) {
+                latch.countDown()
+            }
+        }
+        val finished = try {
+            latch.await(80, TimeUnit.SECONDS)
+        } catch (_: InterruptedException) {
+            false
+        }
+        if (!finished) {
+            Log.w("SocialSaveReply", "reply engine timed out")
+            return EngineReply.Refused
+        }
+        return box.get()
+    }
 }
 
 object ChatReply {
@@ -152,6 +212,7 @@ object ChatReply {
     private val attention = 0xFF00C853.toInt()
     private var brand: Bitmap? = null
     private const val failedId = 0x52454641
+    private const val replyPrefs = "socialsave_chat_reply"
     private val threadPattern = Regex("^[A-Za-z0-9]{2,80}$")
 
     fun show(context: Context, call: MethodCall) {
@@ -250,36 +311,184 @@ object ChatReply {
         deliver(context, builder, alert, id, title, body, payload, api, token)
     }
 
-    fun post(api: String, token: String, payload: String, text: String): Boolean {
-        val id = threadOf(payload) ?: return false
-        if (token.isBlank() || text.isBlank()) return false
+    /// Keeps the chat and the sign-in beside the notice. A reply on some
+    /// phones arrives with the typed text and without these extras.
+    fun remember(context: Context, id: Int, payload: String, api: String, token: String) {
+        if (id == 0) return
+        val edit = context.applicationContext
+            .getSharedPreferences(replyPrefs, Context.MODE_PRIVATE)
+            .edit()
+        if (payload.isNotBlank() && threadOf(payload) != null) {
+            edit.putString("p$id", payload)
+            edit.putString("latest", payload)
+        }
+        val base = api.trim().trimEnd('/')
+        if (base.isNotEmpty()) edit.putString("api", base)
+        val key = token.trim()
+        if (key.isNotEmpty()) edit.putString("token", key)
+        edit.commit()
+    }
+
+    /// Sends a reply that was typed on a notice. Reads the chat and the
+    /// sign-in from the intent, then from the copy saved when the notice
+    /// was posted, then from the signed-in phone.
+    fun isReply(action: String?): Boolean {
+        return action == ACTION || (action != null && action.startsWith("$ACTION/"))
+    }
+
+    fun postedId(intent: Intent): Int {
+        val id = noticeId(intent)
+        if (id != 0) return id
+        return replyParts(intent.action)?.first ?: 0
+    }
+
+    fun sendFrom(context: Context, intent: Intent, text: String): Boolean {
+        val prefs = context.applicationContext.getSharedPreferences(replyPrefs, Context.MODE_PRIVATE)
+        val fromAction = replyParts(intent.action)
+        var id = noticeId(intent)
+        if (id == 0) id = fromAction?.first ?: 0
+        var payload = intent.getStringExtra(EXTRA_PAYLOAD).orEmpty()
+        if (threadOf(payload) == null) {
+            val saved = if (id != 0) prefs.getString("p$id", null).orEmpty() else ""
+            val fromUri = payloadFromUri(intent.data)
+            val latest = prefs.getString("latest", null).orEmpty()
+            payload = when {
+                threadOf(saved) != null -> saved
+                threadOf(fromUri) != null -> fromUri
+                fromAction != null -> "chat|${fromAction.second}|"
+                threadOf(latest) != null -> latest
+                else -> ""
+            }
+        }
+        if (threadOf(payload) == null) {
+            Log.w("SocialSaveReply", "reply stopped thread=false api=false token=false")
+            return false
+        }
+        return send(
+            context,
+            intent.getStringExtra(EXTRA_API).orEmpty(),
+            intent.getStringExtra(EXTRA_TOKEN).orEmpty(),
+            payload,
+            text,
+        )
+    }
+
+    fun send(context: Context, api: String, token: String, payload: String, text: String): Boolean {
+        val clean = text.trim()
+        val thread = threadOf(payload)
+        if (thread == null || clean.isEmpty()) {
+            Log.w("SocialSaveReply", "reply stopped thread=${thread != null} api=false token=false")
+            return false
+        }
+        when (ChatReplyBridge.ask(payload, clean)) {
+            ChatReplyBridge.EngineReply.Sent -> {
+                Log.i("SocialSaveReply", "reply sent in app")
+                return true
+            }
+            ChatReplyBridge.EngineReply.Refused -> {
+                Log.w("SocialSaveReply", "reply refused in app")
+                return false
+            }
+            ChatReplyBridge.EngineReply.Away -> Log.i("SocialSaveReply", "reply engine away")
+        }
+        val app = context.applicationContext
+        val prefs = app.getSharedPreferences(replyPrefs, Context.MODE_PRIVATE)
+        val watch = ChatWatch.credentials(app)
+        val apis = LinkedHashSet<String>()
+        val tokens = LinkedHashSet<String>()
+        fun addApi(value: String?) {
+            val base = value?.trim()?.trimEnd('/').orEmpty()
+            if (base.isNotEmpty()) apis.add(base)
+        }
+        fun addToken(value: String?) {
+            val key = value?.trim().orEmpty()
+            if (key.isNotEmpty()) tokens.add(key)
+        }
+        addApi(api)
+        addApi(prefs.getString("api", null))
+        addApi(watch?.api)
+        addToken(token)
+        addToken(prefs.getString("token", null))
+        addToken(watch?.token)
+        addToken(flutterToken(app))
+        if (apis.isEmpty() || tokens.isEmpty()) {
+            Log.w(
+                "SocialSaveReply",
+                "reply stopped thread=true api=${apis.isNotEmpty()} token=${tokens.isNotEmpty()}",
+            )
+            return false
+        }
+        for (key in tokens) {
+            for (base in apis) {
+                var code = attempt(base, key, thread, clean)
+                if (code == -1) code = attempt(base, key, thread, clean)
+                if (code in 200..299) {
+                    Log.i("SocialSaveReply", "reply sent")
+                    return true
+                }
+                if (code == 401 || code == 403 || code == -1) continue
+                Log.w("SocialSaveReply", "reply http failed")
+                return false
+            }
+        }
+        Log.w("SocialSaveReply", "reply http failed")
+        return false
+    }
+
+    private fun attempt(api: String, token: String, thread: String, text: String): Int {
         val base = api.trim().trimEnd('/')
         val uri = try {
             URI(base)
         } catch (_: Exception) {
-            return false
+            return -1
         }
-        if (!uri.scheme.equals("https", true) || uri.host.isNullOrBlank() || uri.userInfo != null) {
-            return false
+        val host = uri.host
+        if (!uri.scheme.equals("https", true) || host.isNullOrBlank() || uri.userInfo != null) {
+            return -1
         }
-        val connection = (URL("$base/api/v1/chat/threads/$id").openConnection() as HttpURLConnection)
-        return try {
-            connection.requestMethod = "POST"
-            connection.connectTimeout = 15000
-            connection.readTimeout = 45000
-            connection.instanceFollowRedirects = false
-            connection.doOutput = true
-            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            connection.setRequestProperty("Accept", "application/json")
-            connection.setRequestProperty("X-Chat-Token", token)
+        var url = "$base/api/v1/chat/threads/$thread"
+        var hops = 0
+        while (hops < 2) {
             val bytes = JSONObject().put("text", text).toString().toByteArray(Charsets.UTF_8)
-            connection.outputStream.use { it.write(bytes) }
-            connection.responseCode in 200..299
-        } catch (_: Exception) {
-            false
-        } finally {
-            connection.disconnect()
+            val connection = (URL(url).openConnection() as HttpURLConnection)
+            try {
+                connection.requestMethod = "POST"
+                connection.connectTimeout = 20000
+                connection.readTimeout = 45000
+                connection.instanceFollowRedirects = false
+                connection.doOutput = true
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                connection.setRequestProperty("Accept", "application/json")
+                connection.setRequestProperty("X-Chat-Token", token)
+                connection.outputStream.use { it.write(bytes) }
+                val code = connection.responseCode
+                if (code in 300..399 && hops == 0) {
+                    val next = connection.getHeaderField("Location")?.trim().orEmpty()
+                    val dest = try {
+                        URI(next)
+                    } catch (_: Exception) {
+                        null
+                    }
+                    if (dest != null &&
+                        dest.scheme.equals("https", true) &&
+                        host.equals(dest.host, true) &&
+                        dest.userInfo == null
+                    ) {
+                        url = next
+                        hops += 1
+                        continue
+                    }
+                }
+                if (code !in 200..299) Log.w("SocialSaveReply", "send status $code")
+                return code
+            } catch (e: Exception) {
+                Log.w("SocialSaveReply", "send failed ${e.javaClass.simpleName}")
+                return -1
+            } finally {
+                connection.disconnect()
+            }
         }
+        return -1
     }
 
     fun failed(context: Context) {
@@ -364,9 +573,17 @@ object ChatReply {
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
         val code = id xor 0x5A5A5A5A
-        val data = Uri.parse("socialsave://reply/$id")
+        // The thread id lives in the data, which a reply still carries when
+        // the phone drops the extras.
+        val thread = threadOf(payload) ?: "x"
+        val data = Uri.Builder()
+            .scheme("socialsave")
+            .authority("reply")
+            .appendPath(id.toString())
+            .appendPath(thread)
+            .build()
         fun fill(target: Intent): Intent = target
-            .setAction(ACTION)
+            .setAction("$ACTION/$id/$thread")
             .setData(data)
             .putExtra(EXTRA_ID, id)
             .putExtra(EXTRA_PAYLOAD, payload)
@@ -623,7 +840,9 @@ object ChatReply {
         api: String,
         token: String,
     ) {
-        if (alert && !ChatPop.canDraw(context)) {
+        remember(context, id, payload, api, token)
+        val pop = alert && ChatPop.wanted(context)
+        if (pop && !ChatPop.canDraw(context)) {
             builder.setFullScreenIntent(
                 ChatPop.launch(context, id, title, body, payload, api, token),
                 true,
@@ -633,7 +852,7 @@ object ChatReply {
             NotificationManagerCompat.from(context).notify(id, builder.build())
         } catch (_: Exception) {
         }
-        if (alert) ChatPop.show(context, id, title, body, payload, api, token)
+        if (pop) ChatPop.show(context, id, title, body, payload, api, token)
     }
 
     /// Same list Social Save reads as chat.list.muted.v1. A mute from the
@@ -662,6 +881,42 @@ object ChatReply {
         }
         ids.add(threadId)
         prefs.edit().putString(key, prefix + JSONArray(ids.toList()).toString()).commit()
+    }
+
+    private fun replyParts(action: String?): Pair<Int, String>? {
+        if (action == null || !action.startsWith("$ACTION/")) return null
+        val rest = action.substring(ACTION.length + 1)
+        val slash = rest.indexOf('/')
+        if (slash <= 0 || slash >= rest.length - 1) return null
+        val id = rest.substring(0, slash).toIntOrNull() ?: 0
+        val thread = rest.substring(slash + 1).trim()
+        if (!threadPattern.matches(thread)) return null
+        return id to thread
+    }
+
+    private fun noticeId(intent: Intent): Int {
+        val extra = intent.getIntExtra(EXTRA_ID, 0)
+        if (extra != 0) return extra
+        val data = intent.data ?: return 0
+        if (!data.scheme.equals("socialsave", true) || data.host != "reply") return 0
+        return data.pathSegments.firstOrNull()?.toIntOrNull() ?: 0
+    }
+
+    private fun payloadFromUri(data: Uri?): String {
+        if (data == null || !data.scheme.equals("socialsave", true) || data.host != "reply") return ""
+        val parts = data.pathSegments
+        if (parts.size < 2) return ""
+        val thread = parts[1].trim()
+        if (!threadPattern.matches(thread)) return ""
+        return "chat|$thread|"
+    }
+
+    private fun flutterToken(context: Context): String {
+        val prefs = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+        val raw = prefs.getString("flutter.chat.token.v1", null) ?: return ""
+        val prefix = "VGhpcyBpcyB0aGUgcHJlZml4IGZvciBhIHN0cmluZy4"
+        val value = if (raw.startsWith(prefix)) raw.substring(prefix.length) else raw
+        return value.trim()
     }
 
     private fun threadOf(payload: String): String? {
@@ -722,21 +977,19 @@ class ChatReplyService : Service() {
                 ?.trim()
                 .orEmpty()
         }
-        if (incoming == null || incoming.action != ChatReply.ACTION || text.isEmpty()) {
+        if (incoming == null || !ChatReply.isReply(incoming.action) || text.isEmpty()) {
             stopIfIdle()
             return START_NOT_STICKY
         }
-        val id = incoming.getIntExtra(ChatReply.EXTRA_ID, 0)
+        val id = ChatReply.postedId(incoming)
         ChatPop.dismiss()
         val payload = incoming.getStringExtra(ChatReply.EXTRA_PAYLOAD).orEmpty()
-        val api = incoming.getStringExtra(ChatReply.EXTRA_API).orEmpty()
-        val token = incoming.getStringExtra(ChatReply.EXTRA_TOKEN).orEmpty()
         ChatReply.markSending(app, id, payload)
         inflight.incrementAndGet()
         holdWake(app)
         Thread {
             try {
-                val sent = ChatReply.post(api, token, payload, text)
+                val sent = ChatReply.sendFrom(app, incoming, text)
                 if (id != 0) NotificationManagerCompat.from(app).cancel(id)
                 if (!sent) ChatReply.failed(app)
             } catch (_: Exception) {
@@ -817,7 +1070,7 @@ class ChatReplyService : Service() {
                 val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
                 wake = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SocialSave:reply").apply {
                     setReferenceCounted(false)
-                    acquire(60_000L)
+                    acquire(150_000L)
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "wake lock: $e")
@@ -880,12 +1133,12 @@ class ChatReplyReceiver : BroadcastReceiver() {
             ChatReply.applyMute(context.applicationContext, intent)
             return
         }
-        if (intent.action != ChatReply.ACTION) return
+        if (!ChatReply.isReply(intent.action)) return
         val pending = goAsync()
         ChatPop.dismiss()
         val app = context.applicationContext
-        val id = intent.getIntExtra(ChatReply.EXTRA_ID, 0)
-        NotificationManagerCompat.from(app).cancel(id)
+        val id = ChatReply.postedId(intent)
+        if (id != 0) NotificationManagerCompat.from(app).cancel(id)
         val text = RemoteInput.getResultsFromIntent(intent)
             ?.getCharSequence(ChatReply.KEY_TEXT)
             ?.toString()
@@ -895,15 +1148,25 @@ class ChatReplyReceiver : BroadcastReceiver() {
             pending.finish()
             return
         }
-        val payload = intent.getStringExtra(ChatReply.EXTRA_PAYLOAD).orEmpty()
-        val api = intent.getStringExtra(ChatReply.EXTRA_API).orEmpty()
-        val token = intent.getStringExtra(ChatReply.EXTRA_TOKEN).orEmpty()
         Thread {
+            var wake: PowerManager.WakeLock? = null
             try {
-                if (!ChatReply.post(api, token, payload, text)) ChatReply.failed(app)
+                val pm = app.getSystemService(Context.POWER_SERVICE) as PowerManager
+                wake = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SocialSave:reply").apply {
+                    setReferenceCounted(false)
+                    acquire(150_000L)
+                }
+            } catch (_: Exception) {
+            }
+            try {
+                if (!ChatReply.sendFrom(app, intent, text)) ChatReply.failed(app)
             } catch (_: Exception) {
                 ChatReply.failed(app)
             } finally {
+                try {
+                    wake?.release()
+                } catch (_: Exception) {
+                }
                 pending.finish()
             }
         }.start()
