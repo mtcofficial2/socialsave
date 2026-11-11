@@ -2006,7 +2006,10 @@ class _ChatThreadViewState extends State<ChatThreadView>
                 )
               : null,
           actions: [
-            if (!selecting && !_isGroup && !_searching)
+            if (!selecting &&
+                !_isGroup &&
+                !_searching &&
+                callsOnThisDevice(windows: Plat.isWindows))
               IconButton(
                 tooltip: 'Audio call',
                 onPressed: () => unawaited(

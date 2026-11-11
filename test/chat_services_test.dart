@@ -168,7 +168,60 @@ void main() {
     expect(callExitLabel('missed'), 'Missed call');
     expect(callExitLabel('cancelled'), 'Cancelled');
     expect(callExitLabel('ended'), 'Call ended');
-    expect(callUsesFullScreen(outgoing: true, status: 'ringing'), isFalse);
+    expect(callUsesFullScreen(outgoing: true, status: 'ringing'), isTrue);
+    expect(callsOnThisDevice(windows: true), isFalse);
+    expect(callsOnThisDevice(windows: false), isTrue);
+    expect(chatNoticeHold, const Duration(minutes: 2));
+    expect(
+      chatNoticeShouldPop(
+        known: false,
+        previous: 1,
+        lastId: 4,
+        fromMe: false,
+        muted: false,
+      ),
+      isFalse,
+    );
+    expect(
+      chatNoticeShouldPop(
+        known: true,
+        previous: 3,
+        lastId: 4,
+        fromMe: false,
+        muted: false,
+      ),
+      isTrue,
+    );
+    expect(
+      chatNoticeShouldPop(
+        known: true,
+        previous: 4,
+        lastId: 4,
+        fromMe: false,
+        muted: false,
+      ),
+      isFalse,
+    );
+    expect(
+      chatNoticeShouldPop(
+        known: true,
+        previous: 1,
+        lastId: 4,
+        fromMe: true,
+        muted: false,
+      ),
+      isFalse,
+    );
+    expect(
+      chatNoticeShouldPop(
+        known: true,
+        previous: 1,
+        lastId: 4,
+        fromMe: false,
+        muted: true,
+      ),
+      isFalse,
+    );
     expect(callUsesFullScreen(outgoing: true, status: 'active'), isTrue);
     expect(callUsesFullScreen(outgoing: false, status: 'ringing'), isTrue);
     expect(callUsesFullScreen(outgoing: false, status: 'active'), isTrue);

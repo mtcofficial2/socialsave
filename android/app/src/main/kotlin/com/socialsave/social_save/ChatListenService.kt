@@ -45,8 +45,26 @@ object ChatListen {
                             ChatListenService.start(app)
                             result.success(true)
                         }
+                        "creds" -> {
+                            val api = call.argument<String>("api").orEmpty()
+                            val token = call.argument<String>("token").orEmpty()
+                            val me = call.argument<String>("me").orEmpty()
+                            ChatWatch.save(app, api, token, me)
+                            if (ChatListenService.running) ChatWatch.poke(app)
+                            result.success(true)
+                        }
+                        "seen" -> {
+                            val ids = call.argument<Map<*, *>>("ids") ?: emptyMap<String, Any>()
+                            ChatWatch.remember(app, ids)
+                            result.success(true)
+                        }
+                        "beat" -> {
+                            ChatWatch.beat(app)
+                            result.success(true)
+                        }
                         "stop" -> {
                             active = false
+                            ChatWatch.disarm(app)
                             ChatListenService.stop(app)
                             result.success(true)
                             if (!SessionBridge.activityAlive && !SessionBridge.active) {
@@ -125,7 +143,8 @@ class ChatListenService : Service() {
         }
         running = true
         acquireLock()
-        return START_NOT_STICKY
+        ChatWatch.ensure(this)
+        return START_STICKY
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
@@ -135,6 +154,7 @@ class ChatListenService : Service() {
 
     override fun onDestroy() {
         running = false
+        ChatWatch.pause(this)
         releaseLock()
         super.onDestroy()
     }
@@ -163,6 +183,7 @@ class ChatListenService : Service() {
 
     private fun shutdown() {
         running = false
+        ChatWatch.pause(this)
         releaseLock()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)

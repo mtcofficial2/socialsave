@@ -169,6 +169,9 @@
         <receiver
             android:name=".ChatReplyReceiver"
             android:exported="false" />
+        <receiver
+            android:name=".ChatCallReceiver"
+            android:exported="false" />
         <service
             android:name=".PlaybackService"
             android:exported="false"

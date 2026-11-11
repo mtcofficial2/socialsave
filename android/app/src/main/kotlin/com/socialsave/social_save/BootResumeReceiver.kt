@@ -12,6 +12,7 @@ import androidx.core.app.NotificationCompat
 class BootResumeReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        if (ChatWatch.credentials(context) != null) ChatListenService.start(context)
         val prefs = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
         val follows = prefs.getString("flutter.socialsave_follows", null)
         if (!follows.isNullOrBlank() && follows != "[]") FollowAlarm.schedule(context)

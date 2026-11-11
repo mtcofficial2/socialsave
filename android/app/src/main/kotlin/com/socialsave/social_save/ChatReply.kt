@@ -1,14 +1,17 @@
 package com.socialsave.social_save
 
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.media.AudioAttributes
 import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.net.Uri
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
@@ -49,6 +52,7 @@ object ChatReplyBridge {
     private var channel: MethodChannel? = null
     private var listening = false
     private var pending: String? = null
+    private var pendingCall: String? = null
 
     fun install(context: Context, messenger: BinaryMessenger) {
         val next = MethodChannel(messenger, channelName)
@@ -65,19 +69,61 @@ object ChatReplyBridge {
                     pending = null
                     result.success(value)
                 }
+                "pendingCall" -> {
+                    listening = true
+                    val value = pendingCall
+                    pendingCall = null
+                    result.success(value)
+                }
+                "showCall" -> {
+                    val callId = call.argument<String>("id")?.trim().orEmpty()
+                    val name = call.argument<String>("name")?.trim().orEmpty()
+                    val api = call.argument<String>("api")?.trim().orEmpty()
+                    val token = call.argument<String>("token")?.trim().orEmpty()
+                    ChatCallNotice.show(context.applicationContext, callId, name, api, token)
+                    result.success(null)
+                }
+                "cancelCall" -> {
+                    ChatCallNotice.cancel(context.applicationContext)
+                    result.success(null)
+                }
                 else -> result.notImplemented()
             }
         }
     }
 
     fun note(intent: Intent?) {
-        val payload = intent?.getStringExtra(ChatReply.EXTRA_OPEN) ?: return
-        if (!payload.startsWith("chat|")) return
-        intent.removeExtra(ChatReply.EXTRA_OPEN)
+        val payload = intent?.getStringExtra(ChatReply.EXTRA_OPEN)
+        if (payload != null && payload.startsWith("chat|")) {
+            intent.removeExtra(ChatReply.EXTRA_OPEN)
+            if (listening) {
+                channel?.invokeMethod("opened", payload)
+            } else {
+                pending = payload
+            }
+        }
+        val action = intent?.getStringExtra(ChatCallNotice.EXTRA_ACTION)?.trim().orEmpty()
+        val callId = intent?.getStringExtra(ChatCallNotice.EXTRA_ID)?.trim().orEmpty()
+        if (action != "answer" && action != "open" && action != "decline") return
+        if (callId.isEmpty()) return
+        intent?.removeExtra(ChatCallNotice.EXTRA_ACTION)
+        val notice = "$action|$callId"
         if (listening) {
-            channel?.invokeMethod("opened", payload)
+            channel?.invokeMethod("call", notice)
         } else {
-            pending = payload
+            pendingCall = notice
+        }
+    }
+
+    fun tellCall(payload: String) {
+        if (payload.isEmpty()) return
+        if (!listening) {
+            pendingCall = payload
+            return
+        }
+        try {
+            channel?.invokeMethod("call", payload)
+        } catch (_: Exception) {
         }
     }
 
@@ -93,14 +139,18 @@ object ChatReplyBridge {
 object ChatReply {
     const val ACTION = "com.socialsave.social_save.CHAT_REPLY"
     const val ACTION_MUTE = "com.socialsave.social_save.CHAT_MUTE"
+    const val ACTION_DISMISS = "com.socialsave.social_save.CHAT_DISMISS"
     const val EXTRA_OPEN = "socialsave.chat.open"
     const val EXTRA_ID = "socialsave.chat.id"
     const val EXTRA_PAYLOAD = "socialsave.chat.payload"
     const val EXTRA_API = "socialsave.chat.api"
     const val EXTRA_TOKEN = "socialsave.chat.token"
     const val KEY_TEXT = "socialsave.chat.reply"
-    private const val channelLoud = "chats_v2"
+    private const val channelLoud = "chats_v3"
     private const val channelQuiet = "chats_quiet"
+    private const val holdMs = 120_000L
+    private val attention = 0xFFFF6D00.toInt()
+    private var bang: Bitmap? = null
     private const val failedId = 0x52454641
     private val threadPattern = Regex("^[A-Za-z0-9]{2,80}$")
 
@@ -149,24 +199,28 @@ object ChatReply {
             .setShowsUserInterface(false)
             .build()
         val mute = muteAction(context, id, payload)
+        val dismiss = dismissAction(context, id)
         val silent = call.argument<Boolean>("silent") == true
         val faces = try {
             facesOf(pictureBytes(call))
         } catch (_: Exception) {
             null
         }
-        val builder = NotificationCompat.Builder(context, if (sound) channelLoud else channelQuiet)
+        val alert = sound && !silent
+        val builder = NotificationCompat.Builder(context, channelLoud)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(body)
             .setContentIntent(open)
             .setAutoCancel(true)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setOnlyAlertOnce(true)
-            .setSilent(silent)
+            .setOnlyAlertOnce(!alert)
+            .setSilent(!alert)
+            .setShowWhen(true)
             .addAction(action)
+            .addAction(dismiss)
             .addAction(mute)
+        dress(builder, alert)
         if (faces != null) {
             // Android 12 uses the shortcut icon as the profile circle. The app
             // logo in that slot is what was covering the sender.
@@ -191,7 +245,7 @@ object ChatReply {
                 builder.setShortcutId(shortcutId).setLocusId(LocusIdCompat(shortcutId))
             }
         } else {
-            builder.setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            builder.setLargeIcon(bangIcon()).setStyle(NotificationCompat.BigTextStyle().bigText(body))
         }
         NotificationManagerCompat.from(context).notify(id, builder.build())
     }
@@ -376,21 +430,25 @@ object ChatReply {
                 .setShowsUserInterface(false)
                 .build()
             val mute = muteAction(context, id, payload)
-            val notification = NotificationCompat.Builder(
-                context,
-                if (sound) channelLoud else channelQuiet,
-            )
+            val dismiss = dismissAction(context, id)
+            val alert = sound
+            val builder = NotificationCompat.Builder(context, channelLoud)
                 .setSmallIcon(R.drawable.ic_notification)
+                .setLargeIcon(bangIcon())
                 .setContentTitle(title)
                 .setContentText(body)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(body))
                 .setContentIntent(open)
                 .setAutoCancel(true)
                 .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setOnlyAlertOnce(!alert)
+                .setSilent(!alert)
+                .setShowWhen(true)
                 .addAction(action)
+                .addAction(dismiss)
                 .addAction(mute)
-                .build()
+            dress(builder, alert)
+            val notification = builder.build()
             NotificationManagerCompat.from(context).notify(id, notification)
         } catch (t: Throwable) {
             Log.e("SocialSaveReply", "plain notification failed", t)
@@ -487,6 +545,51 @@ object ChatReply {
             .build()
     }
 
+    private fun dismissAction(context: Context, id: Int): NotificationCompat.Action {
+        val pending = PendingIntent.getBroadcast(
+            context,
+            id xor 0x17171717,
+            Intent(context, ChatReplyReceiver::class.java)
+                .setAction(ACTION_DISMISS)
+                .setData(Uri.parse("socialsave://dismiss/$id"))
+                .putExtra(EXTRA_ID, id),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        return NotificationCompat.Action.Builder(R.drawable.ic_notification, "Cancel", pending)
+            .setShowsUserInterface(false)
+            .build()
+    }
+
+    /// Stays for two minutes unless it is cancelled, replied to, or swiped away.
+    private fun dress(builder: NotificationCompat.Builder, loud: Boolean) {
+        builder
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setColor(attention)
+            .setColorized(true)
+            .setTimeoutAfter(holdMs)
+        if (!loud) return
+        builder
+            .setLights(attention, 400, 180)
+            .setVibrate(longArrayOf(0, 280, 120, 280, 120, 480))
+    }
+
+    private fun bangIcon(): Bitmap {
+        bang?.let { return it }
+        val size = 128
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.color = attention
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
+        paint.color = Color.WHITE
+        paint.textAlign = Paint.Align.CENTER
+        paint.textSize = 84f
+        canvas.drawText("!", size / 2f, size / 2f + 28f, paint)
+        bang = bmp
+        return bmp
+    }
+
     /// Same list Social Save reads as chat.list.muted.v1. A mute from the
     /// notification still holds after the app process is gone.
     private fun rememberMute(context: Context, threadId: String) {
@@ -526,8 +629,23 @@ object ChatReply {
     private fun ensureChannels(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        val loud = NotificationChannel(channelLoud, "Chats", NotificationManager.IMPORTANCE_HIGH)
+        val loud = NotificationChannel(channelLoud, "Chats", NotificationManager.IMPORTANCE_MAX)
         loud.description = "New messages"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val audio = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+            loud.setSound(
+                Uri.parse("android.resource://${context.packageName}/${R.raw.ss_message}"),
+                audio,
+            )
+            loud.enableLights(true)
+            loud.lightColor = attention
+            loud.enableVibration(true)
+            loud.vibrationPattern = longArrayOf(0, 280, 120, 280, 120, 480)
+            loud.lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+        }
         val quiet = NotificationChannel(channelQuiet, "Chats", NotificationManager.IMPORTANCE_LOW)
         quiet.description = "New messages"
         quiet.setSound(null, null)
@@ -701,6 +819,16 @@ class ChatReplyService : Service() {
 
 class ChatReplyReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == ChatReply.ACTION_DISMISS) {
+            val id = intent.getIntExtra(ChatReply.EXTRA_ID, 0)
+            if (id != 0) {
+                try {
+                    NotificationManagerCompat.from(context.applicationContext).cancel(id)
+                } catch (_: Exception) {
+                }
+            }
+            return
+        }
         if (intent.action == ChatReply.ACTION_MUTE) {
             ChatReply.applyMute(context.applicationContext, intent)
             return

@@ -398,6 +398,7 @@ class ChatCalls {
   bool _linked = false;
   bool _hadAudio = false;
   bool _ringOn = false;
+  bool _outTone = false;
   bool _finishing = false;
   bool _answering = false;
   bool _routeChosen = false;
@@ -467,6 +468,7 @@ class ChatCalls {
   }
 
   Future<void> start(String threadId, String name) async {
+    if (!callsOnThisDevice(windows: Plat.isWindows)) return;
     if (_finishing) return;
     if (active?.live == true || status == 'ringing' || status == 'active') {
       _present();
@@ -494,6 +496,7 @@ class ChatCalls {
     revision.value++;
     _present();
     _armWatch();
+    _beginOutgoingTone();
     try {
       await _rememberLan();
       unawaited(_notePcAudio());
@@ -521,6 +524,7 @@ class ChatCalls {
       problem = error is StateError ? error.message : chatErrorText(error);
       status = '';
       outgoing = false;
+      unawaited(_stopOutgoingTone());
       _watch?.cancel();
       _watch = null;
       await _media.close();
@@ -535,6 +539,7 @@ class ChatCalls {
   }
 
   Future<void> onLive(ChatLiveEvent event) async {
+    if (!callsOnThisDevice(windows: Plat.isWindows)) return;
     if (_finishing && event.type != 'call') return;
     if (_me.isEmpty) _me = await ChatSession.username();
     if (_finishing && event.type != 'call') return;
@@ -627,6 +632,7 @@ class ChatCalls {
   }
 
   Future<void> syncIncoming() async {
+    if (!callsOnThisDevice(windows: Plat.isWindows)) return;
     if (_finishing) return;
     if (outgoing || status == 'active') {
       await _watchLive();
@@ -702,6 +708,31 @@ class ChatCalls {
       if (!callIsOver(kind)) kind = 'ended';
       await _finish(kind: kind);
     } catch (_) {}
+  }
+
+  /// Answer tapped on the call notice. The call screen opens on that call.
+  Future<void> acceptNotice(String id) async {
+    if (!callsOnThisDevice(windows: Plat.isWindows)) return;
+    final wanted = id.trim();
+    if (wanted.isEmpty) return;
+    for (var i = 0; i < 4; i++) {
+      if (_finishing) return;
+      if (active?.id != wanted || status != 'ringing') {
+        await syncIncoming();
+      }
+      if (active?.id == wanted && status == 'ringing' && !_finishing) {
+        await accept();
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+    }
+  }
+
+  /// Hang up on the call notice already told the server. Close this phone's screen.
+  Future<void> noticeDeclined(String id) async {
+    if (active?.id != id || status != 'ringing') return;
+    _remember(id);
+    await _finish(kind: 'declined');
   }
 
   Future<void> accept() async {
@@ -1054,7 +1085,6 @@ class ChatCalls {
     _ringOn = true;
     final gen = ++_ringGen;
     _showWindow();
-    unawaited(_playRing(gen));
     unawaited(_showIncoming(gen));
   }
 
@@ -1102,10 +1132,35 @@ class ChatCalls {
   }
 
   Future<void> _showIncoming(int gen) async {
-    await NotificationService().showIncomingCall(peerName);
+    try {
+      await NotificationService().showIncomingCall(peerName, callId: active?.id ?? '');
+    } catch (_) {
+      await _playRing(gen);
+      return;
+    }
     if (gen != _ringGen || !_ringOn) {
       await NotificationService().cancelIncomingCall();
     }
+  }
+
+  void _beginOutgoingTone() {
+    if (!Plat.isAndroid || _outTone || !outgoing) return;
+    _outTone = true;
+    unawaited(_ringback(true));
+  }
+
+  Future<void> _stopOutgoingTone() async {
+    if (!_outTone) return;
+    _outTone = false;
+    await _ringback(false);
+  }
+
+  Future<void> _ringback(bool on) async {
+    try {
+      await const MethodChannel('socialsave/media').invokeMethod<void>(
+        on ? 'playCallRingback' : 'stopCallRingback',
+      );
+    } catch (_) {}
   }
 
   Future<void> _playRing(int gen) async {
@@ -1133,6 +1188,7 @@ class ChatCalls {
     try {
       await const MethodChannel('socialsave/media').invokeMethod<void>('stopCallRingtone');
     } catch (_) {}
+    await _stopOutgoingTone();
     unawaited(NotificationService().cancelIncomingCall());
   }
 }

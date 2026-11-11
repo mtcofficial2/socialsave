@@ -1050,10 +1050,29 @@ Map<String, dynamic> windowsCallMic(String? sourceId) {
   return {'audio': audio, 'video': false};
 }
 
-/// Ringing out stays a small bar. A picked-up call, and a call arriving here, fill the screen.
+/// Phones place and receive audio calls. A PC does not.
+bool callsOnThisDevice({required bool windows}) => !windows;
+
+/// A message notice stays until it is cancelled, replied to, or swiped, or this passes.
+const Duration chatNoticeHold = Duration(minutes: 2);
+
+/// Pops only after this device has already seen the inbox, and only for a new message.
+bool chatNoticeShouldPop({
+  required bool known,
+  required int previous,
+  required int lastId,
+  required bool fromMe,
+  required bool muted,
+}) {
+  if (!known || fromMe || muted || lastId <= 0) return false;
+  return lastId > previous;
+}
+
+/// Both sides of a ringing call fill the screen, and a picked-up call does too.
 bool callUsesFullScreen({required bool outgoing, required String status}) {
   if (status == 'active') return true;
-  return !outgoing && status == 'ringing';
+  if (status == 'ringing') return outgoing || !outgoing;
+  return false;
 }
 
 /// The signed-in account answered on another device. This one stops ringing

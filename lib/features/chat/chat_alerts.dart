@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -222,6 +223,7 @@ class ChatAlerts {
         seen[item.id] = item.lastId > prev ? item.lastId : prev;
       }
       seeded = true;
+      _pushSeen();
       return;
     }
     for (final item in items) {
@@ -235,6 +237,18 @@ class ChatAlerts {
       if (ChatInboxFilter.isMuted(item.id)) continue;
       alert(item, chatAlertBody(item.lastText));
     }
+    _pushSeen();
+  }
+
+  static void _pushSeen() {
+    if (!Plat.isAndroid || seen.isEmpty) return;
+    unawaited(
+      const MethodChannel('socialsave/chat_listen').invokeMethod<void>('seen', {
+        'ids': <String, int>{
+          for (final entry in seen.entries) entry.key: entry.value,
+        },
+      }),
+    );
   }
 }
 
@@ -256,6 +270,18 @@ class ChatPresence {
     if (!Plat.isAndroid) {
       _on = signedIn;
       return;
+    }
+    if (signedIn) {
+      try {
+        await const MethodChannel('socialsave/chat_listen').invokeMethod<void>(
+          'creds',
+          {
+            'api': chatApiBaseUrl(),
+            'token': token,
+            'me': await ChatSession.username(),
+          },
+        );
+      } catch (_) {}
     }
     if (signedIn == _on) return;
     _on = signedIn;
@@ -303,35 +329,92 @@ class ChatAlertWatch {
   final ChatApi _api = ChatApi();
   Timer? _poll;
   Timer? _calls;
+  StreamSubscription<List<ConnectivityResult>>? _net;
   bool _busy = false;
+  bool _again = false;
   bool _asked = false;
+  bool _offline = false;
+  bool _socketDown = true;
   String _me = '';
 
   void ensure() {
     if (_poll != null || _calls != null) return;
+    unawaited(_beat());
     NotificationService.attachChatOpen(_open);
+    NotificationService.attachCall(_onCall);
     NotificationService.onCallOpen = () {
       if (Plat.isWindows) unawaited(DesktopTray.show());
     };
     NotificationService.onReplySent = _keep;
     ChatLive.instance.start();
+    ChatLive.instance.connected.addListener(_onSocket);
     unawaited(ChatInboxFilter.ensure());
     ChatLive.instance.events.listen(_onLive);
     _poll = Timer.periodic(
       const Duration(seconds: 12),
       (_) => unawaited(_check()),
     );
-    _calls = Timer.periodic(
-      const Duration(seconds: 4),
-      (_) => unawaited(ChatCalls.instance.syncIncoming()),
-    );
+    if (callsOnThisDevice(windows: Plat.isWindows)) {
+      _calls = Timer.periodic(
+        const Duration(seconds: 4),
+        (_) => unawaited(ChatCalls.instance.syncIncoming()),
+      );
+      unawaited(ChatCalls.instance.syncIncoming());
+    }
+    _net = Connectivity().onConnectivityChanged.listen((results) {
+      final offline = results.length == 1 && results.contains(ConnectivityResult.none);
+      if (offline) {
+        _offline = true;
+        return;
+      }
+      if (!_offline) return;
+      _offline = false;
+      unawaited(_check(force: true));
+      if (callsOnThisDevice(windows: Plat.isWindows)) {
+        unawaited(ChatCalls.instance.syncIncoming());
+      }
+    });
     unawaited(_check());
-    unawaited(ChatCalls.instance.syncIncoming());
+  }
+
+  void _onSocket() {
+    if (!ChatLive.instance.connected.value) {
+      _socketDown = true;
+      return;
+    }
+    if (!_socketDown) return;
+    _socketDown = false;
+    unawaited(_check(force: true));
+  }
+
+  void _onCall(String payload) {
+    final parts = payload.split('|');
+    if (parts.length < 2) return;
+    final id = parts[1].trim();
+    if (id.isEmpty) return;
+    if (parts[0] == 'answer') {
+      unawaited(ChatCalls.instance.acceptNotice(id));
+      return;
+    }
+    if (parts[0] == 'decline') {
+      unawaited(ChatCalls.instance.noticeDeclined(id));
+      return;
+    }
+    if (parts[0] == 'open') unawaited(ChatCalls.instance.syncIncoming());
+  }
+
+  Future<void> _beat() async {
+    if (!Plat.isAndroid) return;
+    try {
+      await const MethodChannel('socialsave/chat_listen').invokeMethod<void>('beat');
+    } catch (_) {}
   }
 
   void _onLive(ChatLiveEvent event) {
     if (event.type == 'call' || event.type.startsWith('call-')) {
-      unawaited(ChatCalls.instance.onLive(event));
+      if (callsOnThisDevice(windows: Plat.isWindows)) {
+        unawaited(ChatCalls.instance.onLive(event));
+      }
       return;
     }
     if (event.type == 'removed') {
@@ -347,6 +430,7 @@ class ChatAlertWatch {
     final prev = ChatAlerts.seen[event.threadId] ?? 0;
     if (message.id <= prev) return;
     ChatAlerts.seen[event.threadId] = message.id;
+    ChatAlerts._pushSeen();
     unawaited(_alertLive(event.threadId, message));
   }
 
@@ -417,27 +501,31 @@ class ChatAlertWatch {
     });
   }
 
-  Future<void> _check() async {
-    if (_busy) return;
-    if (!chatInboxCheckRuns(WidgetsBinding.instance.lifecycleState)) return;
-    await ChatPrefs.ensure();
-    final fresh = ChatAlerts.lastInbox;
-    final gap = ChatPrefs.dataSaver
-        ? const Duration(seconds: 30)
-        : const Duration(seconds: 10);
-    if (fresh != null && DateTime.now().difference(fresh) < gap) {
-      unawaited(ChatPresence.sync());
+  Future<void> _check({bool force = false}) async {
+    if (_busy) {
+      if (force) _again = true;
       return;
     }
-    final token = await ChatSession.token();
-    if (token == null) {
-      ChatAlerts.reset();
-      return;
-    }
-    ChatLive.instance.start();
-    unawaited(ChatPresence.sync());
     _busy = true;
     try {
+      unawaited(_beat());
+      if (!chatInboxCheckRuns(WidgetsBinding.instance.lifecycleState)) return;
+      await ChatPrefs.ensure();
+      final fresh = ChatAlerts.lastInbox;
+      final gap = ChatPrefs.dataSaver
+          ? const Duration(seconds: 30)
+          : const Duration(seconds: 10);
+      if (!force && fresh != null && DateTime.now().difference(fresh) < gap) {
+        unawaited(ChatPresence.sync());
+        return;
+      }
+      final token = await ChatSession.token();
+      if (token == null) {
+        ChatAlerts.reset();
+        return;
+      }
+      ChatLive.instance.start();
+      unawaited(ChatPresence.sync());
       if (!_asked) {
         _asked = true;
         unawaited(NotificationService().requestPermission());
@@ -485,6 +573,10 @@ class ChatAlertWatch {
       // The next pass tries again. A quiet miss is better than a banner on Home.
     } finally {
       _busy = false;
+      if (_again) {
+        _again = false;
+        unawaited(_check(force: true));
+      }
     }
   }
 }

@@ -52,8 +52,10 @@ class MainActivity : FlutterFragmentActivity() {
     private val io = Executors.newFixedThreadPool(3)
     private var messageTone: Ringtone? = null
     private var callTone: Ringtone? = null
+    private var callOut: Ringtone? = null
     private val ringHandler = Handler(Looper.getMainLooper())
     private var ringAgain: Runnable? = null
+    private var outAgain: Runnable? = null
     private var backupResult: MethodChannel.Result? = null
     private var folderResult: MethodChannel.Result? = null
     private var phoneBody: PhoneBody? = null
@@ -522,44 +524,56 @@ class MainActivity : FlutterFragmentActivity() {
         return fragment
     }
 
-    /** The phone's own notification tone. Android plays no sound for a system alert. */
+    private fun rawTone(resId: Int): Ringtone? {
+        val uri = Uri.parse("android.resource://$packageName/$resId")
+        return RingtoneManager.getRingtone(applicationContext, uri)
+    }
+
+    /** Social Save's own message chime. The Android default tone is not used. */
     private fun playNotificationSound() {
         try {
             messageTone?.stop()
-            val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-                ?: Settings.System.DEFAULT_NOTIFICATION_URI
-            val tone = RingtoneManager.getRingtone(applicationContext, uri) ?: return
+            val tone = rawTone(R.raw.ss_message) ?: return
             messageTone = tone
             tone.play()
         } catch (_: Exception) {
         }
     }
 
-    /** The phone ringtone, looping, until the call is answered or declined. */
+    /** Social Save's ring, looping, until the call is answered or declined. */
     private fun playCallRingtone() {
+        playLoop(incoming = true)
+    }
+
+    /** A calling tone on this phone while the other person has not picked up. */
+    private fun playCallRingback() {
+        playLoop(incoming = false)
+    }
+
+    private fun playLoop(incoming: Boolean) {
         try {
-            stopCallRingtone()
-            val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-                ?: Settings.System.DEFAULT_RINGTONE_URI
-            val tone = RingtoneManager.getRingtone(applicationContext, uri) ?: return
-            callTone = tone
+            if (incoming) stopCallRingtone() else stopCallRingback()
+            val tone = rawTone(if (incoming) R.raw.ss_ring else R.raw.ss_callout) ?: return
+            if (incoming) callTone = tone else callOut = tone
             if (Build.VERSION.SDK_INT >= 28) {
                 tone.isLooping = true
                 tone.play()
                 return
             }
+            val gap = if (incoming) 1600L else 2500L
             val again = object : Runnable {
                 override fun run() {
-                    val current = callTone ?: return
+                    val current = if (incoming) callTone else callOut
+                    if (current == null) return
                     try {
                         current.play()
                     } catch (_: Exception) {
                         return
                     }
-                    ringHandler.postDelayed(this, 2800)
+                    ringHandler.postDelayed(this, gap)
                 }
             }
-            ringAgain = again
+            if (incoming) ringAgain = again else outAgain = again
             again.run()
         } catch (_: Exception) {
         }
@@ -573,6 +587,26 @@ class MainActivity : FlutterFragmentActivity() {
         } catch (_: Exception) {
         }
         callTone = null
+    }
+
+    private fun stopCallRingback() {
+        outAgain?.let { ringHandler.removeCallbacks(it) }
+        outAgain = null
+        try {
+            callOut?.stop()
+        } catch (_: Exception) {
+        }
+        callOut = null
+    }
+
+    /** A call can show over the lock screen. Other opens stay behind it. */
+    private fun wakeForCall(intent: Intent?) {
+        val action = intent?.getStringExtra(ChatCallNotice.EXTRA_ACTION)
+        val call = action == "answer" || action == "open"
+        if (Build.VERSION.SDK_INT >= 27) {
+            setShowWhenLocked(call)
+            setTurnScreenOn(call)
+        }
     }
 
     /** Back on the first screen while connected or listening for messages: stay alive. */
@@ -608,6 +642,14 @@ class MainActivity : FlutterFragmentActivity() {
                 }
                 "stopCallRingtone" -> {
                     stopCallRingtone()
+                    result.success(true)
+                }
+                "playCallRingback" -> {
+                    playCallRingback()
+                    result.success(true)
+                }
+                "stopCallRingback" -> {
+                    stopCallRingback()
                     result.success(true)
                 }
                 "deviceName" -> result.success(deviceLabel())
@@ -1213,6 +1255,7 @@ class MainActivity : FlutterFragmentActivity() {
         captureOpenedVideo(intent)
         captureOpenSession(intent)
         captureQuickAction(intent)
+        wakeForCall(intent)
         ChatReplyBridge.note(intent)
     }
 
@@ -1255,6 +1298,7 @@ class MainActivity : FlutterFragmentActivity() {
         else channel?.invokeMethod("sharedText", pendingShare)
         captureOpenedVideo(intent)
         captureQuickAction(intent)
+        wakeForCall(intent)
         ChatReplyBridge.note(intent)
     }
 

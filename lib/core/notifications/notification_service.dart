@@ -199,7 +199,29 @@ class NotificationService {
 
   /// A Windows toast for an incoming call was clicked. The window comes forward.
   static void Function()? onCallOpen;
+
+  /// Answer, hang up, or open from the phone's call notice. `action|callId`.
+  static void Function(String payload)? onCallAction;
   static String? _pendingChat;
+  static String? _pendingCall;
+
+  static void attachCall(void Function(String payload) open) {
+    onCallAction = open;
+    final pending = _pendingCall;
+    _pendingCall = null;
+    if (pending != null) open(pending);
+  }
+
+  static void _deliverCall(String payload) {
+    final trimmed = payload.trim();
+    if (trimmed.isEmpty) return;
+    final open = onCallAction;
+    if (open == null) {
+      _pendingCall = trimmed;
+      return;
+    }
+    open(trimmed);
+  }
 
   /// A reply typed into a notification was accepted by the server.
   /// The background isolate does not set this, so only the open app saves it.
@@ -348,6 +370,8 @@ class NotificationService {
       _androidChatNotify.setMethodCallHandler((call) async {
         if (call.method == 'opened' && call.arguments is String) {
           _openChat(call.arguments as String);
+        } else if (call.method == 'call' && call.arguments is String) {
+          _deliverCall(call.arguments as String);
         } else if (call.method == 'muted' && call.arguments is String) {
           final id = (call.arguments as String).trim();
           if (_chatThreadId.hasMatch(id)) {
@@ -358,6 +382,10 @@ class NotificationService {
       try {
         final pending = await _androidChatNotify.invokeMethod<String>('pending');
         if (pending != null && pending.startsWith('chat|')) _openChat(pending);
+        final callPending = await _androidChatNotify.invokeMethod<String>('pendingCall');
+        if (callPending != null && callPending.contains('|')) {
+          _deliverCall(callPending);
+        }
       } catch (_) {}
     }
     try {
@@ -550,21 +578,24 @@ class NotificationService {
 
   static const incomingCallId = 910085;
 
-  /// A ringing banner. The phone ringtone itself is played separately so the
-  /// notification sound does not cut the ring short. Windows has no call
-  /// channel, so the same words go out as a toast.
-  Future<void> showIncomingCall(String name) async {
-    if (kIsWeb) return;
+  /// A ringing banner with Answer and Hang up for this call.
+  /// A PC does not ring. The tone is Social Save's own ring.
+  Future<void> showIncomingCall(String name, {String callId = ''}) async {
+    if (kIsWeb || defaultTargetPlatform == TargetPlatform.windows) return;
     if (!_initialized) await init();
     final who = name.trim().isEmpty ? 'Audio call' : name.trim();
-    if (defaultTargetPlatform == TargetPlatform.windows) {
-      await _showWindows(
-        incomingCallId,
-        who,
-        'Incoming audio call',
-        payload: 'call|incoming',
-      );
-      return;
+    final id = callId.trim();
+    if (defaultTargetPlatform == TargetPlatform.android && id.isNotEmpty) {
+      final token = await ChatSession.token() ?? '';
+      try {
+        await _androidChatNotify.invokeMethod<void>('showCall', <String, String>{
+          'id': id,
+          'name': who,
+          'api': chatApiBaseUrl(),
+          'token': token,
+        });
+        return;
+      } catch (_) {}
     }
     const details = NotificationDetails(
       android: AndroidNotificationDetails(
@@ -595,7 +626,16 @@ class NotificationService {
     );
   }
 
-  Future<void> cancelIncomingCall() => _plugin.cancel(incomingCallId);
+  Future<void> cancelIncomingCall() async {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        await _androidChatNotify.invokeMethod<void>('cancelCall');
+      } catch (_) {}
+    }
+    try {
+      await _plugin.cancel(incomingCallId);
+    } catch (_) {}
+  }
 
   Future<void> showDownloadComplete({
     required String id,
