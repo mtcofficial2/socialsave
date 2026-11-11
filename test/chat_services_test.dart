@@ -171,7 +171,7 @@ void main() {
     expect(callUsesFullScreen(outgoing: true, status: 'ringing'), isTrue);
     expect(callsOnThisDevice(windows: true), isFalse);
     expect(callsOnThisDevice(windows: false), isTrue);
-    expect(chatNoticeHold, const Duration(minutes: 2));
+    expect(chatNoticeHold, const Duration(minutes: 5));
     expect(
       chatNoticeShouldPop(
         known: false,

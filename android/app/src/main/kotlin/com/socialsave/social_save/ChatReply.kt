@@ -148,9 +148,9 @@ object ChatReply {
     const val KEY_TEXT = "socialsave.chat.reply"
     private const val channelLoud = "chats_v3"
     private const val channelQuiet = "chats_quiet"
-    private const val holdMs = 120_000L
-    private val attention = 0xFFFF6D00.toInt()
-    private var bang: Bitmap? = null
+    private const val holdMs = 300_000L
+    private val attention = 0xFF00C853.toInt()
+    private var brand: Bitmap? = null
     private const val failedId = 0x52454641
     private val threadPattern = Regex("^[A-Za-z0-9]{2,80}$")
 
@@ -245,9 +245,9 @@ object ChatReply {
                 builder.setShortcutId(shortcutId).setLocusId(LocusIdCompat(shortcutId))
             }
         } else {
-            builder.setLargeIcon(bangIcon()).setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            asMessage(context, builder, title, body, brandIcon(context))
         }
-        NotificationManagerCompat.from(context).notify(id, builder.build())
+        deliver(context, builder, alert, id, title, body, payload, api, token)
     }
 
     fun post(api: String, token: String, payload: String, text: String): Boolean {
@@ -434,10 +434,8 @@ object ChatReply {
             val alert = sound
             val builder = NotificationCompat.Builder(context, channelLoud)
                 .setSmallIcon(R.drawable.ic_notification)
-                .setLargeIcon(bangIcon())
                 .setContentTitle(title)
                 .setContentText(body)
-                .setStyle(NotificationCompat.BigTextStyle().bigText(body))
                 .setContentIntent(open)
                 .setAutoCancel(true)
                 .setCategory(NotificationCompat.CATEGORY_MESSAGE)
@@ -447,9 +445,9 @@ object ChatReply {
                 .addAction(action)
                 .addAction(dismiss)
                 .addAction(mute)
+            asMessage(context, builder, title, body, brandIcon(context))
             dress(builder, alert)
-            val notification = builder.build()
-            NotificationManagerCompat.from(context).notify(id, notification)
+            deliver(context, builder, alert, id, title, body, payload, api, token)
         } catch (t: Throwable) {
             Log.e("SocialSaveReply", "plain notification failed", t)
         }
@@ -560,7 +558,8 @@ object ChatReply {
             .build()
     }
 
-    /// Stays for two minutes unless it is cancelled, replied to, or swiped away.
+    /// Stays for five minutes unless it is cancelled, replied to, or swiped away.
+    /// A loud notice also keeps a green popup up for that long.
     private fun dress(builder: NotificationCompat.Builder, loud: Boolean) {
         builder
             .setPriority(NotificationCompat.PRIORITY_MAX)
@@ -574,20 +573,67 @@ object ChatReply {
             .setVibrate(longArrayOf(0, 280, 120, 280, 120, 480))
     }
 
-    private fun bangIcon(): Bitmap {
-        bang?.let { return it }
-        val size = 128
-        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bmp)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        paint.color = attention
-        canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
-        paint.color = Color.WHITE
-        paint.textAlign = Paint.Align.CENTER
-        paint.textSize = 84f
-        canvas.drawText("!", size / 2f, size / 2f + 28f, paint)
-        bang = bmp
+    private fun brandIcon(context: Context): Bitmap {
+        brand?.let { return it }
+        val raw = BitmapFactory.decodeResource(context.resources, R.drawable.ic_notification_logo)
+        val bmp = if (raw == null) {
+            Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        } else if (raw.width == 256 && raw.height == 256) {
+            raw
+        } else {
+            Bitmap.createScaledBitmap(raw, 256, 256, true)
+        }
+        brand = bmp
         return bmp
+    }
+
+    /// The Social Save logo stands in for a missing face, the way a chat app
+    /// keeps its own mark in the notification.
+    private fun asMessage(
+        context: Context,
+        builder: NotificationCompat.Builder,
+        title: String,
+        body: String,
+        icon: Bitmap,
+    ) {
+        val sender = Person.Builder()
+            .setName(title)
+            .setIcon(IconCompat.createWithBitmap(icon))
+            .setImportant(true)
+            .build()
+        val me = Person.Builder().setName("You").setKey("socialsave-me").build()
+        builder
+            .setLargeIcon(icon)
+            .setStyle(
+                NotificationCompat.MessagingStyle(me)
+                    .setGroupConversation(false)
+                    .addMessage(body, System.currentTimeMillis(), sender),
+            )
+            .addPerson(sender)
+    }
+
+    private fun deliver(
+        context: Context,
+        builder: NotificationCompat.Builder,
+        alert: Boolean,
+        id: Int,
+        title: String,
+        body: String,
+        payload: String,
+        api: String,
+        token: String,
+    ) {
+        if (alert && !ChatPop.canDraw(context)) {
+            builder.setFullScreenIntent(
+                ChatPop.launch(context, id, title, body, payload, api, token),
+                true,
+            )
+        }
+        try {
+            NotificationManagerCompat.from(context).notify(id, builder.build())
+        } catch (_: Exception) {
+        }
+        if (alert) ChatPop.show(context, id, title, body, payload, api, token)
     }
 
     /// Same list Social Save reads as chat.list.muted.v1. A mute from the
@@ -681,6 +727,7 @@ class ChatReplyService : Service() {
             return START_NOT_STICKY
         }
         val id = incoming.getIntExtra(ChatReply.EXTRA_ID, 0)
+        ChatPop.dismiss()
         val payload = incoming.getStringExtra(ChatReply.EXTRA_PAYLOAD).orEmpty()
         val api = incoming.getStringExtra(ChatReply.EXTRA_API).orEmpty()
         val token = incoming.getStringExtra(ChatReply.EXTRA_TOKEN).orEmpty()
@@ -835,6 +882,7 @@ class ChatReplyReceiver : BroadcastReceiver() {
         }
         if (intent.action != ChatReply.ACTION) return
         val pending = goAsync()
+        ChatPop.dismiss()
         val app = context.applicationContext
         val id = intent.getIntExtra(ChatReply.EXTRA_ID, 0)
         NotificationManagerCompat.from(app).cancel(id)

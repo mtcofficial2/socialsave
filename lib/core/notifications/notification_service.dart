@@ -5,7 +5,6 @@ import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:social_save/core/config/env_config.dart';
 import 'package:social_save/core/notifications/notification_photo_io.dart'
     if (dart.library.html) 'package:social_save/core/notifications/notification_photo_stub.dart';
 import 'package:social_save/core/notifications/windows_toast_setup_stub.dart'
@@ -446,7 +445,7 @@ class NotificationService {
         'payload': payload,
         'sound': sound,
         'silent': silent,
-        'api': EnvConfig.apiBaseUrl,
+        'api': chatApiBaseUrl(),
         'token': token,
         if (face != null && face.isNotEmpty) 'picture': face,
       });

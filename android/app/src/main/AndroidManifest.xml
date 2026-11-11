@@ -143,6 +143,16 @@
             </intent-filter>
         </activity>
         <activity
+            android:name=".ChatPopActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <activity
             android:name=".ClipboardPeekActivity"
             android:exported="false"
             android:excludeFromRecents="true"

@@ -1054,7 +1054,7 @@ Map<String, dynamic> windowsCallMic(String? sourceId) {
 bool callsOnThisDevice({required bool windows}) => !windows;
 
 /// A message notice stays until it is cancelled, replied to, or swiped, or this passes.
-const Duration chatNoticeHold = Duration(minutes: 2);
+const Duration chatNoticeHold = Duration(minutes: 5);
 
 /// Pops only after this device has already seen the inbox, and only for a new message.
 bool chatNoticeShouldPop({
