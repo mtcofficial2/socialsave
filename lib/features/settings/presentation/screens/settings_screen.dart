@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:social_save/core/config/build_flags.dart';
 import 'package:social_save/core/platform/plat.dart';
@@ -17,6 +18,7 @@ import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/platform/desktop_support.dart';
 import 'package:social_save/core/platform/media_events.dart';
 import 'package:social_save/core/platform/phone_body.dart';
+import 'package:social_save/features/chat/chat_prefs.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
 import 'package:social_save/features/library/hotspot_share.dart';
 import 'package:social_save/features/library/image_device_stamp.dart';
@@ -202,7 +204,7 @@ class SettingsScreen extends ConsumerWidget {
             ),
                   ],
                 )),
-                _Sec(title: 'Download Preferences', keys: 'download wifi location quality resolution start queue', child: Column(
+                _Sec(title: 'Download Preferences', keys: 'download wifi update location quality resolution start queue', child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
             _groupTitle(context, Icons.download_for_offline_outlined, 'Download Preferences'),
@@ -224,6 +226,20 @@ class SettingsScreen extends ConsumerWidget {
                       value: settings.wifiOnly,
                       onChanged: controller.setWifiOnly,
                     ),
+                    if (Plat.isAndroid) ...[
+                      const SizedBox(height: 16),
+                      _WifiAppUpdateRow(
+                        row: (context, value, onChanged) => _toggleRow(
+                          context,
+                          icon: Icons.system_update_alt_rounded,
+                          title: 'Update on Wi-Fi',
+                          subtitle:
+                              'On Wi-Fi, a new version downloads and Android opens the install screen.',
+                          value: value,
+                          onChanged: onChanged,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 16),
                     _toggleRow(
                       context,
@@ -1069,5 +1085,43 @@ class _SecState extends State<_Sec> {
         );
       },
     );
+  }
+}
+
+/// App updates on Wi-Fi. The choice lives with the other download switches.
+class _WifiAppUpdateRow extends StatefulWidget {
+  const _WifiAppUpdateRow({required this.row});
+
+  final Widget Function(BuildContext context, bool value, ValueChanged<bool> onChanged) row;
+
+  @override
+  State<_WifiAppUpdateRow> createState() => _WifiAppUpdateRowState();
+}
+
+class _WifiAppUpdateRowState extends State<_WifiAppUpdateRow> {
+  @override
+  void initState() {
+    super.initState();
+    ChatPrefs.revision.addListener(_refresh);
+    unawaited(ChatPrefs.ensure().then((_) {
+      if (mounted) setState(() {});
+    }));
+  }
+
+  @override
+  void dispose() {
+    ChatPrefs.revision.removeListener(_refresh);
+    super.dispose();
+  }
+
+  void _refresh() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return widget.row(context, ChatPrefs.wifiUpdate, (on) {
+      unawaited(ChatPrefs.setWifiUpdate(on));
+    });
   }
 }

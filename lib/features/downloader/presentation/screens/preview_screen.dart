@@ -24,6 +24,7 @@ import 'package:social_save/shared/models/media_format.dart';
 import 'package:social_save/shared/models/media_info.dart';
 import 'package:social_save/shared/widgets/compliance_notice.dart';
 import 'package:social_save/shared/widgets/glass.dart';
+import 'package:social_save/core/utils/open_link.dart';
 import 'package:social_save/shared/widgets/error_banner.dart';
 import 'package:social_save/shared/widgets/platform_badge.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
@@ -428,7 +429,10 @@ class _PreviewBody extends ConsumerWidget {
               );
             }),
             if (error != null) ...[
-              ErrorBanner(message: error!),
+              ErrorBanner(
+                message: error!,
+                onOpenSite: () => openWebLink(media.sourceUrl),
+              ),
               const SizedBox(height: 12),
             ],
             const SizedBox(height: 8),
@@ -550,7 +554,12 @@ class _LookupScaffold extends StatelessWidget {
             ],
             if (error != null) ...[
               const SizedBox(height: 12),
-              ErrorBanner(message: error!, onRetry: onRetry, onTryServer: onTryServer),
+              ErrorBanner(
+                message: error!,
+                onRetry: onRetry,
+                onTryServer: onTryServer,
+                onOpenSite: () => openWebLink(url),
+              ),
             ],
           ],
         ),

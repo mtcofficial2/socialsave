@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -22,10 +24,10 @@ import (
 const (
 	chatStatusLife    = 24 * time.Hour
 	chatStatusViewMax = 200
-	chatCallRingFor = 45 * time.Second
-	chatStarMax     = 200
-	chatLabelMax    = 12
-	chatReportMax   = 500
+	chatCallRingFor   = 45 * time.Second
+	chatStarMax       = 200
+	chatLabelMax      = 12
+	chatReportMax     = 500
 )
 
 type chatPrivacy struct {
@@ -33,6 +35,9 @@ type chatPrivacy struct {
 	LastSeen string `json:"lastSeen,omitempty"`
 	Photo    string `json:"photo,omitempty"`
 	Receipts string `json:"receipts,omitempty"`
+	// Requests is off unless the person turns it on. A new chat is then a
+	// normal chat, and an older request flag is ignored.
+	Requests bool `json:"requests,omitempty"`
 }
 
 type chatPoll struct {
@@ -77,15 +82,18 @@ type chatDevice struct {
 }
 
 type chatStatusNote struct {
-	ID       string   `json:"id"`
-	From     string   `json:"from"`
-	Name     string   `json:"name"`
-	Text     string   `json:"text"`
-	At       int64    `json:"at"`
-	Audience string   `json:"audience,omitempty"`
-	Allow    []string `json:"allow,omitempty"`
-	Deny     []string `json:"deny,omitempty"`
-	Views    []string `json:"views,omitempty"`
+	ID        string   `json:"id"`
+	From      string   `json:"from"`
+	Name      string   `json:"name"`
+	Text      string   `json:"text"`
+	At        int64    `json:"at"`
+	Audience  string   `json:"audience,omitempty"`
+	Allow     []string `json:"allow,omitempty"`
+	Deny      []string `json:"deny,omitempty"`
+	Views     []string `json:"views,omitempty"`
+	Font      int      `json:"font,omitempty"`
+	Image     string   `json:"image,omitempty"`
+	ImageType string   `json:"imageType,omitempty"`
 }
 
 type chatSchedule struct {
@@ -249,7 +257,7 @@ func (c *chatRoom) gatePostLocked(thread *chatThread, user chatUser) error {
 	// A new direct chat stays a request until the other person replies,
 	// reacts, or accepts it. Messages still send, with a tighter limit,
 	// and a reported account can only start one of these a minute.
-	if len(thread.Members) == 0 && thread.Request != "" && thread.Request != user.ID {
+	if len(thread.Members) == 0 && c.holdsRequestLocked(thread) && thread.Request != user.ID {
 		limit := 5
 		if c.reportedOftenLocked(user.ID) {
 			limit = 1
@@ -531,7 +539,7 @@ func (s *Server) chatPrivacyPut(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var body chatPrivacy
+	var body chatPrivacyBody
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&body); err != nil {
 		writeChatError(w, http.StatusBadRequest, "Choose who can see this.")
 		return
@@ -544,40 +552,79 @@ func (s *Server) chatPrivacyPut(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "privacy": saved})
 }
 
-func (c *chatRoom) setPrivacy(ctx context.Context, userID string, body chatPrivacy) (chatPrivacy, error) {
-	online, err := privacyChoice(body.Online, false)
-	if err != nil {
-		return chatPrivacy{}, err
-	}
-	seen, err := privacyChoice(body.LastSeen, false)
-	if err != nil {
-		return chatPrivacy{}, err
-	}
-	photo, err := privacyChoice(body.Photo, false)
-	if err != nil {
-		return chatPrivacy{}, err
-	}
-	receipts, err := privacyChoice(body.Receipts, true)
-	if err != nil {
-		return chatPrivacy{}, err
-	}
-	next := chatPrivacy{Online: online, LastSeen: seen, Photo: photo, Receipts: receipts}
+// chatPrivacyBody keeps missing fields so a requests switch does not clear
+// online, last seen, photo, or receipts.
+type chatPrivacyBody struct {
+	Online   *string `json:"online"`
+	LastSeen *string `json:"lastSeen"`
+	Photo    *string `json:"photo"`
+	Receipts *string `json:"receipts"`
+	Requests *bool   `json:"requests"`
+}
+
+func (c *chatRoom) setPrivacy(ctx context.Context, userID string, body chatPrivacyBody) (chatPrivacy, error) {
 	c.ensure(ctx)
 	c.mu.Lock()
-	found := false
+	found := -1
 	for i := range c.data.Users {
 		if c.data.Users[i].ID == userID {
-			c.data.Users[i].Privacy = next
-			found = true
+			found = i
 			break
 		}
 	}
-	c.mu.Unlock()
-	if !found {
+	if found < 0 {
+		c.mu.Unlock()
 		return chatPrivacy{}, chatRejected("Sign in again.")
 	}
+	next := c.data.Users[found].Privacy
+	if body.Online != nil {
+		online, err := privacyChoice(*body.Online, false)
+		if err != nil {
+			c.mu.Unlock()
+			return chatPrivacy{}, err
+		}
+		next.Online = online
+	}
+	if body.LastSeen != nil {
+		seen, err := privacyChoice(*body.LastSeen, false)
+		if err != nil {
+			c.mu.Unlock()
+			return chatPrivacy{}, err
+		}
+		next.LastSeen = seen
+	}
+	if body.Photo != nil {
+		photo, err := privacyChoice(*body.Photo, false)
+		if err != nil {
+			c.mu.Unlock()
+			return chatPrivacy{}, err
+		}
+		next.Photo = photo
+	}
+	if body.Receipts != nil {
+		receipts, err := privacyChoice(*body.Receipts, true)
+		if err != nil {
+			c.mu.Unlock()
+			return chatPrivacy{}, err
+		}
+		next.Receipts = receipts
+	}
+	if body.Requests != nil {
+		next.Requests = *body.Requests
+	}
+	c.data.Users[found].Privacy = next
+	c.mu.Unlock()
 	c.persist(ctx)
 	return next, nil
+}
+
+// holdsRequestLocked is true only when the recipient asked for message requests.
+func (c *chatRoom) holdsRequestLocked(thread *chatThread) bool {
+	if thread == nil || thread.Request == "" || len(thread.Members) > 0 {
+		return false
+	}
+	person, ok := c.userLocked(thread.Request)
+	return ok && person.Privacy.Requests
 }
 
 func (s *Server) chatStatusList(w http.ResponseWriter, r *http.Request) {
@@ -598,12 +645,13 @@ func (s *Server) chatStatusPut(w http.ResponseWriter, r *http.Request) {
 		Audience string   `json:"audience"`
 		Allow    []string `json:"allow"`
 		Deny     []string `json:"deny"`
+		Font     int      `json:"font"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil {
 		writeChatError(w, http.StatusBadRequest, "Write an update first.")
 		return
 	}
-	note, err := s.chat.addStatus(r.Context(), user, body.Text, body.Audience, body.Allow, body.Deny)
+	note, err := s.chat.addStatus(r.Context(), user, body.Text, body.Audience, body.Allow, body.Deny, body.Font)
 	if err != nil {
 		writeChatFailure(w, err)
 		return
@@ -621,6 +669,81 @@ func (s *Server) chatStatusView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+func (s *Server) chatStatusDelete(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.chatActor(w, r)
+	if !ok {
+		return
+	}
+	if err := s.chat.deleteStatus(r.Context(), user, chi.URLParam(r, "id")); err != nil {
+		writeChatFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+func (s *Server) chatStatusImagePut(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.chatActor(w, r)
+	if !ok {
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, chatPhotoMax+1))
+	if err != nil {
+		writeChatError(w, http.StatusBadRequest, "Choose a JPEG or PNG photo.")
+		return
+	}
+	font, _ := strconv.Atoi(strings.TrimSpace(r.Header.Get("X-Chat-Font")))
+	note, err := s.chat.addStatusImage(
+		r.Context(),
+		user,
+		body,
+		chatHeaderCaption(r),
+		chatHeaderText(r, "X-Chat-Audience"),
+		chatHeaderList(r, "X-Chat-Allow"),
+		chatHeaderList(r, "X-Chat-Deny"),
+		font,
+	)
+	if err != nil {
+		writeChatFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "status": note})
+}
+
+func (s *Server) chatStatusImageGet(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.chatActor(w, r)
+	if !ok {
+		return
+	}
+	body, contentType, err := s.chat.statusImage(r.Context(), user, chi.URLParam(r, "id"))
+	if err != nil {
+		writeChatFailure(w, err)
+		return
+	}
+	writeChatBytes(w, contentType, body)
+}
+
+func chatHeaderText(r *http.Request, name string) string {
+	raw := strings.TrimSpace(r.Header.Get(name))
+	if raw == "" {
+		return ""
+	}
+	decoded, err := url.QueryUnescape(raw)
+	if err != nil {
+		return raw
+	}
+	return strings.TrimSpace(decoded)
+}
+
+func chatHeaderList(r *http.Request, name string) []string {
+	raw := chatHeaderText(r, name)
+	if raw == "" {
+		return nil
+	}
+	return strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ' ' || r == ';'
+	})
 }
 
 func cleanNames(values []string, max int) ([]string, error) {
@@ -643,35 +766,85 @@ func cleanNames(values []string, max int) ([]string, error) {
 	return out, nil
 }
 
-func (c *chatRoom) addStatus(ctx context.Context, user chatUser, text, audience string, allow, deny []string) (chatStatusNote, error) {
-	clean, err := cleanChatText(text)
-	if err != nil {
-		return chatStatusNote{}, err
+func prepareStatusFields(text, audience string, allow, deny []string, font int, allowEmpty bool) (string, string, []string, []string, int, error) {
+	var clean string
+	if strings.TrimSpace(text) == "" {
+		if !allowEmpty {
+			return "", "", nil, nil, 0, chatRejected("Write an update first.")
+		}
+	} else {
+		next, err := cleanChatText(text)
+		if err != nil {
+			return "", "", nil, nil, 0, err
+		}
+		clean = next
 	}
 	audience = strings.ToLower(strings.TrimSpace(audience))
 	switch audience {
 	case "", "all", "contacts", "only", "except":
 	default:
-		return chatStatusNote{}, chatRejected("Choose who can see this update.")
+		return "", "", nil, nil, 0, chatRejected("Choose who can see this update.")
 	}
 	if audience == "" {
 		audience = "all"
 	}
 	allowed, err := cleanNames(allow, 32)
 	if err != nil {
-		return chatStatusNote{}, err
+		return "", "", nil, nil, 0, err
 	}
 	denied, err := cleanNames(deny, 32)
 	if err != nil {
-		return chatStatusNote{}, err
+		return "", "", nil, nil, 0, err
 	}
 	if audience == "only" && len(allowed) == 0 {
-		return chatStatusNote{}, chatRejected("Choose at least one person.")
+		return "", "", nil, nil, 0, chatRejected("Choose at least one person.")
+	}
+	if font < 0 || font > 19 {
+		font = 0
+	}
+	return clean, audience, allowed, denied, font, nil
+}
+
+func (c *chatRoom) addStatus(ctx context.Context, user chatUser, text, audience string, allow, deny []string, font int) (chatStatusNote, error) {
+	clean, audience, allowed, denied, font, err := prepareStatusFields(text, audience, allow, deny, font, false)
+	if err != nil {
+		return chatStatusNote{}, err
 	}
 	note := chatStatusNote{
 		ID: newChatID("st"), From: user.ID, Name: user.Username, Text: clean,
 		At: time.Now().UnixMilli(), Audience: audience, Allow: allowed, Deny: denied,
+		Font: font,
 	}
+	c.storeStatus(ctx, note)
+	return note, nil
+}
+
+func (c *chatRoom) addStatusImage(ctx context.Context, user chatUser, body []byte, caption, audience string, allow, deny []string, font int) (chatStatusNote, error) {
+	if len(body) == 0 || len(body) > chatPhotoMax || imageKind(body) == "" {
+		return chatStatusNote{}, chatRejected("Choose a JPEG or PNG photo.")
+	}
+	clean, audience, allowed, denied, font, err := prepareStatusFields(caption, audience, allow, deny, font, true)
+	if err != nil {
+		return chatStatusNote{}, err
+	}
+	id := newChatID("st")
+	key, err := chatBlobKey("chat/status/", id)
+	if err != nil {
+		return chatStatusNote{}, chatRejected("That photo could not be posted.")
+	}
+	if err := c.putBlob(ctx, key, body); err != nil {
+		return chatStatusNote{}, chatRejected("That photo could not be posted.")
+	}
+	note := chatStatusNote{
+		ID: id, From: user.ID, Name: user.Username, Text: clean,
+		At: time.Now().UnixMilli(), Audience: audience, Allow: allowed, Deny: denied,
+		Font: font, Image: id, ImageType: imageKind(body),
+	}
+	c.storeStatus(ctx, note)
+	return note, nil
+}
+
+func (c *chatRoom) storeStatus(ctx context.Context, note chatStatusNote) {
 	c.ensure(ctx)
 	c.mu.Lock()
 	c.pruneStatusesLocked()
@@ -681,7 +854,57 @@ func (c *chatRoom) addStatus(ctx context.Context, user chatUser, text, audience 
 	}
 	c.mu.Unlock()
 	c.persist(ctx)
-	return note, nil
+}
+
+func (c *chatRoom) statusImage(ctx context.Context, viewer chatUser, id string) ([]byte, string, error) {
+	id = strings.TrimSpace(id)
+	c.ensure(ctx)
+	c.mu.Lock()
+	c.pruneStatusesLocked()
+	var found *chatStatusNote
+	for i := range c.data.Statuses {
+		if c.data.Statuses[i].ID == id {
+			found = &c.data.Statuses[i]
+			break
+		}
+	}
+	if found == nil || found.Image == "" || !c.statusVisibleLocked(viewer, *found) {
+		c.mu.Unlock()
+		return nil, "", chatRejected("That update is gone.")
+	}
+	imageID := found.Image
+	kind := found.ImageType
+	c.mu.Unlock()
+	key, err := chatBlobKey("chat/status/", imageID)
+	if err != nil {
+		return nil, "", chatRejected("That photo could not be opened.")
+	}
+	body, err := c.getBlob(ctx, key)
+	if err != nil || len(body) == 0 {
+		return nil, "", chatRejected("That photo could not be opened.")
+	}
+	if kind == "" {
+		kind = imageKind(body)
+	}
+	if kind == "" {
+		kind = "application/octet-stream"
+	}
+	return body, kind, nil
+}
+
+func (c *chatRoom) dropStatusImage(imageID string) {
+	if imageID == "" || c.blob != nil {
+		return
+	}
+	key, err := chatBlobKey("chat/status/", imageID)
+	if err != nil {
+		return
+	}
+	path, err := c.localBlob(key)
+	if err != nil {
+		return
+	}
+	_ = os.Remove(path)
 }
 
 func (c *chatRoom) pruneStatusesLocked() {
@@ -712,6 +935,37 @@ func (c *chatRoom) visibleStatuses(ctx context.Context, viewer chatUser) []chatS
 		out = append(out, shown)
 	}
 	return out
+}
+
+func (c *chatRoom) deleteStatus(ctx context.Context, owner chatUser, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return chatRejected("That update is gone.")
+	}
+	c.ensure(ctx)
+	c.mu.Lock()
+	c.pruneStatusesLocked()
+	found := -1
+	for i := range c.data.Statuses {
+		if c.data.Statuses[i].ID == id {
+			found = i
+			break
+		}
+	}
+	if found < 0 {
+		c.mu.Unlock()
+		return chatRejected("That update is gone.")
+	}
+	if c.data.Statuses[found].From != owner.ID {
+		c.mu.Unlock()
+		return chatRejected("You can only delete your own update.")
+	}
+	imageID := c.data.Statuses[found].Image
+	c.data.Statuses = append(c.data.Statuses[:found], c.data.Statuses[found+1:]...)
+	c.mu.Unlock()
+	c.persist(ctx)
+	c.dropStatusImage(imageID)
+	return nil
 }
 
 func (c *chatRoom) viewStatus(ctx context.Context, viewer chatUser, id string) error {

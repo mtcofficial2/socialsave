@@ -13,6 +13,8 @@ import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/features/chat/chat_alerts.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_drafts.dart';
+import 'package:social_save/features/chat/emoji_panel.dart';
+import 'package:social_save/features/chat/emoji_text.dart';
 import 'package:social_save/features/chat/chat_format.dart';
 import 'package:social_save/features/chat/chat_history.dart';
 import 'package:social_save/features/chat/chat_image_store.dart';
@@ -104,6 +106,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
   bool _refreshing = false;
   bool _stickToEnd = true;
   bool _recording = false;
+  bool _emojiOpen = false;
   bool _finishingVoice = false;
   int _below = 0;
   int _after = 0;
@@ -1432,6 +1435,29 @@ class _ChatThreadViewState extends State<ChatThreadView>
     context.push('/preview', extra: url);
   }
 
+  void _toggleEmoji() {
+    if (_emojiOpen) {
+      setState(() => _emojiOpen = false);
+      _focus.requestFocus();
+      return;
+    }
+    _focus.unfocus();
+    setState(() => _emojiOpen = true);
+  }
+
+  void _insertEmoji(String emoji) {
+    final value = _text.value;
+    final text = value.text;
+    final start = value.selection.start < 0 ? text.length : value.selection.start;
+    final end = value.selection.end < 0 ? text.length : value.selection.end;
+    final next = text.replaceRange(start, end, emoji);
+    _text.value = TextEditingValue(
+      text: next,
+      selection: TextSelection.collapsed(offset: start + emoji.length),
+    );
+    _onTyped(next);
+  }
+
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     final hardware = ChatPrefs.hardwareEnterSends(
       keyboardSends: _keyboardSends,
@@ -1983,11 +2009,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
             if (_peerOnline) 'online',
           ].join(' · ')
         : presence;
-    final subtitle = recording
-        ? 'recording audio…'
-        : peerTyping
-        ? 'typing…'
-        : groupLine;
+    final subtitle = groupLine;
     final body = Column(
       children: [
         AppBar(
@@ -2066,7 +2088,9 @@ class _ChatThreadViewState extends State<ChatThreadView>
                           letterSpacing: -0.2,
                         ),
                       ),
-                      if (subtitle.isNotEmpty)
+                      if (recording || peerTyping)
+                        ChatActivityLine(recording: recording)
+                      else if (subtitle.isNotEmpty)
                         Text(
                           subtitle,
                           maxLines: 1,
@@ -2074,10 +2098,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
                           style: TextStyle(
                             fontSize: 12.5,
                             fontWeight: FontWeight.w600,
-                            fontStyle: recording || peerTyping
-                                ? FontStyle.italic
-                                : FontStyle.normal,
-                            color: recording || peerTyping || _peerOnline
+                            color: _peerOnline
                                 ? const Color(0xFF25D366)
                                 : scheme.onSurfaceVariant,
                           ),
@@ -2309,34 +2330,12 @@ class _ChatThreadViewState extends State<ChatThreadView>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (recording)
-                    const Padding(
-                      padding: EdgeInsets.only(left: 14, bottom: 4),
+                  if (recording || peerTyping)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 14, bottom: 4),
                       child: Align(
                         alignment: Alignment.centerLeft,
-                        child: Text(
-                          'recording audio…',
-                          style: TextStyle(
-                            color: Color(0xFF25D366),
-                            fontStyle: FontStyle.italic,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    )
-                  else if (peerTyping)
-                    const Padding(
-                      padding: EdgeInsets.only(left: 14, bottom: 4),
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'typing…',
-                          style: TextStyle(
-                            color: Color(0xFF25D366),
-                            fontStyle: FontStyle.italic,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
+                        child: ChatActivityLine(recording: recording),
                       ),
                     ),
                   if (_editingId != null)
@@ -2470,7 +2469,9 @@ class _ChatThreadViewState extends State<ChatThreadView>
                       onSend: () => unawaited(_finishVoice(send: true)),
                       onPause: () => unawaited(_recorder.togglePause()),
                     )
-                  else
+                  else ...[
+                    if (_emojiOpen)
+                      EmojiPanel(onPick: _insertEmoji),
                     ChatComposer(
                       controller: _text,
                       focusNode: _focus,
@@ -2480,8 +2481,10 @@ class _ChatThreadViewState extends State<ChatThreadView>
                       onSend: () => unawaited(_send()),
                       onMic: () => unawaited(_startVoice()),
                       onAttach: () => unawaited(_attach()),
+                      onEmoji: _toggleEmoji,
                       showMic: !Plat.isWeb,
                     ),
+                  ],
                   ],
                 ],
               ),
@@ -2874,8 +2877,53 @@ class ChatBubble extends StatelessWidget {
           final reserve = message.isEdited ? (mine ? 118.0 : 98.0) : (mine ? 78.0 : 58.0);
           final barePhoto =
               message.isPhoto && (caption.isEmpty || caption == 'Photo');
+          final bareEmoji = quote == null &&
+              !message.isVoice &&
+              !message.isPhoto &&
+              !message.isSong &&
+              !message.isPoll &&
+              message.card == null &&
+              message.place == null &&
+              !message.isCall &&
+              message.links.isEmpty &&
+              emojiOnlyText(caption);
           final Widget body;
-          if (message.isVoice) {
+          if (bareEmoji) {
+            body = Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  caption,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: emojiOnlySize(emojiClusterCount(caption)),
+                    height: 1.15,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: dark ? const Color(0x66000000) : const Color(0xCCFFFFFF),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(6, 1, 4, 1),
+                    child: _stamp(
+                      time,
+                      dark ? Colors.white : const Color(0xFF667781),
+                      tick,
+                      tickColor: tick == 'read'
+                          ? const Color(0xFF53BDEB)
+                          : (dark ? Colors.white70 : const Color(0xFF667781)),
+                      onRetry: onRetry,
+                      edited: message.isEdited,
+                    ),
+                  ),
+                ),
+              ],
+            );
+          } else if (message.isVoice) {
             body = SizedBox(
               width: voiceWidth,
               child: Column(
@@ -3093,12 +3141,13 @@ class ChatBubble extends StatelessWidget {
               tail && mine ? 2 : (tight && mine ? 6 : 18),
             ),
           );
+          final hasReactions = message.reactions.isNotEmpty;
           return GestureDetector(
             onLongPressStart: onLongPress,
             child: Padding(
               padding: EdgeInsets.only(
                 top: tight ? 1 : 7,
-                bottom: tail ? 2 : 1,
+                bottom: (tail ? 2 : 1) + (hasReactions ? 14 : 0),
                 left: mine ? 0 : 8,
                 right: mine ? 8 : 0,
               ),
@@ -3107,16 +3156,18 @@ class ChatBubble extends StatelessWidget {
                 children: [
                   Container(
                     constraints: BoxConstraints(maxWidth: max),
-                    padding: EdgeInsets.fromLTRB(
-                      barePhoto ? 3 : 11,
-                      barePhoto ? 3 : 7,
-                      barePhoto ? 3 : 9,
-                      barePhoto ? 3 : 5,
-                    ),
+                    padding: bareEmoji
+                        ? EdgeInsets.zero
+                        : EdgeInsets.fromLTRB(
+                            barePhoto ? 3 : 11,
+                            barePhoto ? 3 : 7,
+                            barePhoto ? 3 : 9,
+                            barePhoto ? 3 : 5,
+                          ),
                     decoration: BoxDecoration(
-                      color: bg,
-                      borderRadius: radius,
-                      boxShadow: dark
+                      color: bareEmoji ? Colors.transparent : bg,
+                      borderRadius: bareEmoji ? BorderRadius.zero : radius,
+                      boxShadow: bareEmoji || dark
                           ? null
                           : const [
                               BoxShadow(
@@ -3126,29 +3177,9 @@ class ChatBubble extends StatelessWidget {
                               ),
                             ],
                     ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        body,
-                        if (message.reactions.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 2),
-                            child: Wrap(
-                              spacing: 4,
-                              runSpacing: 2,
-                              children: [
-                                for (final chip in _reactionChips(
-                                  message.reactions,
-                                ))
-                                  chip,
-                              ],
-                            ),
-                          ),
-                      ],
-                    ),
+                    child: body,
                   ),
-                  if (tail)
+                  if (tail && !bareEmoji)
                     Positioned(
                       right: mine ? -7 : null,
                       left: mine ? null : -7,
@@ -3156,6 +3187,16 @@ class ChatBubble extends StatelessWidget {
                       child: CustomPaint(
                         size: const Size(10, 12),
                         painter: _BubbleTail(color: bg, mine: mine),
+                      ),
+                    ),
+                  if (hasReactions)
+                    Positioned(
+                      left: mine ? 4 : null,
+                      right: mine ? null : 4,
+                      bottom: -12,
+                      child: _ReactionBadge(
+                        reactions: message.reactions,
+                        dark: dark,
                       ),
                     ),
                 ],
@@ -3215,28 +3256,61 @@ class _BubbleTail extends CustomPainter {
   bool shouldRepaint(_BubbleTail old) => old.color != color || old.mine != mine;
 }
 
-List<Widget> _reactionChips(List<ChatReaction> reactions) {
-  final counts = <String, int>{};
-  for (final item in reactions) {
-    if (item.emoji.isEmpty) continue;
-    counts[item.emoji] = (counts[item.emoji] ?? 0) + 1;
-  }
-  return [
-    for (final entry in counts.entries)
-      DecoratedBox(
-        decoration: BoxDecoration(
-          color: const Color(0x14000000),
-          borderRadius: BorderRadius.circular(10),
+/// A small pill that sits on the corner of a message, outside the bubble.
+class _ReactionBadge extends StatelessWidget {
+  const _ReactionBadge({required this.reactions, required this.dark});
+
+  final List<ChatReaction> reactions;
+  final bool dark;
+
+  @override
+  Widget build(BuildContext context) {
+    final counts = <String, int>{};
+    for (final item in reactions) {
+      if (item.emoji.isEmpty) continue;
+      counts[item.emoji] = (counts[item.emoji] ?? 0) + 1;
+    }
+    if (counts.isEmpty) return const SizedBox.shrink();
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: dark ? const Color(0xFF1F2C34) : Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: dark ? const Color(0xFF2A3942) : const Color(0xFFE4E7EA),
         ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-          child: Text(
-            entry.value > 1 ? '${entry.key} ${entry.value}' : entry.key,
-            style: const TextStyle(fontSize: 13),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x33000000),
+            blurRadius: 2,
+            offset: Offset(0, 1),
           ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final entry in counts.entries) ...[
+              Text(entry.key, style: const TextStyle(fontSize: 16, height: 1.1)),
+              if (entry.value > 1) ...[
+                const SizedBox(width: 2),
+                Text(
+                  '${entry.value}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: dark ? Colors.white70 : const Color(0xFF667781),
+                  ),
+                ),
+              ],
+              if (entry.key != counts.keys.last) const SizedBox(width: 4),
+            ],
+          ],
         ),
       ),
-  ];
+    );
+  }
 }
 
 Widget _stamp(

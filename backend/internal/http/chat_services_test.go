@@ -40,8 +40,8 @@ func TestChatPrivacyStatusAndRequests(t *testing.T) {
 		t.Fatalf("open %s", opened.Body.String())
 	}
 	inbox := getChat(app, "/api/v1/chat/threads", ben.token)
-	if !bytesContain(inbox.Body.Bytes(), `"request":true`) {
-		t.Fatalf("request %s", inbox.Body.String())
+	if bytesContain(inbox.Body.Bytes(), `"request":true`) {
+		t.Fatalf("request is on by default %s", inbox.Body.String())
 	}
 	for i, text := range []string{"one", "two"} {
 		sent := postChat(app, "/api/v1/chat/threads/"+thread.ID, ada.token, `{"text":"`+text+`"}`)
@@ -50,8 +50,8 @@ func TestChatPrivacyStatusAndRequests(t *testing.T) {
 		}
 	}
 	early := postChat(app, "/api/v1/chat/calls", ada.token, `{"thread":"`+thread.ID+`"}`)
-	if early.Code != http.StatusBadRequest || !bytesContain(early.Body.Bytes(), "accept your message") {
-		t.Fatalf("early call %d %s", early.Code, early.Body.String())
+	if bytesContain(early.Body.Bytes(), "accept your message") {
+		t.Fatalf("default chat blocked the call %s", early.Body.String())
 	}
 	if postChat(app, "/api/v1/chat/threads/"+thread.ID+"/accept", ben.token, `{}`).Code != http.StatusOK {
 		t.Fatal("accept")
@@ -133,6 +133,81 @@ func TestChatPrivacyStatusAndRequests(t *testing.T) {
 	adaAgain := getChat(app, "/api/v1/chat/status", ada.token)
 	if !bytesContain(adaAgain.Body.Bytes(), `"views":["ben"]`) || bytesContain(adaAgain.Body.Bytes(), `"views":["ben",`) {
 		t.Fatalf("view list changed %s", adaAgain.Body.String())
+	}
+	styled := postChat(app, "/api/v1/chat/status", ada.token, `{"text":"in script","font":8}`)
+	if styled.Code != http.StatusOK || !bytesContain(styled.Body.Bytes(), `"font":8`) {
+		t.Fatalf("font %d %s", styled.Code, styled.Body.String())
+	}
+	if postChat(app, "/api/v1/chat/status/"+posted.Status.ID+"/delete", ben.token, `{}`).Code == http.StatusOK {
+		t.Fatal("ben deleted ada's update")
+	}
+	if postChat(app, "/api/v1/chat/status/"+posted.Status.ID+"/delete", ada.token, `{}`).Code != http.StatusOK {
+		t.Fatal("delete")
+	}
+	if bytesContain(getChat(app, "/api/v1/chat/status", ada.token).Body.Bytes(), posted.Status.ID) {
+		t.Fatal("deleted update stayed")
+	}
+	pictured := postChatHeaders(app, "/api/v1/chat/status/image", ada.token, png, map[string]string{
+		"X-Chat-Caption":  "look",
+		"X-Chat-Audience": "only",
+		"X-Chat-Allow":    "ben",
+		"X-Chat-Font":     "4",
+	})
+	if pictured.Code != http.StatusOK || !bytesContain(pictured.Body.Bytes(), `"font":4`) || !bytesContain(pictured.Body.Bytes(), `"image":`) {
+		t.Fatalf("image status %d %s", pictured.Code, pictured.Body.String())
+	}
+	var photoNote struct {
+		Status struct {
+			ID string `json:"id"`
+		} `json:"status"`
+	}
+	if err := json.Unmarshal(pictured.Body.Bytes(), &photoNote); err != nil || photoNote.Status.ID == "" {
+		t.Fatalf("image id %s", pictured.Body.String())
+	}
+	photoPath := "/api/v1/chat/status/" + photoNote.Status.ID + "/image"
+	if got := getChat(app, photoPath, ben.token); got.Code != http.StatusOK || !bytes.HasPrefix(got.Body.Bytes(), png[:8]) {
+		t.Fatalf("ben photo %d %d", got.Code, got.Body.Len())
+	}
+	if getChat(app, photoPath, cam.token).Code == http.StatusOK {
+		t.Fatal("cam opened a private photo")
+	}
+	if getChat(app, photoPath, ada.token).Code != http.StatusOK {
+		t.Fatal("ada could not open her photo")
+	}
+	bare := postChatRaw(app, "/api/v1/chat/status/image", ada.token, png, "", "")
+	if bare.Code != http.StatusOK || !bytesContain(bare.Body.Bytes(), `"image":`) {
+		t.Fatalf("photo without caption %d %s", bare.Code, bare.Body.String())
+	}
+	if postChatRaw(app, "/api/v1/chat/status/image", ada.token, []byte("nope"), "", "").Code == http.StatusOK {
+		t.Fatal("a file that is not a photo was posted")
+	}
+	if postChat(app, "/api/v1/chat/status/"+photoNote.Status.ID+"/delete", ada.token, `{}`).Code != http.StatusOK {
+		t.Fatal("delete photo")
+	}
+	if getChat(app, photoPath, ben.token).Code == http.StatusOK {
+		t.Fatal("deleted photo stayed")
+	}
+	if postChat(app, "/api/v1/chat/privacy", cam.token, `{"requests":true}`).Code != http.StatusOK {
+		t.Fatal("requests setting")
+	}
+	kept := postChat(app, "/api/v1/chat/privacy", cam.token, `{"online":"contacts"}`)
+	if kept.Code != http.StatusOK || !bytesContain(kept.Body.Bytes(), `"requests":true`) {
+		t.Fatalf("requests wiped %s", kept.Body.String())
+	}
+	openedCam := postChat(app, "/api/v1/chat/threads", ada.token, `{"username":"cam"}`)
+	var camThread struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(openedCam.Body.Bytes(), &camThread); err != nil || camThread.ID == "" {
+		t.Fatalf("open cam %s", openedCam.Body.String())
+	}
+	camInbox := getChat(app, "/api/v1/chat/threads", cam.token)
+	if !bytesContain(camInbox.Body.Bytes(), `"request":true`) {
+		t.Fatalf("opt-in request %s", camInbox.Body.String())
+	}
+	blocked := postChat(app, "/api/v1/chat/calls", ada.token, `{"thread":"`+camThread.ID+`"}`)
+	if blocked.Code != http.StatusBadRequest || !bytesContain(blocked.Body.Bytes(), "accept your message") {
+		t.Fatalf("opt-in call %d %s", blocked.Code, blocked.Body.String())
 	}
 	app.chat.mu.Lock()
 	for i := range app.chat.data.Statuses {

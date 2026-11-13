@@ -545,7 +545,7 @@ func (c *chatRoom) inbox(ctx context.Context, userID string) []chatInboxItem {
 				Online:   chatOnline(other.LastSeen, now),
 				PhotoRev: other.PhotoRev,
 				Blocked:  chatNamed(c.userBlockedLocked(userID), other.Username),
-				Request:  thread.Request == userID,
+				Request:  c.holdsRequestLocked(thread) && thread.Request == userID,
 			}
 			if !c.sharesPresenceLocked(userID, other, "lastSeen") {
 				item.LastSeen = 0
@@ -623,7 +623,11 @@ func (c *chatRoom) open(ctx context.Context, userID, username string, seen *stri
 			return thread, other.Username, label, nil
 		}
 	}
-	thread := chatThread{ID: newChatID("t"), A: userID, B: other.ID, Next: 1, Request: other.ID}
+	request := ""
+	if other.Privacy.Requests {
+		request = other.ID
+	}
+	thread := chatThread{ID: newChatID("t"), A: userID, B: other.ID, Next: 1, Request: request}
 	c.data.Threads = append(c.data.Threads, thread)
 	c.mu.Unlock()
 	c.persist(ctx)
@@ -715,7 +719,7 @@ func (c *chatRoom) since(ctx context.Context, userID, threadID string, after, si
 		}
 		peer.Name = seenNameLocked(c.data, userID, other.Username)
 		peer.Blocked = chatNamed(c.userBlockedLocked(userID), other.Username)
-		peer.Request = thread.Request == userID
+		peer.Request = c.holdsRequestLocked(thread) && thread.Request == userID
 	}
 	peer.Vanish = thread.Vanish
 	var removed []int64

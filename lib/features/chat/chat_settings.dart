@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_prefs.dart';
 import 'package:social_save/features/chat/chat_services.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
@@ -43,11 +44,42 @@ class ChatSettingsPage extends StatefulWidget {
 }
 
 class _ChatSettingsPageState extends State<ChatSettingsPage> {
+  bool _requests = false;
+
   @override
   void initState() {
     super.initState();
     ChatPrefs.revision.addListener(_refresh);
     unawaited(ChatPrefs.ensure());
+    unawaited(_loadRequests());
+  }
+
+  Future<void> _loadRequests() async {
+    try {
+      final me = await ChatApi().me();
+      if (!mounted) return;
+      setState(() => _requests = me.messageRequests);
+    } catch (_) {}
+  }
+
+  Future<void> _setRequests(bool on) async {
+    setState(() => _requests = on);
+    try {
+      final me = await ChatApi().me();
+      await ChatApi().setPrivacy(
+        online: me.onlinePrivacy,
+        lastSeen: me.seenPrivacy,
+        photo: me.photoPrivacy,
+        receipts: me.receipts,
+        requests: on,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _requests = !on);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(chatErrorText(error))),
+      );
+    }
   }
 
   @override
@@ -187,6 +219,14 @@ class _ChatSettingsPageState extends State<ChatSettingsPage> {
                   'Photos wait until you tap them, and new messages are checked less often.',
               value: ChatPrefs.dataSaver,
               onChanged: (on) => unawaited(ChatPrefs.setDataSaver(on)),
+            ),
+            _SwitchRow(
+              icon: Icons.mark_email_unread_outlined,
+              title: 'Message requests',
+              subtitle:
+                  'Off puts a new person straight in your chats. On holds their first messages in Requests until you accept.',
+              value: _requests,
+              onChanged: (on) => unawaited(_setRequests(on)),
             ),
           ],
         ),

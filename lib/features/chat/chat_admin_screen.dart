@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_format.dart';
 import 'package:social_save/features/chat/chat_thread_screen.dart';
@@ -23,6 +26,7 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
   List<ChatDeviceEntry> _devices = const [];
   String? _error;
   bool _loading = true;
+  String? _opening;
   _MonitorTab _tab = _MonitorTab.devices;
 
   @override
@@ -155,6 +159,14 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
                 onSubmitted: (_) {},
               ),
               const SizedBox(height: 8),
+              if (_tab == _MonitorTab.people && _error == null && !_loading)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    'Tap a person to open their chat. Copy keeps the username.',
+                    style: TextStyle(color: scheme.onSurfaceVariant, height: 1.35),
+                  ),
+                ),
               if (shown == 0)
                 Padding(
                   padding: const EdgeInsets.only(top: 28),
@@ -169,11 +181,53 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
               else if (_tab == _MonitorTab.devices)
                 for (final device in devices) _DeviceRow(device: device)
               else
-                for (final person in people) _PersonRow(person: person),
+                for (final person in people)
+                  _PersonRow(
+                    person: person,
+                    opening: _opening == person.username,
+                    onOpen: () => unawaited(_openPerson(person)),
+                    onCopy: () => unawaited(_copyUsername(person.username)),
+                  ),
             ],
           ],
         ),
       ),
+    );
+  }
+
+  Future<void> _openPerson(ChatDirectoryEntry person) async {
+    final name = person.username.trim();
+    if (name.isEmpty || _opening != null) return;
+    setState(() => _opening = name);
+    try {
+      final opened = await _api.openThread(name);
+      if (!mounted) return;
+      setState(() => _opening = null);
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => ChatThreadScreen(
+            threadId: opened.id,
+            username: opened.username,
+            seenName: opened.name,
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _opening = null);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(chatErrorText(error))),
+      );
+    }
+  }
+
+  Future<void> _copyUsername(String username) async {
+    final name = username.trim();
+    if (name.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: '@$name'));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Copied @$name')),
     );
   }
 
@@ -352,9 +406,17 @@ class _DeviceRow extends StatelessWidget {
 }
 
 class _PersonRow extends StatelessWidget {
-  const _PersonRow({required this.person});
+  const _PersonRow({
+    required this.person,
+    required this.opening,
+    required this.onOpen,
+    required this.onCopy,
+  });
 
   final ChatDirectoryEntry person;
+  final bool opening;
+  final VoidCallback onOpen;
+  final VoidCallback onCopy;
 
   @override
   Widget build(BuildContext context) {
@@ -370,6 +432,15 @@ class _PersonRow extends StatelessWidget {
       subtitle: person.contact.isEmpty ? 'No phone or email' : person.contact,
       detail: _seen(context, person.lastSeen),
       foot: foot,
+      onTap: opening ? null : onOpen,
+      trailing: IconButton(
+        tooltip: 'Copy username',
+        onPressed: onCopy,
+        icon: Icon(
+          opening ? Icons.hourglass_top_rounded : Icons.copy_rounded,
+          size: 20,
+        ),
+      ),
     );
   }
 }
@@ -382,6 +453,8 @@ class _MonitorCard extends StatelessWidget {
     required this.subtitle,
     required this.detail,
     required this.foot,
+    this.onTap,
+    this.trailing,
   });
 
   final IconData? icon;
@@ -390,6 +463,8 @@ class _MonitorCard extends StatelessWidget {
   final String subtitle;
   final String detail;
   final String foot;
+  final VoidCallback? onTap;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -398,13 +473,16 @@ class _MonitorCard extends StatelessWidget {
     final line = dark ? const Color(0xFF1F2C34) : const Color(0xFFE4E7EA);
     return Padding(
       padding: const EdgeInsets.only(top: 8),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: dark ? const Color(0xFF111B21) : Colors.white,
+      child: Material(
+        color: dark ? const Color(0xFF111B21) : Colors.white,
+        shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: line),
+          side: BorderSide(color: line),
         ),
-        child: Padding(
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -458,12 +536,19 @@ class _MonitorCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              Text(
-                detail,
-                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    detail,
+                    style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                  ),
+                  ?trailing,
+                ],
               ),
             ],
           ),
+        ),
         ),
       ),
     );

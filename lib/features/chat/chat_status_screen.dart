@@ -1,9 +1,18 @@
 import 'dart:async';
+import 'dart:math' as math;
+import 'dart:typed_data';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/features/chat/chat_api.dart';
+import 'package:social_save/features/chat/chat_profile.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
+import 'package:social_save/features/chat/day_streak.dart';
+import 'package:social_save/features/chat/emoji_panel.dart';
+import 'package:social_save/features/chat/link_text.dart';
+import 'package:social_save/features/chat/status_fonts.dart';
+import 'package:social_save/features/chat/status_link_card.dart';
 
 const _seenKey = 'chat.status.seen.v1';
 
@@ -17,6 +26,14 @@ const statusTones = <Color>[
   Color(0xFF1B4F72),
   Color(0xFF196F3D),
 ];
+
+/// Words under a status. A photo with no caption says Photo.
+String statusPreview(ChatStatusNote note) {
+  final text = note.text.trim();
+  if (text.isNotEmpty) return text;
+  if (note.image.isNotEmpty) return 'Photo';
+  return 'Update';
+}
 
 Color statusTone(String id) {
   var hash = 0;
@@ -68,6 +85,25 @@ int? ownStatusViews(List<ChatStatusNote> notes, String me) {
   return latest?.views.length;
 }
 
+/// How many text updates [me] has up right now.
+int ownStatusCount(List<ChatStatusNote> notes, String me) {
+  final mine = me.trim().replaceFirst(RegExp(r'^@'), '').toLowerCase();
+  if (mine.isEmpty) return 0;
+  var count = 0;
+  for (final note in notes) {
+    final name = note.name.trim().replaceFirst(RegExp(r'^@'), '').toLowerCase();
+    if (name == mine) count++;
+  }
+  return count;
+}
+
+/// One arc per update. A gap between arcs shows that there is more than one.
+int statusRingSegments(int count) {
+  if (count < 1) return 1;
+  if (count > 12) return 12;
+  return count;
+}
+
 class ChatStatusScreen extends StatefulWidget {
   const ChatStatusScreen({super.key});
 
@@ -82,6 +118,7 @@ class _ChatStatusScreenState extends State<ChatStatusScreen> {
   String _me = '';
   bool _loading = true;
   String? _problem;
+  int _streak = 0;
 
   @override
   void initState() {
@@ -94,11 +131,13 @@ class _ChatStatusScreenState extends State<ChatStatusScreen> {
       final me = await ChatSession.username();
       final rows = await _api.statuses();
       final prefs = await SharedPreferences.getInstance();
+      final streak = await DayStreakStore.touch();
       if (!mounted) return;
       setState(() {
         _me = me;
         _rows = rows;
         _seen = (prefs.getStringList(_seenKey) ?? const []).toSet();
+        _streak = streak;
         _loading = false;
         _problem = null;
       });
@@ -189,9 +228,10 @@ class _ChatStatusScreenState extends State<ChatStatusScreen> {
                   ListTile(
                     isThreeLine: latest != null,
                     contentPadding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
-                    leading: _StatusFace(
+                    leading: StatusFace(
                       letter: _me.isEmpty ? '+' : _me.substring(0, 1).toUpperCase(),
-                      fresh: latest != null,
+                      segments: statusRingSegments(mine.length),
+                      seen: [for (final _ in mine) false],
                       badge: true,
                       onBadge: _compose,
                     ),
@@ -202,12 +242,15 @@ class _ChatStatusScreenState extends State<ChatStatusScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                '${statusAge(latest.at, DateTime.now())} · ${latest.text}',
+                                '${statusAge(latest.at, DateTime.now())} · ${statusPreview(latest)}',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
                               Text(
-                                statusViewLabel(latest.views.length),
+                                [
+                                  statusViewLabel(latest.views.length),
+                                  if (_streak > 0) streakLabel(_streak),
+                                ].join(' · '),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -215,6 +258,14 @@ class _ChatStatusScreenState extends State<ChatStatusScreen> {
                           ),
                     onTap: latest == null ? _compose : () => unawaited(_open(mine, 'My status')),
                   ),
+                  if (_streak > 0)
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(88, 0, 16, 4),
+                      child: Text(
+                        'Come back tomorrow to keep your streak.',
+                        style: TextStyle(color: Color(0xFF667781), fontSize: 12.5),
+                      ),
+                    ),
                   if (names.isNotEmpty)
                     const Padding(
                       padding: EdgeInsets.fromLTRB(16, 18, 16, 6),
@@ -233,9 +284,13 @@ class _ChatStatusScreenState extends State<ChatStatusScreen> {
                     ),
                   for (final name in names)
                     ListTile(
-                      leading: _StatusFace(
+                      leading: StatusFace(
                         letter: name.substring(0, 1).toUpperCase(),
-                        fresh: others[name]!.any((note) => !_seen.contains(note.id)),
+                        segments: statusRingSegments(others[name]!.length),
+                        seen: [
+                          for (final note in _sorted(others[name]!))
+                            _seen.contains(note.id),
+                        ],
                       ),
                       title: Text(name.startsWith('@') ? name : '@$name', style: const TextStyle(fontWeight: FontWeight.w600)),
                       subtitle: Text(
@@ -253,37 +308,39 @@ class _ChatStatusScreenState extends State<ChatStatusScreen> {
   }
 }
 
-class _StatusFace extends StatelessWidget {
-  const _StatusFace({
+class StatusFace extends StatelessWidget {
+  const StatusFace({
+    super.key,
     required this.letter,
-    required this.fresh,
+    this.segments = 1,
+    this.seen = const [],
     this.badge = false,
     this.onBadge,
   });
 
   final String letter;
-  final bool fresh;
+  final int segments;
+  final List<bool> seen;
   final bool badge;
   final VoidCallback? onBadge;
 
   @override
   Widget build(BuildContext context) {
-    final face = Container(
+    final count = statusRingSegments(segments);
+    final face = SizedBox(
       width: 56,
       height: 56,
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        border: Border.all(
-          color: fresh ? ChatUiTokens.brand : const Color(0xFF8696A0),
-          width: 2,
-        ),
-      ),
-      child: CircleAvatar(
-        backgroundColor: const Color(0xFF1F2C34),
-        child: Text(
-          letter.isEmpty ? '?' : letter.substring(0, 1).toUpperCase(),
-          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+      child: CustomPaint(
+        painter: _StatusRingPainter(segments: count, seen: seen),
+        child: Padding(
+          padding: const EdgeInsets.all(4),
+          child: CircleAvatar(
+            backgroundColor: const Color(0xFF1F2C34),
+            child: Text(
+              letter.isEmpty ? '?' : letter.substring(0, 1).toUpperCase(),
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+            ),
+          ),
         ),
       ),
     );
@@ -318,6 +375,53 @@ class _StatusFace extends StatelessWidget {
   }
 }
 
+class _StatusRingPainter extends CustomPainter {
+  const _StatusRingPainter({required this.segments, required this.seen});
+
+  final int segments;
+  final List<bool> seen;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final count = statusRingSegments(segments);
+    const stroke = 2.6;
+    final rect = Rect.fromLTWH(
+      stroke / 2,
+      stroke / 2,
+      size.width - stroke,
+      size.height - stroke,
+    );
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke
+      ..strokeCap = StrokeCap.round;
+    if (count <= 1) {
+      final opened = seen.isNotEmpty && seen.first;
+      paint.color = opened ? const Color(0xFF8696A0) : ChatUiTokens.brand;
+      if (seen.isEmpty) paint.color = const Color(0xFF8696A0);
+      canvas.drawArc(rect, 0, math.pi * 2, false, paint);
+      return;
+    }
+    const gap = 0.28;
+    final sweep = (math.pi * 2 / count) - gap;
+    final start = -math.pi / 2 + gap / 2;
+    for (var i = 0; i < count; i++) {
+      final opened = i < seen.length && seen[i];
+      paint.color = opened ? const Color(0xFF8696A0) : ChatUiTokens.brand;
+      canvas.drawArc(rect, start + i * (sweep + gap), sweep, false, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_StatusRingPainter old) {
+    if (old.segments != segments || old.seen.length != seen.length) return true;
+    for (var i = 0; i < seen.length; i++) {
+      if (old.seen[i] != seen[i]) return true;
+    }
+    return false;
+  }
+}
+
 class _StatusViewer extends StatefulWidget {
   const _StatusViewer({required this.notes, required this.title, required this.own});
 
@@ -331,15 +435,18 @@ class _StatusViewer extends StatefulWidget {
 
 class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderStateMixin {
   late final AnimationController _bar;
+  late List<ChatStatusNote> _notes;
   final Set<String> _reported = {};
   int _index = 0;
+  bool _deleting = false;
 
   @override
   void initState() {
     super.initState();
+    _notes = List<ChatStatusNote>.of(widget.notes);
     _bar = AnimationController(vsync: this, duration: const Duration(seconds: 6));
     _arm();
-    _report(widget.notes.first);
+    _report(_notes.first);
   }
 
   void _report(ChatStatusNote note) {
@@ -365,13 +472,54 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
       _arm();
       return;
     }
-    if (next >= widget.notes.length) {
+    if (next >= _notes.length) {
       Navigator.of(context).pop();
       return;
     }
     setState(() => _index = next);
-    _report(widget.notes[next]);
+    _report(_notes[next]);
     _arm();
+  }
+
+  Future<void> _delete(ChatStatusNote note) async {
+    if (_deleting || note.id.isEmpty) return;
+    _bar.stop();
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete this status?'),
+        content: const Text('It comes down for everyone.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Keep')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (yes != true || !mounted) {
+      if (mounted && !_bar.isCompleted) unawaited(_bar.forward());
+      return;
+    }
+    setState(() => _deleting = true);
+    try {
+      await ChatApi().deleteStatus(note.id);
+      if (!mounted) return;
+      setState(() {
+        _notes.removeWhere((item) => item.id == note.id);
+        if (_index >= _notes.length) _index = _notes.length - 1;
+        _deleting = false;
+      });
+      if (_notes.isEmpty) {
+        Navigator.of(context).pop();
+        return;
+      }
+      _report(_notes[_index]);
+      _arm();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _deleting = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(chatErrorText(error))));
+      if (!_bar.isCompleted) unawaited(_bar.forward());
+    }
   }
 
   Future<void> _viewers(ChatStatusNote note) async {
@@ -417,7 +565,7 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
 
   @override
   Widget build(BuildContext context) {
-    final note = widget.notes[_index];
+    final note = _notes[_index];
     final color = statusTone(note.id);
     return Scaffold(
       backgroundColor: color,
@@ -431,7 +579,7 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
                   builder: (context, _) {
                     return Row(
                       children: [
-                        for (var i = 0; i < widget.notes.length; i++)
+                        for (var i = 0; i < _notes.length; i++)
                           Expanded(
                             child: Padding(
                               padding: const EdgeInsets.symmetric(horizontal: 2),
@@ -479,6 +627,12 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
                         ],
                       ),
                     ),
+                    if (widget.own)
+                      IconButton(
+                        tooltip: 'Delete',
+                        onPressed: _deleting ? null : () => unawaited(_delete(note)),
+                        icon: const Icon(Icons.delete_outline, color: Colors.white),
+                      ),
                     IconButton(
                       onPressed: () => Navigator.of(context).pop(),
                       icon: const Icon(Icons.close, color: Colors.white),
@@ -492,20 +646,40 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
                       final width = MediaQuery.sizeOf(context).width;
                       _step(details.localPosition.dx < width / 3 ? -1 : 1);
                     },
-                    child: Center(
-                      child: Text(
-                        note.text,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 28,
-                          fontWeight: FontWeight.w700,
-                          height: 1.25,
-                        ),
-                      ),
+                    child: Column(
+                      children: [
+                        if (note.image.isNotEmpty)
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(8, 12, 8, 8),
+                              child: _StatusPhoto(key: ValueKey(note.id), id: note.id),
+                            ),
+                          )
+                        else
+                          const Spacer(),
+                        if (note.text.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                            child: Text(
+                              note.text,
+                              textAlign: TextAlign.center,
+                              style: statusFontStyle(
+                                note.font,
+                                color: Colors.white,
+                                size: note.image.isEmpty ? 28 : 20,
+                              ),
+                            ),
+                          ),
+                        if (note.image.isEmpty) const Spacer(),
+                      ],
                     ),
                   ),
                 ),
+                if (firstWebUrl(note.text) case final link?)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                    child: StatusLinkCard(url: link),
+                  ),
                 if (widget.own)
                   TextButton.icon(
                     onPressed: () => unawaited(_viewers(note)),
@@ -534,8 +708,10 @@ class _StatusComposerState extends State<_StatusComposer> {
   final TextEditingController _text = TextEditingController();
   final ChatApi _api = ChatApi();
   int _tone = 0;
+  int _font = 0;
   String _audience = 'all';
   bool _busy = false;
+  Uint8List? _photo;
 
   @override
   void dispose() {
@@ -556,9 +732,30 @@ class _StatusComposerState extends State<_StatusComposer> {
     }
   }
 
+  Future<void> _pickPhoto() async {
+    if (_busy) return;
+    try {
+      final picked = await openFile(
+        acceptedTypeGroups: const [
+          XTypeGroup(label: 'Photos', extensions: ['jpg', 'jpeg', 'png']),
+        ],
+      );
+      if (picked == null || !mounted) return;
+      final raw = await picked.readAsBytes();
+      final fitted = await fitChatImage(raw);
+      if (!mounted) return;
+      setState(() => _photo = fitted);
+    } catch (error) {
+      if (!mounted) return;
+      final message = error is StateError ? error.message : chatErrorText(error);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    }
+  }
+
   Future<void> _send() async {
     final text = _text.text.trim();
-    if (text.isEmpty || _busy) return;
+    final photo = _photo;
+    if ((text.isEmpty && photo == null) || _busy) return;
     List<String> allow = const [];
     List<String> deny = const [];
     if (_audience == 'only' || _audience == 'except') {
@@ -574,7 +771,24 @@ class _StatusComposerState extends State<_StatusComposer> {
     }
     setState(() => _busy = true);
     try {
-      await _api.postStatus(text: text, audience: _audience, allow: allow, deny: deny);
+      if (photo != null) {
+        await _api.postStatusImage(
+          photo,
+          caption: text,
+          audience: _audience,
+          allow: allow,
+          deny: deny,
+          font: _font,
+        );
+      } else {
+        await _api.postStatus(
+          text: text,
+          audience: _audience,
+          allow: allow,
+          deny: deny,
+          font: _font,
+        );
+      }
       if (!mounted) return;
       Navigator.of(context).pop(true);
     } catch (error) {
@@ -611,6 +825,26 @@ class _StatusComposerState extends State<_StatusComposer> {
         );
       },
     ).whenComplete(field.dispose);
+  }
+
+  Future<void> _pickEmoji() async {
+    final emoji = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return EmojiPanel(onPick: (picked) => Navigator.pop(context, picked));
+      },
+    );
+    if (emoji == null || !mounted) return;
+    final value = _text.value;
+    final text = value.text;
+    final start = value.selection.start < 0 ? text.length : value.selection.start;
+    final end = value.selection.end < 0 ? text.length : value.selection.end;
+    final next = text.replaceRange(start, end, emoji);
+    _text.value = TextEditingValue(
+      text: next,
+      selection: TextSelection.collapsed(offset: start + emoji.length),
+    );
   }
 
   Future<void> _pickAudience() async {
@@ -659,25 +893,86 @@ class _StatusComposerState extends State<_StatusComposer> {
         child: Column(
           children: [
             Expanded(
-              child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 28),
-                  child: TextField(
-                    controller: _text,
-                    autofocus: true,
-                    maxLength: 400,
-                    maxLines: null,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w700),
-                    cursorColor: Colors.white,
-                    decoration: const InputDecoration(
-                      counterText: '',
-                      border: InputBorder.none,
-                      hintText: 'Type a status',
-                      hintStyle: TextStyle(color: Colors.white54, fontSize: 28, fontWeight: FontWeight.w600),
+              child: Column(
+                children: [
+                  if (_photo != null)
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
+                        child: Stack(
+                          children: [
+                            Positioned.fill(
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(16),
+                                child: Image.memory(_photo!, fit: BoxFit.contain),
+                              ),
+                            ),
+                            Positioned(
+                              top: 4,
+                              right: 4,
+                              child: IconButton(
+                                tooltip: 'Remove photo',
+                                onPressed: _busy ? null : () => setState(() => _photo = null),
+                                icon: const Icon(Icons.close, color: Colors.white),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  Expanded(
+                    child: Center(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 28),
+                        child: TextField(
+                          controller: _text,
+                          autofocus: _photo == null,
+                          maxLength: 400,
+                          maxLines: null,
+                          textAlign: TextAlign.center,
+                          style: statusFontStyle(_font, color: Colors.white, size: _photo == null ? 28 : 20),
+                          cursorColor: Colors.white,
+                          decoration: InputDecoration(
+                            counterText: '',
+                            border: InputBorder.none,
+                            hintText: _photo == null ? 'Type a status' : 'Add a caption',
+                            hintStyle: statusFontStyle(
+                              _font,
+                              color: Colors.white54,
+                              size: _photo == null ? 28 : 20,
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
                   ),
-                ),
+                ],
+              ),
+            ),
+            SizedBox(
+              height: 72,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                itemCount: statusFontChoices.length,
+                separatorBuilder: (context, index) => const SizedBox(width: 8),
+                itemBuilder: (context, index) {
+                  final picked = index == _font;
+                  final choice = statusFontChoices[index];
+                  return ChoiceChip(
+                    label: Text(
+                      choice.name,
+                      style: statusFontStyle(index, color: Colors.white, size: 14),
+                    ),
+                    selected: picked,
+                    showCheckmark: false,
+                    selectedColor: Colors.white24,
+                    backgroundColor: Colors.white10,
+                    side: BorderSide(color: picked ? Colors.white : Colors.white24),
+                    labelStyle: const TextStyle(color: Colors.white),
+                    onSelected: _busy ? null : (_) => setState(() => _font = index),
+                  );
+                },
               ),
             ),
             Padding(
@@ -688,6 +983,16 @@ class _StatusComposerState extends State<_StatusComposer> {
                     onPressed: _busy ? null : _pickAudience,
                     icon: const Icon(Icons.visibility_outlined, color: Colors.white),
                     label: Text(_audienceLabel, style: const TextStyle(color: Colors.white)),
+                  ),
+                  IconButton(
+                    tooltip: 'Photo',
+                    onPressed: _busy ? null : () => unawaited(_pickPhoto()),
+                    icon: const Icon(Icons.photo_outlined, color: Colors.white),
+                  ),
+                  IconButton(
+                    tooltip: 'Emoji',
+                    onPressed: _busy ? null : _pickEmoji,
+                    icon: const Icon(Icons.emoji_emotions_outlined, color: Colors.white),
                   ),
                   const Spacer(),
                   FloatingActionButton(
@@ -705,5 +1010,60 @@ class _StatusComposerState extends State<_StatusComposer> {
         ),
       ),
     );
+  }
+}
+
+class _StatusPhoto extends StatefulWidget {
+  const _StatusPhoto({super.key, required this.id});
+
+  final String id;
+
+  @override
+  State<_StatusPhoto> createState() => _StatusPhotoState();
+}
+
+class _StatusPhotoState extends State<_StatusPhoto> {
+  Uint8List? _bytes;
+  var _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    try {
+      final bytes = await ChatApi().statusImage(widget.id);
+      if (!mounted) return;
+      setState(() {
+        _bytes = bytes;
+        _failed = bytes == null || bytes.isEmpty;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _failed = true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bytes = _bytes;
+    if (bytes != null && bytes.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: Image.memory(bytes, fit: BoxFit.contain),
+      );
+    }
+    if (_failed) {
+      return const Center(
+        child: Text(
+          'Photo could not be opened.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.white70),
+        ),
+      );
+    }
+    return const Center(child: CircularProgressIndicator(color: Colors.white));
   }
 }

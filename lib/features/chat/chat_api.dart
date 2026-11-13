@@ -96,6 +96,7 @@ class ChatUser {
     this.seenPrivacy = 'everyone',
     this.photoPrivacy = 'everyone',
     this.receipts = 'everyone',
+    this.messageRequests = false,
   });
 
   final String id;
@@ -112,12 +113,16 @@ class ChatUser {
   /// everyone shows read receipts. nobody stores the read without announcing it.
   final String receipts;
 
+  /// Off by default. On holds a new person's first messages in Requests.
+  final bool messageRequests;
+
   ChatUser copyWith({
     int? photoRev,
     String? onlinePrivacy,
     String? seenPrivacy,
     String? photoPrivacy,
     String? receipts,
+    bool? messageRequests,
   }) {
     return ChatUser(
       id: id,
@@ -129,6 +134,7 @@ class ChatUser {
       seenPrivacy: seenPrivacy ?? this.seenPrivacy,
       photoPrivacy: photoPrivacy ?? this.photoPrivacy,
       receipts: receipts ?? this.receipts,
+      messageRequests: messageRequests ?? this.messageRequests,
     );
   }
 
@@ -158,6 +164,7 @@ class ChatUser {
       seenPrivacy: audience('lastSeen'),
       photoPrivacy: audience('photo'),
       receipts: audience('receipts'),
+      messageRequests: privacy is Map && privacy['requests'] == true,
     );
   }
 }
@@ -675,6 +682,9 @@ class ChatStatusNote {
     required this.at,
     this.audience = 'all',
     this.views = const [],
+    this.font = 0,
+    this.image = '',
+    this.imageType = '',
   });
 
   final String id;
@@ -683,15 +693,22 @@ class ChatStatusNote {
   final DateTime at;
   final String audience;
   final List<String> views;
+  final int font;
+  final String image;
+  final String imageType;
 
   factory ChatStatusNote.fromJson(Map<String, dynamic> json) {
     final rawViews = json['views'];
+    final rawFont = (json['font'] as num?)?.toInt() ?? 0;
     return ChatStatusNote(
       id: (json['id'] as String?)?.trim() ?? '',
       name: (json['name'] as String?)?.trim() ?? '',
       text: (json['text'] as String?)?.trim() ?? '',
       at: DateTime.fromMillisecondsSinceEpoch((json['at'] as num?)?.toInt() ?? 0),
       audience: (json['audience'] as String?)?.trim() ?? 'all',
+      font: rawFont < 0 ? 0 : rawFont,
+      image: (json['image'] as String?)?.trim() ?? '',
+      imageType: (json['imageType'] as String?)?.trim() ?? '',
       views: [
         if (rawViews is List)
           for (final item in rawViews)
@@ -1984,6 +2001,7 @@ class ChatApi {
     String? lastSeen,
     String? photo,
     String? receipts,
+    bool? requests,
   }) async {
     await _dio.post<dynamic>(
       '/api/v1/chat/privacy',
@@ -1992,6 +2010,7 @@ class ChatApi {
         'lastSeen': ?lastSeen,
         'photo': ?photo,
         'receipts': ?receipts,
+        'requests': ?requests,
       },
       options: await _auth(),
     );
@@ -2015,15 +2034,87 @@ class ChatApi {
     String audience = 'all',
     List<String> allow = const [],
     List<String> deny = const [],
+    int font = 0,
   }) async {
+    final look = font < 0 ? 0 : font;
     await _dio.post<dynamic>(
       '/api/v1/chat/status',
       data: {
         'text': text,
         'audience': audience,
+        if (look > 0) 'font': look,
         if (allow.isNotEmpty) 'allow': allow,
         if (deny.isNotEmpty) 'deny': deny,
       },
+      options: await _auth(),
+    );
+  }
+
+  Future<void> postStatusImage(
+    Uint8List bytes, {
+    String caption = '',
+    String audience = 'all',
+    List<String> allow = const [],
+    List<String> deny = const [],
+    int font = 0,
+  }) async {
+    final auth = await _auth();
+    final headers = Map<String, dynamic>.from(auth.headers ?? {});
+    headers['Content-Type'] = 'application/octet-stream';
+    final clean = caption.trim();
+    if (clean.isNotEmpty) {
+      headers['X-Chat-Caption'] = Uri.encodeComponent(clean);
+    }
+    if (audience.trim().isNotEmpty) {
+      headers['X-Chat-Audience'] = audience.trim();
+    }
+    if (allow.isNotEmpty) {
+      headers['X-Chat-Allow'] = Uri.encodeComponent(allow.join(','));
+    }
+    if (deny.isNotEmpty) {
+      headers['X-Chat-Deny'] = Uri.encodeComponent(deny.join(','));
+    }
+    final look = font < 0 ? 0 : font;
+    if (look > 0) headers['X-Chat-Font'] = '$look';
+    await _dio.post<dynamic>(
+      '/api/v1/chat/status/image',
+      data: bytes,
+      options: auth.copyWith(
+        headers: headers,
+        contentType: 'application/octet-stream',
+        sendTimeout: const Duration(seconds: 40),
+        receiveTimeout: const Duration(seconds: 40),
+      ),
+    );
+  }
+
+  Future<Uint8List?> statusImage(String id) async {
+    final clean = id.trim();
+    if (clean.isEmpty) return null;
+    try {
+      final auth = await _auth();
+      final response = await _dio.get<dynamic>(
+        '/api/v1/chat/status/$clean/image',
+        options: auth.copyWith(
+          responseType: ResponseType.bytes,
+          receiveTimeout: const Duration(seconds: 40),
+        ),
+      );
+      final data = response.data;
+      if (data is Uint8List && data.isNotEmpty) return data;
+      if (data is List<int> && data.isNotEmpty) return Uint8List.fromList(data);
+      return null;
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
+  Future<void> deleteStatus(String id) async {
+    final clean = id.trim();
+    if (clean.isEmpty) return;
+    await _dio.post<dynamic>(
+      '/api/v1/chat/status/$clean/delete',
       options: await _auth(),
     );
   }

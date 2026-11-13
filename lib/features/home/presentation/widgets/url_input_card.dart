@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:social_save/features/home/presentation/providers/home_controller.dart';
 import 'package:social_save/shared/models/social_platform.dart';
+import 'package:social_save/core/utils/open_link.dart';
 import 'package:social_save/shared/widgets/error_banner.dart';
 import 'package:social_save/shared/widgets/platform_badge.dart';
 import 'package:social_save/shared/widgets/glass.dart';
@@ -170,6 +171,7 @@ class _UrlInputCardState extends ConsumerState<UrlInputCard> {
               ErrorBanner(
                 message: state.error!,
                 onRetry: state.url.isEmpty ? null : widget.onAnalyze,
+                onOpenSite: state.url.isEmpty ? null : () => openWebLink(state.url),
               ),
             ],
             const SizedBox(height: 12),

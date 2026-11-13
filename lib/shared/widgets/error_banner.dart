@@ -7,10 +7,14 @@ class ErrorBanner extends StatelessWidget {
     required this.message,
     this.onRetry,
     this.onTryServer,
+    this.onOpenSite,
   });
 
   final String message;
   final VoidCallback? onRetry;
+
+  /// Opens the page when Social Save cannot save the video.
+  final VoidCallback? onOpenSite;
 
   /// Shown for on-phone engine errors: "Try with server".
   final VoidCallback? onTryServer;
@@ -41,7 +45,10 @@ class ErrorBanner extends StatelessWidget {
                     ),
               ),
             ),
-            if (onRetry != null || onTryServer != null || PhoneEngine.isBotCheck(message))
+            if (onRetry != null ||
+                onTryServer != null ||
+                onOpenSite != null ||
+                PhoneEngine.isBotCheck(message))
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
@@ -58,6 +65,12 @@ class ErrorBanner extends StatelessWidget {
                       key: const ValueKey('try-with-server'),
                       onPressed: onTryServer,
                       child: const Text('Try with server'),
+                    ),
+                  if (onOpenSite != null)
+                    TextButton(
+                      key: const ValueKey('open-website'),
+                      onPressed: onOpenSite,
+                      child: const Text('Open website'),
                     ),
                 ],
               ),

@@ -591,7 +591,7 @@ func (c *chatRoom) inviteCall(ctx context.Context, user chatUser, threadID, sdp 
 		c.mu.Unlock()
 		return chatCall{}, err
 	}
-	if thread.Request != "" {
+	if c.holdsRequestLocked(thread) {
 		c.mu.Unlock()
 		return chatCall{}, chatRejected("Wait until they accept your message.")
 	}

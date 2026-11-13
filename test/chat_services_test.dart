@@ -349,6 +349,22 @@ void main() {
       views: const ['ben', 'cam'],
     );
     expect(ownStatusViews([older, newer, note], 'ada'), 2);
+    expect(ownStatusCount([older, newer, note], 'ada'), 3);
+    expect(statusRingSegments(2), 2);
+    expect(statusRingSegments(0), 1);
+    expect(ChatStatusNote.fromJson({'id': 'st2', 'name': 'ada', 'text': 'hi', 'at': 1, 'font': 8}).font, 8);
+    final photo = ChatStatusNote.fromJson({
+      'id': 'st3',
+      'name': 'ada',
+      'text': '',
+      'at': 1,
+      'image': 'st3',
+      'imageType': 'image/png',
+    });
+    expect(photo.image, 'st3');
+    expect(photo.imageType, 'image/png');
+    expect(statusPreview(photo), 'Photo');
+    expect(statusPreview(newer), 'later');
     expect(ownStatusViews(const [], 'ada'), isNull);
     expect(ownStatusViews([newer], ''), isNull);
   });

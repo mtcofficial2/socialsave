@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:social_save/features/chat/chat_admin_screen.dart';
 import 'package:social_save/features/chat/chat_alerts.dart';
 import 'package:social_save/features/chat/chat_api.dart';
+import 'package:social_save/features/chat/day_streak.dart';
 import 'package:social_save/features/chat/chat_drafts.dart';
 import 'package:social_save/features/chat/chat_history.dart';
 import 'package:social_save/features/chat/chat_live.dart';
@@ -62,6 +63,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _busy = false;
   bool _refreshing = false;
   int? _myStatusViews;
+  int _myStatusCount = 0;
+  int _streak = 0;
 
   bool _wide(BuildContext context) => MediaQuery.sizeOf(context).width >= 840;
 
@@ -147,6 +150,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (username.isNotEmpty) {
       ChatLive.instance.start();
       _startPoll();
+      final streak = await DayStreakStore.touch();
+      if (mounted && streak != _streak) setState(() => _streak = streak);
     }
     try {
       final user = await _api.me();
@@ -272,9 +277,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final me = _user?.username ?? '';
     if (me.isEmpty) return;
     try {
-      final count = ownStatusViews(await _api.statuses(), me);
-      if (!mounted || count == _myStatusViews) return;
-      setState(() => _myStatusViews = count);
+      final notes = await _api.statuses();
+      final count = ownStatusViews(notes, me);
+      final mine = ownStatusCount(notes, me);
+      final streak = await DayStreakStore.touch();
+      if (!mounted) return;
+      if (count == _myStatusViews && mine == _myStatusCount && streak == _streak) {
+        return;
+      }
+      setState(() {
+        _myStatusViews = count;
+        _myStatusCount = mine;
+        _streak = streak;
+      });
     } catch (_) {}
   }
 
@@ -1609,21 +1624,38 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           if (showStatus) {
             if (cursor == 0) {
               return ListTile(
-                leading: Container(
-                  width: 52,
-                  height: 52,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(color: ChatUiTokens.brand, width: 2),
-                  ),
-                  child: const Icon(Icons.add_rounded, color: ChatUiTokens.brand),
-                ),
+                leading: _myStatusCount < 1
+                    ? Container(
+                        width: 52,
+                        height: 52,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(color: ChatUiTokens.brand, width: 2),
+                        ),
+                        child: const Icon(
+                          Icons.add_rounded,
+                          color: ChatUiTokens.brand,
+                        ),
+                      )
+                    : StatusFace(
+                        letter: (_user?.username.trim().isNotEmpty ?? false)
+                            ? _user!.username.trim().substring(0, 1).toUpperCase()
+                            : '+',
+                        segments: statusRingSegments(_myStatusCount),
+                        seen: [
+                          for (var i = 0; i < _myStatusCount; i++) false,
+                        ],
+                      ),
                 title: const Text('My status'),
                 subtitle: Text(
-                  _myStatusViews == null
-                      ? 'Tap to see updates'
-                      : 'Tap to see updates · ${statusViewLabel(_myStatusViews!)}',
+                  statusListLine(
+                    views: _myStatusViews,
+                    streak: _streak,
+                    viewLabel: _myStatusViews == null
+                        ? ''
+                        : statusViewLabel(_myStatusViews!),
+                  ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),

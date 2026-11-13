@@ -76,7 +76,14 @@ class EnvConfig {
 
   static String _defaultBaseUrl() {
     if (!kDebugMode) {
-      return productionApiBaseUrl;
+      final hosted = productionApiBaseUrl;
+      if (hosted.isNotEmpty) return hosted;
+      // A release phone build still has to reach chat and saves when the
+      // compile-time address was left out.
+      if (!kIsWeb && Plat.isAndroid) {
+        return 'https://socialsave-api-p2tm.onrender.com';
+      }
+      return hosted;
     }
     // Android emulator maps the computer's loopback to 10.0.2.2.
     if (Plat.isAndroid) {

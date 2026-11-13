@@ -12,6 +12,7 @@ class ChatPrefs {
   static const _quietKey = 'chat.pref.quiet.v1';
   static const _saverKey = 'chat.pref.saver.v1';
   static const _notifyKey = 'chat.pref.notify.v1';
+  static const _wifiUpdateKey = 'chat.pref.wifiUpdate.v1';
 
   static final ValueNotifier<int> revision = ValueNotifier<int>(0);
 
@@ -31,6 +32,9 @@ class ChatPrefs {
 
   /// Holds message photos until a tap, and checks for new messages less often.
   static bool dataSaver = false;
+
+  /// On Wi-Fi, a newer Android build downloads and the install screen opens.
+  static bool wifiUpdate = true;
 
   /// Per conversation: all, mentions, or silent. Missing means all.
   static final Map<String, String> notifyMode = {};
@@ -157,6 +161,17 @@ class ChatPrefs {
     revision.value++;
   }
 
+  /// Missing means the Wi-Fi update stays on.
+  static bool wifiUpdateValue(bool? stored) => stored ?? true;
+
+  static Future<void> setWifiUpdate(bool on) async {
+    await ensure();
+    wifiUpdate = on;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_wifiUpdateKey, on);
+    revision.value++;
+  }
+
   static Future<void> setDataSaver(bool on) async {
     await ensure();
     dataSaver = on;
@@ -194,6 +209,7 @@ class ChatPrefs {
     messagePopup = messagePopupValue(prefs.getBool(_popupKey));
     pattern = prefs.getBool(_patternKey) ?? false;
     dataSaver = prefs.getBool(_saverKey) ?? false;
+    wifiUpdate = wifiUpdateValue(prefs.getBool(_wifiUpdateKey));
     final quiet = prefs.getString(_quietKey) ?? '';
     final parts = quiet.split(',');
     if (parts.length == 2) {

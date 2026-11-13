@@ -657,28 +657,8 @@ class _RowBody extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 2),
-                if (recording)
-                  const Text(
-                    'recording audio…',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: ChatUiTokens.brand,
-                      fontStyle: FontStyle.italic,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  )
-                else if (typing)
-                  const Text(
-                    'typing…',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: ChatUiTokens.brand,
-                      fontStyle: FontStyle.italic,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  )
+                if (recording || typing)
+                  ChatActivityLine(recording: recording)
                 else if (draft.isNotEmpty)
                   Text.rich(
                     TextSpan(
@@ -837,6 +817,7 @@ class ChatComposer extends StatelessWidget {
     required this.onSend,
     required this.onMic,
     required this.onAttach,
+    required this.onEmoji,
     required this.showMic,
   });
 
@@ -850,6 +831,7 @@ class ChatComposer extends StatelessWidget {
   final VoidCallback onSend;
   final VoidCallback onMic;
   final VoidCallback onAttach;
+  final VoidCallback onEmoji;
   final bool showMic;
 
   @override
@@ -881,36 +863,51 @@ class ChatComposer extends StatelessWidget {
                   color: ChatUiTokens.field(dark),
                   borderRadius: BorderRadius.circular(ChatUiTokens.pill),
                 ),
-                child: Focus(
-                  onKeyEvent: onKey,
-                  child: TextField(
-                    controller: controller,
-                    focusNode: focusNode,
-                    onChanged: onChanged,
-                    minLines: 1,
-                    maxLines: 5,
-                    textInputAction: imeSends
-                        ? TextInputAction.send
-                        : TextInputAction.newline,
-                    onSubmitted: imeSends ? (_) => onSend() : null,
-                    style: TextStyle(
-                      fontSize: 16,
-                      height: 1.25,
-                      color: ChatUiTokens.text(dark),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      child: Focus(
+                        onKeyEvent: onKey,
+                        child: TextField(
+                          controller: controller,
+                          focusNode: focusNode,
+                          onChanged: onChanged,
+                          minLines: 1,
+                          maxLines: 5,
+                          textInputAction: imeSends
+                              ? TextInputAction.send
+                              : TextInputAction.newline,
+                          onSubmitted: imeSends ? (_) => onSend() : null,
+                          style: TextStyle(
+                            fontSize: 16,
+                            height: 1.25,
+                            color: ChatUiTokens.text(dark),
+                          ),
+                          decoration: const InputDecoration(
+                            hintText: 'Message',
+                            filled: false,
+                            isDense: true,
+                            contentPadding: EdgeInsets.fromLTRB(14, 10, 4, 10),
+                            border: InputBorder.none,
+                            enabledBorder: InputBorder.none,
+                            focusedBorder: InputBorder.none,
+                            disabledBorder: InputBorder.none,
+                            errorBorder: InputBorder.none,
+                            focusedErrorBorder: InputBorder.none,
+                          ),
+                        ),
+                      ),
                     ),
-                    decoration: const InputDecoration(
-                      hintText: 'Message',
-                      filled: false,
-                      isDense: true,
-                      contentPadding: EdgeInsets.fromLTRB(14, 10, 14, 10),
-                      border: InputBorder.none,
-                      enabledBorder: InputBorder.none,
-                      focusedBorder: InputBorder.none,
-                      disabledBorder: InputBorder.none,
-                      errorBorder: InputBorder.none,
-                      focusedErrorBorder: InputBorder.none,
+                    IconButton(
+                      tooltip: 'Emoji',
+                      onPressed: onEmoji,
+                      icon: Icon(
+                        Icons.emoji_emotions_outlined,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
                     ),
-                  ),
+                  ],
                 ),
               ),
             ),
@@ -936,6 +933,59 @@ class ChatComposer extends StatelessWidget {
                   : const SizedBox(width: 48, height: 48),
             ),
           ],
+        );
+      },
+    );
+  }
+}
+
+/// "typing" or "recording a voice note", with moving dots.
+class ChatActivityLine extends StatefulWidget {
+  const ChatActivityLine({super.key, required this.recording});
+
+  final bool recording;
+
+  @override
+  State<ChatActivityLine> createState() => _ChatActivityLineState();
+}
+
+class _ChatActivityLineState extends State<ChatActivityLine>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _dots;
+
+  @override
+  void initState() {
+    super.initState();
+    _dots = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _dots.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final label = widget.recording ? 'recording a voice note' : 'typing';
+    return AnimatedBuilder(
+      animation: _dots,
+      builder: (context, _) {
+        final step = (_dots.value * 3).floor();
+        final marks = step >= 2 ? 3 : step + 1;
+        return Text(
+          '$label${'.' * marks}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: ChatUiTokens.brand,
+            fontStyle: FontStyle.italic,
+            fontWeight: FontWeight.w700,
+            fontSize: 13,
+          ),
         );
       },
     );

@@ -3,6 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:social_save/core/constants/app_constants.dart';
+import 'package:social_save/core/di/providers.dart';
+import 'package:social_save/core/network/connectivity_service.dart';
+import 'package:social_save/core/platform/plat.dart';
+import 'package:social_save/features/chat/chat_prefs.dart';
 import 'package:social_save/features/updates/release_version.dart';
 import 'package:social_save/features/updates/update_controller.dart';
 
@@ -21,6 +25,7 @@ class _UpdateCheckerState extends ConsumerState<UpdateChecker>
     with WidgetsBindingObserver {
   Timer? _timer;
   String? _later;
+  String? _autoFor;
   var _showing = false;
 
   @override
@@ -53,6 +58,22 @@ class _UpdateCheckerState extends ConsumerState<UpdateChecker>
     await ref.read(updateControllerProvider.notifier).check(force: force);
     final update = ref.read(updateControllerProvider).update;
     if (update == null || !mounted || _showing) return;
+    await ChatPrefs.ensure();
+    if (!mounted || _showing) return;
+    if (ChatPrefs.wifiUpdate && Plat.isAndroid) {
+      final access = await ref.read(connectivityServiceProvider).current();
+      if (!mounted || _showing) return;
+      if (access == NetworkAccess.wifi) {
+        if (_autoFor == update.version) return;
+        _autoFor = update.version;
+        await ref.read(updateControllerProvider.notifier).downloadAndInstall();
+        final after = ref.read(updateControllerProvider);
+        if (after.message != null && after.message!.startsWith('Could not')) {
+          _autoFor = null;
+        }
+        return;
+      }
+    }
     if (_later == update.version) return;
     _showing = true;
     final current = AppConstants.appVersion;
