@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -1472,6 +1473,105 @@ class _ChatThreadViewState extends State<ChatThreadView>
     return KeyEventResult.handled;
   }
 
+  bool get _mouseMenu =>
+      kIsWeb || Plat.isWindows || Plat.isLinux || Plat.isMacOS;
+
+  /// Double-tap hearts a plain message. Voice, photos, polls, links, and
+  /// quotes keep their own taps, so they are left alone.
+  bool _canHeartTap(ChatMessage message) {
+    if (message.id <= 0 || message.replyText.isNotEmpty) return false;
+    if (message.isVoice || message.isSong || message.isPhoto) return false;
+    if (message.isPoll || message.isCard || message.isPlace || message.isCall) {
+      return false;
+    }
+    if (message.links.isNotEmpty) return false;
+    return message.text.trim().isNotEmpty;
+  }
+
+  Future<void> _openMessageMenu(ChatMessage message, Offset at) async {
+    if (!mounted || message.id <= 0) return;
+    final overlay = Overlay.of(context).context.findRenderObject();
+    if (overlay is! RenderBox) return;
+    final chosen = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(at.dx, at.dy, 0, 0),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        const _ReactionMenuRow(),
+        const PopupMenuItem(value: 'reply', child: Text('Reply')),
+        if (message.text.trim().isNotEmpty)
+          const PopupMenuItem(value: 'copy', child: Text('Copy')),
+        if (_canEdit(message))
+          const PopupMenuItem(value: 'edit', child: Text('Edit')),
+        const PopupMenuItem(value: 'star', child: Text('Star')),
+        PopupMenuItem(
+          value: 'pin',
+          child: Text(_pinned.contains(message.id) ? 'Unpin' : 'Pin'),
+        ),
+        if (message.name == _me && _me.isNotEmpty)
+          const PopupMenuItem(value: 'info', child: Text('Info')),
+        if (message.text.trim().isNotEmpty &&
+            !message.isPhoto &&
+            !message.isVoice &&
+            !message.isSong)
+          const PopupMenuItem(value: 'forward', child: Text('Forward')),
+        if (message.links.isNotEmpty)
+          const PopupMenuItem(value: 'link', child: Text('Save link')),
+        PopupMenuItem(
+          value: 'select',
+          child: Text(_selected.contains(message.id) ? 'Deselect' : 'Select'),
+        ),
+        const PopupMenuItem(value: 'delete', child: Text('Delete')),
+        if (message.name == _me && _me.isNotEmpty)
+          const PopupMenuItem(value: 'unsend', child: Text('Unsend')),
+      ],
+    );
+    if (!mounted || chosen == null) return;
+    if (chosen.startsWith('react:')) {
+      await _react(message, chosen.substring(6));
+      return;
+    }
+    switch (chosen) {
+      case 'reply':
+        setState(_selected.clear);
+        _replyTo(message);
+      case 'copy':
+        final text = message.text.trim();
+        if (text.isEmpty) return;
+        await Clipboard.setData(ClipboardData(text: text));
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Message copied')),
+        );
+      case 'edit':
+        _beginEdit(message);
+      case 'star':
+        await _star(message);
+      case 'pin':
+        await _togglePin(message);
+      case 'info':
+        await _showInfo(message);
+      case 'forward':
+        await _forward(message);
+      case 'link':
+        setState(_selected.clear);
+        _openLink(message.links.first);
+      case 'select':
+        _toggleSelect(message);
+      case 'delete':
+        setState(() {
+          _selected
+            ..clear()
+            ..add(message.id);
+        });
+        await _deletePicked();
+      case 'unsend':
+        await _unsendOne(message);
+    }
+  }
+
   void _toggleSelect(ChatMessage message) {
     setState(() {
       if (_selected.contains(message.id)) {
@@ -2240,8 +2340,26 @@ class _ChatThreadViewState extends State<ChatThreadView>
                             onRetry: message.status == 'failed'
                                 ? () => unawaited(_retry(message))
                                 : null,
-                            onLongPress: (_) => _toggleSelect(message),
+                            onLongPress: (details) {
+                              if (_mouseMenu) {
+                                _openMessageMenu(message, details.globalPosition);
+                              } else {
+                                _toggleSelect(message);
+                              }
+                            },
+                            onSecondaryTap: (at) => _openMessageMenu(message, at),
+                            onDoubleTap: _canHeartTap(message)
+                                ? () => unawaited(_react(message, '❤️'))
+                                : null,
                           );
+                          if (_mouseMenu && message.id > 0) {
+                            bubble = _MouseMessageBar(
+                              mine: mine,
+                              onReact: (emoji) => unawaited(_react(message, emoji)),
+                              onMenu: (at) => _openMessageMenu(message, at),
+                              child: bubble,
+                            );
+                          }
                           if (picked) {
                             bubble = ColoredBox(
                               color: ChatUiTokens.brand.withValues(alpha: 0.18),
@@ -2261,6 +2379,16 @@ class _ChatThreadViewState extends State<ChatThreadView>
                                   width: double.infinity,
                                   child: bubble,
                                 ),
+                              ),
+                            );
+                          }
+                          if (_mouseMenu) {
+                            if (!selecting) return bubble;
+                            return GestureDetector(
+                              onTap: () => _toggleSelect(message),
+                              behavior: HitTestBehavior.opaque,
+                              child: AbsorbPointer(
+                                child: SizedBox(width: double.infinity, child: bubble),
                               ),
                             );
                           }
@@ -2805,6 +2933,121 @@ class ChatAvatar extends StatelessWidget {
   }
 }
 
+/// The six reactions at the top of the message menu. A normal menu item would
+/// take the tap itself and close without an emoji.
+class _ReactionMenuRow extends PopupMenuEntry<String> {
+  const _ReactionMenuRow();
+
+  static const emojis = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+
+  @override
+  double get height => 48;
+
+  @override
+  bool represents(String? value) => value != null && value.startsWith('react:');
+
+  @override
+  State<_ReactionMenuRow> createState() => _ReactionMenuRowState();
+}
+
+class _ReactionMenuRowState extends State<_ReactionMenuRow> {
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
+        for (final emoji in _ReactionMenuRow.emojis)
+          InkWell(
+            onTap: () => Navigator.pop(context, 'react:$emoji'),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+              child: Text(emoji, style: const TextStyle(fontSize: 22)),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Reactions and the rest of the message menu, shown when the pointer rests
+/// on a message. A mouse has no long press, so this is how a computer reacts.
+class _MouseMessageBar extends StatefulWidget {
+  const _MouseMessageBar({
+    required this.mine,
+    required this.onReact,
+    required this.onMenu,
+    required this.child,
+  });
+
+  final bool mine;
+  final ValueChanged<String> onReact;
+  final ValueChanged<Offset> onMenu;
+  final Widget child;
+
+  @override
+  State<_MouseMessageBar> createState() => _MouseMessageBarState();
+}
+
+class _MouseMessageBarState extends State<_MouseMessageBar> {
+  var _open = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = ChatUiTokens.dark(context);
+    return MouseRegion(
+      onEnter: (_) => setState(() => _open = true),
+      onExit: (_) => setState(() => _open = false),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: widget.mine
+            ? CrossAxisAlignment.end
+            : CrossAxisAlignment.start,
+        children: [
+          widget.child,
+          if (_open)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Material(
+                elevation: 2,
+                color: dark ? const Color(0xFF1F2C34) : Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final emoji in const ['👍', '❤️', '😂', '😮', '😢', '🙏'])
+                        InkWell(
+                          onTap: () => widget.onReact(emoji),
+                          borderRadius: BorderRadius.circular(16),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
+                            child: Text(emoji, style: const TextStyle(fontSize: 18)),
+                          ),
+                        ),
+                      IconButton(
+                        tooltip: 'More',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () {
+                          final box = context.findRenderObject() as RenderBox?;
+                          final at = box == null
+                              ? Offset.zero
+                              : box.localToGlobal(box.size.center(Offset.zero));
+                          widget.onMenu(at);
+                        },
+                        icon: const Icon(Icons.more_horiz_rounded, size: 18),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class ChatBubble extends StatelessWidget {
   const ChatBubble({
     super.key,
@@ -2821,6 +3064,8 @@ class ChatBubble extends StatelessWidget {
     this.tight = false,
     this.onQuote,
     this.onRetry,
+    this.onSecondaryTap,
+    this.onDoubleTap,
   });
 
   final ChatMessage message;
@@ -2833,6 +3078,8 @@ class ChatBubble extends StatelessWidget {
   final ValueChanged<String> onLink;
   final ValueChanged<int>? onQuote;
   final ValueChanged<LongPressStartDetails>? onLongPress;
+  final ValueChanged<Offset>? onSecondaryTap;
+  final VoidCallback? onDoubleTap;
   final String me;
   final void Function(int? choice, bool close)? onPoll;
   final VoidCallback? onRetry;
@@ -3144,6 +3391,10 @@ class ChatBubble extends StatelessWidget {
           final hasReactions = message.reactions.isNotEmpty;
           return GestureDetector(
             onLongPressStart: onLongPress,
+            onDoubleTap: onDoubleTap,
+            onSecondaryTapDown: onSecondaryTap == null
+                ? null
+                : (details) => onSecondaryTap!(details.globalPosition),
             child: Padding(
               padding: EdgeInsets.only(
                 top: tight ? 1 : 7,

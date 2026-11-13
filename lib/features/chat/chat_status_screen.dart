@@ -1,9 +1,10 @@
 import 'dart:async';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_profile.dart';
@@ -439,6 +440,8 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
   final Set<String> _reported = {};
   int _index = 0;
   bool _deleting = false;
+  bool _paused = false;
+  bool _holding = false;
 
   @override
   void initState() {
@@ -460,15 +463,48 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
     } catch (_) {}
   }
 
+  void _onBarDone() {
+    if (!mounted || _paused || _holding) return;
+    if (_bar.status != AnimationStatus.completed) return;
+    _step(1);
+  }
+
   void _arm() {
-    _bar.forward(from: 0).whenComplete(() {
-      if (mounted) _step(1);
-    });
+    _bar.forward(from: 0).whenComplete(_onBarDone);
+  }
+
+  /// Continues after a pause, a hold, or a sheet. stop() already finished the
+  /// previous ticker, so the new run needs its own completion.
+  void _continue() {
+    if (!mounted || _paused || _holding) return;
+    if (_bar.status == AnimationStatus.completed || _bar.isAnimating) return;
+    _bar.forward().whenComplete(_onBarDone);
+  }
+
+  void _togglePause() {
+    if (_paused) {
+      setState(() => _paused = false);
+      _continue();
+      return;
+    }
+    setState(() => _paused = true);
+    _bar.stop();
+  }
+
+  void _hold(bool down) {
+    if (_holding == down) return;
+    _holding = down;
+    if (down) {
+      _bar.stop();
+      return;
+    }
+    _continue();
   }
 
   void _step(int by) {
     final next = _index + by;
     if (next < 0) {
+      setState(() => _paused = false);
       _arm();
       return;
     }
@@ -476,9 +512,32 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
       Navigator.of(context).pop();
       return;
     }
-    setState(() => _index = next);
+    setState(() {
+      _index = next;
+      _paused = false;
+    });
     _report(_notes[next]);
     _arm();
+  }
+
+  Future<void> _reply(ChatStatusNote note) async {
+    final name = note.name.trim().replaceFirst(RegExp(r'^@'), '');
+    if (name.isEmpty || widget.own) return;
+    _bar.stop();
+    try {
+      final opened = await ChatApi().openThread(name);
+      if (!mounted) return;
+      await context.push(
+        '/chat/${opened.id}',
+        extra: ChatThreadTarget(username: opened.username, name: opened.name),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(chatErrorText(error))),
+      );
+    }
+    _continue();
   }
 
   Future<void> _delete(ChatStatusNote note) async {
@@ -496,7 +555,7 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
       ),
     );
     if (yes != true || !mounted) {
-      if (mounted && !_bar.isCompleted) unawaited(_bar.forward());
+      _continue();
       return;
     }
     setState(() => _deleting = true);
@@ -518,7 +577,7 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
       if (!mounted) return;
       setState(() => _deleting = false);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(chatErrorText(error))));
-      if (!_bar.isCompleted) unawaited(_bar.forward());
+      _continue();
     }
   }
 
@@ -554,7 +613,7 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
         );
       },
     );
-    if (mounted && !_bar.isCompleted) unawaited(_bar.forward());
+    _continue();
   }
 
   @override
@@ -567,9 +626,17 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
   Widget build(BuildContext context) {
     final note = _notes[_index];
     final color = statusTone(note.id);
-    return Scaffold(
-      backgroundColor: color,
-      body: SafeArea(
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.arrowLeft): () => _step(-1),
+        const SingleActivator(LogicalKeyboardKey.arrowRight): () => _step(1),
+        const SingleActivator(LogicalKeyboardKey.space): _togglePause,
+      },
+      child: Focus(
+        autofocus: true,
+        child: Scaffold(
+          backgroundColor: color,
+          body: SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
             child: Column(
@@ -642,6 +709,9 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
                 Expanded(
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
+                    onLongPressStart: (_) => _hold(true),
+                    onLongPressEnd: (_) => _hold(false),
+                    onLongPressCancel: () => _hold(false),
                     onTapUp: (details) {
                       final width = MediaQuery.sizeOf(context).width;
                       _step(details.localPosition.dx < width / 3 ? -1 : 1);
@@ -680,6 +750,39 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
                     padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
                     child: StatusLinkCard(url: link),
                   ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      tooltip: 'Previous',
+                      onPressed: () => _step(-1),
+                      icon: const Icon(Icons.skip_previous_rounded, color: Colors.white),
+                    ),
+                    IconButton(
+                      tooltip: _paused ? 'Play' : 'Pause',
+                      onPressed: _togglePause,
+                      icon: Icon(
+                        _paused ? Icons.play_arrow_rounded : Icons.pause_rounded,
+                        color: Colors.white,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Forward',
+                      onPressed: () => _step(1),
+                      icon: const Icon(Icons.skip_next_rounded, color: Colors.white),
+                    ),
+                    if (!widget.own)
+                      IconButton(
+                        tooltip: 'Reply',
+                        onPressed: () => unawaited(_reply(note)),
+                        icon: const Icon(Icons.reply_rounded, color: Colors.white),
+                      ),
+                  ],
+                ),
+                Text(
+                  _paused ? 'Paused' : 'Hold the update to pause it',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
                 if (widget.own)
                   TextButton.icon(
                     onPressed: () => unawaited(_viewers(note)),
@@ -693,6 +796,8 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
             ),
           ),
         ),
+        ),
+      ),
     );
   }
 }
