@@ -27,6 +27,8 @@ object ChatWatch {
     private var ticking = false
     private var pulling = false
     private var again = false
+    private var wakePull = false
+    private var nudgedAt = 0L
 
     class Creds(val api: String, val token: String, val me: String)
 
@@ -57,6 +59,13 @@ object ChatWatch {
             .apply()
     }
 
+    /// A beat that did not read the inbox must not keep native quiet.
+    fun rest(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .remove("beat")
+            .apply()
+    }
+
     fun remember(context: Context, ids: Map<*, *>) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val seen = readSeen(prefs)
@@ -82,10 +91,12 @@ object ChatWatch {
             .apply()
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove("ringing").apply()
         ChatCallNotice.cancel(context)
+        ChatListenAlarm.cancel(context)
     }
 
     fun ensure(context: Context) {
         val app = context.applicationContext
+        ChatListenAlarm.schedule(app)
         if (!ticking) {
             ticking = true
             handler.post(object : Runnable {
@@ -125,23 +136,44 @@ object ChatWatch {
         }
     }
 
-    fun poke(context: Context) {
+    /// Screen on, unlock, or leaving idle. Asks Dart first, then pulls again
+    /// so a message sent as the phone wakes is not missed.
+    fun nudge(context: Context) {
         val app = context.applicationContext
-        if (dartCovers(app)) return
+        val now = System.currentTimeMillis()
+        if (now - nudgedAt < 2_000) return
+        nudgedAt = now
+        ChatListenAlarm.schedule(app)
+        ChatListen.wakeDart {
+            poke(app, force = true)
+        }
+        handler.postDelayed({ if (!dartCovers(app)) poke(app, force = true) }, 3_000)
+        handler.postDelayed({ if (!dartCovers(app)) poke(app, force = true) }, 8_000)
+    }
+
+    fun poke(context: Context, force: Boolean = false) {
+        val app = context.applicationContext
         synchronized(gate) {
+            if (force) wakePull = true
             if (pulling) {
                 again = true
                 return
             }
+            if (!wakePull && dartCovers(app)) return
             pulling = true
+        }
+        val forced = synchronized(gate) {
+            val on = wakePull
+            wakePull = false
+            on
         }
         Thread {
             try {
-                pull(app)
+                pull(app, forced)
             } finally {
                 val rerun = synchronized(gate) {
                     pulling = false
-                    val more = again
+                    val more = again || wakePull
                     again = false
                     more
                 }
@@ -150,21 +182,47 @@ object ChatWatch {
         }.start()
     }
 
-    private fun pull(context: Context) {
-        if (dartCovers(context)) return
+    /// Runs the inbox pull on this thread. The idle alarm holds its wake lock around this.
+    fun pullBlocking(context: Context) {
+        val app = context.applicationContext
+        synchronized(gate) {
+            if (pulling) {
+                again = true
+                wakePull = true
+                return
+            }
+            pulling = true
+        }
+        try {
+            pull(app, force = true)
+        } finally {
+            val rerun = synchronized(gate) {
+                pulling = false
+                val more = again || wakePull
+                again = false
+                wakePull = false
+                more
+            }
+            if (rerun) poke(app, force = true)
+        }
+    }
+
+    private fun pull(context: Context, force: Boolean) {
+        if (!force && dartCovers(context)) return
         val creds = credentials(context) ?: return
         val inbox = getJson("${creds.api}/api/v1/chat/threads", creds.token)
         if (inbox != null && !dartCovers(context)) applyInbox(context, creds, inbox)
         if (dartCovers(context)) return
         val calls = getJson("${creds.api}/api/v1/chat/calls", creds.token) ?: return
-        if (!dartCovers(context)) applyCalls(context, creds, calls)
+        applyCalls(context, creds, calls)
     }
 
     /// The open app already posts notices. Native steps in when that loop has gone quiet.
+    /// A missing beat does not count: the engine can be cached while its timer is frozen.
     private fun dartCovers(context: Context): Boolean {
         if (FlutterEngineCache.getInstance().get(ENGINE_ID) == null) return false
         val beat = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getLong("beat", 0L)
-        if (beat == 0L) return true
+        if (beat <= 0L) return false
         return System.currentTimeMillis() - beat < 20_000
     }
 
@@ -184,17 +242,29 @@ object ChatWatch {
             val lastId = row.optInt("lastId", 0)
             if (id.length < 2 || lastId <= 0) continue
             val prev = seen.optInt(id, 0)
-            if (lastId > prev) {
-                seen.put(id, lastId)
-                changed = true
+            if (!seeded) {
+                if (lastId > prev) {
+                    seen.put(id, lastId)
+                    changed = true
+                }
+                continue
             }
-            if (!seeded || lastId <= prev) continue
+            if (lastId <= prev) continue
             val from = row.optString("lastFrom").trim()
-            if (sameUser(from, creds.me) || muted.contains(id)) continue
+            val username = row.optString("username").trim()
             val text = row.optString("lastText").trim().ifEmpty { "New message" }
             val group = row.optBoolean("group") || id.startsWith("g")
-            if (dartCovers(context) || !allows(id, group, text, creds.me, modes)) continue
-            val username = row.optString("username").trim()
+            val own = sameUser(from, creds.me)
+            // Seen moves only when the row is posted or permanently skipped.
+            // A row left because Dart is covering can still post after a wake.
+            if (muted.contains(id) || !allows(id, group, text, creds.me, modes)) {
+                seen.put(id, lastId)
+                changed = true
+                continue
+            }
+            if (dartCovers(context)) continue
+            seen.put(id, lastId)
+            changed = true
             val name = row.optString("name").trim()
             val title = name.ifEmpty { username.ifEmpty { "New message" } }
             val payload = if (name.isEmpty() || name == username) {
@@ -203,6 +273,7 @@ object ChatWatch {
                 "chat|$id|$username|$name"
             }
             val mode = modes[id] ?: "all"
+            val bodyText = if (own && !text.startsWith("You: ")) "You: $text" else text
             ChatReply.show(
                 context,
                 io.flutter.plugin.common.MethodCall(
@@ -210,7 +281,7 @@ object ChatWatch {
                     mapOf(
                         "id" to (id.hashCode() and 0x7fffffff),
                         "title" to title,
-                        "body" to text,
+                        "body" to bodyText,
                         "payload" to payload,
                         "sound" to (soundOn && mode != "silent"),
                         "silent" to false,

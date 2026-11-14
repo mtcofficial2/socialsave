@@ -5,8 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Handler
@@ -62,6 +64,10 @@ object ChatListen {
                             ChatWatch.beat(app)
                             result.success(true)
                         }
+                        "rest" -> {
+                            ChatWatch.rest(app)
+                            result.success(true)
+                        }
                         "stop" -> {
                             active = false
                             ChatWatch.disarm(app)
@@ -93,10 +99,42 @@ object ChatListen {
         channel?.setMethodCallHandler(null)
         channel = null
     }
+
+    /// Asks the open app to read the inbox. [onMiss] runs when Dart is not there.
+    fun wakeDart(onMiss: () -> Unit) {
+        val ch = channel
+        if (ch == null) {
+            onMiss()
+            return
+        }
+        main.post {
+            try {
+                ch.invokeMethod(
+                    "check",
+                    null,
+                    object : MethodChannel.Result {
+                        override fun success(result: Any?) {}
+
+                        override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
+                            onMiss()
+                        }
+
+                        override fun notImplemented() {
+                            onMiss()
+                        }
+                    },
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "wake dart: $e")
+                onMiss()
+            }
+        }
+    }
 }
 
 class ChatListenService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wakeReceiver: BroadcastReceiver? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -143,6 +181,7 @@ class ChatListenService : Service() {
         }
         running = true
         acquireLock()
+        listenForWake()
         ChatWatch.ensure(this)
         return START_STICKY
     }
@@ -154,6 +193,7 @@ class ChatListenService : Service() {
 
     override fun onDestroy() {
         running = false
+        stopWake()
         ChatWatch.pause(this)
         releaseLock()
         super.onDestroy()
@@ -181,8 +221,45 @@ class ChatListenService : Service() {
         wakeLock = null
     }
 
+    private fun listenForWake() {
+        if (wakeReceiver != null) return
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_USER_PRESENT)
+            addAction(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED)
+        }
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                val action = intent?.action ?: return
+                if (action == PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED) {
+                    val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+                    if (pm.isDeviceIdleMode) return
+                }
+                if (ChatWatch.credentials(this@ChatListenService) == null) return
+                Log.i(TAG, "wake $action")
+                ChatWatch.nudge(this@ChatListenService)
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(receiver, filter)
+        }
+        wakeReceiver = receiver
+    }
+
+    private fun stopWake() {
+        val current = wakeReceiver ?: return
+        wakeReceiver = null
+        try {
+            unregisterReceiver(current)
+        } catch (_: Exception) {
+        }
+    }
+
     private fun shutdown() {
         running = false
+        stopWake()
         ChatWatch.pause(this)
         releaseLock()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {

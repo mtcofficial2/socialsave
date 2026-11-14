@@ -232,7 +232,12 @@ class ChatAlerts {
       final grew = item.lastId > prev && item.lastId > 0;
       seen[item.id] = item.lastId > prev ? item.lastId : prev;
       if (!notify || !grew || alert == null) continue;
-      if (item.lastFrom.isEmpty || chatSameUser(item.lastFrom, me)) continue;
+      if (item.lastFrom.isEmpty) continue;
+      // The open chat stays quiet, including a message you just sent there.
+      // On the phone, a send from your other device still notifies once that
+      // chat is not the one on screen. Windows stays quiet for your own sends.
+      final own = chatSameUser(item.lastFrom, me);
+      if (own && !Plat.isAndroid) continue;
       if (holdOpen && item.id == openThread) continue;
       if (ChatInboxFilter.isMuted(item.id)) continue;
       alert(item, chatAlertBody(item.lastText));
@@ -338,8 +343,8 @@ class ChatAlertWatch {
   String _me = '';
 
   void ensure() {
+    _listenForWake();
     if (_poll != null || _calls != null) return;
-    unawaited(_beat());
     NotificationService.attachChatOpen(_open);
     NotificationService.attachCall(_onCall);
     NotificationService.onCallOpen = () {
@@ -403,10 +408,33 @@ class ChatAlertWatch {
     if (parts[0] == 'open') unawaited(ChatCalls.instance.syncIncoming());
   }
 
+  bool _wakeListening = false;
+
+  void _listenForWake() {
+    if (_wakeListening || !Plat.isAndroid) return;
+    _wakeListening = true;
+    const MethodChannel('socialsave/chat_listen').setMethodCallHandler((call) async {
+      if (call.method != 'check') return null;
+      // Do not await. _check calls back into this channel, and waiting here
+      // would stall the platform thread.
+      unawaited(_check(force: true));
+      unawaited(Future<void>.delayed(const Duration(seconds: 3), () => _check(force: true)));
+      unawaited(Future<void>.delayed(const Duration(seconds: 8), () => _check(force: true)));
+      return true;
+    });
+  }
+
   Future<void> _beat() async {
     if (!Plat.isAndroid) return;
     try {
       await const MethodChannel('socialsave/chat_listen').invokeMethod<void>('beat');
+    } catch (_) {}
+  }
+
+  Future<void> _rest() async {
+    if (!Plat.isAndroid) return;
+    try {
+      await const MethodChannel('socialsave/chat_listen').invokeMethod<void>('rest');
     } catch (_) {}
   }
 
@@ -454,8 +482,10 @@ class ChatAlertWatch {
 
   Future<void> _alertLive(String threadId, ChatMessage message) async {
     if (_me.isEmpty) _me = await ChatSession.username();
-    if (_me.isEmpty || chatSameUser(message.name, _me)) return;
+    if (_me.isEmpty) return;
     final here = await _here();
+    final own = chatSameUser(message.name, _me);
+    if (own && !Plat.isAndroid) return;
     if (here && threadId == ChatAlerts.openThread) return;
     await ChatInboxFilter.ensure();
     if (ChatInboxFilter.isMuted(threadId)) return;
@@ -469,10 +499,11 @@ class ChatAlertWatch {
       return;
     }
     final title = _alertTitle(threadId, message.name);
+    final body = chatAlertBody(message.text);
     chatAlertNow(
       threadId: threadId,
       title: title,
-      body: chatAlertBody(message.text),
+      body: own ? _fromYou(body) : body,
       username: message.name,
       photoRev: ChatAlerts.photoRevs[threadId] ?? 0,
     );
@@ -507,8 +538,8 @@ class ChatAlertWatch {
       return;
     }
     _busy = true;
+    var fetched = false;
     try {
-      unawaited(_beat());
       if (!chatInboxCheckRuns(WidgetsBinding.instance.lifecycleState)) return;
       await ChatPrefs.ensure();
       final fresh = ChatAlerts.lastInbox;
@@ -530,6 +561,8 @@ class ChatAlertWatch {
         _asked = true;
         unawaited(NotificationService().requestPermission());
       }
+      await _beat();
+      fetched = true;
       final items = await _api.threads();
       _me = await ChatSession.username();
       if (_me.isNotEmpty) {
@@ -553,10 +586,11 @@ class ChatAlertWatch {
             return;
           }
           final title = _alertTitle(item.id, item.label);
+          final own = chatSameUser(item.lastFrom, _me);
           chatAlertNow(
             threadId: item.id,
             title: title,
-            body: body,
+            body: own ? _fromYou(body) : body,
             username: item.username,
             photoRev: item.photoRev,
           );
@@ -571,6 +605,8 @@ class ChatAlertWatch {
       }
     } catch (_) {
       // The next pass tries again. A quiet miss is better than a banner on Home.
+      // A beat with no inbox would hide the native listener for 20 seconds.
+      if (fetched) unawaited(_rest());
     } finally {
       _busy = false;
       if (_again) {
@@ -658,6 +694,12 @@ class ChatOutgoingBar extends StatelessWidget {
       },
     );
   }
+}
+
+/// A message this account sent from another device.
+String _fromYou(String body) {
+  if (body.startsWith('You: ')) return body;
+  return 'You: $body';
 }
 
 /// Usernames match without case or a leading @.
