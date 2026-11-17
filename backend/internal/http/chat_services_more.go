@@ -354,6 +354,9 @@ func cleanZone(raw string) string {
 }
 
 func (c *chatRoom) addSchedule(ctx context.Context, user chatUser, threadID, text, zone string, reply, sendAt int64) (chatSchedule, error) {
+	if err := accountDisabled(user); err != nil {
+		return chatSchedule{}, err
+	}
 	clean, err := cleanChatText(text)
 	if err != nil {
 		return chatSchedule{}, err

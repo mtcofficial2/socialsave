@@ -70,9 +70,12 @@ type chatUser struct {
 	LastSeen     int64             `json:"lastSeen,omitempty"`
 	Privacy      chatPrivacy       `json:"privacy,omitempty"`
 	RecoveryHash string            `json:"recoveryHash,omitempty"`
-	Stars        []chatStar        `json:"stars,omitempty"`
-	Labels       []chatLabel       `json:"labels,omitempty"`
-	Devices      []chatDevice      `json:"devices,omitempty"`
+	// Disabled is set from Monitor. The account can still sign in and read.
+	// Sends, calls, status posts, and scheduled sends are refused.
+	Disabled bool         `json:"disabled,omitempty"`
+	Stars    []chatStar   `json:"stars,omitempty"`
+	Labels   []chatLabel  `json:"labels,omitempty"`
+	Devices  []chatDevice `json:"devices,omitempty"`
 	// RecoveryPlain is shown once to the person registering. It is never stored.
 	RecoveryPlain string `json:"-"`
 }
@@ -160,6 +163,8 @@ type chatThread struct {
 	Vanish    int                 `json:"vanish,omitempty"`
 	ClearAt   int64               `json:"clearAt,omitempty"`
 	Request   string              `json:"request,omitempty"`
+	// Created is when a group was made. Older groups may leave this empty.
+	Created int64 `json:"created,omitempty"`
 }
 
 // chatInstall is one copy of the app. The id is random and made on that
@@ -175,6 +180,9 @@ type chatInstall struct {
 	Seen         int64  `json:"seen"`
 	Downloads    int    `json:"downloads,omitempty"`
 	LastDownload int64  `json:"lastDownload,omitempty"`
+	// SignedIn is true only when this copy opened the app with an account.
+	// Username stays as the last account after a signed-out open.
+	SignedIn bool `json:"signedIn,omitempty"`
 }
 
 type chatData struct {
@@ -638,12 +646,21 @@ func (c *chatRoom) since(ctx context.Context, userID, threadID string, after, si
 	c.ensure(ctx)
 	c.mu.Lock()
 	thread := c.threadLocked(threadID)
-	if thread == nil || !onThread(thread, userID) {
+	if thread == nil {
 		c.mu.Unlock()
 		return chatThreadSync{}, chatRejected("That chat was not found.")
 	}
+	member := onThread(thread, userID)
+	if !member {
+		viewer, ok := c.userLocked(userID)
+		// Monitor can open a group it does not belong to. Direct chats stay closed.
+		if !ok || !chatIsAdmin(viewer) || len(thread.Members) == 0 {
+			c.mu.Unlock()
+			return chatThreadSync{}, chatRejected("That chat was not found.")
+		}
+	}
 	dirty := c.touchLocked(userID)
-	if noteDelivered(thread, userID) {
+	if member && noteDelivered(thread, userID) {
 		dirty = true
 	}
 	if c.sweepThreadLocked(thread) {

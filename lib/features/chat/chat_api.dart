@@ -192,6 +192,9 @@ class ChatDirectoryEntry {
     required this.created,
     this.lastSeen,
     this.hasPassword = false,
+    this.hasRecovery = false,
+    this.disabled = false,
+    this.sessions = const [],
   });
 
   final String username;
@@ -200,6 +203,9 @@ class ChatDirectoryEntry {
   final DateTime? created;
   final DateTime? lastSeen;
   final bool hasPassword;
+  final bool hasRecovery;
+  final bool disabled;
+  final List<ChatAdminSession> sessions;
 
   String get contact {
     if (phone.isNotEmpty && email.isNotEmpty) return '$phone · $email';
@@ -216,6 +222,37 @@ class ChatDirectoryEntry {
       created: at > 0 ? DateTime.fromMillisecondsSinceEpoch(at) : null,
       lastSeen: seen > 0 ? DateTime.fromMillisecondsSinceEpoch(seen) : null,
       hasPassword: json['hasPassword'] == true,
+      hasRecovery: json['hasRecovery'] == true,
+      disabled: json['disabled'] == true,
+      sessions: _adminSessions(json['sessions']),
+    );
+  }
+}
+
+/// One signed-in session. [id] is a short prefix, not the token.
+class ChatAdminSession {
+  const ChatAdminSession({
+    required this.id,
+    this.name = '',
+    this.platform = '',
+    this.seen,
+    this.current = false,
+  });
+
+  final String id;
+  final String name;
+  final String platform;
+  final DateTime? seen;
+  final bool current;
+
+  factory ChatAdminSession.fromJson(Map<String, dynamic> json) {
+    final seen = (json['seen'] as num?)?.toInt() ?? 0;
+    return ChatAdminSession(
+      id: (json['id'] as String?)?.trim() ?? '',
+      name: (json['name'] as String?)?.trim() ?? '',
+      platform: (json['platform'] as String?)?.trim() ?? '',
+      seen: seen > 0 ? DateTime.fromMillisecondsSinceEpoch(seen) : null,
+      current: json['current'] == true,
     );
   }
 }
@@ -226,11 +263,76 @@ class ChatAdminSnapshot {
     required this.people,
     required this.devices,
     required this.storage,
+    this.groups = const [],
+    this.reports = const [],
+    this.deviceLimit = 2000,
   });
 
   final List<ChatDirectoryEntry> people;
   final List<ChatDeviceEntry> devices;
+  final List<ChatAdminGroup> groups;
+  final List<ChatAdminReport> reports;
   final String storage;
+  final int deviceLimit;
+}
+
+/// A group, without its messages.
+class ChatAdminGroup {
+  const ChatAdminGroup({
+    required this.id,
+    required this.name,
+    this.owner = '',
+    this.members = 0,
+    this.created,
+    this.announce = false,
+  });
+
+  final String id;
+  final String name;
+  final String owner;
+  final int members;
+  final DateTime? created;
+  final bool announce;
+
+  factory ChatAdminGroup.fromJson(Map<String, dynamic> json) {
+    final at = (json['created'] as num?)?.toInt() ?? 0;
+    return ChatAdminGroup(
+      id: (json['id'] as String?)?.trim() ?? '',
+      name: (json['name'] as String?)?.trim() ?? '',
+      owner: (json['owner'] as String?)?.trim() ?? '',
+      members: (json['members'] as num?)?.toInt() ?? 0,
+      created: at > 0 ? DateTime.fromMillisecondsSinceEpoch(at) : null,
+      announce: json['announce'] == true,
+    );
+  }
+}
+
+/// Someone reported a username. The reason is all the server stored.
+class ChatAdminReport {
+  const ChatAdminReport({
+    required this.id,
+    required this.from,
+    required this.target,
+    this.reason = '',
+    this.at,
+  });
+
+  final String id;
+  final String from;
+  final String target;
+  final String reason;
+  final DateTime? at;
+
+  factory ChatAdminReport.fromJson(Map<String, dynamic> json) {
+    final at = (json['at'] as num?)?.toInt() ?? 0;
+    return ChatAdminReport(
+      id: (json['id'] as String?)?.trim() ?? '',
+      from: (json['from'] as String?)?.trim() ?? '',
+      target: (json['target'] as String?)?.trim() ?? '',
+      reason: (json['reason'] as String?)?.trim() ?? '',
+      at: at > 0 ? DateTime.fromMillisecondsSinceEpoch(at) : null,
+    );
+  }
 }
 
 /// One install. [id] is a random id from that device, not a serial number.
@@ -246,6 +348,7 @@ class ChatDeviceEntry {
     required this.first,
     required this.seen,
     this.lastDownload,
+    this.signedIn = false,
   });
 
   final String id;
@@ -258,6 +361,7 @@ class ChatDeviceEntry {
   final DateTime? first;
   final DateTime? seen;
   final DateTime? lastDownload;
+  final bool signedIn;
 
   factory ChatDeviceEntry.fromJson(Map<String, dynamic> json) {
     final first = (json['first'] as num?)?.toInt() ?? 0;
@@ -277,6 +381,7 @@ class ChatDeviceEntry {
               (json['lastDownload'] as num).toInt(),
             )
           : null,
+      signedIn: json['signedIn'] == true,
     );
   }
 }
@@ -295,6 +400,32 @@ List<ChatDeviceEntry> _deviceRows(Object? items) {
   return [
     for (final item in items)
       if (item is Map) ChatDeviceEntry.fromJson(Map<String, dynamic>.from(item)),
+  ];
+}
+
+List<ChatAdminSession> _adminSessions(Object? items) {
+  if (items is! List) return const [];
+  return [
+    for (final item in items)
+      if (item is Map)
+        ChatAdminSession.fromJson(Map<String, dynamic>.from(item)),
+  ];
+}
+
+List<ChatAdminGroup> _groupRows(Object? items) {
+  if (items is! List) return const [];
+  return [
+    for (final item in items)
+      if (item is Map) ChatAdminGroup.fromJson(Map<String, dynamic>.from(item)),
+  ];
+}
+
+List<ChatAdminReport> _reportRows(Object? items) {
+  if (items is! List) return const [];
+  return [
+    for (final item in items)
+      if (item is Map)
+        ChatAdminReport.fromJson(Map<String, dynamic>.from(item)),
   ];
 }
 
@@ -1551,10 +1682,42 @@ class ChatApi {
     );
     final body = _object(response);
     lastStorage = (body['storage'] as String?)?.trim() ?? '';
+    final limit = (body['deviceLimit'] as num?)?.toInt() ?? 0;
     return ChatAdminSnapshot(
       people: _directoryRows(body['users']),
       devices: _deviceRows(body['devices']),
+      groups: _groupRows(body['groups']),
+      reports: _reportRows(body['reports']),
       storage: lastStorage,
+      deviceLimit: limit > 0 ? limit : 2000,
+    );
+  }
+
+  /// Stops or allows sends, calls, and status posts. Chats stay.
+  Future<void> setAccountDisabled(String username, {required bool disabled}) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/admin/disable',
+      data: {'username': username, 'disabled': disabled},
+      options: await _auth(),
+    );
+  }
+
+  /// Ends one signed-in session. [sessionId] is the short id from Monitor.
+  Future<void> endAccountSession(String username, String sessionId) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/admin/sessions/end',
+      data: {'username': username, 'id': sessionId},
+      options: await _auth(),
+    );
+  }
+
+  /// Ends every signed-in session on [username].
+  /// The admin's own current session stays.
+  Future<void> endAccountSessions(String username) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/admin/sessions/all',
+      data: {'username': username},
+      options: await _auth(),
     );
   }
 

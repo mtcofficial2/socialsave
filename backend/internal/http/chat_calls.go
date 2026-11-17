@@ -569,6 +569,9 @@ func cleanSDP(raw string) (string, error) {
 }
 
 func (c *chatRoom) inviteCall(ctx context.Context, user chatUser, threadID, sdp string) (chatCall, error) {
+	if err := accountDisabled(user); err != nil {
+		return chatCall{}, err
+	}
 	sdp, err := cleanSDP(sdp)
 	if err != nil {
 		return chatCall{}, err

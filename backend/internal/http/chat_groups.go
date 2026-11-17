@@ -64,6 +64,7 @@ func (c *chatRoom) createGroup(ctx context.Context, user chatUser, name string) 
 		Code:    code,
 		Members: []string{user.ID},
 		Next:    1,
+		Created: time.Now().UnixMilli(),
 	}
 	c.data.Threads = append(c.data.Threads, thread)
 	c.mu.Unlock()

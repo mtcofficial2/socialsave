@@ -251,6 +251,9 @@ func (c *chatRoom) reportedOftenLocked(userID string) bool {
 }
 
 func (c *chatRoom) gatePostLocked(thread *chatThread, user chatUser) error {
+	if err := accountDisabled(user); err != nil {
+		return err
+	}
 	if c.fresh == nil {
 		c.fresh = map[string][]time.Time{}
 	}
@@ -504,6 +507,11 @@ func (c *chatRoom) sendDue(ctx context.Context) {
 	kept := make([]chatSchedule, 0, len(c.data.Schedules))
 	for _, item := range c.data.Schedules {
 		if item.SendAt <= now {
+			author, ok := c.userLocked(item.From)
+			if ok && author.Disabled {
+				kept = append(kept, item)
+				continue
+			}
 			due = append(due, item)
 			continue
 		}
@@ -806,6 +814,9 @@ func prepareStatusFields(text, audience string, allow, deny []string, font int, 
 }
 
 func (c *chatRoom) addStatus(ctx context.Context, user chatUser, text, audience string, allow, deny []string, font int) (chatStatusNote, error) {
+	if err := accountDisabled(user); err != nil {
+		return chatStatusNote{}, err
+	}
 	clean, audience, allowed, denied, font, err := prepareStatusFields(text, audience, allow, deny, font, false)
 	if err != nil {
 		return chatStatusNote{}, err
@@ -820,6 +831,9 @@ func (c *chatRoom) addStatus(ctx context.Context, user chatUser, text, audience 
 }
 
 func (c *chatRoom) addStatusImage(ctx context.Context, user chatUser, body []byte, caption, audience string, allow, deny []string, font int) (chatStatusNote, error) {
+	if err := accountDisabled(user); err != nil {
+		return chatStatusNote{}, err
+	}
 	if len(body) == 0 || len(body) > chatPhotoMax || imageKind(body) == "" {
 		return chatStatusNote{}, chatRejected("Choose a JPEG or PNG photo.")
 	}
