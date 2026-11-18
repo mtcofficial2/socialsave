@@ -75,6 +75,7 @@ Future<void> main(List<String> args) async {
     appRouter.routerDelegate.addListener(() {
       PhoneActivity.sawScreen(appRouter.routeInformationProvider.value.uri.path);
     });
+    PhoneActivity.prompt = _askFullerLog;
   }
   if (kIsWeb) {
     await _runWeb();
@@ -575,6 +576,27 @@ Future<void> main(List<String> args) async {
 /// Browser build: the same app and screens, without the parts a browser
 /// cannot do (files on disk, nearby share, the Vault, native players).
 /// Downloads are kept in this browser's storage (IndexedDB via Hive).
+/// Asks the person holding this phone before a computer can read the fuller log.
+Future<bool?> _askFullerLog() {
+  final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
+  if (ctx == null) return Future<bool?>.value();
+  return showDialog<bool>(
+    context: ctx,
+    useRootNavigator: true,
+    barrierDismissible: false,
+    builder: (context) => AlertDialog(
+      title: const Text('Allow a fuller phone log?'),
+      content: const Text(
+        'A computer with Social Save is reading this phone. If you tap Yes, the log also includes when the screen turned on or off, when the phone locked, which apps opened, and which apps sent a notification. Message text, passwords, and what is inside other apps stay off the log.',
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Not now')),
+        FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Yes')),
+      ],
+    ),
+  );
+}
+
 Future<void> _runWeb() async {
   MediaKit.ensureInitialized();
   await Hive.initFlutter();

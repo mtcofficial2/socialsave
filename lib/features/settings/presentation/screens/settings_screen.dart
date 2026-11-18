@@ -26,6 +26,7 @@ import 'package:social_save/features/library/image_device_stamp.dart';
 import 'package:social_save/features/library/index_backup.dart';
 import 'package:social_save/features/library/library_catalog.dart';
 import 'package:social_save/core/constants/app_constants.dart';
+import 'package:social_save/core/diagnostics/phone_activity.dart';
 import 'package:social_save/core/storage/download_path_service.dart';
 import 'package:social_save/core/theme/app_fonts.dart';
 import 'package:social_save/features/settings/domain/entities/app_settings.dart';
@@ -73,7 +74,7 @@ class SettingsScreen extends ConsumerWidget {
             const SizedBox(height: 12),
             DesktopColumns(
               sections: [
-                _Sec(title: 'Appearance & Theme', keys: 'appearance theme dark light system font typeface wallpaper color home shortcuts minimal liquid glass', child: Column(
+                _Sec(title: 'Appearance & Theme', keys: 'appearance theme dark light system font typeface wallpaper color home shortcuts minimal liquid glass fuller log owner screen lock notification', child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
             _groupTitle(context, Icons.palette_outlined, 'Appearance & Theme'),
@@ -179,12 +180,13 @@ class SettingsScreen extends ConsumerWidget {
                         contentPadding: EdgeInsets.zero,
                         title: const Text('Phone log', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
                         subtitle: Text(
-                          'When a phone with Social Save is plugged in, read the apps it used and everything it did',
+                          'When a phone with Social Save is plugged in, read the apps it used and everything it did. The fuller log appears after that phone\'s owner says yes',
                           style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant),
                         ),
                         trailing: const Icon(Icons.notes_rounded),
                         onTap: () => showPhoneLog(context),
                       ),
+                    if (Plat.isAndroid) const _FullerLogTile(),
                     SwitchListTile(
                       key: const ValueKey('classic-library-switch'),
                       contentPadding: EdgeInsets.zero,
@@ -1096,6 +1098,55 @@ class _SecState extends State<_Sec> {
           ],
         );
       },
+    );
+  }
+}
+
+/// The phone's owner turns the fuller cable log on or off.
+class _FullerLogTile extends StatefulWidget {
+  const _FullerLogTile();
+
+  @override
+  State<_FullerLogTile> createState() => _FullerLogTileState();
+}
+
+class _FullerLogTileState extends State<_FullerLogTile> {
+  bool _on = false;
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    final value = await PhoneActivity.consent();
+    if (!mounted) return;
+    setState(() {
+      _on = value == true;
+      _ready = true;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return SwitchListTile(
+      key: const ValueKey('fuller-log-switch'),
+      contentPadding: EdgeInsets.zero,
+      title: const Text('Fuller phone log', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+      subtitle: Text(
+        'When you say yes, a computer on the cable can also see the screen, the lock, apps that opened, and apps that sent a notification',
+        style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant),
+      ),
+      value: _on,
+      onChanged: !_ready
+          ? null
+          : (next) async {
+              setState(() => _on = next);
+              await PhoneActivity.setConsent(next);
+            },
     );
   }
 }

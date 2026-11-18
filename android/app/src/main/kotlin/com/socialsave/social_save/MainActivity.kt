@@ -956,10 +956,11 @@ class MainActivity : FlutterFragmentActivity() {
                     runOnUiThread { result.success(out) }
                 }
                 "phoneUsage" -> io.execute {
+                    val full = call.argument<Boolean>("full") == true
                     val out = try {
                         mapOf(
                             "allowed" to PhoneUsage.allowed(applicationContext),
-                            "lines" to PhoneUsage.recent(applicationContext),
+                            "lines" to PhoneUsage.recent(applicationContext, full),
                         )
                     } catch (_: Exception) {
                         mapOf("allowed" to false, "lines" to emptyList<Map<String, String>>())

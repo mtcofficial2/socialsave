@@ -19,8 +19,11 @@ import java.util.TimeZone
  */
 object PhoneUsage {
     private const val windowMs = 3L * 24 * 60 * 60 * 1000
+    private const val fullWindowMs = 7L * 24 * 60 * 60 * 1000
     private const val minMs = 3_000L
     private const val cap = 150
+    private const val fullCap = 400
+    private const val noteGapMs = 120_000L
 
     fun allowed(context: Context): Boolean {
         val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
@@ -47,11 +50,13 @@ object PhoneUsage {
         context.startActivity(intent)
     }
 
-    fun recent(context: Context): List<Map<String, String>> {
+    /** [full] is only true after the phone's owner taps Yes. */
+    fun recent(context: Context, full: Boolean = false): List<Map<String, String>> {
         if (!allowed(context)) return emptyList()
         val manager = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
         val end = System.currentTimeMillis()
-        val events = manager.queryEvents(end - windowMs, end) ?: return emptyList()
+        val span = if (full) fullWindowMs else windowMs
+        val events = manager.queryEvents(end - span, end) ?: return emptyList()
         val event = UsageEvents.Event()
         val resumed = if (Build.VERSION.SDK_INT >= 29) {
             UsageEvents.Event.ACTIVITY_RESUMED
@@ -65,24 +70,81 @@ object PhoneUsage {
         }
         var current: Pair<String, Long>? = null
         val rows = ArrayList<Map<String, String>>()
+        var notePkg: String? = null
+        var noteStart = 0L
+        var noteCount = 0
+        fun flushNotes() {
+            val pkg = notePkg ?: return
+            if (noteCount < 1) return
+            val name = label(context, pkg)
+            val text = if (noteCount == 1) {
+                "A notification arrived from $name."
+            } else {
+                "$noteCount notifications arrived from $name."
+            }
+            rows.add(mapOf("at" to iso(noteStart), "text" to text))
+            notePkg = null
+            noteCount = 0
+        }
         while (events.hasNextEvent()) {
             events.getNextEvent(event)
+            val type = event.eventType
+            if (full) {
+                val device = deviceSentence(type)
+                if (device != null) {
+                    flushNotes()
+                    rows.add(mapOf("at" to iso(event.timeStamp), "text" to device))
+                    continue
+                }
+                if (type == UsageEvents.Event.NOTIFICATION_INTERRUPTION) {
+                    val pkg = event.packageName ?: continue
+                    if (skipPackage(pkg)) continue
+                    if (notePkg == pkg && event.timeStamp - noteStart < noteGapMs) {
+                        noteCount += 1
+                    } else {
+                        flushNotes()
+                        notePkg = pkg
+                        noteStart = event.timeStamp
+                        noteCount = 1
+                    }
+                    continue
+                }
+            }
             val pkg = event.packageName ?: continue
             if (pkg == context.packageName) continue
-            when (event.eventType) {
+            when (type) {
                 resumed -> {
-                    close(context, current, event.timeStamp, rows)
+                    close(context, current, event.timeStamp, rows, full)
                     current = pkg to event.timeStamp
                 }
                 paused -> if (current?.first == pkg) {
-                    close(context, current, event.timeStamp, rows)
+                    close(context, current, event.timeStamp, rows, full)
                     current = null
                 }
             }
         }
-        close(context, current, end, rows)
-        if (rows.size <= cap) return rows
-        return rows.subList(rows.size - cap, rows.size)
+        flushNotes()
+        close(context, current, end, rows, full)
+        rows.sortBy { it["at"] ?: "" }
+        val limit = if (full) fullCap else cap
+        if (rows.size <= limit) return rows
+        return rows.subList(rows.size - limit, rows.size)
+    }
+
+    private fun deviceSentence(type: Int): String? {
+        return when (type) {
+            UsageEvents.Event.SCREEN_INTERACTIVE -> "The screen turned on."
+            UsageEvents.Event.SCREEN_NON_INTERACTIVE -> "The screen turned off."
+            UsageEvents.Event.KEYGUARD_SHOWN -> "The phone locked."
+            UsageEvents.Event.KEYGUARD_HIDDEN -> "The phone unlocked."
+            UsageEvents.Event.DEVICE_STARTUP -> "The phone turned on."
+            UsageEvents.Event.DEVICE_SHUTDOWN -> "The phone shut down."
+            else -> null
+        }
+    }
+
+    private fun skipPackage(pkg: String): Boolean {
+        return pkg == "android" || pkg.endsWith(".systemui")
     }
 
     private fun close(
@@ -90,14 +152,19 @@ object PhoneUsage {
         open: Pair<String, Long>?,
         end: Long,
         rows: MutableList<Map<String, String>>,
+        full: Boolean,
     ) {
         if (open == null) return
         val ms = end - open.second
         if (ms < minMs) return
+        val name = label(context, open.first)
+        if (full) {
+            rows.add(mapOf("at" to iso(open.second), "text" to "Opened $name."))
+        }
         rows.add(
             mapOf(
-                "at" to iso(open.second),
-                "text" to "Used ${label(context, open.first)} for ${duration(ms)}.",
+                "at" to iso(end),
+                "text" to "Used $name for ${duration(ms)}.",
             ),
         )
     }

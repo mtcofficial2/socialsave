@@ -55,7 +55,7 @@ class _PhoneLogSheetState extends State<PhoneLogSheet> {
               Text('Phone log', style: theme.textTheme.titleLarge),
               const SizedBox(height: 4),
               Text(
-                'The apps this phone used, and what it did in Social Save.',
+                'The apps this phone used, and what it did in Social Save. After the phone\'s owner says yes, this also shows the screen, the lock, apps that opened, and apps that sent a notification.',
                 style: theme.textTheme.bodySmall,
               ),
               const SizedBox(height: 12),
