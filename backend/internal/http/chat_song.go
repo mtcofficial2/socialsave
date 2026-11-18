@@ -152,6 +152,9 @@ func (c *chatRoom) songFor(ctx context.Context, userID, songID string) ([]byte, 
 	if kind == "" {
 		return nil, "", os.ErrNotExist
 	}
+	if link := c.publicBlob(key); link != "" {
+		return nil, "", &chatOffload{link: link}
+	}
 	body, err := c.getBlob(ctx, key)
 	if err != nil || len(body) == 0 {
 		return nil, "", os.ErrNotExist
@@ -199,6 +202,9 @@ func (s *Server) chatSongGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, contentType, err := s.chat.songFor(r.Context(), user.ID, chi.URLParam(r, "id"))
+	if wroteChatOffload(w, r, err) {
+		return
+	}
 	if err != nil {
 		writeChatFailure(w, err)
 		return

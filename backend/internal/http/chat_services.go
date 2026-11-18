@@ -725,6 +725,9 @@ func (s *Server) chatStatusImageGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, contentType, err := s.chat.statusImage(r.Context(), user, chi.URLParam(r, "id"))
+	if wroteChatOffload(w, r, err) {
+		return
+	}
 	if err != nil {
 		writeChatFailure(w, err)
 		return
@@ -892,6 +895,9 @@ func (c *chatRoom) statusImage(ctx context.Context, viewer chatUser, id string) 
 	key, err := chatBlobKey("chat/status/", imageID)
 	if err != nil {
 		return nil, "", chatRejected("That photo could not be opened.")
+	}
+	if link := c.publicBlob(key); link != "" {
+		return nil, "", &chatOffload{link: link}
 	}
 	body, err := c.getBlob(ctx, key)
 	if err != nil || len(body) == 0 {

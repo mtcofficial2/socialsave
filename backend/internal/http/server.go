@@ -105,7 +105,7 @@ func (s *Server) Router() http.Handler {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins: []string{"*"},
 		AllowedMethods: []string{http.MethodGet, http.MethodPost, http.MethodOptions},
-		AllowedHeaders: []string{"Authorization", "Content-Type", "X-API-Key", "X-Chat-Token", "X-Voice-Ms", "X-Reply-Id", "X-Chat-Caption"},
+		AllowedHeaders: []string{"Authorization", "Content-Type", "X-API-Key", "X-Chat-Token", "X-Voice-Ms", "X-Reply-Id", "X-Chat-Caption", "X-Chat-File-Name", "X-Chat-Clip"},
 		MaxAge:         300,
 	}))
 	r.Use(s.limit)
@@ -186,6 +186,11 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requireKey).Get("/chat/songs/{id}", s.chatSongGet)
 		r.With(s.requireKey).Post("/chat/threads/{id}/photo", s.chatThreadPhoto)
 		r.With(s.requireKey).Get("/chat/images/{id}", s.chatImageGet)
+		r.With(s.requireKey).Post("/chat/threads/{id}/list-pin", s.chatThreadListPin)
+		r.With(s.requireKey).Post("/chat/threads/{id}/unread", s.chatThreadMarkUnread)
+		r.With(s.requireKey).Get("/chat/search", s.chatSearch)
+		r.With(s.requireKey).Post("/chat/threads/{id}/file", s.chatThreadFile)
+		r.With(s.requireKey).Get("/chat/files/{id}", s.chatFileGet)
 		r.Get("/pair/{code}", s.readPair)
 		r.Get("/download/{job_id}", s.jobStatus)
 		r.Get("/files/{token}", s.file)

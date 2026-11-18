@@ -20,12 +20,18 @@ type chatReaction struct {
 	At    int64  `json:"at"`
 }
 
+type chatReader struct {
+	Name string `json:"name"`
+	At   int64  `json:"at,omitempty"`
+}
+
 type chatMessageInfo struct {
-	ID          int64 `json:"id"`
-	At          int64 `json:"at"`
-	EditedAt    int64 `json:"editedAt,omitempty"`
-	DeliveredAt int64 `json:"deliveredAt,omitempty"`
-	ReadAt      int64 `json:"readAt,omitempty"`
+	ID          int64        `json:"id"`
+	At          int64        `json:"at"`
+	EditedAt    int64        `json:"editedAt,omitempty"`
+	DeliveredAt int64        `json:"deliveredAt,omitempty"`
+	ReadAt      int64        `json:"readAt,omitempty"`
+	Readers     []chatReader `json:"readers,omitempty"`
 }
 
 func nonNilIDs(ids []int64) []int64 {
@@ -171,7 +177,7 @@ func (c *chatRoom) edit(ctx context.Context, user chatUser, threadID string, id 
 	}
 	now := time.Now().UnixMilli()
 	item.Text = clean
-	if item.Photo == "" {
+	if item.Photo == "" && item.File == "" {
 		item.Links = chatLinks(clean)
 	}
 	item.EditedAt = now
@@ -267,6 +273,27 @@ func (c *chatRoom) info(ctx context.Context, user chatUser, threadID string, id 
 	}
 	if peer.Read >= id {
 		out.ReadAt = peer.ReadAt
+	}
+	if len(thread.Members) > 0 {
+		readers := make([]chatReader, 0)
+		for _, memberID := range thread.Members {
+			if memberID == "" || memberID == item.From {
+				continue
+			}
+			seen := thread.Seen[memberID]
+			if seen.Read < id {
+				continue
+			}
+			member, ok := c.userLocked(memberID)
+			name := "Removed account"
+			if ok && member.Username != "" {
+				name = member.Username
+			}
+			readers = append(readers, chatReader{Name: name, At: seen.ReadAt})
+		}
+		if len(readers) > 0 {
+			out.Readers = readers
+		}
 	}
 	return out, nil
 }

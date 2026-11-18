@@ -38,6 +38,10 @@ const (
 	chatPhotoMax    = 512 * 1024
 	chatVoiceMax    = 900 * 1024
 	chatSongMax     = 16 * 1024 * 1024
+	chatFileMax     = 8 * 1024 * 1024
+	chatClipMax     = 12 * 1024 * 1024
+	chatListPinMax  = 20
+	chatSearchMax   = 30
 	chatOnlineFor   = 35 * time.Second
 	chatSeenPersist = 45 * time.Second
 	chatEditFor     = 24 * time.Hour
@@ -76,6 +80,11 @@ type chatUser struct {
 	Stars    []chatStar   `json:"stars,omitempty"`
 	Labels   []chatLabel  `json:"labels,omitempty"`
 	Devices  []chatDevice `json:"devices,omitempty"`
+	// Pins are conversation ids this person keeps at the top of their list.
+	// They are not message ids. Message pins stay on the thread.
+	Pins []string `json:"pins,omitempty"`
+	// UnreadMarks forces a badge without moving the read cursor backwards.
+	UnreadMarks []string `json:"unreadMarks,omitempty"`
 	// RecoveryPlain is shown once to the person registering. It is never stored.
 	RecoveryPlain string `json:"-"`
 }
@@ -109,6 +118,11 @@ type chatMessage struct {
 	Expires   int64          `json:"expires,omitempty"`
 	Call      string         `json:"call,omitempty"`
 	CallMs    int            `json:"callMs,omitempty"`
+	File      string         `json:"file,omitempty"`
+	FileName  string         `json:"fileName,omitempty"`
+	FileType  string         `json:"fileType,omitempty"`
+	FileSize  int64          `json:"fileSize,omitempty"`
+	Clip      bool           `json:"clip,omitempty"`
 }
 
 // chatExtra is everything a message carries besides its text. ReplyName and
@@ -131,6 +145,11 @@ type chatExtra struct {
 	Place     *chatPlace
 	Call      string
 	CallMs    int
+	File      string
+	FileName  string
+	FileType  string
+	FileSize  int64
+	Clip      bool
 }
 
 // chatSeen is how far this person has received or opened the conversation.
@@ -221,6 +240,10 @@ type chatInboxItem struct {
 	Group      bool   `json:"group,omitempty"`
 	Members    int    `json:"members,omitempty"`
 	Request    bool   `json:"request,omitempty"`
+	// Pinned and Marked are always sent so an older list can tell them apart
+	// from a server that does not know about them yet.
+	Pinned bool `json:"pinned"`
+	Marked bool `json:"marked"`
 }
 
 // chatPeerView is the other person, as far as ticks, presence, and photo go.
@@ -516,6 +539,7 @@ func (c *chatRoom) inbox(ctx context.Context, userID string) []chatInboxItem {
 	c.ensure(ctx)
 	c.mu.Lock()
 	dirty := c.touchLocked(userID)
+	me, _ := c.userLocked(userID)
 	out := make([]chatInboxItem, 0)
 	now := time.Now()
 	for i := range c.data.Threads {
@@ -574,6 +598,15 @@ func (c *chatRoom) inbox(ctx context.Context, userID string) []chatInboxItem {
 			item.LastStatus = chatStatus(thread, userID, last)
 			if item.LastStatus == "read" && !c.receiptsSharedLocked(thread) {
 				item.LastStatus = "delivered"
+			}
+		}
+		if chatNamed(me.Pins, thread.ID) {
+			item.Pinned = true
+		}
+		if chatNamed(me.UnreadMarks, thread.ID) {
+			item.Marked = true
+			if item.Unread < 1 {
+				item.Unread = 1
 			}
 		}
 		out = append(out, item)
@@ -809,6 +842,7 @@ func (c *chatRoom) markRead(ctx context.Context, userID, threadID string, id int
 		c.mu.Unlock()
 		return chatRejected("That chat was not found.")
 	}
+	cleared := c.clearUnreadLocked(userID, thread.ID)
 	last := int64(0)
 	if n := len(thread.Messages); n > 0 {
 		last = thread.Messages[n-1].ID
@@ -822,6 +856,9 @@ func (c *chatRoom) markRead(ctx context.Context, userID, threadID string, id int
 	cur := thread.Seen[userID]
 	if cur.Read >= id && cur.Delivered >= id {
 		c.mu.Unlock()
+		if cleared {
+			c.persist(ctx)
+		}
 		return nil
 	}
 	now := time.Now().UnixMilli()
@@ -1057,11 +1094,16 @@ func (c *chatRoom) appendMessageLocked(thread *chatThread, user chatUser, text s
 		Place:     extra.Place,
 		Call:      extra.Call,
 		CallMs:    extra.CallMs,
+		File:      extra.File,
+		FileName:  extra.FileName,
+		FileType:  extra.FileType,
+		FileSize:  extra.FileSize,
+		Clip:      extra.Clip,
 	}
 	if thread.Vanish > 0 && item.Call == "" {
 		item.Expires = item.At + int64(thread.Vanish)*1000
 	}
-	if extra.Voice == "" && extra.Photo == "" && extra.Song == "" {
+	if extra.Voice == "" && extra.Photo == "" && extra.Song == "" && extra.File == "" {
 		item.Links = chatLinks(text)
 	}
 	thread.Next++
@@ -1125,6 +1167,9 @@ func (c *chatRoom) photo(ctx context.Context, viewerID, username string) ([]byte
 	if id == "" || rev == 0 {
 		return nil, "", os.ErrNotExist
 	}
+	if link := c.publicBlob("chat/avatars/" + id); link != "" {
+		return nil, "", &chatOffload{link: link}
+	}
 	body, err := c.getBlob(ctx, "chat/avatars/"+id)
 	if err != nil {
 		return nil, "", os.ErrNotExist
@@ -1162,6 +1207,9 @@ func (c *chatRoom) voiceFor(ctx context.Context, userID, voiceID string) ([]byte
 	if kind == "" {
 		return nil, "", os.ErrNotExist
 	}
+	if link := c.publicBlob(key); link != "" {
+		return nil, "", &chatOffload{link: link}
+	}
 	body, err := c.getBlob(ctx, key)
 	if err != nil || len(body) == 0 {
 		return nil, "", os.ErrNotExist
@@ -1194,6 +1242,9 @@ func (c *chatRoom) imageFor(ctx context.Context, userID, imageID string) ([]byte
 	c.mu.Unlock()
 	if !found {
 		return nil, "", os.ErrNotExist
+	}
+	if link := c.publicBlob(key); link != "" {
+		return nil, "", &chatOffload{link: link}
 	}
 	body, err := c.getBlob(ctx, key)
 	if err != nil || len(body) == 0 {
@@ -1280,6 +1331,45 @@ func (c *chatRoom) getBlob(ctx context.Context, key string) ([]byte, error) {
 		return nil, err
 	}
 	return os.ReadFile(path)
+}
+
+// publicBlob is a Cloudflare URL for a chat file. Empty means this process
+// still has to send the bytes, which is what tests and a machine without R2 do.
+func (c *chatRoom) publicBlob(key string) string {
+	if c == nil || c.blob == nil || key == "" {
+		return ""
+	}
+	opener, ok := c.blob.(interface {
+		PublicGet(string) (string, error)
+	})
+	if !ok {
+		return ""
+	}
+	link, err := opener.PublicGet(key)
+	if err != nil {
+		return ""
+	}
+	parsed, err := url.Parse(link)
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return ""
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "localhost" || host == "127.0.0.1" || strings.HasSuffix(host, "onrender.com") {
+		return ""
+	}
+	return link
+}
+
+// chatOffload means the phone should fetch the file from object storage.
+type chatOffload struct {
+	link string
+}
+
+func (e *chatOffload) Error() string {
+	return "chat file is on object storage"
 }
 
 func (c *chatRoom) localBlob(key string) (string, error) {
@@ -1926,6 +2016,9 @@ func (s *Server) chatPhotoGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, contentType, err := s.chat.photo(r.Context(), user.ID, r.URL.Query().Get("username"))
+	if wroteChatOffload(w, r, err) {
+		return
+	}
 	if err != nil {
 		writeChatFailure(w, err)
 		return
@@ -2131,6 +2224,9 @@ func (s *Server) chatVoiceGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, contentType, err := s.chat.voiceFor(r.Context(), user.ID, chi.URLParam(r, "id"))
+	if wroteChatOffload(w, r, err) {
+		return
+	}
 	if err != nil {
 		writeChatFailure(w, err)
 		return
@@ -2183,6 +2279,9 @@ func (s *Server) chatImageGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, contentType, err := s.chat.imageFor(r.Context(), user.ID, chi.URLParam(r, "id"))
+	if wroteChatOffload(w, r, err) {
+		return
+	}
 	if err != nil {
 		writeChatFailure(w, err)
 		return
@@ -2255,6 +2354,17 @@ func writeChatBytes(w http.ResponseWriter, contentType string, body []byte) {
 	w.Header().Set("Cache-Control", "private, max-age=86400")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
+}
+
+// wroteChatOffload sends the phone to Cloudflare and writes no file bytes.
+func wroteChatOffload(w http.ResponseWriter, r *http.Request, err error) bool {
+	var hop *chatOffload
+	if !errors.As(err, &hop) || hop == nil || hop.link == "" {
+		return false
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	http.Redirect(w, r, hop.link, http.StatusTemporaryRedirect)
+	return true
 }
 
 func writeChatError(w http.ResponseWriter, status int, message string) {

@@ -134,6 +134,26 @@ func (s *S3) Put(ctx context.Context, path, name, mime string) (string, error) {
 	return s.presignGet(key), nil
 }
 
+// PublicGet returns a URL the phone can fetch directly. The API uses it so a
+// chat photo, voice note, song, or file is not streamed through Render.
+func (s *S3) PublicGet(key string) (string, error) {
+	if !s.Enabled() {
+		return "", fmt.Errorf("object storage disabled")
+	}
+	key, err := fixedKey(key)
+	if err != nil {
+		return "", err
+	}
+	if s.PublicBase != "" {
+		return strings.TrimRight(s.PublicBase, "/") + "/" + escapeKey(key), nil
+	}
+	link := s.presignGet(key)
+	if link == "" {
+		return "", fmt.Errorf("object storage disabled")
+	}
+	return link, nil
+}
+
 // PutBytes stores a small object at a fixed key. It does not use the video
 // name rules in objectKey.
 func (s *S3) PutBytes(ctx context.Context, key string, body []byte) error {
