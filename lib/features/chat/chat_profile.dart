@@ -88,6 +88,7 @@ Future<void> showChatProfile(
   Future<String> Function(String name)? onSeenName,
   bool blocked = false,
   Future<bool> Function(bool on)? onBlock,
+  VoidCallback? onMedia,
 }) {
   final name = username.replaceFirst(RegExp(r'^@'), '').trim();
   final mine = contact.trim().isNotEmpty;
@@ -190,6 +191,19 @@ Future<void> showChatProfile(
                     ),
                   ],
                   const SizedBox(height: 18),
+                  if (onMedia != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: FilledButton.tonalIcon(
+                        onPressed: () {
+                          final open = onMedia;
+                          Navigator.pop(context);
+                          open();
+                        },
+                        icon: const Icon(Icons.perm_media_outlined),
+                        label: const Text('Media'),
+                      ),
+                    ),
                   if (mine)
                     FilledButton.tonalIcon(
                       onPressed: busy
@@ -464,6 +478,7 @@ Future<void> showChatGroup(
   Future<void> Function(String username)? onTransfer,
   Future<String> Function(int hours)? onInvite,
   Future<void> Function({String? about, String? rules, bool? announce})? onInfo,
+  VoidCallback? onMedia,
 }) {
   var shown = name.trim();
   var people = List<String>.from(members);
@@ -505,6 +520,18 @@ Future<void> showChatGroup(
                     people.length == 1 ? '1 person' : '${people.length} people',
                     style: TextStyle(color: scheme.onSurfaceVariant),
                   ),
+                  if (onMedia != null) ...[
+                    const SizedBox(height: 12),
+                    FilledButton.tonalIcon(
+                      onPressed: () {
+                        final open = onMedia;
+                        Navigator.pop(context);
+                        open();
+                      },
+                      icon: const Icon(Icons.perm_media_outlined),
+                      label: const Text('Media'),
+                    ),
+                  ],
                   if (aboutText.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     Text(aboutText, textAlign: TextAlign.center),

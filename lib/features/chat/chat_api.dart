@@ -461,11 +461,15 @@ class ChatThreadTarget {
     required this.username,
     this.name = '',
     this.group = false,
+    this.statusQuote = '',
   });
 
   final String username;
   final String name;
   final bool group;
+
+  /// Status line to show in the reply bar. Blank for a normal chat.
+  final String statusQuote;
 }
 
 class ChatReaction {
@@ -484,6 +488,23 @@ class ChatReaction {
   Map<String, dynamic> toJson() => {'user': user, 'emoji': emoji};
 }
 
+class ChatReader {
+  const ChatReader({required this.name, this.at});
+
+  final String name;
+  final DateTime? at;
+
+  factory ChatReader.fromJson(Map<String, dynamic> json) {
+    final at = (json['at'] as num?)?.toInt() ?? 0;
+    return ChatReader(
+      name: (json['name'] as String?)?.trim().isNotEmpty == true
+          ? (json['name'] as String).trim()
+          : 'Removed account',
+      at: at > 0 ? DateTime.fromMillisecondsSinceEpoch(at) : null,
+    );
+  }
+}
+
 class ChatMessageInfo {
   const ChatMessageInfo({
     required this.id,
@@ -491,6 +512,7 @@ class ChatMessageInfo {
     this.editedAt,
     this.deliveredAt,
     this.readAt,
+    this.readers = const [],
   });
 
   final int id;
@@ -498,6 +520,7 @@ class ChatMessageInfo {
   final DateTime? editedAt;
   final DateTime? deliveredAt;
   final DateTime? readAt;
+  final List<ChatReader> readers;
 
   factory ChatMessageInfo.fromJson(Map<String, dynamic> json) {
     DateTime? atOf(String key) {
@@ -506,12 +529,49 @@ class ChatMessageInfo {
       return DateTime.fromMillisecondsSinceEpoch(value);
     }
 
+    final rawReaders = json['readers'];
     return ChatMessageInfo(
       id: (json['id'] as num?)?.toInt() ?? 0,
       at: atOf('at') ?? DateTime.fromMillisecondsSinceEpoch(0),
       editedAt: atOf('editedAt'),
       deliveredAt: atOf('deliveredAt'),
       readAt: atOf('readAt'),
+      readers: rawReaders is List
+          ? [
+              for (final item in rawReaders)
+                if (item is Map) ChatReader.fromJson(Map<String, dynamic>.from(item)),
+            ]
+          : const [],
+    );
+  }
+}
+
+class ChatSearchHit {
+  const ChatSearchHit({
+    required this.thread,
+    required this.id,
+    required this.name,
+    required this.text,
+    this.at,
+    this.title = '',
+  });
+
+  final String thread;
+  final int id;
+  final String name;
+  final String text;
+  final DateTime? at;
+  final String title;
+
+  factory ChatSearchHit.fromJson(Map<String, dynamic> json) {
+    final at = (json['at'] as num?)?.toInt() ?? 0;
+    return ChatSearchHit(
+      thread: (json['thread'] as String?)?.trim() ?? '',
+      id: (json['id'] as num?)?.toInt() ?? 0,
+      name: (json['name'] as String?)?.trim() ?? '',
+      text: (json['text'] as String?)?.trim() ?? '',
+      at: at > 0 ? DateTime.fromMillisecondsSinceEpoch(at) : null,
+      title: (json['title'] as String?)?.trim() ?? '',
     );
   }
 }
@@ -573,6 +633,10 @@ class ChatThreadSummary {
     this.group = false,
     this.members = 0,
     this.request = false,
+    this.pinned = false,
+    this.marked = false,
+    this.pinKnown = false,
+    this.markKnown = false,
   });
 
   final String id;
@@ -596,6 +660,18 @@ class ChatThreadSummary {
   final int members;
   final bool request;
 
+  /// Conversation pin. Not written to the on-disk history.
+  final bool pinned;
+
+  /// Forced unread badge. Not written to the on-disk history.
+  final bool marked;
+
+  /// True when the server sent [pinned]. An old server omits the key.
+  final bool pinKnown;
+
+  /// True when the server sent [marked].
+  final bool markKnown;
+
   ChatThreadSummary copyWith({
     String? lastText,
     DateTime? lastAt,
@@ -611,6 +687,10 @@ class ChatThreadSummary {
     bool? group,
     int? members,
     bool? request,
+    bool? pinned,
+    bool? marked,
+    bool? pinKnown,
+    bool? markKnown,
   }) {
     return ChatThreadSummary(
       id: id,
@@ -629,6 +709,10 @@ class ChatThreadSummary {
       group: group ?? this.group,
       members: members ?? this.members,
       request: request ?? this.request,
+      pinned: pinned ?? this.pinned,
+      marked: marked ?? this.marked,
+      pinKnown: pinKnown ?? this.pinKnown,
+      markKnown: markKnown ?? this.markKnown,
     );
   }
 
@@ -652,6 +736,10 @@ class ChatThreadSummary {
       group: json['group'] == true,
       members: (json['members'] as num?)?.toInt() ?? 0,
       request: json['request'] == true,
+      pinned: json['pinned'] == true,
+      marked: json['marked'] == true,
+      pinKnown: json.containsKey('pinned'),
+      markKnown: json.containsKey('marked'),
     );
   }
 
@@ -1290,6 +1378,11 @@ class ChatMessage {
     this.expires,
     this.call = '',
     this.callMs = 0,
+    this.file = '',
+    this.fileName = '',
+    this.fileType = '',
+    this.fileSize = 0,
+    this.clip = false,
   });
 
   final int id;
@@ -1321,10 +1414,17 @@ class ChatMessage {
   final DateTime? expires;
   final String call;
   final int callMs;
+  final String file;
+  final String fileName;
+  final String fileType;
+  final int fileSize;
+  final bool clip;
 
   bool get isVoice => voice.isNotEmpty || pendingKind == 'voice';
   bool get isPhoto => photo.isNotEmpty || pendingKind == 'photo';
   bool get isSong => song.isNotEmpty || pendingKind == 'song';
+  bool get isFile => file.isNotEmpty || pendingKind == 'file' || pendingKind == 'clip';
+  bool get isClip => clip || pendingKind == 'clip';
   bool get isEdited => editedAt != null;
   bool get isPoll => poll != null;
   bool get isCard => card != null;
@@ -1362,6 +1462,11 @@ class ChatMessage {
       expires: expires,
       call: call,
       callMs: callMs,
+      file: file,
+      fileName: fileName,
+      fileType: fileType,
+      fileSize: fileSize,
+      clip: clip,
     );
   }
 
@@ -1402,6 +1507,11 @@ class ChatMessage {
       expires: expires,
       call: call,
       callMs: callMs,
+      file: file,
+      fileName: fileName,
+      fileType: fileType,
+      fileSize: fileSize,
+      clip: clip,
     );
   }
 
@@ -1436,6 +1546,11 @@ class ChatMessage {
       expires: expires,
       call: call,
       callMs: callMs,
+      file: file,
+      fileName: fileName,
+      fileType: fileType,
+      fileSize: fileSize,
+      clip: clip,
     );
   }
 
@@ -1499,6 +1614,11 @@ class ChatMessage {
           : null,
       call: (json['call'] as String?)?.trim() ?? '',
       callMs: (json['callMs'] as num?)?.toInt() ?? 0,
+      file: (json['file'] as String?)?.trim() ?? '',
+      fileName: (json['fileName'] as String?)?.trim() ?? '',
+      fileType: (json['fileType'] as String?)?.trim() ?? '',
+      fileSize: (json['fileSize'] as num?)?.toInt() ?? 0,
+      clip: json['clip'] == true,
     );
   }
 
@@ -1550,6 +1670,11 @@ class ChatMessage {
         },
       if (call.isNotEmpty) 'call': call,
       if (callMs > 0) 'callMs': callMs,
+      if (file.isNotEmpty) 'file': file,
+      if (fileName.isNotEmpty) 'fileName': fileName,
+      if (fileType.isNotEmpty) 'fileType': fileType,
+      if (fileSize > 0) 'fileSize': fileSize,
+      if (clip) 'clip': true,
       if (expires != null) 'expires': expires!.millisecondsSinceEpoch,
     };
   }
@@ -2631,6 +2756,115 @@ class ChatApi {
     return ChatCallRecord.fromJson(Map<String, dynamic>.from(raw));
   }
 
+  /// null when this server does not have conversation pins yet.
+  Future<bool?> pinChat(String id) async {
+    try {
+      final response = await _dio.post<dynamic>(
+        '/api/v1/chat/threads/$id/list-pin',
+        data: const <String, dynamic>{},
+        options: await _auth(),
+      );
+      return _object(response)['pinned'] == true;
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// null when this server does not have unread marks yet.
+  Future<bool?> markChatUnread(String id) async {
+    try {
+      final response = await _dio.post<dynamic>(
+        '/api/v1/chat/threads/$id/unread',
+        data: const <String, dynamic>{},
+        options: await _auth(),
+      );
+      return _object(response)['marked'] == true;
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// null when this server does not search yet. Empty when nothing matches.
+  Future<List<ChatSearchHit>?> searchMessages(String query) async {
+    final q = query.trim();
+    if (q.length < 2) return const [];
+    try {
+      final response = await _dio.get<dynamic>(
+        '/api/v1/chat/search',
+        queryParameters: {'q': q},
+        options: await _auth(),
+      );
+      final raw = _object(response)['hits'];
+      if (raw is! List) return const [];
+      return [
+        for (final item in raw)
+          if (item is Map) ChatSearchHit.fromJson(Map<String, dynamic>.from(item)),
+      ];
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
+  Future<ChatMessage> sendFile(
+    String id,
+    Uint8List bytes, {
+    required String name,
+    String caption = '',
+    int reply = 0,
+    bool clip = false,
+  }) async {
+    final auth = await _auth();
+    final headers = Map<String, dynamic>.from(auth.headers ?? {});
+    headers['Content-Type'] = 'application/octet-stream';
+    headers['X-Chat-File-Name'] = Uri.encodeComponent(name);
+    if (clip) headers['X-Chat-Clip'] = '1';
+    final clean = caption.trim();
+    if (clean.isNotEmpty) headers['X-Chat-Caption'] = Uri.encodeComponent(clean);
+    if (reply > 0) headers['X-Reply-Id'] = '$reply';
+    final response = await _dio.post<dynamic>(
+      '/api/v1/chat/threads/$id/file',
+      data: bytes,
+      options: auth.copyWith(
+        headers: headers,
+        contentType: 'application/octet-stream',
+        sendTimeout: const Duration(seconds: 60),
+        receiveTimeout: const Duration(seconds: 60),
+      ),
+    );
+    final message = _object(response)['message'];
+    if (message is! Map) {
+      throw DioException(
+        requestOptions: response.requestOptions,
+        message: 'The chat server did not return the file.',
+      );
+    }
+    return ChatMessage.fromJson(Map<String, dynamic>.from(message));
+  }
+
+  Future<Uint8List?> chatFile(String id) async {
+    if (id.isEmpty) return null;
+    try {
+      final auth = await _auth();
+      final response = await _dio.get<dynamic>(
+        '/api/v1/chat/files/$id',
+        options: auth.copyWith(
+          responseType: ResponseType.bytes,
+          receiveTimeout: const Duration(seconds: 60),
+        ),
+      );
+      final data = response.data;
+      if (data is Uint8List && data.isNotEmpty) return data;
+      if (data is List<int> && data.isNotEmpty) return Uint8List.fromList(data);
+      return null;
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
   Future<ChatMessage> send(String id, String text, {int reply = 0}) async {
     final response = await _dio.post<dynamic>(
       '/api/v1/chat/threads/$id',
@@ -2842,6 +3076,9 @@ String chatErrorText(Object error) {
       return 'This network cannot find the chat server. Try mobile data, another Wi-Fi, or a different DNS.';
     }
     final code = error.response?.statusCode;
+    if (code == 503) {
+      return 'The chat server is waking. Try again in a moment.';
+    }
     if (code != null && code >= 400) {
       return 'The chat server answered with error $code. Try again in a moment.';
     }

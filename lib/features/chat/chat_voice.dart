@@ -626,8 +626,7 @@ class _ChatVoiceBubbleState extends State<ChatVoiceBubble> {
                           },
                         ),
                       ),
-                      if (_heard)
-                        GestureDetector(
+                      GestureDetector(
                           behavior: HitTestBehavior.opaque,
                           onTap: () => unawaited(_cycleRate()),
                           child: Padding(

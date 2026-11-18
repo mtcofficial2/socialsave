@@ -88,4 +88,53 @@ void main() {
     expect(chatLinkAllowed(Uri.parse('https://192.168.1.2/secret')), isFalse);
     expect(chatLinkAllowed(Uri.parse('https://localhost/secret')), isFalse);
   });
+
+  test('written usernames split out of a message', () {
+    final hello = chatTextPieces('hello @Ada');
+    expect(hello.map((piece) => piece.text).toList(), ['hello ', '@Ada']);
+    expect(hello[1].username, 'ada');
+    expect(hello[1].link, isNull);
+
+    final email = chatTextPieces('mail user@ada.com today');
+    expect(email, hasLength(1));
+    expect(email.single.username, isNull);
+    expect(email.single.text, 'mail user@ada.com today');
+
+    final linked = chatTextPieces(
+      'go https://x.com/@ada now @ben',
+      ['https://x.com/@ada'],
+    );
+    expect(linked.map((piece) => piece.text).toList(), [
+      'go ',
+      'https://x.com/@ada',
+      ' now ',
+      '@ben',
+    ]);
+    expect(linked[1].link, 'https://x.com/@ada');
+    expect(linked[1].username, isNull);
+    expect(linked[3].username, 'ben');
+
+    final inside = chatTextPieces('see https://x.com/@ada please');
+    expect(inside.where((piece) => piece.isUsername), isEmpty);
+
+    expect(chatTextPieces('@ab').single.username, isNull);
+    expect(chatTextPieces('@a_b').single.username, 'a_b');
+    expect(chatTextPieces('(@zo_e)').map((piece) => piece.username).toList(), [
+      null,
+      'zo_e',
+      null,
+    ]);
+    expect(chatTextPieces('@${'a' * 21}').single.username, isNull);
+    expect(chatTextPieces('').single.text, '');
+  });
+
+  test('a status reply keeps the status line in the message', () {
+    expect(statusReplySnippet('  hello  ', photo: false), 'hello');
+    expect(statusReplySnippet('', photo: true), 'Photo');
+    expect(statusReplySnippet('', photo: false), 'Update');
+    expect(statusReplySnippet('a' * 90, photo: false), 'a' * 80);
+    expect(statusReplyBody('Photo', 'on my way'), 'Status: Photo\non my way');
+    expect(statusReplyBody('Photo', ''), 'Status: Photo');
+    expect(statusReplyBody('', 'hi'), 'hi');
+  });
 }

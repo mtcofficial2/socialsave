@@ -1,11 +1,8 @@
-import 'dart:io';
-import 'package:social_save/core/platform/plat.dart';
-
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:social_save/core/constants/app_constants.dart';
-import 'package:social_save/core/platform/media_events.dart';
+import 'package:social_save/core/platform/plat.dart';
+import 'package:social_save/core/utils/open_link.dart';
 import 'package:social_save/features/updates/release_version.dart';
 
 const _releasesUrl =
@@ -109,44 +106,24 @@ class UpdateController extends Notifier<UpdateState> {
     }
   }
 
+  /// Opens the latest GitHub app file. The release check already picked that
+  /// file, so the phone downloads it and the person installs it.
   Future<void> downloadAndInstall() async {
     final update = state.update;
     if (update == null || state.busy) return;
-    state = state.copyWith(busy: true, progress: 0, clearMessage: true);
+    state = state.copyWith(busy: true, clearProgress: true, clearMessage: true);
     try {
-      final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}${Platform.pathSeparator}SocialSave.apk');
-      if (await file.exists()) {
-        await file.delete();
-      }
-      await Dio(
-        BaseOptions(
-          connectTimeout: const Duration(seconds: 20),
-          receiveTimeout: const Duration(minutes: 10),
-        ),
-      ).download(
-        update.downloadUrl.toString(),
-        file.path,
-        onReceiveProgress: (received, total) {
-          if (total <= 0) return;
-          state = state.copyWith(progress: received / total, busy: true);
-        },
-      );
-      final opened = await MediaEvents.channel.invokeMethod<bool>('installApk', {
-        'path': file.path,
-      });
+      final opened = await openWebLink(update.downloadUrl.toString());
       state = state.copyWith(
         busy: false,
-        clearProgress: true,
-        message: opened == true
-            ? 'Confirm the install on the next screen.'
-            : 'Allow SocialSave to install updates, then tap Update again.',
+        message: opened
+            ? 'The latest app is downloading. Install it when the file finishes.'
+            : 'Could not open the download. Try again.',
       );
     } catch (_) {
       state = state.copyWith(
         busy: false,
-        clearProgress: true,
-        message: 'Could not download the update inside the app.',
+        message: 'Could not open the download. Try again.',
       );
     }
   }

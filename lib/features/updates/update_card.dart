@@ -26,13 +26,9 @@ class UpdateCard extends ConsumerWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                'The new app downloads here and opens the Android installer.',
+                'The latest version is already chosen. Download it, then install it on this phone.',
                 style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
               ),
-              if (state.progress != null) ...[
-                const SizedBox(height: 10),
-                LinearProgressIndicator(value: state.progress),
-              ],
               if (state.message != null) ...[
                 const SizedBox(height: 8),
                 Text(state.message!, style: TextStyle(color: scheme.primary, fontSize: 12)),
@@ -42,7 +38,7 @@ class UpdateCard extends ConsumerWidget {
                 onPressed: state.busy
                     ? null
                     : () => ref.read(updateControllerProvider.notifier).downloadAndInstall(),
-                child: Text(state.busy ? 'Downloading' : 'Download update'),
+                child: Text(state.busy ? 'Opening' : 'Download'),
               ),
             ],
           ),

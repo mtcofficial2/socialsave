@@ -7,7 +7,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/platform/plat.dart';
@@ -26,7 +28,9 @@ import 'package:social_save/features/chat/chat_prefs.dart';
 import 'package:social_save/features/chat/chat_profile.dart';
 import 'package:social_save/features/chat/chat_services.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
+import 'package:social_save/features/chat/chat_ux.dart';
 import 'package:social_save/features/chat/chat_voice.dart';
+import 'package:social_save/features/chat/chat_wall.dart';
 import 'package:social_save/features/chat/chat_wallpaper.dart';
 
 /// A direct chat. On a phone this is its own page. On a wide window it sits
@@ -38,6 +42,7 @@ class ChatThreadScreen extends StatelessWidget {
     required this.username,
     this.seenName = '',
     this.group = false,
+    this.statusQuote = '',
   });
 
   final String threadId;
@@ -49,6 +54,9 @@ class ChatThreadScreen extends StatelessWidget {
   /// A group chat. The title is the group name, not a username.
   final bool group;
 
+  /// Status line to quote when this chat was opened from a reply.
+  final String statusQuote;
+
   @override
   Widget build(BuildContext context) {
     return ChatThreadView(
@@ -56,6 +64,7 @@ class ChatThreadScreen extends StatelessWidget {
       username: username,
       seenName: seenName,
       group: group || threadId.startsWith('g'),
+      statusQuote: statusQuote,
     );
   }
 }
@@ -68,6 +77,7 @@ class ChatThreadView extends StatefulWidget {
     this.seenName = '',
     this.group = false,
     this.embedded = false,
+    this.statusQuote = '',
     this.onRead,
     this.onSeenName,
     this.onLeft,
@@ -78,6 +88,7 @@ class ChatThreadView extends StatefulWidget {
   final String seenName;
   final bool group;
   final bool embedded;
+  final String statusQuote;
   final void Function(String threadId, int lastId)? onRead;
   final void Function(String threadId, String name)? onSeenName;
   final void Function(String threadId)? onLeft;
@@ -128,6 +139,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
   int? _replyId;
   String _replyName = '';
   String _replyText = '';
+  bool _statusReply = false;
   final Set<int> _selected = <int>{};
   final TextEditingController _search = TextEditingController();
   bool _searching = false;
@@ -144,6 +156,20 @@ class _ChatThreadViewState extends State<ChatThreadView>
   int _syncedAt = 0;
   int? _editingId;
   int _pinCursor = 0;
+  bool _landed = false;
+  int? _flashId;
+  Timer? _flashTimer;
+  int _searchCursor = 0;
+  String? _mentionQuery;
+  bool _voiceCancel = false;
+  bool _voiceLockArm = false;
+  bool _voiceLocked = false;
+  bool _voiceHolding = false;
+  bool _voiceReleasePending = false;
+  bool _voiceReleaseSend = true;
+  String _voiceHint = '';
+  String _wallMode = ChatWalls.modeDefault;
+  Uint8List? _wallBytes;
 
   bool get _isGroup => _group || widget.group || _threadId.startsWith('g');
 
@@ -175,6 +201,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     ChatLive.revision.addListener(_onTypingClock);
     _scroll.addListener(_onScroll);
     _text.addListener(_onDraftChanged);
+    unawaited(_loadWall());
     _recorder.onLimit = () {
       if (!mounted) return;
       unawaited(_finishVoice(send: true));
@@ -192,6 +219,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     ChatLive.instance.typing(_threadId, on: false);
     ChatLive.instance.recording(_threadId, on: false);
     _poll?.cancel();
+    _flashTimer?.cancel();
     _draftTimer?.cancel();
     _typingIdle?.cancel();
     _typingClock?.cancel();
@@ -238,10 +266,54 @@ class _ChatThreadViewState extends State<ChatThreadView>
       unawaited(ChatDrafts.write(threadId, text));
     });
     if (_focus.hasFocus) _noteTyping();
+    _syncMentions();
   }
 
   void _onTyped(String _) {
     _noteTyping(force: true);
+    _syncMentions();
+  }
+
+  void _syncMentions() {
+    final next = !_isGroup
+        ? null
+        : chatMentionQuery(_text.text, _text.selection.extentOffset);
+    if (next == _mentionQuery) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final fresh = !_isGroup
+          ? null
+          : chatMentionQuery(_text.text, _text.selection.extentOffset);
+      if (fresh == _mentionQuery) return;
+      setState(() => _mentionQuery = fresh);
+    });
+  }
+
+  List<String> get _mentionChoices {
+    final query = (_mentionQuery ?? '').toLowerCase();
+    final me = _me.replaceFirst(RegExp(r'^@'), '').trim().toLowerCase();
+    return [
+      for (final name in _members)
+        if (name.toLowerCase() != me &&
+            (query.isEmpty || name.toLowerCase().startsWith(query)))
+          name,
+    ];
+  }
+
+  void _insertMention(String name) {
+    final text = _text.text;
+    final caret = _text.selection.extentOffset.clamp(0, text.length);
+    final match = RegExp(
+      r'(^|[\s\n])@([A-Za-z0-9_]{0,20})$',
+    ).firstMatch(text.substring(0, caret));
+    if (match == null) return;
+    final start = match.start + (match.group(1) ?? '').length;
+    final next = '${text.substring(0, start)}@$name ${text.substring(caret)}';
+    _text.value = TextEditingValue(
+      text: next,
+      selection: TextSelection.collapsed(offset: start + name.length + 2),
+    );
+    setState(() => _mentionQuery = null);
   }
 
   void _noteTyping({bool force = false}) {
@@ -385,7 +457,118 @@ class _ChatThreadViewState extends State<ChatThreadView>
     });
   }
 
+  void _applyLand(List<ChatMessage> messages, {required bool finish}) {
+    if (_landed) return;
+    final hasUnread = messages.any(
+      (item) => item.name != _me && item.id > _seenAtOpen && item.id > 0,
+    );
+    if (!hasUnread && !finish) return;
+    _landed = true;
+    _bannerAfter = hasUnread ? _seenAtOpen : -1;
+    if (hasUnread) _stickToEnd = false;
+  }
+
+  void _jumpToUnread() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ChatMessage? target;
+      for (final message in _messages) {
+        if (message.name != _me && message.id > _bannerAfter && message.id > 0) {
+          target = message;
+          break;
+        }
+      }
+      if (target == null) {
+        _jump(animate: false);
+        return;
+      }
+      _scrollToMessage(target.id);
+    });
+  }
+
+  void _flash(int id) {
+    _flashTimer?.cancel();
+    setState(() => _flashId = id);
+    _flashTimer = Timer(const Duration(milliseconds: 900), () {
+      if (!mounted) return;
+      setState(() {
+        if (_flashId == id) _flashId = null;
+      });
+    });
+  }
+
+  void _onQuote(int id) {
+    _scrollToMessage(id);
+    _flash(id);
+  }
+
+  List<int> get _searchHits => chatSearchHitIds(_messages, _search.text);
+
+  String get _searchLabel {
+    if (_search.text.trim().isEmpty) return '';
+    final hits = _searchHits;
+    if (hits.isEmpty) return 'No matches';
+    final index = _searchCursor.clamp(0, hits.length - 1);
+    return '${index + 1} of ${hits.length}';
+  }
+
+  void _onSearchChanged(String _) {
+    final hits = chatSearchHitIds(_messages, _search.text);
+    setState(() => _searchCursor = hits.isEmpty ? 0 : hits.length - 1);
+    if (hits.isNotEmpty) _scrollToMessage(hits.last);
+  }
+
+  void _moveSearch(int delta) {
+    final hits = _searchHits;
+    if (hits.isEmpty) return;
+    var next = (_searchCursor + delta) % hits.length;
+    if (next < 0) next += hits.length;
+    setState(() => _searchCursor = next);
+    _scrollToMessage(hits[next]);
+  }
+
+  bool _isSearchHit(int id) {
+    if (!_searching || _search.text.trim().isEmpty) return false;
+    final hits = _searchHits;
+    if (hits.isEmpty) return false;
+    final index = _searchCursor.clamp(0, hits.length - 1);
+    return hits[index] == id;
+  }
+
+  Future<void> _loadWall() async {
+    final id = _threadId;
+    final mode = await ChatWalls.mode(id);
+    final bytes = mode == ChatWalls.modePhoto ? await ChatWalls.photo(id) : null;
+    if (!mounted || id != _threadId) return;
+    setState(() {
+      _wallMode = mode;
+      _wallBytes = bytes;
+    });
+  }
+
+  bool get _wallPattern {
+    if (_wallMode == ChatWalls.modePlain || _wallMode == ChatWalls.modePhoto) {
+      return false;
+    }
+    if (_wallMode == ChatWalls.modePattern) return true;
+    return ChatPrefs.pattern;
+  }
+
+  ImageProvider? get _wallImage {
+    final bytes = _wallBytes;
+    if (_wallMode != ChatWalls.modePhoto || bytes == null || bytes.isEmpty) {
+      return null;
+    }
+    return MemoryImage(bytes);
+  }
+
   Future<void> _open() async {
+    final quote = widget.statusQuote.trim();
+    if (quote.isNotEmpty) {
+      _statusReply = true;
+      _replyName = 'Status';
+      _replyText = quote;
+    }
     _me = await ChatSession.username();
     final saved = await ChatDrafts.read(_threadId);
     if (!mounted) return;
@@ -426,10 +609,15 @@ class _ChatThreadViewState extends State<ChatThreadView>
         _peerSeen = savedLog.seen;
         _peerPhoto = savedLog.photoRev;
         _peerOnline = false;
-        _starting = false;
         _error = null;
+        _applyLand(merged, finish: false);
+        _starting = false;
       });
-      _jump(animate: false);
+      if (_landed && _bannerAfter >= 0) {
+        _jumpToUnread();
+      } else if (_landed) {
+        _jump(animate: false);
+      }
       _remember();
       unawaited(_noteRead());
     }
@@ -588,19 +776,25 @@ class _ChatThreadViewState extends State<ChatThreadView>
       final changed =
           fresh.isNotEmpty || base.length != _messages.length || touched;
       if (!changed && !_starting) {
+        if (!_landed) {
+          _applyLand(combined, finish: true);
+          if (_bannerAfter >= 0) {
+            _jumpToUnread();
+          } else if (_stickToEnd) {
+            _jump(animate: false);
+          }
+          if (mounted) setState(() {});
+        }
         if (presenceChanged || _error != null) setState(() => _error = null);
         if (presenceChanged) _remember();
         unawaited(_noteRead());
         return;
       }
       final wasStarting = _starting;
-      final stick = _stickToEnd || wasStarting;
-      if (wasStarting) {
-        final hasUnread = fresh.any(
-          (item) => item.name != _me && item.id > _seenAtOpen,
-        );
-        _bannerAfter = hasUnread ? _seenAtOpen : -1;
-      }
+      final landedBefore = _landed;
+      _applyLand(combined, finish: true);
+      final justLanded = !landedBefore && _landed;
+      final stick = _stickToEnd;
       setState(() {
         _messages = combined;
         _after = next;
@@ -612,7 +806,11 @@ class _ChatThreadViewState extends State<ChatThreadView>
               .length;
         }
       });
-      if (stick) _jump(animate: !wasStarting && fresh.isNotEmpty);
+      if (stick) {
+        _jump(animate: !wasStarting && fresh.isNotEmpty);
+      } else if (justLanded) {
+        _jumpToUnread();
+      }
       _remember();
       unawaited(_noteRead());
     } catch (error) {
@@ -660,7 +858,9 @@ class _ChatThreadViewState extends State<ChatThreadView>
       setState(() {
         _threadId = opened.id;
         _forgetServerMessages();
+        _landed = false;
       });
+      unawaited(_loadWall());
       return true;
     } catch (_) {
       return false;
@@ -680,9 +880,13 @@ class _ChatThreadViewState extends State<ChatThreadView>
     if (local.pendingKind == 'song') {
       return server.isSong && server.songName == local.songName;
     }
+    if (local.pendingKind == 'file' || local.pendingKind == 'clip') {
+      return server.isFile && server.fileName == local.fileName;
+    }
     return !server.isVoice &&
         !server.isPhoto &&
         !server.isSong &&
+        !server.isFile &&
         server.text == local.text;
   }
 
@@ -735,11 +939,13 @@ class _ChatThreadViewState extends State<ChatThreadView>
       }
       return;
     }
-    final reply = _replyId ?? 0;
-    final replyName = _replyName;
-    final replyText = _replyText;
+    final status = _statusReply && _replyText.trim().isNotEmpty;
+    final body = status ? statusReplyBody(_replyText, text) : text;
+    final reply = status ? 0 : (_replyId ?? 0);
+    final replyName = status ? '' : _replyName;
+    final replyText = status ? '' : _replyText;
     final local = _pending(
-      text: text,
+      text: body,
       reply: reply,
       replyName: replyName,
       replyText: replyText,
@@ -747,13 +953,13 @@ class _ChatThreadViewState extends State<ChatThreadView>
     _clearComposer();
     _accept(local);
     try {
-      final message = await _api.send(_threadId, text, reply: reply);
+      final message = await _api.send(_threadId, body, reply: reply);
       if (!mounted) return;
       _replaceLocal(local.id, message);
     } catch (error) {
       if (mounted && _chatGone(error) && await _reopen()) {
         try {
-          final message = await _api.send(_threadId, text);
+          final message = await _api.send(_threadId, body);
           if (!mounted) return;
           _replaceLocal(local.id, message);
           return;
@@ -843,9 +1049,15 @@ class _ChatThreadViewState extends State<ChatThreadView>
               ListTile(
                 leading: const Icon(Icons.description_outlined),
                 title: const Text('Document'),
-                subtitle: const Text('A photo file can be sent'),
+                subtitle: const Text('pdf, office, text, or zip'),
                 minTileHeight: 48,
                 onTap: () => Navigator.pop(context, 'document'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.play_circle_outline),
+                title: const Text('Short clip'),
+                minTileHeight: 48,
+                onTap: () => Navigator.pop(context, 'clip'),
               ),
               ListTile(
                 leading: const Icon(Icons.music_note_outlined),
@@ -910,6 +1122,10 @@ class _ChatThreadViewState extends State<ChatThreadView>
       await _pickDocument();
       return;
     }
+    if (choice == 'clip') {
+      await _pickClip();
+      return;
+    }
     if (choice == 'song') {
       await _pickSong();
       return;
@@ -968,7 +1184,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       final raw = await File(path).readAsBytes();
       final fitted = await fitChatImage(raw);
       if (!mounted) return;
-      await _sendFittedPhoto(fitted);
+      await _previewAndSend([fitted]);
     } catch (error) {
       if (!mounted) return;
       setState(
@@ -1094,45 +1310,128 @@ class _ChatThreadViewState extends State<ChatThreadView>
   }
 
   Future<void> _pickDocument() async {
+    await _pickAttachment(clip: false);
+  }
+
+  Future<void> _pickClip() async {
+    await _pickAttachment(clip: true);
+  }
+
+  Future<void> _pickAttachment({required bool clip}) async {
     if (_recording || _threadId.isEmpty) return;
-    final picked = await openFile();
+    final picked = await openFile(
+      acceptedTypeGroups: [
+        XTypeGroup(
+          label: clip ? 'Short clips' : 'Documents',
+          extensions: (clip ? chatClipExtensions : chatDocExtensions).toList(),
+        ),
+      ],
+    );
     if (picked == null || !mounted) return;
-    final name = picked.name.toLowerCase();
-    final photo =
-        name.endsWith('.jpg') ||
-        name.endsWith('.jpeg') ||
-        name.endsWith('.png');
-    if (!photo) {
-      setState(() => _error = 'Only a photo can be sent from a file.');
+    final name = picked.name;
+    if (clip ? !chatIsClipName(name) : !chatIsDocumentName(name)) {
+      setState(() => _error = clip ? 'Choose a short clip.' : 'Choose a document.');
       return;
     }
+    final bytes = await picked.readAsBytes();
+    if (!mounted) return;
+    final cap = clip ? chatClipMaxBytes : chatDocMaxBytes;
+    if (bytes.length > cap) {
+      setState(
+        () => _error = clip
+            ? 'That short clip is too large.'
+            : 'That document is too large.',
+      );
+      return;
+    }
+    if (bytes.isEmpty) {
+      setState(() => _error = 'Choose a file first.');
+      return;
+    }
+    await _sendChosenFile(bytes, name: name, clip: clip);
+  }
+
+  Future<void> _sendChosenFile(
+    Uint8List bytes, {
+    required String name,
+    required bool clip,
+  }) async {
+    int? localId;
     try {
-      final raw = await picked.readAsBytes();
-      final fitted = await fitChatImage(raw);
-      if (!mounted) return;
-      await _sendFittedPhoto(fitted);
+      final reply = _replyId ?? 0;
+      final replyName = _replyName;
+      final replyText = _replyText;
+      final local = _pending(
+        text: '',
+        kind: clip ? 'clip' : 'file',
+        bytes: bytes,
+        reply: reply,
+        replyName: replyName,
+        replyText: replyText,
+        fileName: name,
+        fileSize: bytes.length,
+        clip: clip,
+      );
+      localId = local.id;
+      _replyId = null;
+      _replyName = '';
+      _replyText = '';
+      _statusReply = false;
+      _accept(local);
+      final message = await _api.sendFile(
+        _threadId,
+        bytes,
+        name: name,
+        reply: reply,
+        clip: clip,
+      );
+      if (!mounted || !_messages.any((item) => item.id == local.id)) return;
+      _replaceLocal(local.id, message);
     } catch (error) {
       if (!mounted) return;
-      setState(
-        () => _error = error is StateError
-            ? error.message
-            : chatErrorText(error),
-      );
+      if (localId != null && _messages.any((item) => item.id == localId)) {
+        _mark(localId, 'failed');
+        return;
+      }
+      setState(() => _error = chatErrorText(error));
+    }
+  }
+
+  Future<void> _openAttachment(ChatMessage message) async {
+    try {
+      final bytes = message.localBytes ??
+          (message.file.isEmpty ? null : await _api.chatFile(message.file));
+      if (!mounted) return;
+      if (bytes == null || bytes.isEmpty) {
+        setState(() => _error = 'That file was not found.');
+        return;
+      }
+      if (kIsWeb) return;
+      final dir = await getTemporaryDirectory();
+      final safe = message.fileName.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+      final path = p.join(dir.path, safe.isEmpty ? 'file' : safe);
+      await File(path).writeAsBytes(bytes, flush: true);
+      await OpenFilex.open(path);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = chatErrorText(error));
     }
   }
 
   Future<void> _pickPhoto() async {
     if (_recording || _threadId.isEmpty) return;
-    Uint8List? fitted;
+    final fitted = <Uint8List>[];
     try {
-      final picked = await openFile(
+      final picked = await openFiles(
         acceptedTypeGroups: const [
           XTypeGroup(label: 'Photos', extensions: ['jpg', 'jpeg', 'png']),
         ],
       );
-      if (picked == null || !mounted) return;
-      final raw = await picked.readAsBytes();
-      fitted = await fitChatImage(raw);
+      if (picked.isEmpty || !mounted) return;
+      for (final file in picked.take(chatPhotoSetMax)) {
+        final raw = await file.readAsBytes();
+        fitted.add(await fitChatImage(raw));
+      }
     } catch (error) {
       if (!mounted) return;
       setState(
@@ -1142,18 +1441,38 @@ class _ChatThreadViewState extends State<ChatThreadView>
       );
       return;
     }
-    if (!mounted) return;
-    await _sendFittedPhoto(fitted);
+    if (!mounted || fitted.isEmpty) return;
+    await _previewAndSend(fitted);
   }
 
-  Future<void> _sendFittedPhoto(Uint8List fitted) async {
+  Future<void> _previewAndSend(List<Uint8List> photos) async {
+    if (photos.isEmpty || !mounted) return;
+    final caption = await showChatPhotoPreview(context, photos);
+    if (caption == null || !mounted) return;
+    for (var i = 0; i < photos.length; i++) {
+      await _sendFittedPhoto(
+        photos[i],
+        caption: i == 0 ? caption : '',
+        quote: i == 0,
+      );
+    }
+  }
+
+  Future<void> _sendFittedPhoto(
+    Uint8List fitted, {
+    String? caption,
+    bool quote = true,
+  }) async {
     int? localId;
     try {
-      final caption = _text.text.trim();
-      final reply = _replyId ?? 0;
-      final replyName = _replyName;
-      final replyText = _replyText;
-      final stored = caption.isEmpty ? 'Photo' : caption;
+      final fromPreview = caption != null;
+      final typed = fromPreview ? caption.trim() : _text.text.trim();
+      final status = quote && _statusReply && _replyText.trim().isNotEmpty;
+      final body = status ? statusReplyBody(_replyText, typed) : typed;
+      final reply = !quote || status ? 0 : (_replyId ?? 0);
+      final replyName = !quote || status ? '' : _replyName;
+      final replyText = !quote || status ? '' : _replyText;
+      final stored = body.isEmpty ? 'Photo' : body;
       final local = _pending(
         text: stored,
         kind: 'photo',
@@ -1163,12 +1482,21 @@ class _ChatThreadViewState extends State<ChatThreadView>
         replyText: replyText,
       );
       localId = local.id;
-      _clearComposer();
+      if (fromPreview) {
+        if (quote) {
+          _replyId = null;
+          _replyName = '';
+          _replyText = '';
+          _statusReply = false;
+        }
+      } else {
+        _clearComposer();
+      }
       _accept(local);
       final outgoing = await _api.sendPhoto(
         _threadId,
         fitted,
-        caption: caption,
+        caption: body,
         reply: reply,
       );
       await _storePhoto(outgoing, fitted);
@@ -1218,6 +1546,16 @@ class _ChatThreadViewState extends State<ChatThreadView>
         );
         await _storePhoto(outgoing, message.localBytes!);
         sent = outgoing.message;
+      } else if ((message.pendingKind == 'file' || message.pendingKind == 'clip') &&
+          message.localBytes != null) {
+        sent = await _api.sendFile(
+          _threadId,
+          message.localBytes!,
+          name: message.fileName.isEmpty ? 'file' : message.fileName,
+          caption: message.text,
+          reply: message.reply,
+          clip: message.isClip,
+        );
       } else {
         sent = await _api.send(
           _threadId,
@@ -1246,6 +1584,9 @@ class _ChatThreadViewState extends State<ChatThreadView>
     int reply = 0,
     String replyName = '',
     String replyText = '',
+    String fileName = '',
+    int fileSize = 0,
+    bool clip = false,
   }) {
     _localSeq -= 1;
     return ChatMessage(
@@ -1264,6 +1605,9 @@ class _ChatThreadViewState extends State<ChatThreadView>
       replyText: replyText,
       localBytes: bytes,
       pendingKind: kind,
+      fileName: fileName,
+      fileSize: fileSize,
+      clip: clip,
     );
   }
 
@@ -1272,6 +1616,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     _replyId = null;
     _replyName = '';
     _replyText = '';
+    _statusReply = false;
     _editingId = null;
     _typingIdle?.cancel();
     ChatLive.instance.typing(_threadId, on: false);
@@ -1325,6 +1670,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     if (message.id <= 0) return;
     unawaited(HapticFeedback.selectionClick());
     setState(() {
+      _statusReply = false;
       _replyId = message.id;
       _replyName = message.name;
       _replyText = message.isSong
@@ -1354,12 +1700,67 @@ class _ChatThreadViewState extends State<ChatThreadView>
     _remember();
   }
 
+  void _onMicTap() {
+    setState(() => _error = 'Hold to record');
+  }
+
+  void _onMicHoldStart(LongPressStartDetails _) {
+    _voiceCancel = false;
+    _voiceLockArm = false;
+    _voiceHolding = true;
+    _voiceReleasePending = false;
+    setState(() => _voiceHint = 'Slide left to cancel. Slide up to lock.');
+    unawaited(_startVoice());
+  }
+
+  void _onMicHoldMove(LongPressMoveUpdateDetails details) {
+    final cancel = details.offsetFromOrigin.dx < -72;
+    final lock = details.offsetFromOrigin.dy < -72 && !cancel;
+    if (cancel == _voiceCancel && lock == _voiceLockArm) return;
+    setState(() {
+      _voiceCancel = cancel;
+      _voiceLockArm = lock;
+      _voiceHint = cancel
+          ? 'Release to cancel'
+          : lock
+          ? 'Release to lock'
+          : 'Slide left to cancel. Slide up to lock.';
+    });
+  }
+
+  void _onMicHoldEnd(LongPressEndDetails _) {
+    final lock = _voiceLockArm && !_voiceCancel;
+    final send = !_voiceCancel;
+    _voiceHolding = false;
+    _voiceLockArm = false;
+    _voiceCancel = false;
+    if (lock) {
+      setState(() {
+        _voiceLocked = true;
+        _voiceHint = '';
+      });
+      return;
+    }
+    setState(() => _voiceHint = '');
+    if (!_recording) {
+      _voiceReleasePending = true;
+      _voiceReleaseSend = send;
+      return;
+    }
+    unawaited(_finishVoice(send: send));
+  }
+
   Future<void> _startVoice() async {
     if (_recording || _threadId.isEmpty || Plat.isWeb) return;
     final problem = await _recorder.begin();
     if (!mounted) return;
     if (problem != null) {
-      setState(() => _error = problem);
+      _voiceReleasePending = false;
+      setState(() {
+        _error = problem;
+        _voiceHolding = false;
+        _voiceHint = '';
+      });
       return;
     }
     setState(() {
@@ -1368,6 +1769,11 @@ class _ChatThreadViewState extends State<ChatThreadView>
     });
     ChatLive.instance.typing(_threadId, on: false);
     ChatLive.instance.recording(_threadId, on: true);
+    if (_voiceReleasePending) {
+      final send = _voiceReleaseSend;
+      _voiceReleasePending = false;
+      await _finishVoice(send: send);
+    }
   }
 
   Future<void> _finishVoice({required bool send}) async {
@@ -1378,7 +1784,12 @@ class _ChatThreadViewState extends State<ChatThreadView>
     try {
       final taken = await _recorder.stop(send: send);
       if (!mounted) return;
-      setState(() => _recording = false);
+      setState(() {
+        _recording = false;
+        _voiceLocked = false;
+        _voiceHolding = false;
+        _voiceHint = '';
+      });
       if (!send || taken == null) return;
       if (taken.ms < 500) {
         setState(() => _error = 'That voice note was too short.');
@@ -1408,6 +1819,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       _replyId = null;
       _replyName = '';
       _replyText = '';
+      _statusReply = false;
       voiceLocal = local.id;
       _accept(local);
       final message = await _api.sendVoice(
@@ -1420,7 +1832,12 @@ class _ChatThreadViewState extends State<ChatThreadView>
       _replaceLocal(voiceLocal, message);
     } catch (error) {
       if (!mounted) return;
-      setState(() => _recording = false);
+      setState(() {
+        _recording = false;
+        _voiceLocked = false;
+        _voiceHolding = false;
+        _voiceHint = '';
+      });
       if (voiceLocal < 0 && _messages.any((item) => item.id == voiceLocal)) {
         _mark(voiceLocal, 'failed');
         return;
@@ -1480,7 +1897,9 @@ class _ChatThreadViewState extends State<ChatThreadView>
   /// quotes keep their own taps, so they are left alone.
   bool _canHeartTap(ChatMessage message) {
     if (message.id <= 0 || message.replyText.isNotEmpty) return false;
-    if (message.isVoice || message.isSong || message.isPhoto) return false;
+    if (message.isVoice || message.isSong || message.isPhoto || message.isFile) {
+      return false;
+    }
     if (message.isPoll || message.isCard || message.isPlace || message.isCall) {
       return false;
     }
@@ -1512,10 +1931,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
         ),
         if (message.name == _me && _me.isNotEmpty)
           const PopupMenuItem(value: 'info', child: Text('Info')),
-        if (message.text.trim().isNotEmpty &&
-            !message.isPhoto &&
-            !message.isVoice &&
-            !message.isSong)
+        if (chatCanForward(message))
           const PopupMenuItem(value: 'forward', child: Text('Forward')),
         if (message.links.isNotEmpty)
           const PopupMenuItem(value: 'link', child: Text('Save link')),
@@ -1554,7 +1970,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       case 'info':
         await _showInfo(message);
       case 'forward':
-        await _forward(message);
+        await _forwardMany([message]);
       case 'link':
         setState(_selected.clear);
         _openLink(message.links.first);
@@ -1652,14 +2068,10 @@ class _ChatThreadViewState extends State<ChatThreadView>
               onPressed: () => unawaited(_showInfo(one)),
               icon: const Icon(Icons.info_outline_rounded),
             ),
-          if (one != null &&
-              one.text.trim().isNotEmpty &&
-              !one.isPhoto &&
-              !one.isVoice &&
-              !one.isSong)
+          if (picked.any(chatCanForward))
             IconButton(
               tooltip: 'Forward',
-              onPressed: () => unawaited(_forward(one)),
+              onPressed: () => unawaited(_forwardMany(picked)),
               icon: const Icon(Icons.forward_rounded),
             ),
           IconButton(
@@ -1690,7 +2102,9 @@ class _ChatThreadViewState extends State<ChatThreadView>
 
   bool _canEdit(ChatMessage message) {
     if (message.id <= 0 || message.name != _me || _me.isEmpty) return false;
-    if (message.isVoice || message.isSong || message.isPhoto) return false;
+    if (message.isVoice || message.isSong || message.isPhoto || message.isFile) {
+      return false;
+    }
     if (message.isPoll || message.isCard || message.isPlace || message.isCall) {
       return false;
     }
@@ -1760,13 +2174,21 @@ class _ChatThreadViewState extends State<ChatThreadView>
     final when = await askSendTime(context);
     if (when == null || !mounted) return;
     try {
-      await _api.scheduleMessage(_threadId, text: text, sendAt: when, reply: _replyId ?? 0);
+      final status = _statusReply && _replyText.trim().isNotEmpty;
+      final body = status ? statusReplyBody(_replyText, text) : text;
+      await _api.scheduleMessage(
+        _threadId,
+        text: body,
+        sendAt: when,
+        reply: status ? 0 : (_replyId ?? 0),
+      );
       if (!mounted) return;
       setState(() {
         _text.clear();
         _replyId = null;
         _replyName = '';
         _replyText = '';
+        _statusReply = false;
         _error = null;
       });
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1871,6 +2293,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       _replyId = null;
       _replyName = '';
       _replyText = '';
+      _statusReply = false;
       _text.text = message.text;
       _text.selection = TextSelection.collapsed(offset: _text.text.length);
     });
@@ -1920,6 +2343,10 @@ class _ChatThreadViewState extends State<ChatThreadView>
         if (info.editedAt != null) line('Edited', info.editedAt),
         line('Delivered', info.deliveredAt),
         line('Read', info.readAt),
+        if (_isGroup)
+          info.readers.isEmpty
+              ? 'No one else has read this'
+              : 'Read by\n${info.readers.map((reader) => reader.name).join('\n')}',
       ].where((item) => item.isNotEmpty).join('\n');
       await showDialog<void>(
         context: context,
@@ -1988,9 +2415,12 @@ class _ChatThreadViewState extends State<ChatThreadView>
     if (mounted) setState(_selected.clear);
   }
 
-  Future<void> _forward(ChatMessage message) async {
-    final text = message.text.trim();
-    if (text.isEmpty || message.isPhoto || message.isVoice) return;
+  Future<void> _forwardMany(List<ChatMessage> messages) async {
+    final texts = [
+      for (final message in messages)
+        if (chatCanForward(message)) message.text.trim(),
+    ];
+    if (texts.isEmpty) return;
     final List<ChatThreadSummary> threads;
     try {
       threads = await _api.threads();
@@ -2029,7 +2459,9 @@ class _ChatThreadViewState extends State<ChatThreadView>
     );
     if (target == null || !mounted) return;
     try {
-      await _api.send(target.id, text);
+      for (final text in texts) {
+        await _api.send(target.id, text);
+      }
     } catch (error) {
       if (!mounted) return;
       setState(() => _error = chatErrorText(error));
@@ -2144,11 +2576,29 @@ class _ChatThreadViewState extends State<ChatThreadView>
                 tooltip: _searching ? 'Close search' : 'Search',
                 onPressed: () => setState(() {
                   _searching = !_searching;
-                  if (!_searching) _search.clear();
+                  if (!_searching) {
+                    _search.clear();
+                    _searchCursor = 0;
+                  }
                 }),
                 icon: Icon(
                   _searching ? Icons.close_rounded : Icons.search_rounded,
                 ),
+              ),
+            if (!selecting && !_searching)
+              PopupMenuButton<String>(
+                tooltip: 'More',
+                onSelected: (value) {
+                  if (value == 'media') {
+                    _openMedia(title);
+                  } else if (value == 'wall') {
+                    unawaited(_pickWallpaper());
+                  }
+                },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(value: 'media', child: Text('Media')),
+                  PopupMenuItem(value: 'wall', child: Text('Wallpaper')),
+                ],
               ),
           ],
           title: selecting
@@ -2161,7 +2611,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
                     hintText: 'Search this chat',
                     border: InputBorder.none,
                   ),
-                  onChanged: (_) => setState(() {}),
+                  onChanged: _onSearchChanged,
                 )
               : InkWell(
             onTap: () => unawaited(_openProfile(face, handle, title)),
@@ -2190,18 +2640,36 @@ class _ChatThreadViewState extends State<ChatThreadView>
                       ),
                       if (recording || peerTyping)
                         ChatActivityLine(recording: recording)
-                      else if (subtitle.isNotEmpty)
-                        Text(
-                          subtitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w600,
-                            color: _peerOnline
-                                ? const Color(0xFF25D366)
-                                : scheme.onSurfaceVariant,
-                          ),
+                      else
+                        ValueListenableBuilder<bool>(
+                          valueListenable: ChatLive.instance.connected,
+                          builder: (context, connected, _) {
+                            if (!connected) {
+                              return Text(
+                                'Connecting',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              );
+                            }
+                            if (subtitle.isEmpty) return const SizedBox.shrink();
+                            return Text(
+                              subtitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w600,
+                                color: _peerOnline
+                                    ? const Color(0xFF25D366)
+                                    : scheme.onSurfaceVariant,
+                              ),
+                            );
+                          },
                         ),
                     ],
                   ),
@@ -2210,6 +2678,34 @@ class _ChatThreadViewState extends State<ChatThreadView>
             ),
           ),
         ),
+        if (_searching)
+          Material(
+            color: canvas,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(4, 0, 12, 4),
+              child: Row(
+                children: [
+                  IconButton(
+                    tooltip: 'Previous',
+                    onPressed: _searchHits.isEmpty ? null : () => _moveSearch(-1),
+                    icon: const Icon(Icons.keyboard_arrow_up_rounded),
+                  ),
+                  IconButton(
+                    tooltip: 'Next',
+                    onPressed: _searchHits.isEmpty ? null : () => _moveSearch(1),
+                    icon: const Icon(Icons.keyboard_arrow_down_rounded),
+                  ),
+                  Expanded(
+                    child: Text(
+                      _searchLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         if (_error != null)
           Material(
             color: scheme.errorContainer,
@@ -2229,7 +2725,8 @@ class _ChatThreadViewState extends State<ChatThreadView>
                 Positioned.fill(
                   child: ChatWallpaper(
                     dark: scheme.brightness == Brightness.dark,
-                    pattern: ChatPrefs.pattern,
+                    pattern: _wallPattern,
+                    image: _wallImage,
                   ),
                 ),
                 if (_pinned.isNotEmpty && !_searching)
@@ -2266,9 +2763,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
                     child: Padding(
                       padding: const EdgeInsets.all(32),
                       child: Text(
-                        _messages.isEmpty
-                            ? 'No messages yet. Say hello, or paste a public link. Tap a link to save it.'
-                            : 'No messages match that search.',
+                        'No messages yet. Say hello, or paste a public link. Tap a link to save it.',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: scheme.onSurfaceVariant,
@@ -2336,7 +2831,25 @@ class _ChatThreadViewState extends State<ChatThreadView>
                             onPoll: (choice, close) =>
                                 unawaited(_vote(message, choice, close)),
                             onLink: _openLink,
-                            onQuote: _scrollToMessage,
+                            onUsername: (name) => unawaited(
+                              openUsernameChat(
+                                context,
+                                name,
+                                currentThreadId: _threadId,
+                              ),
+                            ),
+                            onQuote: _onQuote,
+                            highlight: _searching ? _search.text.trim() : '',
+                            flash: message.id == _flashId || _isSearchHit(message.id),
+                            album: message.isPhoto
+                                ? chatPhotoAlbum(_messages, message)
+                                : const [],
+                            onOpenFile: message.isFile
+                                ? () => unawaited(_openAttachment(message))
+                                : null,
+                            onReactions: message.reactions.isEmpty
+                                ? null
+                                : () => _showReactions(message),
                             onRetry: message.status == 'failed'
                                 ? () => unawaited(_retry(message))
                                 : null,
@@ -2392,29 +2905,8 @@ class _ChatThreadViewState extends State<ChatThreadView>
                               ),
                             );
                           }
-                          final replyRow = Dismissible(
-                            key: ValueKey('reply-${message.id}'),
-                            direction: DismissDirection.startToEnd,
-                            dismissThresholds: const {
-                              DismissDirection.startToEnd: 0.2,
-                            },
-                            confirmDismiss: (_) {
-                              final target = message;
-                              WidgetsBinding.instance.addPostFrameCallback((_) {
-                                if (mounted) _replyTo(target);
-                              });
-                              return Future<bool>.value(false);
-                            },
-                            background: const Align(
-                              alignment: Alignment.centerLeft,
-                              child: Padding(
-                                padding: EdgeInsets.only(left: 8),
-                                child: Icon(
-                                  Icons.reply_rounded,
-                                  color: Color(0xFF25D366),
-                                ),
-                              ),
-                            ),
+                          final replyRow = ChatSwipeReply(
+                            onReply: () => _replyTo(message),
                             child: SizedBox(
                               width: double.infinity,
                               child: bubble,
@@ -2584,13 +3076,46 @@ class _ChatThreadViewState extends State<ChatThreadView>
                               _replyId = null;
                               _replyName = '';
                               _replyText = '';
+                              _statusReply = false;
                             }),
                             icon: const Icon(Icons.close_rounded, size: 20),
                           ),
                         ],
                       ),
                     ),
-                  if (_recording)
+                  if (_voiceHint.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 14, bottom: 4),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          _voiceHint,
+                          style: TextStyle(
+                            color: _voiceCancel
+                                ? scheme.error
+                                : scheme.onSurfaceVariant,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  if (_mentionQuery != null && _mentionChoices.isNotEmpty)
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 160),
+                      child: ListView(
+                        shrinkWrap: true,
+                        children: [
+                          for (final name in _mentionChoices)
+                            ListTile(
+                              dense: true,
+                              minTileHeight: 40,
+                              title: Text('@$name'),
+                              onTap: () => _insertMention(name),
+                            ),
+                        ],
+                      ),
+                    ),
+                  if (_recording && (_voiceLocked || !_voiceHolding))
                     ChatRecordingBar(
                       view: _recorder.view,
                       onDelete: () => unawaited(_finishVoice(send: false)),
@@ -2607,7 +3132,10 @@ class _ChatThreadViewState extends State<ChatThreadView>
                       onKey: _onKey,
                       onChanged: _onTyped,
                       onSend: () => unawaited(_send()),
-                      onMic: () => unawaited(_startVoice()),
+                      onMic: _onMicTap,
+                      onMicHoldStart: Plat.isWeb ? null : _onMicHoldStart,
+                      onMicHoldMove: Plat.isWeb ? null : _onMicHoldMove,
+                      onMicHoldEnd: Plat.isWeb ? null : _onMicHoldEnd,
                       onAttach: () => unawaited(_attach()),
                       onEmoji: _toggleEmoji,
                       showMic: !Plat.isWeb,
@@ -2625,17 +3153,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     return Scaffold(body: body);
   }
 
-  List<ChatMessage> get _shown {
-    final query = _search.text.trim().toLowerCase();
-    if (!_searching || query.isEmpty) return _messages;
-    return [
-      for (final message in _messages)
-        if (message.text.toLowerCase().contains(query) ||
-            message.replyText.toLowerCase().contains(query) ||
-            message.songName.toLowerCase().contains(query))
-          message,
-    ];
-  }
+  List<ChatMessage> get _shown => _messages;
 
   String _pinnedPreview() {
     for (final id in _pinned.reversed) {
@@ -2739,6 +3257,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
               if (announce != null) _announce = announce;
             });
           },
+          onMedia: () => _openMedia(title),
         );
       } catch (error) {
         if (!mounted) return;
@@ -2769,7 +3288,111 @@ class _ChatThreadViewState extends State<ChatThreadView>
               widget.onSeenName?.call(_threadId, saved);
               return saved;
             },
+      onMedia: () => _openMedia(title),
     );
+  }
+
+  void _openMedia(String title) {
+    final label = title.trim().isEmpty ? 'Media' : title.trim();
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => ChatMediaPage(
+          title: label,
+          messages: _messages,
+          onLink: (url) {
+            if (!mounted) return;
+            _openLink(url);
+          },
+        ),
+      ),
+    );
+  }
+
+  void _showReactions(ChatMessage message) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              for (final reaction in message.reactions)
+                ListTile(
+                  leading: Text(
+                    reaction.emoji,
+                    style: const TextStyle(fontSize: 22),
+                  ),
+                  title: Text(
+                    reaction.user.trim().isEmpty ? 'Someone' : reaction.user.trim(),
+                  ),
+                  minTileHeight: 48,
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _pickWallpaper() async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                title: const Text('App default'),
+                minTileHeight: 48,
+                onTap: () => Navigator.pop(context, ChatWalls.modeDefault),
+              ),
+              ListTile(
+                title: const Text('Pattern'),
+                minTileHeight: 48,
+                onTap: () => Navigator.pop(context, ChatWalls.modePattern),
+              ),
+              ListTile(
+                title: const Text('Plain'),
+                minTileHeight: 48,
+                onTap: () => Navigator.pop(context, ChatWalls.modePlain),
+              ),
+              ListTile(
+                title: const Text('Photo'),
+                minTileHeight: 48,
+                onTap: () => Navigator.pop(context, ChatWalls.modePhoto),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    if (choice == null || !mounted) return;
+    if (choice == ChatWalls.modePhoto) {
+      final picked = await openFile(
+        acceptedTypeGroups: const [
+          XTypeGroup(label: 'Photos', extensions: ['jpg', 'jpeg', 'png']),
+        ],
+      );
+      if (picked == null || !mounted) return;
+      final bytes = await picked.readAsBytes();
+      if (bytes.isEmpty || !mounted) return;
+      await ChatWalls.savePhoto(_threadId, bytes);
+      if (!mounted) return;
+      setState(() {
+        _wallMode = ChatWalls.modePhoto;
+        _wallBytes = bytes;
+      });
+      return;
+    }
+    await ChatWalls.setMode(_threadId, choice);
+    if (!mounted) return;
+    setState(() {
+      _wallMode = choice;
+      if (choice != ChatWalls.modePhoto) _wallBytes = null;
+    });
   }
 
   List<_Row> _rows() {
@@ -2777,12 +3400,15 @@ class _ChatThreadViewState extends State<ChatThreadView>
     DateTime? previous;
     final now = DateTime.now();
     final shown = _shown;
+    final hidden = chatPhotoFollowers(shown);
     var markedNew = false;
     var newCount = 0;
     for (final message in shown) {
+      if (hidden.contains(message.id)) continue;
       if (message.name != _me && message.id > _seenAtOpen) newCount++;
     }
     for (final message in shown) {
+      if (hidden.contains(message.id)) continue;
       final local = message.at.toLocal();
       final day = DateTime(local.year, local.month, local.day);
       if (previous == null || day != previous) {
@@ -3058,6 +3684,7 @@ class ChatBubble extends StatelessWidget {
     required this.tick,
     required this.onLink,
     required this.onLongPress,
+    this.onUsername,
     this.me = '',
     this.onPoll,
     this.tail = true,
@@ -3066,6 +3693,11 @@ class ChatBubble extends StatelessWidget {
     this.onRetry,
     this.onSecondaryTap,
     this.onDoubleTap,
+    this.album = const [],
+    this.highlight = '',
+    this.flash = false,
+    this.onOpenFile,
+    this.onReactions,
   });
 
   final ChatMessage message;
@@ -3076,6 +3708,7 @@ class ChatBubble extends StatelessWidget {
   final ChatApi api;
   final String tick;
   final ValueChanged<String> onLink;
+  final ValueChanged<String>? onUsername;
   final ValueChanged<int>? onQuote;
   final ValueChanged<LongPressStartDetails>? onLongPress;
   final ValueChanged<Offset>? onSecondaryTap;
@@ -3083,6 +3716,11 @@ class ChatBubble extends StatelessWidget {
   final String me;
   final void Function(int? choice, bool close)? onPoll;
   final VoidCallback? onRetry;
+  final List<ChatMessage> album;
+  final String highlight;
+  final bool flash;
+  final VoidCallback? onOpenFile;
+  final VoidCallback? onReactions;
 
   @override
   Widget build(BuildContext context) {
@@ -3107,6 +3745,9 @@ class ChatBubble extends StatelessWidget {
                   name: message.replyName,
                   text: message.replyText,
                   dark: dark,
+                  linkColor: link,
+                  onUsername: onUsername,
+                  highlight: highlight,
                   onTap: message.reply > 0 && onQuote != null
                       ? () => onQuote!(message.reply)
                       : null,
@@ -3128,6 +3769,7 @@ class ChatBubble extends StatelessWidget {
               !message.isVoice &&
               !message.isPhoto &&
               !message.isSong &&
+              !message.isFile &&
               !message.isPoll &&
               message.card == null &&
               message.place == null &&
@@ -3189,11 +3831,33 @@ class ChatBubble extends StatelessWidget {
               ),
             );
           } else if (message.isPhoto) {
+            final photos = album.length > 1 ? album : <ChatMessage>[message];
+            final wide = photos.length > 1;
+            final photoWidth = wide
+                ? ((max - 16) > 280 ? 280.0 : (max - 16))
+                : cardWidth;
             final overlayTick = tick == 'read'
                 ? const Color(0xFF53BDEB)
                 : Colors.white;
+            final Widget picture;
+            if (!wide) {
+              picture = _ChatPicture(message: message, threadId: threadId);
+            } else {
+              final cell = ((photoWidth - 2) / 2).clamp(40.0, 140.0).toDouble();
+              picture = Wrap(
+                spacing: 2,
+                runSpacing: 2,
+                children: [
+                  for (final item in photos)
+                    SizedBox(
+                      width: cell,
+                      child: _ChatPicture(message: item, threadId: threadId),
+                    ),
+                ],
+              );
+            }
             body = SizedBox(
-              width: cardWidth,
+              width: photoWidth < 0 ? 0.0 : photoWidth,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3201,7 +3865,7 @@ class ChatBubble extends StatelessWidget {
                   ?quote,
                   Stack(
                     children: [
-                      _ChatPicture(message: message, threadId: threadId),
+                      picture,
                       if (barePhoto)
                         Positioned(
                           right: 4,
@@ -3230,17 +3894,52 @@ class ChatBubble extends StatelessWidget {
                   if (!barePhoto) ...[
                     const SizedBox(height: 4),
                     _TimedLine(
-                      text: _LinkText(
+                      text: ChatTapText(
                         text: message.text,
                         links: message.links,
                         color: fg,
                         linkColor: link,
                         onLink: onLink,
+                        onUsername: onUsername,
                         reserve: reserve,
+                        highlight: highlight,
                       ),
                       stamp: stamp,
                     ),
                   ],
+                ],
+              ),
+            );
+          } else if (message.isFile) {
+            final captionText = message.text.trim();
+            final showCaption = captionText.isNotEmpty && captionText != message.fileName.trim();
+            body = SizedBox(
+              width: cardWidth,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ?quote,
+                  ChatFileCard(
+                    message: message,
+                    onOpen: () => onOpenFile?.call(),
+                  ),
+                  if (showCaption)
+                    _TimedLine(
+                      text: ChatTapText(
+                        text: message.text,
+                        links: message.links,
+                        color: fg,
+                        linkColor: link,
+                        onLink: onLink,
+                        onUsername: onUsername,
+                        reserve: reserve,
+                        highlight: highlight,
+                      ),
+                      stamp: stamp,
+                    )
+                  else
+                    stamp,
                 ],
               ),
             );
@@ -3343,13 +4042,15 @@ class ChatBubble extends StatelessWidget {
                   ?quote,
                   ChatLinkCard(url: message.links.first, onOpen: onLink),
                   _TimedLine(
-                    text: _LinkText(
+                    text: ChatTapText(
                       text: message.text,
                       links: message.links,
                       color: fg,
                       linkColor: link,
                       onLink: onLink,
+                      onUsername: onUsername,
                       reserve: reserve,
+                      highlight: highlight,
                     ),
                     stamp: stamp,
                   ),
@@ -3364,13 +4065,15 @@ class ChatBubble extends StatelessWidget {
                 children: [
                   ?quote,
                   _TimedLine(
-                    text: _LinkText(
+                    text: ChatTapText(
                       text: message.text,
                       links: message.links,
                       color: fg,
                       linkColor: link,
                       onLink: onLink,
+                      onUsername: onUsername,
                       reserve: reserve,
+                      highlight: highlight,
                     ),
                     stamp: stamp,
                   ),
@@ -3389,6 +4092,9 @@ class ChatBubble extends StatelessWidget {
             ),
           );
           final hasReactions = message.reactions.isNotEmpty;
+          final bubbleColor = flash
+              ? Color.alphaBlend(const Color(0x66FFF59D), bg)
+              : bg;
           return GestureDetector(
             onLongPressStart: onLongPress,
             onDoubleTap: onDoubleTap,
@@ -3416,7 +4122,9 @@ class ChatBubble extends StatelessWidget {
                             barePhoto ? 3 : 5,
                           ),
                     decoration: BoxDecoration(
-                      color: bareEmoji ? Colors.transparent : bg,
+                      color: bareEmoji
+                          ? (flash ? const Color(0xFFFFF59D) : Colors.transparent)
+                          : bubbleColor,
                       borderRadius: bareEmoji ? BorderRadius.zero : radius,
                       boxShadow: bareEmoji || dark
                           ? null
@@ -3437,7 +4145,7 @@ class ChatBubble extends StatelessWidget {
                       bottom: 0,
                       child: CustomPaint(
                         size: const Size(10, 12),
-                        painter: _BubbleTail(color: bg, mine: mine),
+                        painter: _BubbleTail(color: bareEmoji ? bg : bubbleColor, mine: mine),
                       ),
                     ),
                   if (hasReactions)
@@ -3448,6 +4156,7 @@ class ChatBubble extends StatelessWidget {
                       child: _ReactionBadge(
                         reactions: message.reactions,
                         dark: dark,
+                        onTap: onReactions,
                       ),
                     ),
                 ],
@@ -3509,10 +4218,11 @@ class _BubbleTail extends CustomPainter {
 
 /// A small pill that sits on the corner of a message, outside the bubble.
 class _ReactionBadge extends StatelessWidget {
-  const _ReactionBadge({required this.reactions, required this.dark});
+  const _ReactionBadge({required this.reactions, required this.dark, this.onTap});
 
   final List<ChatReaction> reactions;
   final bool dark;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -3522,7 +4232,9 @@ class _ReactionBadge extends StatelessWidget {
       counts[item.emoji] = (counts[item.emoji] ?? 0) + 1;
     }
     if (counts.isEmpty) return const SizedBox.shrink();
-    return DecoratedBox(
+    return GestureDetector(
+      onTap: onTap,
+      child: DecoratedBox(
       decoration: BoxDecoration(
         color: dark ? const Color(0xFF1F2C34) : Colors.white,
         borderRadius: BorderRadius.circular(14),
@@ -3559,6 +4271,7 @@ class _ReactionBadge extends StatelessWidget {
             ],
           ],
         ),
+      ),
       ),
     );
   }
@@ -3638,13 +4351,19 @@ class _Quote extends StatelessWidget {
     required this.name,
     required this.text,
     required this.dark,
+    required this.linkColor,
     this.onTap,
+    this.onUsername,
+    this.highlight = '',
   });
 
   final String name;
   final String text;
   final bool dark;
+  final Color linkColor;
   final VoidCallback? onTap;
+  final ValueChanged<String>? onUsername;
+  final String highlight;
 
   @override
   Widget build(BuildContext context) {
@@ -3673,8 +4392,12 @@ class _Quote extends StatelessWidget {
                 color: Color(0xFF25D366),
               ),
             ),
-            Text(
-              text,
+            ChatTapText(
+              text: text,
+              color: dark ? const Color(0xFFE9EDEF) : const Color(0xFF111B21),
+              linkColor: linkColor,
+              onUsername: onUsername,
+              highlight: highlight,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -3910,76 +4633,4 @@ class _PhotoPage extends StatelessWidget {
   }
 }
 
-class _LinkText extends StatelessWidget {
-  const _LinkText({
-    required this.text,
-    required this.links,
-    required this.color,
-    required this.linkColor,
-    required this.onLink,
-    this.reserve = 0,
-  });
 
-  final String text;
-  final List<String> links;
-  final Color color;
-  final Color linkColor;
-  final ValueChanged<String> onLink;
-  final double reserve;
-
-  @override
-  Widget build(BuildContext context) {
-    final pieces = _pieces(text, links);
-    return Text.rich(
-      TextSpan(
-        style: TextStyle(fontSize: 15.5, height: 1.3, color: color),
-        children: [
-          for (final piece in pieces)
-            if (piece.url == null)
-              TextSpan(text: piece.text)
-            else
-              WidgetSpan(
-                alignment: PlaceholderAlignment.baseline,
-                baseline: TextBaseline.alphabetic,
-                child: GestureDetector(
-                  onTap: () => onLink(piece.url!),
-                  child: Text(
-                    piece.text,
-                    style: TextStyle(
-                      fontSize: 15.5,
-                      height: 1.3,
-                      color: linkColor,
-                      decoration: TextDecoration.underline,
-                    ),
-                  ),
-                ),
-              ),
-          if (reserve > 0)
-            WidgetSpan(child: SizedBox(width: reserve, height: 14)),
-        ],
-      ),
-    );
-  }
-}
-
-class _Piece {
-  const _Piece(this.text, this.url);
-  final String text;
-  final String? url;
-}
-
-List<_Piece> _pieces(String text, List<String> links) {
-  if (links.isEmpty || text.isEmpty) return [_Piece(text, null)];
-  final pieces = <_Piece>[];
-  var cursor = 0;
-  for (final link in links) {
-    final at = text.indexOf(link, cursor);
-    if (at < 0) continue;
-    if (at > cursor) pieces.add(_Piece(text.substring(cursor, at), null));
-    pieces.add(_Piece(link, link));
-    cursor = at + link.length;
-  }
-  if (cursor < text.length) pieces.add(_Piece(text.substring(cursor), null));
-  if (pieces.isEmpty) return [_Piece(text, null)];
-  return pieces;
-}

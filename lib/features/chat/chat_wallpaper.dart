@@ -2,15 +2,21 @@ import 'package:flutter/material.dart';
 
 /// Faint doodles on the chat canvas. No bitmap and no extra theme.
 class ChatWallpaper extends StatelessWidget {
-  const ChatWallpaper({super.key, required this.dark, this.pattern = false});
+  const ChatWallpaper({super.key, required this.dark, this.pattern = false, this.image});
 
   final bool dark;
 
   /// Off leaves the canvas plain. The pattern is a Settings choice.
   final bool pattern;
 
+  /// A photo chosen for this chat. It covers the pattern.
+  final ImageProvider? image;
+
   @override
   Widget build(BuildContext context) {
+    if (image != null) {
+      return Image(image: image!, fit: BoxFit.cover, width: double.infinity, height: double.infinity);
+    }
     if (!pattern) return const SizedBox.expand();
     return IgnorePointer(
       child: CustomPaint(

@@ -56,6 +56,12 @@ class ChatHistory {
     _archive = null;
   }
 
+  static List<ChatMessage> peekMessages(String username, String threadId) {
+    final book = _open[username];
+    if (book == null) return const [];
+    return book.logs[threadId]?.messages ?? const [];
+  }
+
   static Future<List<ChatThreadSummary>> threads(String username) {
     return _run(() async {
       final book = await _book(username);
@@ -371,10 +377,14 @@ class ChatHistory {
     if (local.pendingKind == 'song') {
       return server.isSong && server.songName == local.songName;
     }
+    if (local.pendingKind == 'file' || local.pendingKind == 'clip') {
+      return server.isFile && server.fileName == local.fileName;
+    }
     if (local.pendingKind.isNotEmpty) return false;
     return !server.isVoice &&
         !server.isPhoto &&
         !server.isSong &&
+        !server.isFile &&
         local.text == server.text;
   }
 }

@@ -6,7 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:social_save/core/utils/open_link.dart';
 import 'package:social_save/features/chat/chat_api.dart';
+import 'package:social_save/features/chat/chat_format.dart';
 import 'package:social_save/features/chat/chat_profile.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
 import 'package:social_save/features/chat/day_streak.dart';
@@ -524,20 +526,33 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
     final name = note.name.trim().replaceFirst(RegExp(r'^@'), '');
     if (name.isEmpty || widget.own) return;
     _bar.stop();
+    final router = GoRouter.of(context);
     try {
       final opened = await ChatApi().openThread(name);
       if (!mounted) return;
-      await context.push(
+      final snippet = statusReplySnippet(note.text, photo: note.image.isNotEmpty);
+      Navigator.of(context).pop();
+      await router.push(
         '/chat/${opened.id}',
-        extra: ChatThreadTarget(username: opened.username, name: opened.name),
+        extra: ChatThreadTarget(
+          username: opened.username,
+          name: opened.name,
+          statusQuote: snippet,
+        ),
       );
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(chatErrorText(error))),
       );
+      _continue();
     }
-    _continue();
+  }
+
+  Future<void> _openWritten(String name) async {
+    _bar.stop();
+    final opened = await openUsernameChat(context, name, leaveOverlay: true);
+    if (!opened && mounted) _continue();
   }
 
   Future<void> _delete(ChatStatusNote note) async {
@@ -681,9 +696,16 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            widget.title,
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                          GestureDetector(
+                            onTap: widget.own ? null : () => unawaited(_openWritten(note.name)),
+                            child: Text(
+                              widget.title,
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                                decoration: widget.own ? null : TextDecoration.underline,
+                              ),
+                            ),
                           ),
                           Text(
                             widget.own
@@ -730,14 +752,19 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
                         if (note.text.isNotEmpty)
                           Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                            child: Text(
-                              note.text,
+                            child: ChatTapText(
+                              text: note.text,
+                              color: Colors.white,
+                              linkColor: Colors.white,
                               textAlign: TextAlign.center,
                               style: statusFontStyle(
                                 note.font,
                                 color: Colors.white,
                                 size: note.image.isEmpty ? 28 : 20,
                               ),
+                              links: [?firstWebUrl(note.text)],
+                              onLink: (url) => unawaited(openWebLink(url)),
+                              onUsername: (name) => unawaited(_openWritten(name)),
                             ),
                           ),
                         if (note.image.isEmpty) const Spacer(),

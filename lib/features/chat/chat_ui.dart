@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_drafts.dart';
@@ -54,10 +55,14 @@ class ChatInboxFilter {
   static const _archiveKey = 'chat.list.archived.v1';
   static const _muteKey = 'chat.list.muted.v1';
   static const _hideKey = 'chat.list.hidden.v1';
+  static const _pinKey = 'chat.list.pins.v1';
+  static const _unreadKey = 'chat.list.unread.v1';
 
   static final ValueNotifier<int> revision = ValueNotifier<int>(0);
   static Set<String> archived = <String>{};
   static Set<String> muted = <String>{};
+  static Set<String> pinned = <String>{};
+  static Set<String> unreadMarks = <String>{};
   static final Map<String, int> hidden = <String, int>{};
   static Future<void>? _loading;
 
@@ -102,6 +107,63 @@ class ChatInboxFilter {
     revision.value++;
   }
 
+  static Future<void> setPinned(String id, {required bool on, bool quiet = false}) async {
+    final clean = id.trim();
+    if (clean.isEmpty) return;
+    await ensure();
+    if (on) {
+      pinned.add(clean);
+      if (pinned.length > 20) {
+        pinned = pinned.skip(pinned.length - 20).toSet();
+      }
+    } else {
+      pinned.remove(clean);
+    }
+    await _write(_pinKey, pinned.toList());
+    if (!quiet) revision.value++;
+  }
+
+  static Future<void> setUnreadMark(String id, {required bool on, bool quiet = false}) async {
+    final clean = id.trim();
+    if (clean.isEmpty) return;
+    await ensure();
+    if (on) {
+      unreadMarks.add(clean);
+    } else {
+      unreadMarks.remove(clean);
+    }
+    await _write(_unreadKey, unreadMarks.toList());
+    if (!quiet) revision.value++;
+  }
+
+  /// Copies pins and unread marks when the server actually sent those keys.
+  static Future<void> takeServerFlags(List<ChatThreadSummary> items) async {
+    await ensure();
+    var changed = false;
+    for (final item in items) {
+      if (item.pinKnown && pinned.contains(item.id) != item.pinned) {
+        if (item.pinned) {
+          pinned.add(item.id);
+        } else {
+          pinned.remove(item.id);
+        }
+        changed = true;
+      }
+      if (item.markKnown && unreadMarks.contains(item.id) != item.marked) {
+        if (item.marked) {
+          unreadMarks.add(item.id);
+        } else {
+          unreadMarks.remove(item.id);
+        }
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    await _write(_pinKey, pinned.toList());
+    await _write(_unreadKey, unreadMarks.toList());
+    revision.value++;
+  }
+
   static Future<void> hide(String id, int lastId) async {
     await ensure();
     hidden[id] = lastId < 0 ? 0 : lastId;
@@ -118,6 +180,8 @@ class ChatInboxFilter {
     final prefs = await SharedPreferences.getInstance();
     archived = (prefs.getStringList(_archiveKey) ?? const <String>[]).toSet();
     muted = (prefs.getStringList(_muteKey) ?? const <String>[]).toSet();
+    pinned = (prefs.getStringList(_pinKey) ?? const <String>[]).toSet();
+    unreadMarks = (prefs.getStringList(_unreadKey) ?? const <String>[]).toSet();
     hidden.clear();
     for (final raw in prefs.getStringList(_hideKey) ?? const <String>[]) {
       final cut = raw.lastIndexOf(':');
@@ -295,8 +359,11 @@ class ChatListTile extends StatefulWidget {
     required this.onMute,
     required this.onDelete,
     this.onRename,
+    this.onPin,
+    this.onUnread,
     required this.muted,
     required this.archived,
+    this.failed = false,
   });
 
   final ChatThreadSummary item;
@@ -310,8 +377,11 @@ class ChatListTile extends StatefulWidget {
   final VoidCallback onMute;
   final VoidCallback onDelete;
   final VoidCallback? onRename;
+  final VoidCallback? onPin;
+  final VoidCallback? onUnread;
   final bool muted;
   final bool archived;
+  final bool failed;
 
   @override
   State<ChatListTile> createState() => _ChatListTileState();
@@ -407,6 +477,11 @@ class _ChatListTileState extends State<ChatListTile> {
         ),
         if (widget.onRename != null)
           const PopupMenuItem<String>(value: 'rename', child: Text('Edit name')),
+        PopupMenuItem<String>(
+          value: 'pin',
+          child: Text(widget.item.pinned ? 'Unpin chat' : 'Pin chat'),
+        ),
+        const PopupMenuItem<String>(value: 'unread', child: Text('Mark unread')),
         const PopupMenuItem<String>(value: 'delete', child: Text('Delete')),
       ],
     );
@@ -423,6 +498,10 @@ class _ChatListTileState extends State<ChatListTile> {
         widget.onMute();
       case 'rename':
         widget.onRename?.call();
+      case 'pin':
+        widget.onPin?.call();
+      case 'unread':
+        widget.onUnread?.call();
       case 'delete':
         widget.onDelete();
     }
@@ -546,6 +625,7 @@ class _ChatListTileState extends State<ChatListTile> {
                           live: _live,
                           avatar: widget.avatar,
                           muted: widget.muted,
+                          failed: widget.failed,
                         ),
                         Positioned(
                           left: 80,
@@ -610,6 +690,7 @@ class _RowBody extends StatelessWidget {
     required this.live,
     required this.avatar,
     required this.muted,
+    required this.failed,
   });
 
   final ChatThreadSummary item;
@@ -617,6 +698,7 @@ class _RowBody extends StatelessWidget {
   final bool live;
   final Widget avatar;
   final bool muted;
+  final bool failed;
 
   @override
   Widget build(BuildContext context) {
@@ -632,7 +714,7 @@ class _RowBody extends StatelessWidget {
     final draft = ChatDrafts.peek(item.id).trim();
     final recording = live && ChatLive.isRecording(item.id);
     final typing = live && !recording && ChatLive.isTyping(item.id);
-    final preview = chatPreview(item.lastText, item.lastFrom, me);
+    final preview = failed ? 'Not sent' : chatPreview(item.lastText, item.lastFrom, me);
     final voice = draft.isEmpty && item.lastText.trim() == 'Voice message';
     final photo = draft.isEmpty && item.lastText.trim() == 'Photo';
     return Padding(
@@ -646,19 +728,36 @@ class _RowBody extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  item.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 16,
-                    letterSpacing: -0.2,
-                    fontWeight: unread ? FontWeight.w600 : FontWeight.w500,
-                  ),
+                Row(
+                  children: [
+                    if (item.pinned) ...[
+                      const Icon(Icons.push_pin, size: 14, color: ChatUiTokens.brand),
+                      const SizedBox(width: 4),
+                    ],
+                    Expanded(
+                      child: Text(
+                        item.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 16,
+                          letterSpacing: -0.2,
+                          fontWeight: unread ? FontWeight.w600 : FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 2),
                 if (recording || typing)
                   ChatActivityLine(recording: recording)
+                else if (failed && draft.isEmpty)
+                  Text(
+                    'Not sent',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 14, height: 1.2, color: scheme.error),
+                  )
                 else if (draft.isNotEmpty)
                   Text.rich(
                     TextSpan(
@@ -816,6 +915,9 @@ class ChatComposer extends StatelessWidget {
     required this.onChanged,
     required this.onSend,
     required this.onMic,
+    this.onMicHoldStart,
+    this.onMicHoldMove,
+    this.onMicHoldEnd,
     required this.onAttach,
     required this.onEmoji,
     required this.showMic,
@@ -830,6 +932,9 @@ class ChatComposer extends StatelessWidget {
   final ValueChanged<String> onChanged;
   final VoidCallback onSend;
   final VoidCallback onMic;
+  final void Function(LongPressStartDetails)? onMicHoldStart;
+  final void Function(LongPressMoveUpdateDetails)? onMicHoldMove;
+  final void Function(LongPressEndDetails)? onMicHoldEnd;
   final VoidCallback onAttach;
   final VoidCallback onEmoji;
   final bool showMic;
@@ -924,11 +1029,24 @@ class ChatComposer extends StatelessWidget {
                       onPressed: onSend,
                     )
                   : showMic
+                  ? onMicHoldStart == null
                   ? _RoundButton(
                       key: const ValueKey('mic'),
                       tooltip: 'Voice note',
                       icon: Icons.mic_rounded,
                       onPressed: onMic,
+                    )
+                  : GestureDetector(
+                      key: const ValueKey('mic-hold'),
+                      onTap: onMic,
+                      onLongPressStart: onMicHoldStart,
+                      onLongPressMoveUpdate: onMicHoldMove,
+                      onLongPressEnd: onMicHoldEnd,
+                      child: const SizedBox(
+                        width: 48,
+                        height: 48,
+                        child: Icon(Icons.mic_rounded, color: ChatUiTokens.brand),
+                      ),
                     )
                   : const SizedBox(width: 48, height: 48),
             ),
@@ -1061,6 +1179,139 @@ class ChatDownChip extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Opens the chat for a written @username.
+///
+/// [leaveOverlay] pops the current route first. A status is shown on top of
+/// the chat stack, so the new chat would stay hidden without that pop.
+/// Returns true when a chat page was opened.
+Future<bool> openUsernameChat(
+  BuildContext context,
+  String username, {
+  String currentThreadId = '',
+  bool leaveOverlay = false,
+}) async {
+  final name = username.trim().replaceFirst(RegExp(r'^@'), '').toLowerCase();
+  if (!RegExp(r'^[a-z0-9_]{3,20}$').hasMatch(name)) return false;
+  try {
+    final opened = await ChatApi().openThread(name);
+    if (!context.mounted) return false;
+    if (currentThreadId.isNotEmpty && opened.id == currentThreadId) return false;
+    final router = GoRouter.of(context);
+    if (leaveOverlay) {
+      final nav = Navigator.of(context);
+      if (nav.canPop()) nav.pop();
+    }
+    await router.push(
+      '/chat/${opened.id}',
+      extra: ChatThreadTarget(username: opened.username, name: opened.name),
+    );
+    return true;
+  } catch (error) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(chatErrorText(error))),
+      );
+    }
+    return false;
+  }
+}
+
+/// Message or status text. Web links and @usernames are underlined and tappable.
+class ChatTapText extends StatelessWidget {
+  const ChatTapText({
+    super.key,
+    required this.text,
+    required this.color,
+    this.links = const [],
+    this.linkColor,
+    this.onLink,
+    this.onUsername,
+    this.reserve = 0,
+    this.style,
+    this.textAlign,
+    this.maxLines,
+    this.overflow,
+    this.highlight = '',
+  });
+
+  final String text;
+  final List<String> links;
+  final Color color;
+  final Color? linkColor;
+  final ValueChanged<String>? onLink;
+  final ValueChanged<String>? onUsername;
+  final double reserve;
+  final TextStyle? style;
+  final TextAlign? textAlign;
+  final int? maxLines;
+  final TextOverflow? overflow;
+  final String highlight;
+
+  List<InlineSpan> _marked(String text, TextStyle style) {
+    final needle = highlight.trim();
+    if (needle.isEmpty) return [TextSpan(text: text, style: style)];
+    final lower = text.toLowerCase();
+    final look = needle.toLowerCase();
+    final spans = <InlineSpan>[];
+    var cursor = 0;
+    while (cursor < text.length) {
+      final at = lower.indexOf(look, cursor);
+      if (at < 0) {
+        spans.add(TextSpan(text: text.substring(cursor), style: style));
+        break;
+      }
+      if (at > cursor) spans.add(TextSpan(text: text.substring(cursor, at), style: style));
+      spans.add(TextSpan(
+        text: text.substring(at, at + look.length),
+        style: style.copyWith(backgroundColor: const Color(0xFFFFF59D), color: const Color(0xFF111B21)),
+      ));
+      cursor = at + look.length;
+    }
+    return spans;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final base = style ?? TextStyle(fontSize: 15.5, height: 1.3, color: color);
+    final tapColor = linkColor ?? color;
+    final tapStyle = base.copyWith(
+      color: tapColor,
+      decoration: TextDecoration.underline,
+      decorationColor: tapColor,
+    );
+    final pieces = chatTextPieces(text, links);
+    return Text.rich(
+      TextSpan(
+        style: base,
+        children: [
+          for (final piece in pieces)
+            if (piece.isLink || (piece.isUsername && onUsername != null))
+              WidgetSpan(
+                alignment: PlaceholderAlignment.baseline,
+                baseline: TextBaseline.alphabetic,
+                child: GestureDetector(
+                  onTap: () {
+                    if (piece.isLink) {
+                      onLink?.call(piece.link!);
+                    } else {
+                      onUsername?.call(piece.username!);
+                    }
+                  },
+                  child: Text.rich(TextSpan(children: _marked(piece.text, tapStyle))),
+                ),
+              )
+            else
+              ..._marked(piece.text, base),
+          if (reserve > 0) WidgetSpan(child: SizedBox(width: reserve, height: 14)),
+        ],
+      ),
+      textAlign: textAlign,
+      maxLines: maxLines,
+      overflow: overflow,
     );
   }
 }

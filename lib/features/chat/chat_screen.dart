@@ -16,6 +16,7 @@ import 'package:social_save/features/chat/chat_status_screen.dart';
 import 'package:social_save/features/chat/chat_settings.dart';
 import 'package:social_save/features/chat/chat_thread_screen.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
+import 'package:social_save/features/chat/chat_ux.dart';
 import 'package:social_save/shared/widgets/app_logo.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
 
@@ -65,6 +66,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   int? _myStatusViews;
   int _myStatusCount = 0;
   int _streak = 0;
+  Map<String, String> _messageHits = {};
+  Timer? _hitTimer;
 
   bool _wide(BuildContext context) => MediaQuery.sizeOf(context).width >= 840;
 
@@ -92,6 +95,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     ChatInboxFilter.revision.removeListener(_onDrafts);
     _live?.cancel();
     _poll?.cancel();
+    _hitTimer?.cancel();
     _contact.dispose();
     _username.dispose();
     _password.dispose();
@@ -224,7 +228,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (_refreshing || _user == null) return;
     _refreshing = true;
     try {
-      final items = _mergeThreads(await _api.threads());
+      final server = await _api.threads();
+      await ChatInboxFilter.takeServerFlags(server);
+      final items = _mergeThreads(server);
       if (!mounted) return;
       ChatAlerts.observe(
         items,
@@ -937,6 +943,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   void _onRead(String id, int lastId) {
+    unawaited(ChatInboxFilter.setUnreadMark(id, on: false));
     setState(() {
       _threads = [
         for (final item in _threads)
@@ -1414,6 +1421,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               announce: announce,
             );
           },
+          onMedia: () => _openListMedia(item),
         );
       } catch (error) {
         if (!mounted) return;
@@ -1441,6 +1449,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         if (mounted) _applySeen(item.id, saved);
         return saved;
       },
+      onMedia: () => _openListMedia(item),
     );
   }
 
@@ -1514,12 +1523,108 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     await ChatInboxFilter.hide(item.id, item.lastId);
   }
 
+  ChatThreadSummary _previewItem(ChatThreadSummary item) {
+    final hit = _messageHits[item.id];
+    if (hit == null || hit.isEmpty) return item;
+    if (item.lastText.toLowerCase().contains(hit.toLowerCase())) return item;
+    return item.copyWith(lastText: hit, lastFrom: '');
+  }
+
+  void _openListMedia(ChatThreadSummary item) {
+    final me = _user?.username ?? '';
+    final messages = me.isEmpty
+        ? const <ChatMessage>[]
+        : ChatHistory.peekMessages(me, item.id);
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => ChatMediaPage(
+          title: item.label,
+          messages: messages,
+          onLink: (url) => context.push('/preview', extra: url),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pinThread(ChatThreadSummary item) async {
+    try {
+      final serverFlag = await _api.pinChat(item.id);
+      if (!mounted) return;
+      final on = serverFlag ?? !ChatInboxFilter.pinned.contains(item.id);
+      await ChatInboxFilter.setPinned(item.id, on: on);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = chatErrorText(error));
+    }
+  }
+
+  Future<void> _markThreadUnread(ChatThreadSummary item) async {
+    await ChatInboxFilter.setUnreadMark(item.id, on: true);
+    try {
+      await _api.markChatUnread(item.id);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = chatErrorText(error));
+    }
+  }
+
+  void _queueMessageSearch() {
+    _hitTimer?.cancel();
+    final raw = _find.text.trim().toLowerCase().replaceFirst(RegExp(r'^@'), '');
+    if (raw.length < 2) {
+      if (_messageHits.isNotEmpty) setState(() => _messageHits = {});
+      return;
+    }
+    _hitTimer = Timer(const Duration(milliseconds: 250), () {
+      unawaited(_searchMessages(raw));
+    });
+  }
+
+  Future<void> _searchMessages(String query) async {
+    final me = _user?.username ?? '';
+    final hits = <String, String>{};
+    if (me.isNotEmpty) {
+      for (final item in _threads) {
+        final messages = ChatHistory.peekMessages(me, item.id);
+        for (final message in messages.reversed) {
+          final text = message.text.trim();
+          if (text.toLowerCase().contains(query)) {
+            hits[item.id] = text;
+            break;
+          }
+        }
+      }
+    }
+    try {
+      final remote = await _api.searchMessages(query);
+      if (remote != null) {
+        for (final hit in remote) {
+          final text = hit.text.trim();
+          if (text.isEmpty) continue;
+          hits.putIfAbsent(hit.thread, () => text);
+        }
+      }
+    } catch (_) {}
+    if (!mounted) return;
+    final current = _find.text.trim().toLowerCase().replaceFirst(RegExp(r'^@'), '');
+    if (current != query) return;
+    setState(() => _messageHits = hits);
+  }
+
   Widget _threadTile(ChatThreadSummary item, String me, bool wide) {
     final archived = ChatInboxFilter.archived.contains(item.id);
+    final shown = _previewItem(item);
     return ChatListTile(
       key: ValueKey(item.id),
-      item: item,
+      item: shown,
       me: me,
+      failed: chatHasFailedSend(
+        ChatHistory.peekMessages(me, item.id),
+        me,
+        item.lastAt,
+      ),
+      onPin: () => unawaited(_pinThread(item)),
+      onUnread: () => unawaited(_markThreadUnread(item)),
       selected: wide && item.id == _selectedId,
       muted: ChatInboxFilter.isMuted(item.id),
       archived: archived,
@@ -1581,6 +1686,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       for (final item in open)
         if (!(!groups && query.isEmpty && item.request)) item,
     ];
+    rest.sort(chatPinCompare);
     final showHeader = query.isEmpty && archived.isNotEmpty;
     final showBlocked = query.isEmpty && blocked.isNotEmpty;
     final showStatus = !groups && query.isEmpty;
@@ -1769,7 +1875,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
     final section = [
       for (final item in _threads)
-        if ((item.group || item.id.startsWith('g')) == _groups) item,
+        if ((item.group || item.id.startsWith('g')) == _groups)
+          chatWithListFlags(
+            item,
+            pinned: ChatInboxFilter.pinned.contains(item.id),
+            marked: ChatInboxFilter.unreadMarks.contains(item.id),
+          ),
     ];
     final shown = [
       for (final item in section)
@@ -1780,7 +1891,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 item.username.contains(query) ||
                 item.label.toLowerCase().contains(query) ||
                 item.lastText.toLowerCase().contains(query) ||
-                ChatDrafts.peek(item.id).toLowerCase().contains(query)))
+                ChatDrafts.peek(item.id).toLowerCase().contains(query) ||
+                _messageHits.containsKey(item.id)))
           item,
     ];
     final canStart =
@@ -1959,7 +2071,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     hintText: _groups
                         ? 'Search groups'
                         : 'Search or start a chat',
-                    onChanged: (_) => setState(() {}),
+                    onChanged: (_) {
+                      setState(() {});
+                      _queueMessageSearch();
+                    },
                     onSubmitted: (value) {
                       if (_groups) return;
                       unawaited(_startTyped(value));

@@ -83,7 +83,9 @@ class _UpdateCheckerState extends ConsumerState<UpdateChecker>
         context: context,
         builder: (dialogContext) => AlertDialog(
           title: const Text('Update available'),
-          content: Text('SocialSave ${update.version} is ready. You have $current.'),
+          content: Text(
+            'Social Save ${update.version} is the latest. You have $current. Download it, then install it on this phone.',
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext),
@@ -95,7 +97,7 @@ class _UpdateCheckerState extends ConsumerState<UpdateChecker>
                 Navigator.pop(dialogContext);
                 ref.read(updateControllerProvider.notifier).downloadAndInstall();
               },
-              child: const Text('Update'),
+              child: const Text('Download'),
             ),
           ],
         ),

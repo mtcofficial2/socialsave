@@ -163,3 +163,135 @@ Color chatTickColor(String status, {required bool dark}) {
   if (status == 'read') return const Color(0xFF53BDEB);
   return dark ? const Color(0xFFAEBAC1) : const Color(0xFF667781);
 }
+
+/// One slice of a message or status. A link and a username are never both set.
+class ChatTextPiece {
+  const ChatTextPiece({required this.text, this.link, this.username});
+
+  final String text;
+
+  /// Exact address to open. The visible [text] is that address.
+  final String? link;
+
+  /// Lowercase username, without @. The visible [text] keeps the written @name.
+  final String? username;
+
+  bool get isLink => link != null && link!.isNotEmpty;
+  bool get isUsername => username != null && username!.isNotEmpty;
+}
+
+final _linkOrName = RegExp(
+  r'https?://\S+|@([A-Za-z0-9_]{3,20})(?![A-Za-z0-9_])',
+  caseSensitive: false,
+);
+
+bool _isNameChar(int unit) {
+  return (unit >= 0x30 && unit <= 0x39) ||
+      (unit >= 0x41 && unit <= 0x5a) ||
+      (unit >= 0x61 && unit <= 0x7a) ||
+      unit == 0x5f;
+}
+
+String _trimUrlTail(String raw) {
+  var end = raw.length;
+  while (end > 0) {
+    final ch = raw[end - 1];
+    if (ch == '.' || ch == ',' || ch == ')' || ch == ']') {
+      end--;
+      continue;
+    }
+    break;
+  }
+  return raw.substring(0, end);
+}
+
+void _pushPiece(List<ChatTextPiece> out, ChatTextPiece piece) {
+  if (piece.text.isEmpty) return;
+  if (out.isNotEmpty && !out.last.isLink && !out.last.isUsername && !piece.isLink && !piece.isUsername) {
+    final prev = out.removeLast();
+    out.add(ChatTextPiece(text: prev.text + piece.text));
+    return;
+  }
+  out.add(piece);
+}
+
+/// Plain words, with web addresses left whole so an @ inside them is not a name.
+List<ChatTextPiece> _plainPieces(String text) {
+  final pieces = <ChatTextPiece>[];
+  var cursor = 0;
+  for (final match in _linkOrName.allMatches(text)) {
+    final raw = match.group(0)!;
+    final lower = raw.toLowerCase();
+    final isUrl = lower.startsWith('http://') || lower.startsWith('https://');
+    if (isUrl) {
+      final shown = _trimUrlTail(raw);
+      if (match.start > cursor) {
+        _pushPiece(pieces, ChatTextPiece(text: text.substring(cursor, match.start)));
+      }
+      if (shown.isNotEmpty) _pushPiece(pieces, ChatTextPiece(text: shown));
+      cursor = match.start + shown.length;
+      continue;
+    }
+    final name = match.group(1);
+    if (name == null) continue;
+    if (match.start > 0 && _isNameChar(text.codeUnitAt(match.start - 1))) continue;
+    if (match.start > cursor) {
+      _pushPiece(pieces, ChatTextPiece(text: text.substring(cursor, match.start)));
+    }
+    _pushPiece(pieces, ChatTextPiece(text: raw, username: name.toLowerCase()));
+    cursor = match.end;
+  }
+  if (cursor < text.length) {
+    _pushPiece(pieces, ChatTextPiece(text: text.substring(cursor)));
+  }
+  return pieces;
+}
+
+/// Splits [text] into words, known [links], and @usernames.
+///
+/// A username is @ plus 3 to 20 letters, numbers, or underscores. It is not
+/// taken from an email or from inside a web address. The stored username is
+/// lowercase and has no @.
+List<ChatTextPiece> chatTextPieces(String text, [List<String> links = const []]) {
+  if (text.isEmpty) return const [ChatTextPiece(text: '')];
+  final out = <ChatTextPiece>[];
+  var cursor = 0;
+  for (final link in links) {
+    if (link.isEmpty) continue;
+    final at = text.indexOf(link, cursor);
+    if (at < 0) continue;
+    if (at > cursor) {
+      for (final piece in _plainPieces(text.substring(cursor, at))) {
+        _pushPiece(out, piece);
+      }
+    }
+    _pushPiece(out, ChatTextPiece(text: link, link: link));
+    cursor = at + link.length;
+  }
+  if (cursor < text.length) {
+    for (final piece in _plainPieces(text.substring(cursor))) {
+      _pushPiece(out, piece);
+    }
+  }
+  if (out.isEmpty) return [ChatTextPiece(text: text)];
+  return out;
+}
+
+/// Short line above a status reply. A photo with no words says Photo.
+String statusReplySnippet(String text, {required bool photo}) {
+  final label = text.trim();
+  if (photo && label.isEmpty) return 'Photo';
+  if (label.isEmpty) return 'Update';
+  final runes = label.runes;
+  if (runes.length <= 80) return label;
+  return String.fromCharCodes(runes.take(80));
+}
+
+/// What the other person reads. The live server cannot store a status as a quote.
+String statusReplyBody(String snippet, String typed) {
+  final line = snippet.trim();
+  final body = typed.trim();
+  if (line.isEmpty) return body;
+  if (body.isEmpty) return 'Status: $line';
+  return 'Status: $line\n$body';
+}

@@ -193,6 +193,7 @@ final appRouter = GoRouter(
                 ? (seen.trim().isNotEmpty ? seen.trim() : rawUser)
                 : seen,
             group: group,
+            statusQuote: fromTarget ? extra.statusQuote : '',
           ),
         );
       },

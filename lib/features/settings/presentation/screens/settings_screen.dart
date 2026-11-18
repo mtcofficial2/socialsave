@@ -234,7 +234,7 @@ class SettingsScreen extends ConsumerWidget {
                           icon: Icons.system_update_alt_rounded,
                           title: 'Update on Wi-Fi',
                           subtitle:
-                              'On Wi-Fi, a new version downloads and Android opens the install screen.',
+                              'On Wi-Fi, the latest app opens so you can download it and install it.',
                           value: value,
                           onChanged: onChanged,
                         ),
