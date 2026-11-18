@@ -12,6 +12,7 @@ import 'package:social_save/core/engine/phone_engine.dart';
 import 'package:social_save/core/utils/file_utils.dart';
 import 'package:social_save/core/engine/local_engine.dart';
 import 'package:social_save/core/constants/app_constants.dart';
+import 'package:social_save/core/diagnostics/plain_log.dart';
 import 'package:social_save/core/platform/media_events.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/core/platform/phone_body.dart';
@@ -450,6 +451,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       // Recent downloads and the Library list read the history; refresh it.
       ref.invalidate(downloadsControllerProvider);
       state = state.copyWithTask(finished);
+      PlainLog.note('Saved "${readyTask.title}".');
       await _persist();
       await _signalActive();
       final doneSettings = ref.read(settingsControllerProvider);
@@ -592,6 +594,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       // Recent downloads and the Library list read the history; refresh it.
       ref.invalidate(downloadsControllerProvider);
       state = state.copyWithTask(finished);
+      PlainLog.note('Saved "${completed.title}".');
       await _persist();
     } catch (error) {
       if (token.isCancelled) return;
@@ -980,6 +983,8 @@ class DownloadManager extends Notifier<DownloadManagerState> {
         errorMessage: error.message,
       );
       state = state.copyWithTask(failed);
+      final why = error.message.trim();
+      PlainLog.note(why.isEmpty ? 'A download did not finish.' : 'A download did not finish. $why');
       final settings = ref.read(settingsControllerProvider);
       if (settings.hapticAlerts) {
         unawaited(PhoneBody.vibrate(saved: false));

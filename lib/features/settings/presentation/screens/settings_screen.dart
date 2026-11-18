@@ -21,6 +21,7 @@ import 'package:social_save/core/platform/phone_body.dart';
 import 'package:social_save/features/chat/chat_prefs.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
 import 'package:social_save/features/library/hotspot_share.dart';
+import 'package:social_save/features/library/phone_log_ui.dart';
 import 'package:social_save/features/library/image_device_stamp.dart';
 import 'package:social_save/features/library/index_backup.dart';
 import 'package:social_save/features/library/library_catalog.dart';
@@ -173,6 +174,17 @@ class SettingsScreen extends ConsumerWidget {
                       value: settings.usbQuickAction,
                       onChanged: controller.setUsbQuickAction,
                     ),
+                    if (Plat.isWindows)
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Phone log', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                        subtitle: Text(
+                          'When a phone with Social Save is plugged in, read what it did in plain English',
+                          style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant),
+                        ),
+                        trailing: const Icon(Icons.notes_rounded),
+                        onTap: () => showPhoneLog(context),
+                      ),
                     SwitchListTile(
                       key: const ValueKey('classic-library-switch'),
                       contentPadding: EdgeInsets.zero,

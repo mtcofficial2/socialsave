@@ -12,6 +12,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:social_save/core/diagnostics/plain_log.dart';
 import 'package:social_save/core/platform/player_identity.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:social_save/features/library/usb_link.dart';
@@ -593,9 +594,28 @@ class NearbyService {
             kind: '${body['kind'] ?? 'pc'}',
             port: (body['port'] as num?)?.toInt() ?? 0,
           );
+          PlainLog.note('A computer connected over the USB cable.');
         }
         res.headers.contentType = ContentType.json;
         res.write(jsonEncode({'ok': true, 'id': id, 'name': name, 'kind': kind, 'player': thisPlayerName}));
+        await res.close();
+        return;
+      }
+      if (req.method == 'GET' && parts.length == 1 && parts[0] == 'devicelog') {
+        // Only the USB tunnel (adb forward) arrives as loopback. A phone on
+        // the same Wi-Fi cannot read this log.
+        final from = req.connectionInfo?.remoteAddress;
+        if (from == null || !from.isLoopback) {
+          res.statusCode = HttpStatus.forbidden;
+          await res.close();
+          return;
+        }
+        await PlainLog.load();
+        res.headers.contentType = ContentType.json;
+        res.write(jsonEncode({
+          'name': name,
+          'lines': [for (final line in PlainLog.lines) line.toJson()],
+        }));
         await res.close();
         return;
       }

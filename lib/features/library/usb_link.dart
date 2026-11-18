@@ -35,6 +35,12 @@ class UsbLink {
   /// 1.0.46: called once per plug-in with the phone's name (quick action).
   static void Function(String name)? onPlugged;
 
+  /// Plain-English logs from phones that answered over the cable.
+  static final ValueNotifier<List<PluggedPhoneLog>> deviceLogs = ValueNotifier(const []);
+
+  static final Map<String, PluggedPhoneLog> _logs = {};
+  static DateTime _logsAt = DateTime.fromMillisecondsSinceEpoch(0);
+
   static void start() {
     if (_started || !Plat.isWindows) return;
     _started = true;
@@ -94,12 +100,20 @@ class UsbLink {
       }
       _forwards.removeWhere((serial, _) => !ready.contains(serial));
       _sessionTried.removeWhere((serial) => !ready.contains(serial));
+      if (_logs.keys.any((serial) => !ready.contains(serial))) {
+        _logs.removeWhere((serial, _) => !ready.contains(serial));
+        deviceLogs.value = _logs.values.toList();
+      }
       var linked = 0;
       for (final serial in ready) {
         if (await _link(serial)) linked++;
       }
       if (linked > 0) {
         hint.value = '';
+        if (DateTime.now().difference(_logsAt) > const Duration(seconds: 8)) {
+          _logsAt = DateTime.now();
+          await refreshDeviceLogs();
+        }
       } else if (unauthorized) {
         hint.value = 'Tap "Allow USB debugging" on the phone for cable transfers';
       } else if (ready.isNotEmpty) {
@@ -183,6 +197,73 @@ class UsbLink {
     }
   }
 
+  /// Asks each plugged-in Social Save for its plain-English log.
+  static Future<void> refreshDeviceLogs() async {
+    final next = Map<String, PluggedPhoneLog>.from(_logs);
+    for (final serial in _forwards.keys.toList()) {
+      final port = _forwards[serial];
+      if (port == null) continue;
+      final name = _models[serial]?.trim() ?? '';
+      final fetched = await _readLog(port, serial, name.isEmpty ? 'Phone' : name);
+      if (fetched != null) next[serial] = fetched;
+    }
+    next.removeWhere((serial, _) => !_forwards.containsKey(serial));
+    _logs
+      ..clear()
+      ..addAll(next);
+    deviceLogs.value = _logs.values.toList();
+  }
+
+  static Future<PluggedPhoneLog?> _readLog(int port, String serial, String fallbackName) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
+    try {
+      final req = await client.getUrl(Uri.http('127.0.0.1:$port', '/devicelog'));
+      final res = await req.close().timeout(const Duration(seconds: 4));
+      if (res.statusCode == 404) {
+        await res.drain<void>();
+        return PluggedPhoneLog(
+          serial: serial,
+          name: fallbackName,
+          lines: const [],
+          problem: 'Update Social Save on this phone, then plug it in again.',
+        );
+      }
+      if (res.statusCode != 200) {
+        await res.drain<void>();
+        return PluggedPhoneLog(
+          serial: serial,
+          name: fallbackName,
+          lines: _logs[serial]?.lines ?? const [],
+          problem: 'Open Social Save on the phone. The log is not answering yet.',
+        );
+      }
+      final j = jsonDecode(await utf8.decoder.bind(res).join());
+      if (j is! Map) return null;
+      final lines = <PhoneLogLine>[];
+      for (final item in (j['lines'] as List? ?? const [])) {
+        if (item is! Map) continue;
+        final text = '${item['text'] ?? ''}'.trim();
+        if (text.isEmpty) continue;
+        lines.add(PhoneLogLine(at: '${item['at'] ?? ''}', text: text));
+      }
+      final remoteName = '${j['name'] ?? ''}'.trim();
+      return PluggedPhoneLog(
+        serial: serial,
+        name: fallbackName == 'Phone' && remoteName.isNotEmpty ? remoteName : fallbackName,
+        lines: lines,
+      );
+    } catch (_) {
+      return PluggedPhoneLog(
+        serial: serial,
+        name: fallbackName,
+        lines: _logs[serial]?.lines ?? const [],
+        problem: 'Open Social Save on the phone. The log is not answering yet.',
+      );
+    } finally {
+      client.close(force: true);
+    }
+  }
+
   static Future<void> _openSession(String id, int port) async {
     await Future<void>.delayed(const Duration(milliseconds: 600));
     if (ShareSession.active || ShareSession.closedRecently(id)) return;
@@ -190,4 +271,27 @@ class UsbLink {
     final err = await ShareSession.openOverCable(id: id, host: '127.0.0.1', port: port, link: 'usb');
     debugPrint('usb session: ${err ?? 'connected'}');
   }
+}
+
+/// One sentence from a plugged-in phone.
+class PhoneLogLine {
+  const PhoneLogLine({required this.at, required this.text});
+
+  final String at;
+  final String text;
+}
+
+/// The plain-English log of one phone on the USB cable.
+class PluggedPhoneLog {
+  const PluggedPhoneLog({
+    required this.serial,
+    required this.name,
+    required this.lines,
+    this.problem = '',
+  });
+
+  final String serial;
+  final String name;
+  final List<PhoneLogLine> lines;
+  final String problem;
 }

@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/config/build_flags.dart';
 import 'package:social_save/core/config/env_config.dart';
 import 'package:social_save/core/constants/app_constants.dart';
+import 'package:social_save/core/diagnostics/plain_log.dart';
 import 'package:social_save/core/platform/device_name_io.dart'
     if (dart.library.html) 'package:social_save/core/platform/device_name_stub.dart';
 import 'package:social_save/core/platform/plat.dart';
@@ -3055,6 +3056,12 @@ bool chatNeedsRegister(Object error) {
 
 /// The sentence to show when a chat request fails.
 String chatErrorText(Object error) {
+  final text = _chatErrorSentence(error);
+  PlainLog.note(text);
+  return text;
+}
+
+String _chatErrorSentence(Object error) {
   if (error is ChatSignedOut) {
     return 'Sign in with your phone or email and username to use chat.';
   }

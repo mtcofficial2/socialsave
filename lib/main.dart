@@ -23,6 +23,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/app.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:social_save/core/constants/app_constants.dart';
+import 'package:social_save/core/diagnostics/plain_log.dart';
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/network/windows_dns_fallback.dart';
 import 'package:social_save/core/notifications/notification_service.dart';
@@ -61,10 +62,15 @@ Future<void> main(List<String> args) async {
     final base = debugPrint;
     debugPrint = (String? m, {int? wrapWidth}) {
       base(m, wrapWidth: wrapWidth);
+      PlainLog.fromDebug(m);
       if (m != null && m.startsWith('[')) {
         MediaEvents.channel.invokeMethod<void>('log', {'m': m}).then((_) {}, onError: (_) {});
       }
     };
+  }
+  if (!kIsWeb) {
+    unawaited(PlainLog.load());
+    PlainLog.note('Social Save ${AppConstants.appVersion} opened.');
   }
   if (kIsWeb) {
     await _runWeb();
