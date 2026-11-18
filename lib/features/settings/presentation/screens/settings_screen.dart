@@ -179,7 +179,7 @@ class SettingsScreen extends ConsumerWidget {
                         contentPadding: EdgeInsets.zero,
                         title: const Text('Phone log', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
                         subtitle: Text(
-                          'When a phone with Social Save is plugged in, read what it did in plain English',
+                          'When a phone with Social Save is plugged in, read the apps it used and everything it did',
                           style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant),
                         ),
                         trailing: const Icon(Icons.notes_rounded),

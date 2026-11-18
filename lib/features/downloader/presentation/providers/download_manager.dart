@@ -299,6 +299,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       clearError: true,
     );
     state = state.copyWithTask(task);
+    PlainLog.note('Started saving "${existing.title}".');
 
     final downloader = ref.read(fileDownloaderProvider);
     try {

@@ -12,6 +12,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:social_save/core/diagnostics/phone_activity.dart';
 import 'package:social_save/core/diagnostics/plain_log.dart';
 import 'package:social_save/core/platform/player_identity.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
@@ -610,11 +611,11 @@ class NearbyService {
           await res.close();
           return;
         }
-        await PlainLog.load();
+        final lines = await PhoneActivity.forCable();
         res.headers.contentType = ContentType.json;
         res.write(jsonEncode({
           'name': name,
-          'lines': [for (final line in PlainLog.lines) line.toJson()],
+          'lines': lines,
         }));
         await res.close();
         return;

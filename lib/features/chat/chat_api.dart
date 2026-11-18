@@ -2157,6 +2157,7 @@ class ChatApi {
     int milliseconds = 0,
     int reply = 0,
   }) async {
+    PlainLog.note('Sent a song.');
     final auth = await _auth();
     final headers = Map<String, dynamic>.from(auth.headers ?? {});
     headers['Content-Type'] = 'application/octet-stream';
@@ -2255,6 +2256,15 @@ class ChatApi {
     ChatCard? card,
     ChatPlace? place,
   }) async {
+    PlainLog.note(
+      poll != null
+          ? 'Sent a poll.'
+          : card != null
+          ? 'Sent a contact.'
+          : place != null
+          ? 'Sent a place.'
+          : 'Sent a message.',
+    );
     final response = await _dio.post<dynamic>(
       '/api/v1/chat/threads/$id',
       data: {
@@ -2325,6 +2335,7 @@ class ChatApi {
     List<String> deny = const [],
     int font = 0,
   }) async {
+    PlainLog.note('Posted a status.');
     final look = font < 0 ? 0 : font;
     await _dio.post<dynamic>(
       '/api/v1/chat/status',
@@ -2347,6 +2358,7 @@ class ChatApi {
     List<String> deny = const [],
     int font = 0,
   }) async {
+    PlainLog.note('Posted a status photo.');
     final auth = await _auth();
     final headers = Map<String, dynamic>.from(auth.headers ?? {});
     headers['Content-Type'] = 'application/octet-stream';
@@ -2817,6 +2829,7 @@ class ChatApi {
     int reply = 0,
     bool clip = false,
   }) async {
+    PlainLog.note(clip ? 'Sent a short clip.' : 'Sent a file.');
     final auth = await _auth();
     final headers = Map<String, dynamic>.from(auth.headers ?? {});
     headers['Content-Type'] = 'application/octet-stream';
@@ -2867,6 +2880,7 @@ class ChatApi {
   }
 
   Future<ChatMessage> send(String id, String text, {int reply = 0}) async {
+    PlainLog.note('Sent a message.');
     final response = await _dio.post<dynamic>(
       '/api/v1/chat/threads/$id',
       data: {'text': text, if (reply > 0) 'reply': reply},
@@ -2931,6 +2945,7 @@ class ChatApi {
     String caption = '',
     int reply = 0,
   }) async {
+    PlainLog.note('Sent a photo.');
     final auth = await _auth();
     final headers = Map<String, dynamic>.from(auth.headers ?? {});
     headers['Content-Type'] = 'application/octet-stream';
@@ -2989,6 +3004,7 @@ class ChatApi {
     int milliseconds, {
     int reply = 0,
   }) async {
+    PlainLog.note('Sent a voice note.');
     final auth = await _auth();
     final headers = Map<String, dynamic>.from(auth.headers ?? {});
     headers['Content-Type'] = 'application/octet-stream';

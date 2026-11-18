@@ -20,7 +20,7 @@ class PlainLine {
 class PlainLog {
   PlainLog._();
 
-  static const keep = 80;
+  static const keep = 200;
   static const _key = 'socialsave_plain_log';
   static final List<PlainLine> _lines = [];
   static String _last = '';
@@ -55,6 +55,30 @@ class PlainLog {
     _saveTimer = Timer(const Duration(milliseconds: 400), () {
       unawaited(_write());
     });
+  }
+
+  /// A Social Save screen, as a sentence. Unknown paths are skipped.
+  static String? screenSentence(String path) {
+    final clean = path.split('?').first;
+    if (clean.isEmpty || clean == '/') return 'Opened Home.';
+    if (clean == '/library') return 'Opened the library.';
+    if (clean.startsWith('/downloads/')) return 'Opened a saved file.';
+    if (clean == '/downloads') return 'Opened downloads.';
+    if (clean == '/settings') return 'Opened Settings.';
+    if (clean == '/chat') return 'Opened chats.';
+    if (clean.startsWith('/chat/')) return 'Opened a conversation.';
+    if (clean == '/player') return 'Opened the player.';
+    if (clean == '/preview') return 'Opened a preview.';
+    if (clean == '/share') return 'Opened sharing.';
+    if (clean == '/music') return 'Opened music.';
+    if (clean == '/status') return 'Opened status.';
+    if (clean == '/browse') return 'Opened the browser.';
+    if (clean == '/playlist') return 'Opened a set of links.';
+    if (clean.startsWith('/progress/')) return 'Opened a download.';
+    if (clean == '/about') return 'Opened About.';
+    if (clean.startsWith('/legal/')) return 'Opened a legal page.';
+    if (clean == '/background-detect') return 'Opened link detection.';
+    return null;
   }
 
   /// Turns a known diagnostic line into a sentence. Unknown lines are dropped.

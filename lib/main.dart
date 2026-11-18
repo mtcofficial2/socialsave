@@ -23,6 +23,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/app.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:social_save/core/constants/app_constants.dart';
+import 'package:social_save/core/diagnostics/phone_activity.dart';
 import 'package:social_save/core/diagnostics/plain_log.dart';
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/network/windows_dns_fallback.dart';
@@ -71,6 +72,9 @@ Future<void> main(List<String> args) async {
   if (!kIsWeb) {
     unawaited(PlainLog.load());
     PlainLog.note('Social Save ${AppConstants.appVersion} opened.');
+    appRouter.routerDelegate.addListener(() {
+      PhoneActivity.sawScreen(appRouter.routeInformationProvider.value.uri.path);
+    });
   }
   if (kIsWeb) {
     await _runWeb();

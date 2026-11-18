@@ -44,6 +44,14 @@ void main() {
     expect(PlainLog.plainEnglish('just a note'), isNull);
   });
 
+  test('screens are named in plain English', () {
+    expect(PlainLog.screenSentence('/'), 'Opened Home.');
+    expect(PlainLog.screenSentence('/library'), 'Opened the library.');
+    expect(PlainLog.screenSentence('/chat/abc'), 'Opened a conversation.');
+    expect(PlainLog.screenSentence('/player'), 'Opened the player.');
+    expect(PlainLog.screenSentence('/nope'), isNull);
+  });
+
   test('the same sentence is kept once until it changes', () {
     PlainLog.note('Social Save opened.');
     PlainLog.note('Social Save opened.');

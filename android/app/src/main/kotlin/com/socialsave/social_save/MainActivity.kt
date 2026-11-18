@@ -955,6 +955,25 @@ class MainActivity : FlutterFragmentActivity() {
                     }
                     runOnUiThread { result.success(out) }
                 }
+                "phoneUsage" -> io.execute {
+                    val out = try {
+                        mapOf(
+                            "allowed" to PhoneUsage.allowed(applicationContext),
+                            "lines" to PhoneUsage.recent(applicationContext),
+                        )
+                    } catch (_: Exception) {
+                        mapOf("allowed" to false, "lines" to emptyList<Map<String, String>>())
+                    }
+                    runOnUiThread { result.success(out) }
+                }
+                "openUsageAccess" -> {
+                    try {
+                        PhoneUsage.openSettings(applicationContext)
+                        result.success(true)
+                    } catch (_: Exception) {
+                        result.success(false)
+                    }
+                }
                 "log" -> {
                     android.util.Log.i("SocialSaveSession", call.argument<String>("m") ?: "")
                     result.success(null)
