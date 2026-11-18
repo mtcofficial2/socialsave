@@ -25,6 +25,9 @@ object PhoneUsage {
     private const val fullCap = 400
     private const val noteGapMs = 120_000L
 
+    // Hidden from the public SDK. The event is still an int in the usage stream.
+    private const val notificationArrived = 12
+
     fun allowed(context: Context): Boolean {
         val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
         val mode = if (Build.VERSION.SDK_INT >= 29) {
@@ -96,7 +99,7 @@ object PhoneUsage {
                     rows.add(mapOf("at" to iso(event.timeStamp), "text" to device))
                     continue
                 }
-                if (type == UsageEvents.Event.NOTIFICATION_INTERRUPTION) {
+                if (type == notificationArrived) {
                     val pkg = event.packageName ?: continue
                     if (skipPackage(pkg)) continue
                     if (notePkg == pkg && event.timeStamp - noteStart < noteGapMs) {
