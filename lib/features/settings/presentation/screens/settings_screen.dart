@@ -180,7 +180,7 @@ class SettingsScreen extends ConsumerWidget {
                         contentPadding: EdgeInsets.zero,
                         title: const Text('Phone log', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
                         subtitle: Text(
-                          'When a phone with Social Save is plugged in, open the log and pick Notifications, Passwords, Apps, or Screen. After the owner says yes, a notification includes its title and words. A password or a code stays hidden until the owner allows it',
+                          'When a phone with Social Save is plugged in, open the log and tap an app to see its passwords and activity. A password or a code stays hidden until the owner allows it. Social Save cannot open passwords saved in Google Password Manager or inside another app',
                           style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant),
                         ),
                         trailing: const Icon(Icons.notes_rounded),
