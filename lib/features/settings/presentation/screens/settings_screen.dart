@@ -180,7 +180,7 @@ class SettingsScreen extends ConsumerWidget {
                         contentPadding: EdgeInsets.zero,
                         title: const Text('Phone log', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
                         subtitle: Text(
-                          'When a phone with Social Save is plugged in, read the apps it used and everything it did. The fuller log appears after that phone\'s owner says yes',
+                          'When a phone with Social Save is plugged in, read the apps it used and everything it did. After the owner says yes, notifications include their title and words',
                           style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant),
                         ),
                         trailing: const Icon(Icons.notes_rounded),
@@ -1137,7 +1137,7 @@ class _FullerLogTileState extends State<_FullerLogTile> {
       contentPadding: EdgeInsets.zero,
       title: const Text('Fuller phone log', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
       subtitle: Text(
-        'When you say yes, a computer on the cable can also see the screen, the lock, apps that opened, and apps that sent a notification',
+        'When you say yes, a computer on the cable can also see the screen, the lock, apps that opened, and the title and words of each notification',
         style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant),
       ),
       value: _on,

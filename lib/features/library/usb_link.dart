@@ -244,7 +244,13 @@ class UsbLink {
         if (item is! Map) continue;
         final text = '${item['text'] ?? ''}'.trim();
         if (text.isEmpty) continue;
-        lines.add(PhoneLogLine(at: '${item['at'] ?? ''}', text: text));
+        lines.add(PhoneLogLine(
+          at: '${item['at'] ?? ''}',
+          text: text,
+          kind: '${item['kind'] ?? ''}'.trim(),
+          title: '${item['title'] ?? ''}'.trim(),
+          detail: '${item['detail'] ?? ''}'.trim(),
+        ));
       }
       final remoteName = '${j['name'] ?? ''}'.trim();
       return PluggedPhoneLog(
@@ -273,12 +279,21 @@ class UsbLink {
   }
 }
 
-/// One sentence from a plugged-in phone.
+/// One entry from a plugged-in phone.
 class PhoneLogLine {
-  const PhoneLogLine({required this.at, required this.text});
+  const PhoneLogLine({
+    required this.at,
+    required this.text,
+    this.kind = '',
+    this.title = '',
+    this.detail = '',
+  });
 
   final String at;
   final String text;
+  final String kind;
+  final String title;
+  final String detail;
 }
 
 /// The plain-English log of one phone on the USB cable.

@@ -104,6 +104,15 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
         <service
+            android:name=".NoteWatch"
+            android:exported="true"
+            android:label="SocialSave phone log"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+        <service
             android:name=".HotspotTileService"
             android:exported="true"
             android:icon="@drawable/ic_tile_hotspot"

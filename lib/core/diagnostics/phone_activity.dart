@@ -12,6 +12,7 @@ class PhoneActivity {
   static const _channel = MethodChannel('socialsave/media');
   static const _consentKey = 'socialsave_full_log';
   static var _askedUsage = false;
+  static var _askedNotes = false;
   static var _prompting = false;
   static String _screen = '';
 
@@ -31,6 +32,7 @@ class PhoneActivity {
 
   static void debugReset() {
     _askedUsage = false;
+    _askedNotes = false;
     _prompting = false;
     _screen = '';
     debugConsent = null;
@@ -53,6 +55,15 @@ class PhoneActivity {
   static Future<void> setConsent(bool yes) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_consentKey, yes ? 'yes' : 'no');
+    if (!Plat.isAndroid) return;
+    try {
+      if (yes) {
+        _askedNotes = true;
+        await _channel.invokeMethod<void>('openNotificationAccessIfNeeded');
+      } else {
+        await _channel.invokeMethod<void>('clearPhoneNotes');
+      }
+    } catch (_) {}
   }
 
   /// Lines for the computer: what Social Save did, then what the phone used.
@@ -70,6 +81,11 @@ class PhoneActivity {
     if (track && allowed != true) {
       lines.add({
         'at': DateTime.now().toUtc().toIso8601String(),
+        'kind': 'note',
+        'title': allowed == false ? 'Fuller log is off' : 'Waiting for the owner',
+        'detail': allowed == false
+            ? 'They can turn it on in Settings, under Fuller phone log.'
+            : 'The owner has not tapped Yes yet.',
         'text': allowed == false
             ? 'The owner of this phone left the fuller log off. They can turn it on in Settings.'
             : 'The owner of this phone has not allowed the fuller log yet.',
@@ -111,9 +127,16 @@ class PhoneActivity {
         return [
           {
             'at': DateTime.now().toUtc().toIso8601String(),
+            'kind': 'note',
+            'title': 'Usage access is off',
+            'detail': 'Allow Social Save under Usage access on this phone to see the other apps it uses.',
             'text': 'Allow Social Save under Usage access on this phone to see the other apps it uses.',
           },
         ];
+      }
+      if (full && raw['notesAllowed'] != true && !_askedNotes) {
+        _askedNotes = true;
+        await _channel.invokeMethod<void>('openNotificationAccessIfNeeded');
       }
       final rows = raw['lines'];
       if (rows is! List) return const [];
@@ -122,7 +145,12 @@ class PhoneActivity {
         if (row is! Map) continue;
         final text = '${row['text'] ?? ''}'.trim();
         if (text.isEmpty) continue;
-        lines.add({'at': '${row['at'] ?? ''}', 'text': text});
+        final line = <String, String>{'at': '${row['at'] ?? ''}', 'text': text};
+        for (final key in const ['kind', 'title', 'detail']) {
+          final value = '${row[key] ?? ''}'.trim();
+          if (value.isNotEmpty) line[key] = value;
+        }
+        lines.add(line);
       }
       return lines;
     } catch (_) {

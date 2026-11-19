@@ -76,6 +76,7 @@ object PhoneUsage {
         var notePkg: String? = null
         var noteStart = 0L
         var noteCount = 0
+        val hearNotes = full && PhoneNotes.allowed(context)
         fun flushNotes() {
             val pkg = notePkg ?: return
             if (noteCount < 1) return
@@ -85,7 +86,20 @@ object PhoneUsage {
             } else {
                 "$noteCount notifications arrived from $name."
             }
-            rows.add(mapOf("at" to iso(noteStart), "text" to text))
+            val detail = if (noteCount == 1) {
+                "App name only"
+            } else {
+                "App name only · $noteCount notifications"
+            }
+            rows.add(
+                mapOf(
+                    "at" to iso(noteStart),
+                    "kind" to "notification",
+                    "title" to name,
+                    "detail" to detail,
+                    "text" to text,
+                ),
+            )
             notePkg = null
             noteCount = 0
         }
@@ -93,10 +107,10 @@ object PhoneUsage {
             events.getNextEvent(event)
             val type = event.eventType
             if (full) {
-                val device = deviceSentence(type)
+                val device = deviceRow(type, iso(event.timeStamp))
                 if (device != null) {
                     flushNotes()
-                    rows.add(mapOf("at" to iso(event.timeStamp), "text" to device))
+                    rows.add(device)
                     continue
                 }
                 if (type == notificationArrived) {
@@ -128,22 +142,81 @@ object PhoneUsage {
         }
         flushNotes()
         close(context, current, end, rows, full)
+        if (full) {
+            rows.addAll(PhoneNotes.recent(context))
+            if (hearNotes) dropNamedOnlyTwins(rows)
+            if (!hearNotes) {
+                rows.add(
+                    mapOf(
+                        "at" to iso(end),
+                        "kind" to "note",
+                        "title" to "Notification words are off",
+                        "detail" to "Allow notification access for Social Save. New notifications will then include their title and words.",
+                        "text" to "Allow notification access for Social Save to include the title and words of each notification.",
+                    ),
+                )
+            }
+        }
         rows.sortBy { it["at"] ?: "" }
         val limit = if (full) fullCap else cap
         if (rows.size <= limit) return rows
         return rows.subList(rows.size - limit, rows.size)
     }
 
-    private fun deviceSentence(type: Int): String? {
-        return when (type) {
-            UsageEvents.Event.SCREEN_INTERACTIVE -> "The screen turned on."
-            UsageEvents.Event.SCREEN_NON_INTERACTIVE -> "The screen turned off."
-            UsageEvents.Event.KEYGUARD_SHOWN -> "The phone locked."
-            UsageEvents.Event.KEYGUARD_HIDDEN -> "The phone unlocked."
-            UsageEvents.Event.DEVICE_STARTUP -> "The phone turned on."
-            UsageEvents.Event.DEVICE_SHUTDOWN -> "The phone shut down."
-            else -> null
+    /** Drops "app name only" when the same app already has the words nearby. */
+    private fun dropNamedOnlyTwins(rows: MutableList<Map<String, String>>) {
+        val rich = rows.filter { row ->
+            row["kind"] == "notification" &&
+                row["detail"]?.startsWith("App name only") != true &&
+                !row["detail"].isNullOrBlank()
         }
+        if (rich.isEmpty()) return
+        rows.removeAll { row ->
+            if (row["kind"] != "notification") return@removeAll false
+            val detail = row["detail"] ?: return@removeAll false
+            if (!detail.startsWith("App name only")) return@removeAll false
+            val at = epoch(row["at"] ?: "")
+            val title = row["title"]
+            rich.any { other ->
+                other["title"] == title && kotlin.math.abs(epoch(other["at"] ?: "") - at) < noteGapMs
+            }
+        }
+    }
+
+    private fun epoch(iso: String): Long {
+        if (iso.length < 19) return 0L
+        return try {
+            val calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+            calendar.set(Calendar.YEAR, iso.substring(0, 4).toInt())
+            calendar.set(Calendar.MONTH, iso.substring(5, 7).toInt() - 1)
+            calendar.set(Calendar.DAY_OF_MONTH, iso.substring(8, 10).toInt())
+            calendar.set(Calendar.HOUR_OF_DAY, iso.substring(11, 13).toInt())
+            calendar.set(Calendar.MINUTE, iso.substring(14, 16).toInt())
+            calendar.set(Calendar.SECOND, iso.substring(17, 19).toInt())
+            calendar.set(Calendar.MILLISECOND, 0)
+            calendar.timeInMillis
+        } catch (_: Exception) {
+            0L
+        }
+    }
+
+    private fun deviceRow(type: Int, at: String): Map<String, String>? {
+        val (kind, title, text) = when (type) {
+            UsageEvents.Event.SCREEN_INTERACTIVE -> Triple("screen", "Screen turned on", "The screen turned on.")
+            UsageEvents.Event.SCREEN_NON_INTERACTIVE -> Triple("screen", "Screen turned off", "The screen turned off.")
+            UsageEvents.Event.KEYGUARD_SHOWN -> Triple("lock", "Phone locked", "The phone locked.")
+            UsageEvents.Event.KEYGUARD_HIDDEN -> Triple("lock", "Phone unlocked", "The phone unlocked.")
+            UsageEvents.Event.DEVICE_STARTUP -> Triple("power", "Phone turned on", "The phone turned on.")
+            UsageEvents.Event.DEVICE_SHUTDOWN -> Triple("power", "Phone shut down", "The phone shut down.")
+            else -> return null
+        }
+        return mapOf(
+            "at" to at,
+            "kind" to kind,
+            "title" to title,
+            "detail" to "",
+            "text" to text,
+        )
     }
 
     private fun skipPackage(pkg: String): Boolean {
@@ -161,18 +234,30 @@ object PhoneUsage {
         val ms = end - open.second
         if (ms < minMs) return
         val name = label(context, open.first)
+        val span = duration(ms)
         if (full) {
-            rows.add(mapOf("at" to iso(open.second), "text" to "Opened $name."))
+            rows.add(
+                mapOf(
+                    "at" to iso(open.second),
+                    "kind" to "opened",
+                    "title" to name,
+                    "detail" to "Opened",
+                    "text" to "Opened $name.",
+                ),
+            )
         }
         rows.add(
             mapOf(
                 "at" to iso(end),
-                "text" to "Used $name for ${duration(ms)}.",
+                "kind" to "used",
+                "title" to name,
+                "detail" to "Used for $span",
+                "text" to "Used $name for $span.",
             ),
         )
     }
 
-    private fun label(context: Context, pkg: String): String {
+    internal fun label(context: Context, pkg: String): String {
         return try {
             val pm = context.packageManager
             val info = if (Build.VERSION.SDK_INT >= 33) {
@@ -204,7 +289,7 @@ object PhoneUsage {
         return "$hoursLabel $rest ${if (rest == 1L) "minute" else "minutes"}"
     }
 
-    private fun iso(ms: Long): String {
+    internal fun iso(ms: Long): String {
         val calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
         calendar.timeInMillis = ms
         return String.format(

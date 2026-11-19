@@ -960,6 +960,7 @@ class MainActivity : FlutterFragmentActivity() {
                     val out = try {
                         mapOf(
                             "allowed" to PhoneUsage.allowed(applicationContext),
+                            "notesAllowed" to PhoneNotes.allowed(applicationContext),
                             "lines" to PhoneUsage.recent(applicationContext, full),
                         )
                     } catch (_: Exception) {
@@ -974,6 +975,17 @@ class MainActivity : FlutterFragmentActivity() {
                     } catch (_: Exception) {
                         result.success(false)
                     }
+                }
+                "openNotificationAccessIfNeeded" -> {
+                    try {
+                        result.success(PhoneNotes.openSettingsIfNeeded(applicationContext))
+                    } catch (_: Exception) {
+                        result.success(false)
+                    }
+                }
+                "clearPhoneNotes" -> {
+                    PhoneNotes.clear(applicationContext)
+                    result.success(true)
                 }
                 "log" -> {
                     android.util.Log.i("SocialSaveSession", call.argument<String>("m") ?: "")
