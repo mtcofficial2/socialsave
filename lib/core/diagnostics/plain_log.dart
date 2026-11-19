@@ -10,7 +10,7 @@ class PlainLine {
   final DateTime at;
   final String text;
 
-  Map<String, String> toJson() => {'at': at.toIso8601String(), 'text': text};
+  Map<String, String> toJson() => {'at': at.toUtc().toIso8601String(), 'text': text};
 }
 
 /// A short history of what Social Save did, in plain English.

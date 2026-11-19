@@ -21,6 +21,15 @@ void main() {
     );
   });
 
+  test('a local stamp and a UTC stamp are the same moment', () {
+    final utc = DateTime.utc(2026, 11, 19, 1, 5, 6);
+    final localStamp = utc.toLocal().toIso8601String();
+    final utcStamp = utc.toIso8601String();
+    expect(PhoneActivity.instant(localStamp), PhoneActivity.instant(utcStamp));
+    final minuteLater = utc.toLocal().add(const Duration(minutes: 1)).toIso8601String();
+    expect(PhoneActivity.instant(utcStamp).isBefore(PhoneActivity.instant(minuteLater)), isTrue);
+  });
+
   test('no stays off and does not ask again', () async {
     PhoneActivity.debugConsent = () async => false;
     var asked = false;

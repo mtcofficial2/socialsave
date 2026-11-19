@@ -282,8 +282,11 @@ class NearbyService {
   }
 
   /// Called by [UsbLink] for a device reached through an adb tunnel.
-  static void addUsbRoute({required String id, required String name, required String kind, required int port}) {
-    if (id.isEmpty || id == NearbyService.id) return;
+  /// True when this cable link is new, so the log is written once per connection.
+  static bool addUsbRoute({required String id, required String name, required String kind, required int port}) {
+    if (id.isEmpty || id == NearbyService.id) return false;
+    final known = _seen[id];
+    final same = known != null && known.link == 'usb' && known.host == '127.0.0.1' && known.port == port;
     _offer(NearbyDevice(
       id: id,
       name: name.endsWith('(USB)') ? name : '$name (USB)',
@@ -293,6 +296,7 @@ class NearbyService {
       lastSeen: DateTime.now(),
       link: 'usb',
     ));
+    return !same;
   }
 
   static void _publishList() {
@@ -589,13 +593,13 @@ class NearbyService {
         final body = jsonDecode(await utf8.decoder.bind(req).join()) as Map<String, dynamic>;
         final from = req.connectionInfo?.remoteAddress;
         if (from != null && from.isLoopback) {
-          addUsbRoute(
+          final fresh = addUsbRoute(
             id: '${body['id'] ?? ''}',
             name: '${body['name'] ?? 'PC'}',
             kind: '${body['kind'] ?? 'pc'}',
             port: (body['port'] as num?)?.toInt() ?? 0,
           );
-          PlainLog.note('A computer connected over the USB cable.');
+          if (fresh) PlainLog.note('A computer connected over the USB cable.');
         }
         res.headers.contentType = ContentType.json;
         res.write(jsonEncode({'ok': true, 'id': id, 'name': name, 'kind': kind, 'player': thisPlayerName}));

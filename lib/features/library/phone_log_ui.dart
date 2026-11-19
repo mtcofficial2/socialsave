@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:social_save/core/diagnostics/phone_activity.dart';
 import 'package:social_save/features/library/usb_link.dart';
 
 /// Opens the log of every Social Save phone on the USB cable.
@@ -166,7 +167,7 @@ class _PhoneBlock extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final entries = [for (final line in phone.lines.reversed) presentPhoneLog(line)];
+    final entries = [for (final line in _newestFirst(phone.lines)) presentPhoneLog(line)];
     final rows = _withDays(entries);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -215,6 +216,23 @@ class _PhoneBlock extends StatelessWidget {
       ],
     );
   }
+}
+
+const _cableLine = 'A computer connected over the USB cable.';
+
+/// Newest real time first. Repeated cable lines keep only the latest one.
+List<PhoneLogLine> _newestFirst(List<PhoneLogLine> lines) {
+  final sorted = [...lines]..sort((a, b) => PhoneActivity.instant(b.at).compareTo(PhoneActivity.instant(a.at)));
+  final kept = <PhoneLogLine>[];
+  var sawCable = false;
+  for (final line in sorted) {
+    if (line.text == _cableLine) {
+      if (sawCable) continue;
+      sawCable = true;
+    }
+    kept.add(line);
+  }
+  return kept;
 }
 
 class _DayRow {

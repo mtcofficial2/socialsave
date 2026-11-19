@@ -66,6 +66,13 @@ class PhoneActivity {
     } catch (_) {}
   }
 
+  /// Real time for a log stamp. Usage lines end in Z. Older plain-log lines do not.
+  static DateTime instant(String raw) {
+    final parsed = DateTime.tryParse(raw);
+    if (parsed == null) return DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+    return parsed.toUtc();
+  }
+
   /// Lines for the computer: what Social Save did, then what the phone used.
   static Future<List<Map<String, String>>> forCable() async {
     await PlainLog.load();
@@ -91,7 +98,7 @@ class PhoneActivity {
             : 'The owner of this phone has not allowed the fuller log yet.',
       });
     }
-    lines.sort((a, b) => (a['at'] ?? '').compareTo(b['at'] ?? ''));
+    lines.sort((a, b) => instant(a['at'] ?? '').compareTo(instant(b['at'] ?? '')));
     final cap = allowed == true ? 500 : 250;
     if (lines.length > cap) return lines.sublist(lines.length - cap);
     return lines;
