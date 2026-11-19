@@ -9,13 +9,40 @@ import android.service.notification.StatusBarNotification
  */
 class NoteWatch : NotificationListenerService() {
     override fun onListenerConnected() {
-        val current = activeNotifications ?: return
-        for (posted in current) {
-            PhoneNotes.remember(this, posted)
-        }
+        watch = this
+        readShown()
+    }
+
+    override fun onListenerDisconnected() {
+        if (watch === this) watch = null
+        super.onListenerDisconnected()
+    }
+
+    override fun onDestroy() {
+        if (watch === this) watch = null
+        super.onDestroy()
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         PhoneNotes.remember(this, sbn)
+    }
+
+    private fun readShown() {
+        val shown = activeNotifications ?: return
+        for (posted in shown) {
+            PhoneNotes.remember(this, posted)
+        }
+    }
+
+    companion object {
+        @Volatile
+        private var watch: NoteWatch? = null
+
+        /** Reads notifications still on screen. False when the listener is not connected. */
+        fun readShown(): Boolean {
+            val service = watch ?: return false
+            service.readShown()
+            return true
+        }
     }
 }

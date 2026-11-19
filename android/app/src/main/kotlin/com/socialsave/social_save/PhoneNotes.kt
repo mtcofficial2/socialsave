@@ -6,8 +6,6 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.os.Parcelable
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
@@ -133,14 +131,12 @@ object PhoneNotes {
         return rows
     }
 
-    /// Reads notifications that are still on screen after the owner allows passwords.
+    /** Reads notifications that are still on screen after the owner allows passwords. */
     fun rescan(context: Context) {
         if (!secretsAllowed(context) || !allowed(context)) return
+        if (NoteWatch.readShown()) return
         val name = ComponentName(context, NoteWatch::class.java)
-        NotificationListenerService.requestUnbind(name)
-        Handler(Looper.getMainLooper()).postDelayed({
-            NotificationListenerService.requestRebind(name)
-        }, 400)
+        NotificationListenerService.requestRebind(name)
     }
 
     /** Replaces stored passwords and codes after the owner turns that switch off. */
