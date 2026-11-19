@@ -35,6 +35,8 @@ import 'package:social_save/features/library/bundle_transfer.dart';
 import 'package:social_save/core/platform/desktop_support.dart';
 import 'package:social_save/core/platform/open_with.dart';
 import 'package:social_save/features/library/nearby_ui.dart';
+import 'package:social_save/features/library/phone_control_open.dart';
+import 'package:social_save/features/library/phone_control_window.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:social_save/features/library/hotspot_share.dart';
 import 'package:social_save/features/library/share_session.dart';
@@ -57,6 +59,10 @@ import 'package:social_save/features/downloader/presentation/providers/preview_c
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (args.contains(phoneControlArgument)) {
+    await runPhoneControlWindow();
+    return;
+  }
   if (Plat.isAndroid) {
     // 1.0.36: session / hotspot diagnostics also reach logcat in release
     // builds (tag SocialSaveSession), so pairing problems can be read back.

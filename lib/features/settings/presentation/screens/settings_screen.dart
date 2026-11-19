@@ -192,7 +192,7 @@ class SettingsScreen extends ConsumerWidget {
                         contentPadding: EdgeInsets.zero,
                         title: const Text('Control the phone', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
                         subtitle: Text(
-                          'Open an app on a plugged-in phone, tap its screen, and type. The phone shows the same actions. Words you type are not saved',
+                          'Opens its own window. Drag, scroll, and type on a plugged-in phone. The phone shows the same actions. Words you type are not saved',
                           style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant),
                         ),
                         trailing: const Icon(Icons.phonelink_rounded),

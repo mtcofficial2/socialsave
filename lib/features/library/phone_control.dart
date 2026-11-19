@@ -57,6 +57,36 @@ List<PhoneControlApp> phoneControlApps(Object? raw) {
   return (width, height);
 }
 
+/// Where a point on the fitted screen lands on the phone.
+///
+/// Null when the point misses the picture. [clamp] keeps a drag that slides
+/// off the picture and pins it to the edge.
+({int x, int y})? phoneControlPoint({
+  required double localX,
+  required double localY,
+  required double boxW,
+  required double boxH,
+  required int imageW,
+  required int imageH,
+  bool clamp = false,
+}) {
+  if (boxW <= 0 || boxH <= 0 || imageW <= 0 || imageH <= 0) return null;
+  final scale = math.min(boxW / imageW, boxH / imageH);
+  final destW = imageW * scale;
+  final destH = imageH * scale;
+  final dx = (boxW - destW) / 2;
+  final dy = (boxH - destH) / 2;
+  var x = (localX - dx) / destW;
+  var y = (localY - dy) / destH;
+  final outside = x < 0 || y < 0 || x > 1 || y > 1;
+  if (outside && !clamp) return null;
+  if (outside) {
+    x = x.clamp(0.0, 1.0);
+    y = y.clamp(0.0, 1.0);
+  }
+  return (x: (x * imageW).round().clamp(0, imageW - 1), y: (y * imageH).round().clamp(0, imageH - 1));
+}
+
 /// Where a click on the fitted screen lands on the phone. Null when the click misses the picture.
 ({int x, int y})? phoneControlTap({
   required double localX,
@@ -66,16 +96,148 @@ List<PhoneControlApp> phoneControlApps(Object? raw) {
   required int imageW,
   required int imageH,
 }) {
-  if (boxW <= 0 || boxH <= 0 || imageW <= 0 || imageH <= 0) return null;
-  final scale = math.min(boxW / imageW, boxH / imageH);
-  final destW = imageW * scale;
-  final destH = imageH * scale;
-  final dx = (boxW - destW) / 2;
-  final dy = (boxH - destH) / 2;
-  final x = (localX - dx) / destW;
-  final y = (localY - dy) / destH;
-  if (x < 0 || y < 0 || x > 1 || y > 1) return null;
-  return (x: (x * imageW).round().clamp(0, imageW - 1), y: (y * imageH).round().clamp(0, imageH - 1));
+  return phoneControlPoint(localX: localX, localY: localY, boxW: boxW, boxH: boxH, imageW: imageW, imageH: imageH);
+}
+
+/// What the finger did on the phone picture.
+enum PhoneMotion { tap, hold, swipe }
+
+/// A tap, a hold, or a swipe in phone pixels.
+class PhoneMotionEvent {
+  const PhoneMotionEvent({
+    required this.motion,
+    required this.x1,
+    required this.y1,
+    required this.x2,
+    required this.y2,
+    required this.ms,
+  });
+
+  final PhoneMotion motion;
+  final int x1;
+  final int y1;
+  final int x2;
+  final int y2;
+  final int ms;
+}
+
+/// A press on the fitted picture. A short still press is a tap, a long still
+/// press is a hold, and a drag is a swipe. Null when the press starts off the picture.
+PhoneMotionEvent? phoneControlMotion({
+  required double downX,
+  required double downY,
+  required double upX,
+  required double upY,
+  required int elapsedMs,
+  required double boxW,
+  required double boxH,
+  required int imageW,
+  required int imageH,
+}) {
+  final start = phoneControlPoint(localX: downX, localY: downY, boxW: boxW, boxH: boxH, imageW: imageW, imageH: imageH);
+  if (start == null) return null;
+  final end = phoneControlPoint(localX: upX, localY: upY, boxW: boxW, boxH: boxH, imageW: imageW, imageH: imageH, clamp: true);
+  if (end == null) return null;
+  final distance = math.sqrt(math.pow(end.x - start.x, 2) + math.pow(end.y - start.y, 2));
+  final slop = math.max(18.0, imageW * 0.02);
+  if (distance >= slop) {
+    return PhoneMotionEvent(
+      motion: PhoneMotion.swipe,
+      x1: start.x,
+      y1: start.y,
+      x2: end.x,
+      y2: end.y,
+      ms: elapsedMs.clamp(50, 1200),
+    );
+  }
+  if (elapsedMs >= 420) {
+    return PhoneMotionEvent(motion: PhoneMotion.hold, x1: start.x, y1: start.y, x2: start.x, y2: start.y, ms: 560);
+  }
+  return PhoneMotionEvent(motion: PhoneMotion.tap, x1: start.x, y1: start.y, x2: start.x, y2: start.y, ms: 0);
+}
+
+/// A turn of the mouse wheel becomes a short swipe at that spot.
+/// Wheel down moves the page down, which is a finger swipe toward the top.
+PhoneMotionEvent? phoneControlWheel({
+  required double localX,
+  required double localY,
+  required double boxW,
+  required double boxH,
+  required int imageW,
+  required int imageH,
+  required double deltaY,
+}) {
+  if (deltaY == 0) return null;
+  final start = phoneControlPoint(localX: localX, localY: localY, boxW: boxW, boxH: boxH, imageW: imageW, imageH: imageH);
+  if (start == null) return null;
+  // One mouse notch is about 100. A flick of several notches scrolls further.
+  final notches = (deltaY.abs() / 100).clamp(0.35, 4.0);
+  final distance = (imageH * 0.16 * notches).round().clamp(80, 900);
+  final endY = (start.y + (deltaY > 0 ? -distance : distance)).clamp(0, imageH - 1);
+  if (endY == start.y) return null;
+  return PhoneMotionEvent(motion: PhoneMotion.swipe, x1: start.x, y1: start.y, x2: start.x, y2: endY, ms: 220);
+}
+
+/// One computer key that can be sent to the phone.
+enum PhoneKeyKind { back, enter, backspace, delete, up, down, left, right, tab, volumeUp, volumeDown, character }
+
+class PhoneKeyPress {
+  const PhoneKeyPress(this.kind, [this.text = '']);
+
+  final PhoneKeyKind kind;
+  final String text;
+}
+
+/// A key pressed while the phone picture is focused. Null for shortcuts and keys we do not send.
+PhoneKeyPress? phoneControlKey({required String? name, required String character, bool shortcut = false}) {
+  if (shortcut) return null;
+  switch (name) {
+    case 'Escape':
+      return const PhoneKeyPress(PhoneKeyKind.back);
+    case 'Enter':
+    case 'Numpad Enter':
+      return const PhoneKeyPress(PhoneKeyKind.enter);
+    case 'Backspace':
+      return const PhoneKeyPress(PhoneKeyKind.backspace);
+    case 'Delete':
+      return const PhoneKeyPress(PhoneKeyKind.delete);
+    case 'Arrow Up':
+      return const PhoneKeyPress(PhoneKeyKind.up);
+    case 'Arrow Down':
+      return const PhoneKeyPress(PhoneKeyKind.down);
+    case 'Arrow Left':
+      return const PhoneKeyPress(PhoneKeyKind.left);
+    case 'Arrow Right':
+      return const PhoneKeyPress(PhoneKeyKind.right);
+    case 'Tab':
+      return const PhoneKeyPress(PhoneKeyKind.tab);
+    case 'Audio Volume Up':
+      return const PhoneKeyPress(PhoneKeyKind.volumeUp);
+    case 'Audio Volume Down':
+      return const PhoneKeyPress(PhoneKeyKind.volumeDown);
+  }
+  final text = phoneControlChar(character);
+  if (text.isEmpty) return null;
+  return PhoneKeyPress(PhoneKeyKind.character, text);
+}
+
+/// One typed character. A space is kept. Control characters are dropped.
+String phoneControlChar(String raw) {
+  if (raw.runes.length != 1) return '';
+  final code = raw.runes.single;
+  if (code < 32 || code == 127) return '';
+  return raw;
+}
+
+/// Several keys typed in a row. Spaces stay. Control characters are dropped.
+String phoneControlBurst(String raw) {
+  final codes = <int>[];
+  for (final code in raw.runes) {
+    if (code < 32 || code == 127) continue;
+    codes.add(code);
+    if (codes.length >= 200) break;
+  }
+  return String.fromCharCodes(codes);
 }
 
 /// The words sent to the phone. Empty when there is nothing safe to type.

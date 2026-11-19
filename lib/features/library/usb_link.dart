@@ -43,6 +43,7 @@ class UsbLink {
 
   static final Map<String, PluggedPhoneLog> _logs = {};
   static DateTime _logsAt = DateTime.fromMillisecondsSinceEpoch(0);
+  static DateTime _awake = DateTime.fromMillisecondsSinceEpoch(0);
 
   static void start() {
     if (_started || !Plat.isWindows) return;
@@ -87,6 +88,76 @@ class UsbLink {
     ];
   }
 
+  /// Why the control window has no phone yet. Empty when a phone is ready.
+  static String controlProblem = '';
+
+  /// The control window lists phones and sends input. It does not offer a share.
+  static Future<void> prepareControl() async {
+    if (_started || !Plat.isWindows) return;
+    _started = true;
+    await _scanControl();
+    Timer.periodic(const Duration(seconds: 3), (_) => unawaited(_scanControl()));
+  }
+
+  static Future<void> _scanControl() async {
+    if (_tick) return;
+    _tick = true;
+    try {
+      _adb ??= _findAdb();
+      if (_adb == null) {
+        controlProblem = offHint;
+        return;
+      }
+      final r = await _run(['devices']);
+      if (r == null || r.exitCode != 0) {
+        controlProblem = offHint;
+        return;
+      }
+      final ready = <String>[];
+      var unauthorized = false;
+      for (final line in '${r.stdout}'.split('\n').skip(1)) {
+        final cols = line.trim().split(RegExp(r'\s+'));
+        if (cols.length < 2) continue;
+        if (cols[1] == 'device') ready.add(cols[0]);
+        if (cols[1] == 'unauthorized') unauthorized = true;
+      }
+      _forwards.removeWhere((serial, _) => !ready.contains(serial));
+      _models.removeWhere((serial, _) => !ready.contains(serial));
+      for (final serial in ready) {
+        await _ensureForward(serial);
+      }
+      if (ready.isNotEmpty) {
+        controlProblem = '';
+      } else if (unauthorized) {
+        controlProblem = 'Tap Allow USB debugging on the phone.';
+      } else {
+        controlProblem = '';
+      }
+    } catch (_) {
+      controlProblem = offHint;
+    } finally {
+      _tick = false;
+    }
+  }
+
+  static Future<void> _ensureForward(String serial) async {
+    if (_forwards.containsKey(serial)) {
+      if ((_models[serial] ?? '').trim().isEmpty) await _readModel(serial);
+      return;
+    }
+    final r = await _run(['-s', serial, 'forward', 'tcp:0', 'tcp:${NearbyService.inboxPort}']);
+    final port = int.tryParse('${r?.stdout ?? ''}'.trim());
+    if (port == null) return;
+    _forwards[serial] = port;
+    await _readModel(serial);
+  }
+
+  static Future<void> _readModel(String serial) async {
+    if ((_models[serial] ?? '').trim().isNotEmpty) return;
+    final m = await _run(['-s', serial, 'shell', 'getprop', 'ro.product.model']);
+    _models[serial] = '${m?.stdout ?? ''}'.trim();
+  }
+
   /// [named] is false when this phone's app has no app list yet.
   static Future<({List<PhoneControlApp> apps, bool named})> phoneApps(String serial) async {
     final port = _forwards[serial];
@@ -127,8 +198,11 @@ class UsbLink {
   }
 
   static Future<bool> _wake(String serial) async {
+    if (DateTime.now().difference(_awake) < const Duration(seconds: 8)) return true;
     final r = await _run(['-s', serial, 'shell', 'input', 'keyevent', '224']);
-    return r != null && r.exitCode == 0;
+    final ok = r != null && r.exitCode == 0;
+    if (ok) _awake = DateTime.now();
+    return ok;
   }
 
   /// Opens a launcher app on the phone. The package must be a normal package name.
@@ -139,20 +213,66 @@ class UsbLink {
     return r != null && r.exitCode == 0;
   }
 
+  static bool _onPhone(int x, int y) => x >= 0 && y >= 0 && x <= 8000 && y <= 8000;
+
   static Future<bool> phoneKey(String serial, String name) async {
-    const keys = {'back': '4', 'home': '3', 'recents': '187'};
+    const keys = {
+      'back': '4',
+      'home': '3',
+      'recents': '187',
+      'enter': '66',
+      'backspace': '67',
+      'delete': '112',
+      'up': '19',
+      'down': '20',
+      'left': '21',
+      'right': '22',
+      'tab': '61',
+      'space': '62',
+      'volumeUp': '24',
+      'volumeDown': '25',
+      'wake': '224',
+    };
     final code = keys[name];
     if (code == null || !_forwards.containsKey(serial)) return false;
-    await _wake(serial);
+    if (name != 'wake') await _wake(serial);
     final r = await _run(['-s', serial, 'shell', 'input', 'keyevent', code]);
-    return r != null && r.exitCode == 0;
+    final ok = r != null && r.exitCode == 0;
+    if (name == 'wake' && ok) _awake = DateTime.now();
+    return ok;
   }
 
   static Future<bool> phoneTap(String serial, int x, int y) async {
-    if (x < 0 || y < 0 || x > 8000 || y > 8000 || !_forwards.containsKey(serial)) return false;
+    if (!_onPhone(x, y) || !_forwards.containsKey(serial)) return false;
     await _wake(serial);
     final r = await _run(['-s', serial, 'shell', 'input', 'tap', '$x', '$y']);
     return r != null && r.exitCode == 0;
+  }
+
+  /// A drag or a hold. The same point held down is a long press.
+  static Future<bool> phoneSwipe(String serial, int x1, int y1, int x2, int y2, int ms) async {
+    if (!_onPhone(x1, y1) || !_onPhone(x2, y2) || !_forwards.containsKey(serial)) return false;
+    final duration = ms.clamp(40, 1500);
+    await _wake(serial);
+    final r = await _run(['-s', serial, 'shell', 'input', 'swipe', '$x1', '$y1', '$x2', '$y2', '$duration']);
+    return r != null && r.exitCode == 0;
+  }
+
+  /// One character into the open field. The character is not stored.
+  static Future<bool> phoneChar(String serial, String raw) async {
+    final text = phoneControlChar(raw);
+    if (text.isEmpty || !_forwards.containsKey(serial)) return false;
+    if (text == ' ') return phoneKey(serial, 'space');
+    await _wake(serial);
+    if (RegExp(r'^[A-Za-z0-9@._+\-]$').hasMatch(text)) {
+      final typed = await _run(['-s', serial, 'shell', 'input', 'text', text]);
+      if (typed != null && typed.exitCode == 0) return true;
+    }
+    final command = 'cmd clipboard set ${phoneControlShellQuote(text)}';
+    final set = await _run(['-s', serial, 'shell', command]);
+    if (set == null || set.exitCode != 0) return false;
+    final paste = await _run(['-s', serial, 'shell', 'input', 'keyevent', '279']);
+    return paste != null && paste.exitCode == 0;
   }
 
   /// Types into whatever field is open on the phone. The words are not stored.
@@ -169,6 +289,22 @@ class UsbLink {
     if (!RegExp(r'^[A-Za-z0-9 @._+\-]+$').hasMatch(text)) return false;
     final typed = await _run(['-s', serial, 'shell', 'input', 'text', text.replaceAll(' ', '%s')]);
     return typed != null && typed.exitCode == 0;
+  }
+
+  /// A short run of keys. The words are not stored. Plain text skips the clipboard.
+  static Future<bool> phoneWrite(String serial, String raw) async {
+    final text = phoneControlBurst(raw);
+    if (text.isEmpty || !_forwards.containsKey(serial)) return false;
+    await _wake(serial);
+    if (RegExp(r'^[A-Za-z0-9 @._+\-]+$').hasMatch(text)) {
+      final typed = await _run(['-s', serial, 'shell', 'input', 'text', text.replaceAll(' ', '%s')]);
+      if (typed != null && typed.exitCode == 0) return true;
+    }
+    final command = 'cmd clipboard set ${phoneControlShellQuote(text)}';
+    final set = await _run(['-s', serial, 'shell', command]);
+    if (set == null || set.exitCode != 0) return false;
+    final paste = await _run(['-s', serial, 'shell', 'input', 'keyevent', '279']);
+    return paste != null && paste.exitCode == 0;
   }
 
   static Future<void> _scan() async {

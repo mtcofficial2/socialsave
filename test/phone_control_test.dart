@@ -73,6 +73,95 @@ void main() {
     expect(phoneControlShellQuote("it's; rm -rf"), r"'it'\''s; rm -rf'");
     expect(phoneControlMatches(const PhoneControlApp(name: 'Camera', packageName: 'com.android.camera', system: true), 'cam'), isTrue);
     expect(phoneControlMatches(const PhoneControlApp(name: 'Camera', packageName: 'com.android.camera', system: true), 'chrome'), isFalse);
+    expect(phoneControlBurst('hi there '), 'hi there ');
+    expect(phoneControlBurst('a\nb'), 'ab');
+    expect(phoneControlChar(' '), ' ');
+    expect(phoneControlChar('\n'), '');
+    expect(phoneControlChar('ab'), '');
+  });
+
+  test('a drag, a hold, the wheel, and a key map onto the phone', () {
+    const box = (w: 200.0, h: 400.0, iw: 100, ih: 400);
+    final still = phoneControlMotion(
+      downX: 100,
+      downY: 200,
+      upX: 100,
+      upY: 200,
+      elapsedMs: 40,
+      boxW: box.w,
+      boxH: box.h,
+      imageW: box.iw,
+      imageH: box.ih,
+    );
+    expect(still?.motion, PhoneMotion.tap);
+    expect(still?.x1, 50);
+
+    final held = phoneControlMotion(
+      downX: 100,
+      downY: 200,
+      upX: 102,
+      upY: 200,
+      elapsedMs: 500,
+      boxW: box.w,
+      boxH: box.h,
+      imageW: box.iw,
+      imageH: box.ih,
+    );
+    expect(held?.motion, PhoneMotion.hold);
+    expect(held?.ms, 560);
+
+    final dragged = phoneControlMotion(
+      downX: 100,
+      downY: 80,
+      upX: 100,
+      upY: 320,
+      elapsedMs: 300,
+      boxW: box.w,
+      boxH: box.h,
+      imageW: box.iw,
+      imageH: box.ih,
+    );
+    expect(dragged?.motion, PhoneMotion.swipe);
+    expect(dragged?.y2, greaterThan(dragged!.y1));
+    expect(dragged.ms, 300);
+
+    final clamped = phoneControlMotion(
+      downX: 100,
+      downY: 200,
+      upX: 400,
+      upY: 200,
+      elapsedMs: 80,
+      boxW: box.w,
+      boxH: box.h,
+      imageW: box.iw,
+      imageH: box.ih,
+    );
+    expect(clamped?.motion, PhoneMotion.swipe);
+    expect(clamped?.x2, 99);
+
+    expect(
+      phoneControlMotion(downX: 1, downY: 1, upX: 40, upY: 40, elapsedMs: 80, boxW: box.w, boxH: box.h, imageW: box.iw, imageH: box.ih),
+      isNull,
+    );
+
+    final wheel = phoneControlWheel(
+      localX: 100,
+      localY: 200,
+      boxW: box.w,
+      boxH: box.h,
+      imageW: box.iw,
+      imageH: box.ih,
+      deltaY: 100,
+    );
+    expect(wheel?.motion, PhoneMotion.swipe);
+    expect(wheel!.y2, lessThan(wheel.y1));
+    expect(wheel.x2, wheel.x1);
+    expect(phoneControlWheel(localX: 100, localY: 200, boxW: box.w, boxH: box.h, imageW: box.iw, imageH: box.ih, deltaY: 0), isNull);
+
+    expect(phoneControlKey(name: 'Escape', character: '', shortcut: false)?.kind, PhoneKeyKind.back);
+    expect(phoneControlKey(name: 'Escape', character: '', shortcut: true), isNull);
+    expect(phoneControlKey(name: null, character: ' ' )?.text, ' ');
+    expect(phoneControlKey(name: 'Home', character: ''), isNull);
   });
 
   testWidgets('the control sheet opens an app and does not keep typed words', (tester) async {
@@ -86,6 +175,7 @@ void main() {
             PhoneControlApp(name: 'Chrome', packageName: 'com.android.chrome', system: false),
             PhoneControlApp(name: 'Camera', packageName: 'com.android.camera', system: true),
           ],
+          windowed: true,
         ),
       ),
     );
@@ -116,6 +206,11 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('phone-control-back')));
     await tester.pump();
     expect(find.text('Pressed Back.'), findsOneWidget);
+
+    final screen = find.byKey(const ValueKey('phone-control-screen'));
+    await tester.timedDrag(screen, const Offset(0, -160), const Duration(milliseconds: 180));
+    await tester.pump();
+    expect(find.text('Swiped the phone screen.'), findsOneWidget);
   });
 
   testWidgets('an older phone still shows the screen', (tester) async {

@@ -346,7 +346,7 @@ class _NearbyDeviceChipsState extends State<NearbyDeviceChips> {
               ActionChip(
                 avatar: const Icon(Icons.phonelink_rounded, size: 18),
                 label: const Text('Control'),
-                tooltip: 'Open apps on the plugged-in phone and tap its screen',
+                tooltip: 'Open a window to control the plugged-in phone',
                 onPressed: () => showPhoneControl(context),
               ),
             if (!cable) const UsbHint(),
