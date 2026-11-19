@@ -21,6 +21,7 @@ import 'package:social_save/core/platform/phone_body.dart';
 import 'package:social_save/features/chat/chat_prefs.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
 import 'package:social_save/features/library/hotspot_share.dart';
+import 'package:social_save/features/library/phone_control_ui.dart';
 import 'package:social_save/features/library/phone_log_ui.dart';
 import 'package:social_save/features/library/image_device_stamp.dart';
 import 'package:social_save/features/library/index_backup.dart';
@@ -185,6 +186,17 @@ class SettingsScreen extends ConsumerWidget {
                         ),
                         trailing: const Icon(Icons.notes_rounded),
                         onTap: () => showPhoneLog(context),
+                      ),
+                    if (Plat.isWindows)
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Control the phone', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                        subtitle: Text(
+                          'Open an app on a plugged-in phone, tap its screen, and type. The phone shows the same actions. Words you type are not saved',
+                          style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant),
+                        ),
+                        trailing: const Icon(Icons.phonelink_rounded),
+                        onTap: () => showPhoneControl(context),
                       ),
                     if (Plat.isAndroid) const _FullerLogTile(),
                     SwitchListTile(

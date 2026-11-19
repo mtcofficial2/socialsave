@@ -11,6 +11,7 @@ import 'package:social_save/features/library/session_ui.dart';
 import 'package:social_save/features/library/share_hub.dart';
 import 'package:social_save/features/library/share_session.dart';
 import 'package:social_save/features/library/presentation/library_look.dart';
+import 'package:social_save/features/library/phone_control_ui.dart';
 import 'package:social_save/features/library/phone_log_ui.dart';
 import 'package:social_save/features/library/usb_link.dart';
 import 'package:social_save/features/player/player_session.dart';
@@ -340,6 +341,13 @@ class _NearbyDeviceChipsState extends State<NearbyDeviceChips> {
                 label: const Text('Phone log'),
                 tooltip: 'Read what Social Save did on the plugged-in phone',
                 onPressed: () => showPhoneLog(context),
+              ),
+            if (cable && Plat.isWindows)
+              ActionChip(
+                avatar: const Icon(Icons.phonelink_rounded, size: 18),
+                label: const Text('Control'),
+                tooltip: 'Open apps on the plugged-in phone and tap its screen',
+                onPressed: () => showPhoneControl(context),
               ),
             if (!cable) const UsbHint(),
           ],

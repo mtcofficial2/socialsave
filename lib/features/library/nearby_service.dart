@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/diagnostics/phone_activity.dart';
 import 'package:social_save/core/diagnostics/plain_log.dart';
 import 'package:social_save/core/platform/player_identity.dart';
+import 'package:social_save/features/library/phone_control.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:social_save/features/library/usb_link.dart';
 
@@ -138,6 +139,25 @@ class NearbyService {
 
   /// Extra inbox routes (the session protocol). Returns true when handled.
   static Future<bool> Function(HttpRequest req, List<String> parts)? extraRoute;
+
+  static List<Map<String, Object>>? _controlCache;
+  static DateTime _controlAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// Launchable apps for the cable. APK paths never leave the phone.
+  static Future<List<Map<String, Object>>> _controlApps() async {
+    if (_controlCache != null && DateTime.now().difference(_controlAt) < const Duration(seconds: 30)) {
+      return _controlCache!;
+    }
+    try {
+      final raw = await _media.invokeListMethod<Map<Object?, Object?>>('installedApps');
+      final apps = phoneControlWireApps(raw);
+      _controlCache = apps;
+      _controlAt = DateTime.now();
+      return apps;
+    } catch (_) {
+      return _controlCache ?? const [];
+    }
+  }
 
   static String id = '';
   static String name = '';
@@ -623,6 +643,20 @@ class NearbyService {
           'secrets': secrets,
           'lines': lines,
         }));
+        await res.close();
+        return;
+      }
+      if (req.method == 'GET' && parts.length == 1 && parts[0] == 'phoneapps') {
+        // Only the USB tunnel arrives as loopback. Names and packages only.
+        final from = req.connectionInfo?.remoteAddress;
+        if (from == null || !from.isLoopback) {
+          res.statusCode = HttpStatus.forbidden;
+          await res.close();
+          return;
+        }
+        final apps = await _controlApps();
+        res.headers.contentType = ContentType.json;
+        res.write(jsonEncode({'apps': apps}));
         await res.close();
         return;
       }

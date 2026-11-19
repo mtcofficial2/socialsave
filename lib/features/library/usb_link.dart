@@ -2,6 +2,9 @@ import 'dart:async';
 import 'package:social_save/core/platform/plat.dart';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:social_save/features/library/phone_control.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
@@ -74,6 +77,98 @@ class UsbLink {
     } catch (_) {
       return null;
     }
+  }
+
+  /// Phones that currently have a cable tunnel.
+  static List<({String serial, String name})> phones() {
+    return [
+      for (final serial in _forwards.keys)
+        (serial: serial, name: (_models[serial] ?? '').trim().isEmpty ? 'Phone' : _models[serial]!.trim()),
+    ];
+  }
+
+  /// [named] is false when this phone's app has no app list yet.
+  static Future<({List<PhoneControlApp> apps, bool named})> phoneApps(String serial) async {
+    final port = _forwards[serial];
+    if (port == null) return (apps: const <PhoneControlApp>[], named: false);
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
+    try {
+      final req = await client.getUrl(Uri.http('127.0.0.1:$port', '/phoneapps'));
+      final res = await req.close().timeout(const Duration(seconds: 8));
+      if (res.statusCode != 200) {
+        await res.drain<void>();
+        return (apps: const <PhoneControlApp>[], named: false);
+      }
+      final body = jsonDecode(await utf8.decoder.bind(res).join());
+      return (apps: phoneControlApps(body), named: true);
+    } catch (_) {
+      return (apps: const <PhoneControlApp>[], named: false);
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  static Future<Uint8List?> phoneShot(String serial) async {
+    final adb = _adb ?? _findAdb();
+    _adb ??= adb;
+    if (adb == null || !_forwards.containsKey(serial)) return null;
+    try {
+      final proc = await Process.start(adb, ['-s', serial, 'exec-out', 'screencap', '-p'], runInShell: false);
+      final builder = BytesBuilder(copy: false);
+      unawaited(proc.stderr.drain<void>());
+      await proc.stdout.forEach(builder.add);
+      final code = await proc.exitCode.timeout(const Duration(seconds: 12));
+      if (code != 0) return null;
+      final bytes = builder.takeBytes();
+      return phoneControlShot(bytes) ? bytes : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<bool> _wake(String serial) async {
+    final r = await _run(['-s', serial, 'shell', 'input', 'keyevent', '224']);
+    return r != null && r.exitCode == 0;
+  }
+
+  /// Opens a launcher app on the phone. The package must be a normal package name.
+  static Future<bool> openPhoneApp(String serial, String packageName) async {
+    if (!phoneControlPackage(packageName) || !_forwards.containsKey(serial)) return false;
+    await _wake(serial);
+    final r = await _run(['-s', serial, 'shell', 'monkey', '-p', packageName, '-c', 'android.intent.category.LAUNCHER', '1']);
+    return r != null && r.exitCode == 0;
+  }
+
+  static Future<bool> phoneKey(String serial, String name) async {
+    const keys = {'back': '4', 'home': '3', 'recents': '187'};
+    final code = keys[name];
+    if (code == null || !_forwards.containsKey(serial)) return false;
+    await _wake(serial);
+    final r = await _run(['-s', serial, 'shell', 'input', 'keyevent', code]);
+    return r != null && r.exitCode == 0;
+  }
+
+  static Future<bool> phoneTap(String serial, int x, int y) async {
+    if (x < 0 || y < 0 || x > 8000 || y > 8000 || !_forwards.containsKey(serial)) return false;
+    await _wake(serial);
+    final r = await _run(['-s', serial, 'shell', 'input', 'tap', '$x', '$y']);
+    return r != null && r.exitCode == 0;
+  }
+
+  /// Types into whatever field is open on the phone. The words are not stored.
+  static Future<bool> phoneType(String serial, String raw) async {
+    final text = phoneControlType(raw);
+    if (text.isEmpty || !_forwards.containsKey(serial)) return false;
+    await _wake(serial);
+    final command = 'cmd clipboard set ${phoneControlShellQuote(text)}';
+    final set = await _run(['-s', serial, 'shell', command]);
+    if (set != null && set.exitCode == 0) {
+      final paste = await _run(['-s', serial, 'shell', 'input', 'keyevent', '279']);
+      if (paste != null && paste.exitCode == 0) return true;
+    }
+    if (!RegExp(r'^[A-Za-z0-9 @._+\-]+$').hasMatch(text)) return false;
+    final typed = await _run(['-s', serial, 'shell', 'input', 'text', text.replaceAll(' ', '%s')]);
+    return typed != null && typed.exitCode == 0;
   }
 
   static Future<void> _scan() async {
