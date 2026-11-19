@@ -990,6 +990,7 @@ class MainActivity : FlutterFragmentActivity() {
                 "setPhoneSecrets" -> {
                     val yes = call.argument<Boolean>("yes") == true
                     if (!yes) PhoneNotes.concealSecrets(applicationContext)
+                    else PhoneNotes.rescan(applicationContext)
                     result.success(yes && PhoneNotes.secretsAllowed(applicationContext))
                 }
                 "log" -> {
@@ -1294,6 +1295,7 @@ class MainActivity : FlutterFragmentActivity() {
         captureQuickAction(intent)
         wakeForCall(intent)
         ChatReplyBridge.note(intent)
+        PhoneNotes.rescan(this)
     }
 
     /** The Quick Settings tile: open Hotspot share. */

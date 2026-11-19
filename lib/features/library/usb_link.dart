@@ -257,6 +257,7 @@ class UsbLink {
         serial: serial,
         name: fallbackName == 'Phone' && remoteName.isNotEmpty ? remoteName : fallbackName,
         lines: lines,
+        secrets: j['secrets'] == true,
       );
     } catch (_) {
       return PluggedPhoneLog(
@@ -303,10 +304,14 @@ class PluggedPhoneLog {
     required this.name,
     required this.lines,
     this.problem = '',
+    this.secrets = false,
   });
 
   final String serial;
   final String name;
   final List<PhoneLogLine> lines;
   final String problem;
+
+  /// True when the owner has turned on Show passwords and codes.
+  final bool secrets;
 }

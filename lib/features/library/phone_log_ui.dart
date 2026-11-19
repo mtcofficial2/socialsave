@@ -33,16 +33,22 @@ class PhoneLogEntry {
 }
 
 /// Turns a cable line into a title and the words that belong under it.
-PhoneLogEntry presentPhoneLog(PhoneLogLine line) {
+PhoneLogEntry presentPhoneLog(PhoneLogLine line, {bool secrets = false}) {
   final kind = line.kind.trim();
   final title = line.title.trim();
   var detail = line.detail.trim();
-  if (kind == 'secret' || detail.startsWith('Hidden. This notification')) {
-    final hidden = detail.startsWith('Hidden. This notification') || detail.isEmpty;
+  if (kind == 'secret' || detail.startsWith('Hidden. This notification') || detail.startsWith('These words were hidden before')) {
+    final gone = detail.startsWith('These words were hidden before');
+    final hidden = gone || detail.startsWith('Hidden. This notification') || detail.isEmpty;
+    final shown = !hidden
+        ? detail
+        : (secrets || gone)
+            ? 'These words were hidden before you allowed passwords. That notification is no longer on the phone.'
+            : 'Hidden until the owner allows passwords and codes.';
     return PhoneLogEntry(
       kind: 'secret',
       title: title.isEmpty ? 'Password or code' : title,
-      detail: hidden ? 'Hidden until the owner allows passwords and codes.' : detail,
+      detail: shown,
       at: line.at,
     );
   }
@@ -392,7 +398,7 @@ class _PhoneBlockState extends State<_PhoneBlock> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final phone = widget.phone;
-    final entries = [for (final line in _newestFirst(phone.lines)) presentPhoneLog(line)];
+    final entries = [for (final line in _newestFirst(phone.lines)) presentPhoneLog(line, secrets: phone.secrets)];
     final counts = <String, int>{};
     for (final entry in entries) {
       final bucket = phoneLogBucket(entry);

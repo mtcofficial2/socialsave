@@ -616,9 +616,11 @@ class NearbyService {
           return;
         }
         final lines = await PhoneActivity.forCable();
+        final secrets = await PhoneActivity.secretsAllowed();
         res.headers.contentType = ContentType.json;
         res.write(jsonEncode({
           'name': name,
+          'secrets': secrets,
           'lines': lines,
         }));
         await res.close();

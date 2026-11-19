@@ -51,6 +51,14 @@ void main() {
     expect(phoneLogBucket(entry), 'secrets');
     expect(phoneLogVisible(entry, section: 'secrets', app: '', query: 'gmail'), isTrue);
     expect(phoneLogVisible(entry, section: 'notifications', app: '', query: ''), isFalse);
+    final allowed = presentPhoneLog(const PhoneLogLine(
+      at: '2026-11-19T00:25:00Z',
+      text: 'Hidden. This notification looks like a password or a code.',
+      kind: 'secret',
+      title: 'Gmail',
+      detail: 'Hidden. This notification looks like a password or a code.',
+    ), secrets: true);
+    expect(allowed.detail, 'These words were hidden before you allowed passwords. That notification is no longer on the phone.');
   });
 
   test('an allowed password keeps the words and can be found', () {

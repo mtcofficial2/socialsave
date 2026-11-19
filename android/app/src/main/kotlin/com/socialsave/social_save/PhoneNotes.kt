@@ -1,12 +1,16 @@
 package com.socialsave.social_save
 
 import android.app.Notification
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.Parcelable
 import android.provider.Settings
+import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import org.json.JSONArray
 import org.json.JSONObject
@@ -19,6 +23,9 @@ import java.io.File
 object PhoneNotes {
     private const val fileName = "phone_notes.json"
     private const val cap = 200
+    private const val hiddenSentence = "Hidden. This notification looks like a password or a code."
+    private const val keptHidden =
+        "These words were hidden before you allowed passwords. That notification is no longer on the phone."
     private val gate = Any()
 
     fun ownerAllows(context: Context): Boolean {
@@ -99,20 +106,26 @@ object PhoneNotes {
 
     fun recent(context: Context): List<Map<String, String>> {
         if (!ownerAllows(context)) return emptyList()
+        val secrets = secretsAllowed(context)
         val array = synchronized(gate) { readArray(File(context.filesDir, fileName)) }
         val rows = ArrayList<Map<String, String>>()
         for (i in 0 until array.length()) {
             val item = array.optJSONObject(i) ?: continue
-            val text = item.optString("text").trim()
+            var text = item.optString("text").trim()
             val title = item.optString("title").trim()
             if (text.isEmpty() || title.isEmpty()) continue
+            var detail = item.optString("detail")
             val kind = item.optString("kind").ifBlank { "notification" }
+            if (secrets && (detail.startsWith("Hidden.") || text.startsWith("Hidden."))) {
+                detail = keptHidden
+                text = keptHidden
+            }
             rows.add(
                 mapOf(
                     "at" to item.optString("at"),
                     "kind" to kind,
                     "title" to title,
-                    "detail" to item.optString("detail"),
+                    "detail" to detail,
                     "text" to text,
                 ),
             )
@@ -120,9 +133,19 @@ object PhoneNotes {
         return rows
     }
 
+    /// Reads notifications that are still on screen after the owner allows passwords.
+    fun rescan(context: Context) {
+        if (!secretsAllowed(context) || !allowed(context)) return
+        val name = ComponentName(context, NoteWatch::class.java)
+        NotificationListenerService.requestUnbind(name)
+        Handler(Looper.getMainLooper()).postDelayed({
+            NotificationListenerService.requestRebind(name)
+        }, 400)
+    }
+
     /** Replaces stored passwords and codes after the owner turns that switch off. */
     fun concealSecrets(context: Context) {
-        val hidden = "Hidden. This notification looks like a password or a code."
+        val hidden = hiddenSentence
         synchronized(gate) {
             val file = File(context.filesDir, fileName)
             val array = readArray(file)
