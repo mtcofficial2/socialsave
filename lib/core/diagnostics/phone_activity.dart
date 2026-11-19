@@ -11,6 +11,7 @@ class PhoneActivity {
 
   static const _channel = MethodChannel('socialsave/media');
   static const _consentKey = 'socialsave_full_log';
+  static const _secretKey = 'socialsave_secret_log';
   static var _askedUsage = false;
   static var _askedNotes = false;
   static var _prompting = false;
@@ -55,6 +56,7 @@ class PhoneActivity {
   static Future<void> setConsent(bool yes) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_consentKey, yes ? 'yes' : 'no');
+    if (!yes) await prefs.setString(_secretKey, 'no');
     if (!Plat.isAndroid) return;
     try {
       if (yes) {
@@ -63,6 +65,27 @@ class PhoneActivity {
       } else {
         await _channel.invokeMethod<void>('clearPhoneNotes');
       }
+    } catch (_) {}
+  }
+
+  /// True when the owner allowed passwords and codes that are already on a notification.
+  static Future<bool> secretsAllowed() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(_secretKey) == 'yes';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Stores the owner's choice. Off replaces passwords and codes already in the log.
+  static Future<void> setSecrets(bool yes) async {
+    if (yes && await consent() != true) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_secretKey, yes ? 'yes' : 'no');
+    if (!Plat.isAndroid) return;
+    try {
+      await _channel.invokeMethod<void>('setPhoneSecrets', {'yes': yes});
     } catch (_) {}
   }
 

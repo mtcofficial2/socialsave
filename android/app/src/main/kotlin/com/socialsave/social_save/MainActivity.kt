@@ -987,6 +987,11 @@ class MainActivity : FlutterFragmentActivity() {
                     PhoneNotes.clear(applicationContext)
                     result.success(true)
                 }
+                "setPhoneSecrets" -> {
+                    val yes = call.argument<Boolean>("yes") == true
+                    if (!yes) PhoneNotes.concealSecrets(applicationContext)
+                    result.success(yes && PhoneNotes.secretsAllowed(applicationContext))
+                }
                 "log" -> {
                     android.util.Log.i("SocialSaveSession", call.argument<String>("m") ?: "")
                     result.success(null)

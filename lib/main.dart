@@ -587,7 +587,7 @@ Future<bool?> _askFullerLog() {
     builder: (context) => AlertDialog(
       title: const Text('Allow a fuller phone log?'),
       content: const Text(
-        'A computer with Social Save is reading this phone. If you tap Yes, the log also includes when the screen turned on or off, when the phone locked, which apps opened, and the title and words shown on each notification. Android will ask you to allow notification access. Passwords and codes are left out. Words that never appear on a notification stay off the log.',
+        'A computer with Social Save is reading this phone. If you tap Yes, the log also includes when the screen turned on or off, when the phone locked, which apps opened, and the title and words shown on each notification. Android will ask you to allow notification access. Passwords and codes stay hidden until you turn on Show passwords and codes in Settings. Words that never appear on a notification stay off the log.',
       ),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Not now')),

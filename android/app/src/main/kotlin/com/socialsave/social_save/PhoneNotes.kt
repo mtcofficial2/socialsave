@@ -14,7 +14,7 @@ import java.io.File
 
 /**
  * Title and words of notifications, kept only after the owner says yes.
- * Passwords and codes are replaced before anything is stored.
+ * A password or a code is stored only after the owner allows that too.
  */
 object PhoneNotes {
     private const val fileName = "phone_notes.json"
@@ -24,6 +24,13 @@ object PhoneNotes {
     fun ownerAllows(context: Context): Boolean {
         val prefs = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
         return prefs.getString("flutter.socialsave_full_log", "") == "yes"
+    }
+
+    /** True only when the fuller log is on and the owner allowed passwords and codes. */
+    fun secretsAllowed(context: Context): Boolean {
+        if (!ownerAllows(context)) return false
+        val prefs = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+        return prefs.getString("flutter.socialsave_secret_log", "") == "yes"
     }
 
     fun allowed(context: Context): Boolean {
@@ -54,10 +61,12 @@ object PhoneNotes {
         val flags = posted.notification?.flags ?: return
         if (flags and Notification.FLAG_GROUP_SUMMARY != 0) return
         if (flags and Notification.FLAG_FOREGROUND_SERVICE != 0) return
-        val words = wordsOf(posted)
+        val secrets = secretsAllowed(context)
+        val words = wordsOf(posted, secrets)
         if (words.isEmpty()) return
         val name = PhoneUsage.label(context, pkg)
         val hidden = words.startsWith("Hidden.")
+        val secret = hidden || looksSecret(words.lowercase())
         val text = if (hidden) words else sentence(name, words)
         val now = PhoneUsage.iso(System.currentTimeMillis())
         synchronized(gate) {
@@ -74,7 +83,7 @@ object PhoneNotes {
             val obj = JSONObject()
                 .put("key", posted.key)
                 .put("at", now)
-                .put("kind", "notification")
+                .put("kind", if (secret) "secret" else "notification")
                 .put("title", name)
                 .put("detail", words)
                 .put("text", text)
@@ -97,10 +106,11 @@ object PhoneNotes {
             val text = item.optString("text").trim()
             val title = item.optString("title").trim()
             if (text.isEmpty() || title.isEmpty()) continue
+            val kind = item.optString("kind").ifBlank { "notification" }
             rows.add(
                 mapOf(
                     "at" to item.optString("at"),
-                    "kind" to "notification",
+                    "kind" to kind,
                     "title" to title,
                     "detail" to item.optString("detail"),
                     "text" to text,
@@ -110,11 +120,39 @@ object PhoneNotes {
         return rows
     }
 
-    private fun wordsOf(posted: StatusBarNotification): String {
+    /** Replaces stored passwords and codes after the owner turns that switch off. */
+    fun concealSecrets(context: Context) {
+        val hidden = "Hidden. This notification looks like a password or a code."
+        synchronized(gate) {
+            val file = File(context.filesDir, fileName)
+            val array = readArray(file)
+            var changed = false
+            for (i in 0 until array.length()) {
+                val item = array.optJSONObject(i) ?: continue
+                val detail = item.optString("detail")
+                val text = item.optString("text")
+                val secret = item.optString("kind") == "secret" ||
+                    looksSecret(detail.lowercase()) ||
+                    looksSecret(text.lowercase())
+                if (!secret || detail == hidden) continue
+                item.put("kind", "secret")
+                item.put("detail", hidden)
+                item.put("text", hidden)
+                changed = true
+            }
+            if (changed) writeArray(file, array)
+        }
+    }
+
+    private fun wordsOf(posted: StatusBarNotification, secrets: Boolean): String {
         val extras = posted.notification?.extras ?: return ""
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
         val big = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim().orEmpty()
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim().orEmpty()
+        val sub = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim().orEmpty()
+        val summary = extras.getCharSequence(Notification.EXTRA_SUMMARY_TEXT)?.toString()?.trim().orEmpty()
+        val info = extras.getCharSequence(Notification.EXTRA_INFO_TEXT)?.toString()?.trim().orEmpty()
+        val conversation = extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.trim().orEmpty()
         val lines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
             ?.map { it.toString().trim() }
             ?.filter { it.isNotEmpty() }
@@ -131,7 +169,10 @@ object PhoneNotes {
             body.isNotEmpty() -> body
             else -> title
         }
-        return tidy(combined)
+        val extrasText = listOf(conversation, sub, summary, info)
+            .filter { bit -> bit.isNotEmpty() && !combined.contains(bit) }
+        val full = if (extrasText.isEmpty()) combined else combined + "\n" + extrasText.joinToString("\n")
+        return tidy(full, secrets)
     }
 
     private fun messageLines(extras: Bundle): List<String> {
@@ -149,19 +190,12 @@ object PhoneNotes {
             val sender = bundle.getCharSequence("sender")?.toString()?.trim().orEmpty()
             out.add(if (sender.isEmpty()) text else "$sender: $text")
         }
-        if (out.size <= 4) return out
-        return out.takeLast(4)
+        if (out.size <= 8) return out
+        return out.takeLast(8)
     }
 
-    private fun tidy(raw: String): String {
-        val lines = raw.replace("\r\n", "\n").replace('\r', '\n')
-            .lines()
-            .map { it.replace(Regex("[\\t ]+"), " ").trim() }
-            .filter { it.isNotEmpty() }
-        var clean = lines.joinToString("\n")
-        if (clean.isEmpty()) return ""
-        val lower = clean.lowercase()
-        val secret = listOf(
+    private fun looksSecret(lower: String): Boolean {
+        return listOf(
             "password",
             "token",
             "bearer",
@@ -173,8 +207,19 @@ object PhoneNotes {
             "one-time",
             "verification code",
         ).any { lower.contains(it) }
-        if (secret) return "Hidden. This notification looks like a password or a code."
-        if (clean.length > 500) clean = clean.take(497) + "…"
+    }
+
+    private fun tidy(raw: String, secrets: Boolean): String {
+        val lines = raw.replace("\r\n", "\n").replace('\r', '\n')
+            .lines()
+            .map { it.replace(Regex("[\\t ]+"), " ").trim() }
+            .filter { it.isNotEmpty() }
+        var clean = lines.joinToString("\n")
+        if (clean.isEmpty()) return ""
+        if (looksSecret(clean.lowercase()) && !secrets) {
+            return "Hidden. This notification looks like a password or a code."
+        }
+        if (clean.length > 800) clean = clean.take(797) + "…"
         return clean
     }
 
