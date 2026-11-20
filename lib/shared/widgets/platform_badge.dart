@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/core/theme/app_colors.dart';
 import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
@@ -19,15 +20,7 @@ class PlatformBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final color = AppColors.platformColor(platform);
-    return Container(
-      height: compact ? 28 : 32,
-      padding: EdgeInsets.fromLTRB(compact ? 8 : 8, 0, compact ? 10 : 12, 0),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: scheme.outline),
-      ),
-      child: Row(
+    final row = Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Opacity(
@@ -44,7 +37,17 @@ class PlatformBadge extends StatelessWidget {
                 ),
           ),
         ],
+      );
+    if (Plat.isWindows) return row;
+    return Container(
+      height: compact ? 28 : 32,
+      padding: EdgeInsets.fromLTRB(compact ? 8 : 8, 0, compact ? 10 : 12, 0),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: scheme.outline),
       ),
+      child: row,
     );
   }
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:social_save/core/constants/app_constants.dart';
+import 'package:social_save/core/platform/plat.dart';
 
 class AppLogo extends StatelessWidget {
   const AppLogo({
@@ -13,15 +14,19 @@ class AppLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final mark = ClipRRect(
-      borderRadius: BorderRadius.circular(size * 0.28),
-      child: Image.asset(
-        'assets/brand/icon_1024.png',
-        width: size,
-        height: size,
-        filterQuality: FilterQuality.high,
-      ),
+    final image = Image.asset(
+      Plat.isWindows ? 'assets/brand/icon_foreground_1024.png' : 'assets/brand/icon_1024.png',
+      width: size,
+      height: size,
+      fit: BoxFit.contain,
+      filterQuality: FilterQuality.high,
     );
+    final mark = Plat.isWindows
+        ? image
+        : ClipRRect(
+            borderRadius: BorderRadius.circular(size * 0.28),
+            child: image,
+          );
 
     if (!showWordmark) {
       return mark;

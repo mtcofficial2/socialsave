@@ -3,7 +3,7 @@ class AppConstants {
 
   static const String appName = 'SocialSave';
   static const String appTagline = 'Paste a public video link and save it to this device';
-  static const String appVersion = '1.0.115';
+  static const String appVersion = '1.0.116';
 
   static const String downloadsBoxName = 'downloads';
   static const String settingsPrefsPrefix = 'socialsave_';

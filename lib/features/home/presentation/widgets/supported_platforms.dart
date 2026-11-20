@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
 
@@ -39,6 +40,27 @@ class SupportedPlatformsSection extends StatelessWidget {
             separatorBuilder: (_, _) => const SizedBox(width: 8),
             itemBuilder: (context, index) {
               final item = _chips[index];
+              final row = Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  PlatformLogo(platform: item.$1, size: 16),
+                  const SizedBox(width: 6),
+                  Text(
+                    item.$2,
+                    style: TextStyle(
+                      color: scheme.onSurface,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              );
+              if (Plat.isWindows) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: row,
+                );
+              }
               return DecoratedBox(
                 decoration: BoxDecoration(
                   color: scheme.surfaceContainerLow,
@@ -47,21 +69,7 @@ class SupportedPlatformsSection extends StatelessWidget {
                 ),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 10),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      PlatformLogo(platform: item.$1, size: 14),
-                      const SizedBox(width: 6),
-                      Text(
-                        item.$2,
-                        style: TextStyle(
-                          color: scheme.onSurface,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
+                  child: row,
                 ),
               );
             },

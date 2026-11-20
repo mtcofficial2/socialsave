@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/core/theme/app_colors.dart';
 import 'package:social_save/shared/models/social_platform.dart';
 
@@ -13,24 +14,25 @@ class PlatformLogo extends StatelessWidget {
   final SocialPlatform platform;
   final double size;
 
-  static String? assetFor(SocialPlatform platform) {
+  static String? assetFor(SocialPlatform platform, {bool bare = false}) {
+    final mark = bare ? '_mark' : '';
     switch (platform) {
       case SocialPlatform.tiktok:
-        return 'assets/platforms/tiktok.svg';
+        return 'assets/platforms/tiktok$mark.svg';
       case SocialPlatform.instagram:
-        return 'assets/platforms/instagram.svg';
+        return 'assets/platforms/instagram$mark.svg';
       case SocialPlatform.facebook:
-        return 'assets/platforms/facebook.svg';
+        return 'assets/platforms/facebook$mark.svg';
       case SocialPlatform.x:
-        return 'assets/platforms/x.svg';
+        return 'assets/platforms/x$mark.svg';
       case SocialPlatform.youtube:
-        return 'assets/platforms/youtube.svg';
+        return 'assets/platforms/youtube$mark.svg';
       case SocialPlatform.reddit:
-        return 'assets/platforms/reddit.svg';
+        return 'assets/platforms/reddit$mark.svg';
       case SocialPlatform.pinterest:
-        return 'assets/platforms/pinterest.svg';
+        return 'assets/platforms/pinterest$mark.svg';
       case SocialPlatform.direct:
-        return 'assets/platforms/direct.svg';
+        return 'assets/platforms/direct$mark.svg';
       case SocialPlatform.web:
       case SocialPlatform.unknown:
         return null;
@@ -39,7 +41,8 @@ class PlatformLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final asset = assetFor(platform);
+    final bare = Plat.isWindows;
+    final asset = assetFor(platform, bare: bare);
     if (asset == null) {
       return Icon(
         Icons.link_rounded,
@@ -51,7 +54,8 @@ class PlatformLogo extends StatelessWidget {
       asset,
       width: size,
       height: size,
-      fit: BoxFit.cover,
+      fit: bare ? BoxFit.contain : BoxFit.cover,
+      theme: SvgTheme(currentColor: Theme.of(context).colorScheme.onSurface),
     );
   }
 }
