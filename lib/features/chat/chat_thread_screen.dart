@@ -3763,6 +3763,16 @@ class ChatBubble extends StatelessWidget {
           );
           final caption = message.text.trim();
           final reserve = message.isEdited ? (mine ? 118.0 : 98.0) : (mine ? 78.0 : 58.0);
+          final statusParts = message.isVoice ||
+                  message.isPhoto ||
+                  message.isSong ||
+                  message.isFile ||
+                  message.isPoll ||
+                  message.card != null ||
+                  message.place != null ||
+                  message.isCall
+              ? null
+              : parseStatusReply(caption);
           final barePhoto =
               message.isPhoto && (caption.isEmpty || caption == 'Photo');
           final bareEmoji = quote == null &&
@@ -4029,6 +4039,50 @@ class ChatBubble extends StatelessWidget {
                     ],
                   ),
                   stamp,
+                ],
+              ),
+            );
+          } else if (statusParts != null) {
+            final reply = statusParts.reply;
+            final emoji = reply.isNotEmpty && emojiOnlyText(reply);
+            body = IntrinsicWidth(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _Quote(
+                    name: 'Status',
+                    text: statusParts.snippet,
+                    dark: dark,
+                    linkColor: link,
+                    onUsername: onUsername,
+                    highlight: highlight,
+                  ),
+                  if (reply.isEmpty)
+                    stamp
+                  else
+                    _TimedLine(
+                      text: emoji
+                          ? Text(
+                              reply,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: emojiOnlySize(emojiClusterCount(reply)),
+                                height: 1.15,
+                              ),
+                            )
+                          : ChatTapText(
+                              text: reply,
+                              links: message.links,
+                              color: fg,
+                              linkColor: link,
+                              onLink: onLink,
+                              onUsername: onUsername,
+                              reserve: reserve,
+                              highlight: highlight,
+                            ),
+                      stamp: stamp,
+                    ),
                 ],
               ),
             );

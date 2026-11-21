@@ -120,10 +120,47 @@ String chatQuoteLabel(String text, {required bool voice, required bool photo}) {
   return String.fromCharCodes(runes.take(80));
 }
 
+/// A status reply stored as plain text. The live server cannot keep a quote.
+class StatusReplyParts {
+  const StatusReplyParts({required this.snippet, required this.reply});
+
+  final String snippet;
+  final String reply;
+}
+
+/// Null when [text] is an ordinary message.
+StatusReplyParts? parseStatusReply(String text) {
+  const prefix = 'Status: ';
+  if (!text.startsWith(prefix)) return null;
+  final rest = text.substring(prefix.length);
+  final split = rest.indexOf('\n');
+  if (split < 0) {
+    final snippet = rest.trim();
+    if (snippet.isEmpty) return null;
+    return StatusReplyParts(snippet: snippet, reply: '');
+  }
+  final snippet = rest.substring(0, split).trim();
+  if (snippet.isEmpty) return null;
+  return StatusReplyParts(snippet: snippet, reply: rest.substring(split + 1).trim());
+}
+
+/// The words a person wrote, without the status line above them.
+String statusReplyShown(String text) {
+  final parts = parseStatusReply(text);
+  if (parts == null) return text.trim();
+  if (parts.reply.isNotEmpty) return parts.reply;
+  return parts.snippet;
+}
+
 /// What a notification says when this chat is not the one on screen.
 String chatAlertBody(String lastText) {
   final text = lastText.trim();
   if (text.isEmpty) return 'New message';
+  final status = parseStatusReply(text);
+  if (status != null) {
+    if (status.reply.isNotEmpty) return status.reply;
+    return 'Replied to a status';
+  }
   if (text == 'Voice message') return 'Voice message';
   if (text == 'Photo') return 'Photo';
   return text;
@@ -132,8 +169,9 @@ String chatAlertBody(String lastText) {
 String chatPreview(String lastText, String lastFrom, String me) {
   final text = lastText.trim();
   if (text.isEmpty) return 'No messages yet';
-  if (lastFrom.isNotEmpty && lastFrom == me) return 'You: $text';
-  return text;
+  final shown = statusReplyShown(text);
+  if (lastFrom.isNotEmpty && lastFrom == me) return 'You: $shown';
+  return shown;
 }
 
 /// Empty when [lastSeen] is missing. Online only when the server said so.

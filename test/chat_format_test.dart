@@ -136,5 +136,15 @@ void main() {
     expect(statusReplyBody('Photo', 'on my way'), 'Status: Photo\non my way');
     expect(statusReplyBody('Photo', ''), 'Status: Photo');
     expect(statusReplyBody('', 'hi'), 'hi');
+    final parts = parseStatusReply('Status: Photo\non my way');
+    expect(parts?.snippet, 'Photo');
+    expect(parts?.reply, 'on my way');
+    expect(parseStatusReply('Status: hello')?.reply, '');
+    expect(parseStatusReply('hello'), isNull);
+    expect(statusReplyShown('Status: Photo\n❤️'), '❤️');
+    expect(chatPreview('Status: Photo\non my way', 'ada', 'ada'), 'You: on my way');
+    expect(chatPreview('Status: Photo\non my way', 'ben', 'ada'), 'on my way');
+    expect(chatAlertBody('Status: Photo\non my way'), 'on my way');
+    expect(chatAlertBody('Status: Photo'), 'Replied to a status');
   });
 }

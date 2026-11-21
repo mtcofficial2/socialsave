@@ -4,7 +4,6 @@ import 'dart:math' as math;
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/utils/open_link.dart';
 import 'package:social_save/features/chat/chat_api.dart';
@@ -438,20 +437,39 @@ class _StatusViewer extends StatefulWidget {
 
 class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderStateMixin {
   late final AnimationController _bar;
+  late final TextEditingController _reply;
+  late final FocusNode _replyFocus;
   late List<ChatStatusNote> _notes;
   final Set<String> _reported = {};
   int _index = 0;
   bool _deleting = false;
   bool _paused = false;
   bool _holding = false;
+  bool _sending = false;
+  bool _sent = false;
+  bool _moving = false;
+  String? _threadId;
+  String _threadUser = '';
+  Timer? _sentTimer;
 
   @override
   void initState() {
     super.initState();
     _notes = List<ChatStatusNote>.of(widget.notes);
+    _reply = TextEditingController();
+    _replyFocus = FocusNode()..addListener(_onReplyFocus);
     _bar = AnimationController(vsync: this, duration: const Duration(seconds: 6));
     _arm();
     _report(_notes.first);
+  }
+
+  void _onReplyFocus() {
+    if (_moving) return;
+    if (_replyFocus.hasFocus) {
+      _bar.stop();
+      return;
+    }
+    _continue();
   }
 
   void _report(ChatStatusNote note) {
@@ -514,38 +532,58 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
       Navigator.of(context).pop();
       return;
     }
+    _moving = true;
+    _reply.clear();
+    _sentTimer?.cancel();
+    if (_replyFocus.hasFocus) _replyFocus.unfocus();
+    _moving = false;
     setState(() {
       _index = next;
       _paused = false;
+      _sent = false;
     });
     _report(_notes[next]);
     _arm();
   }
 
-  Future<void> _reply(ChatStatusNote note) async {
+  Future<String> _threadFor(String name) async {
+    if (_threadId != null && _threadUser == name) return _threadId!;
+    final opened = await ChatApi().openThread(name);
+    _threadId = opened.id;
+    _threadUser = name;
+    return opened.id;
+  }
+
+  /// Sends a private reply and stays on the status.
+  Future<void> _sendStatusReply(ChatStatusNote note, String typed) async {
+    final body = typed.trim();
     final name = note.name.trim().replaceFirst(RegExp(r'^@'), '');
-    if (name.isEmpty || widget.own) return;
+    if (body.isEmpty || name.isEmpty || widget.own || _sending) return;
     _bar.stop();
-    final router = GoRouter.of(context);
+    setState(() => _sending = true);
     try {
-      final opened = await ChatApi().openThread(name);
-      if (!mounted) return;
+      final id = await _threadFor(name);
       final snippet = statusReplySnippet(note.text, photo: note.image.isNotEmpty);
-      Navigator.of(context).pop();
-      await router.push(
-        '/chat/${opened.id}',
-        extra: ChatThreadTarget(
-          username: opened.username,
-          name: opened.name,
-          statusQuote: snippet,
-        ),
-      );
+      await ChatApi().send(id, statusReplyBody(snippet, body));
+      if (!mounted) return;
+      _reply.clear();
+      _replyFocus.unfocus();
+      _sentTimer?.cancel();
+      setState(() {
+        _sending = false;
+        _sent = true;
+      });
+      _sentTimer = Timer(const Duration(milliseconds: 1400), () {
+        if (mounted) setState(() => _sent = false);
+      });
     } catch (error) {
       if (!mounted) return;
+      setState(() => _sending = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(chatErrorText(error))),
       );
-      _continue();
+    } finally {
+      if (mounted && !_replyFocus.hasFocus) _continue();
     }
   }
 
@@ -633,6 +671,10 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
 
   @override
   void dispose() {
+    _sentTimer?.cancel();
+    _replyFocus.removeListener(_onReplyFocus);
+    _replyFocus.dispose();
+    _reply.dispose();
     _bar.dispose();
     super.dispose();
   }
@@ -798,18 +840,21 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
                       onPressed: () => _step(1),
                       icon: const Icon(Icons.skip_next_rounded, color: Colors.white),
                     ),
-                    if (!widget.own)
-                      IconButton(
-                        tooltip: 'Reply',
-                        onPressed: () => unawaited(_reply(note)),
-                        icon: const Icon(Icons.reply_rounded, color: Colors.white),
-                      ),
                   ],
                 ),
-                Text(
-                  _paused ? 'Paused' : 'Hold the update to pause it',
-                  style: const TextStyle(color: Colors.white70, fontSize: 12),
-                ),
+                if (widget.own || !_replyFocus.hasFocus)
+                  Text(
+                    _paused ? 'Paused' : 'Hold the update to pause it',
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                if (!widget.own)
+                  _StatusReplyBar(
+                    controller: _reply,
+                    focus: _replyFocus,
+                    busy: _sending,
+                    sent: _sent,
+                    onSend: (text) => unawaited(_sendStatusReply(note, text)),
+                  ),
                 if (widget.own)
                   TextButton.icon(
                     onPressed: () => unawaited(_viewers(note)),
@@ -824,6 +869,146 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
           ),
         ),
         ),
+      ),
+    );
+  }
+}
+
+const _statusReactions = ['❤️', '😂', '😮', '😢', '🙏', '👏'];
+
+/// Reply field on someone else's status. Sending stays on this screen.
+class _StatusReplyBar extends StatefulWidget {
+  const _StatusReplyBar({
+    required this.controller,
+    required this.focus,
+    required this.busy,
+    required this.sent,
+    required this.onSend,
+  });
+
+  final TextEditingController controller;
+  final FocusNode focus;
+  final bool busy;
+  final bool sent;
+  final ValueChanged<String> onSend;
+
+  @override
+  State<_StatusReplyBar> createState() => _StatusReplyBarState();
+}
+
+class _StatusReplyBarState extends State<_StatusReplyBar> {
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_rebuild);
+    widget.focus.addListener(_rebuild);
+  }
+
+  @override
+  void didUpdateWidget(_StatusReplyBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_rebuild);
+      widget.controller.addListener(_rebuild);
+    }
+    if (oldWidget.focus != widget.focus) {
+      oldWidget.focus.removeListener(_rebuild);
+      widget.focus.addListener(_rebuild);
+    }
+  }
+
+  void _rebuild() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_rebuild);
+    widget.focus.removeListener(_rebuild);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final typed = widget.controller.text.trim().isNotEmpty;
+    final open = widget.focus.hasFocus;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (widget.sent)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 6),
+              child: Text(
+                'Sent',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13),
+              ),
+            ),
+          if (open)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  for (final emoji in _statusReactions)
+                    InkWell(
+                      onTap: widget.busy ? null : () => widget.onSend(emoji),
+                      borderRadius: BorderRadius.circular(24),
+                      child: Padding(
+                        padding: const EdgeInsets.all(6),
+                        child: Text(emoji, style: const TextStyle(fontSize: 28)),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: widget.controller,
+                  focusNode: widget.focus,
+                  enabled: !widget.busy,
+                  style: const TextStyle(color: Colors.white, fontSize: 16),
+                  cursorColor: Colors.white,
+                  textInputAction: TextInputAction.send,
+                  onSubmitted: widget.busy ? null : widget.onSend,
+                  decoration: InputDecoration(
+                    hintText: 'Reply',
+                    hintStyle: const TextStyle(color: Colors.white70),
+                    filled: true,
+                    fillColor: Colors.white.withValues(alpha: 0.16),
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(28),
+                      borderSide: const BorderSide(color: Colors.white54),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(28),
+                      borderSide: const BorderSide(color: Colors.white54),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(28),
+                      borderSide: const BorderSide(color: Colors.white),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
+              IconButton(
+                tooltip: typed ? 'Send' : 'Like',
+                onPressed: widget.busy
+                    ? null
+                    : () => widget.onSend(typed ? widget.controller.text : '❤️'),
+                icon: typed
+                    ? const Icon(Icons.send_rounded, color: Colors.white)
+                    : const Text('❤️', style: TextStyle(fontSize: 26)),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
