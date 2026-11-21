@@ -17,6 +17,56 @@ import 'package:social_save/features/chat/status_fonts.dart';
 import 'package:social_save/features/chat/status_link_card.dart';
 
 const _seenKey = 'chat.status.seen.v1';
+const _likedKey = 'chat.status.liked.v1';
+
+/// Opens the status quoted by a chat reply. A missing status stays in the chat.
+Future<void> openQuotedStatus(BuildContext context, String id) async {
+  final clean = id.trim();
+  if (clean.isEmpty) return;
+  try {
+    final rows = await ChatApi().statuses();
+    if (!context.mounted) return;
+    ChatStatusNote? hit;
+    for (final note in rows) {
+      if (note.id == clean) {
+        hit = note;
+        break;
+      }
+    }
+    if (hit == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('That status is no longer up.')),
+      );
+      return;
+    }
+    final owner = hit.name.trim();
+    final group = rows.where((note) => note.name.trim() == owner).toList()
+      ..sort((a, b) => b.at.compareTo(a.at));
+    final index = group.indexWhere((note) => note.id == clean);
+    final me = (await ChatSession.username()).trim().replaceFirst(RegExp(r'^@'), '').toLowerCase();
+    final name = owner.replaceFirst(RegExp(r'^@'), '').toLowerCase();
+    final own = me.isNotEmpty && me == name;
+    if (!context.mounted) return;
+    final title = own
+        ? 'My status'
+        : (owner.startsWith('@') || owner.isEmpty ? owner : '@$owner');
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (context) => _StatusViewer(
+          notes: group,
+          title: title.isEmpty ? 'Status' : title,
+          own: own,
+          initialIndex: index < 0 ? 0 : index,
+        ),
+      ),
+    );
+  } catch (error) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(chatErrorText(error))),
+    );
+  }
+}
 
 const statusTones = <Color>[
   Color(0xFF075E54),
@@ -425,11 +475,17 @@ class _StatusRingPainter extends CustomPainter {
 }
 
 class _StatusViewer extends StatefulWidget {
-  const _StatusViewer({required this.notes, required this.title, required this.own});
+  const _StatusViewer({
+    required this.notes,
+    required this.title,
+    required this.own,
+    this.initialIndex = 0,
+  });
 
   final List<ChatStatusNote> notes;
   final String title;
   final bool own;
+  final int initialIndex;
 
   @override
   State<_StatusViewer> createState() => _StatusViewerState();
@@ -451,16 +507,37 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
   String? _threadId;
   String _threadUser = '';
   Timer? _sentTimer;
+  Set<String> _liked = {};
 
   @override
   void initState() {
     super.initState();
     _notes = List<ChatStatusNote>.of(widget.notes);
+    final last = _notes.isEmpty ? 0 : _notes.length - 1;
+    _index = widget.initialIndex.clamp(0, last);
     _reply = TextEditingController();
     _replyFocus = FocusNode()..addListener(_onReplyFocus);
     _bar = AnimationController(vsync: this, duration: const Duration(seconds: 6));
     _arm();
-    _report(_notes.first);
+    if (_notes.isNotEmpty) _report(_notes[_index]);
+    unawaited(_loadLiked());
+  }
+
+  Future<void> _loadLiked() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getStringList(_likedKey) ?? const <String>[];
+    if (!mounted) return;
+    setState(() => _liked = saved.toSet());
+  }
+
+  Future<void> _rememberLike(String id) async {
+    if (id.isEmpty || _liked.contains(id)) return;
+    final next = {..._liked, id};
+    setState(() => _liked = next);
+    final prefs = await SharedPreferences.getInstance();
+    final kept = next.toList();
+    if (kept.length > 400) kept.removeRange(0, kept.length - 400);
+    await prefs.setStringList(_likedKey, kept);
   }
 
   void _onReplyFocus() {
@@ -555,33 +632,44 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
   }
 
   /// Sends a private reply and stays on the status.
-  Future<void> _sendStatusReply(ChatStatusNote note, String typed) async {
+  Future<bool> _sendStatusReply(ChatStatusNote note, String typed) async {
     final body = typed.trim();
     final name = note.name.trim().replaceFirst(RegExp(r'^@'), '');
-    if (body.isEmpty || name.isEmpty || widget.own || _sending) return;
+    final liked = body == '❤️';
+    if (body.isEmpty || name.isEmpty || widget.own || _sending) return false;
+    if (liked && _liked.contains(note.id)) return false;
     _bar.stop();
     setState(() => _sending = true);
     try {
       final id = await _threadFor(name);
-      final snippet = statusReplySnippet(note.text, photo: note.image.isNotEmpty);
-      await ChatApi().send(id, statusReplyBody(snippet, body));
-      if (!mounted) return;
+      final photo = note.image.isNotEmpty;
+      final snippet = statusReplySnippet(note.text, photo: photo);
+      await ChatApi().send(
+        id,
+        statusReplyBody(snippet, body, id: note.id, photo: photo),
+      );
+      if (!mounted) return true;
       _reply.clear();
       _replyFocus.unfocus();
       _sentTimer?.cancel();
       setState(() {
         _sending = false;
-        _sent = true;
+        _sent = !liked;
       });
-      _sentTimer = Timer(const Duration(milliseconds: 1400), () {
-        if (mounted) setState(() => _sent = false);
-      });
+      if (liked) unawaited(_rememberLike(note.id));
+      if (!liked) {
+        _sentTimer = Timer(const Duration(milliseconds: 1400), () {
+          if (mounted) setState(() => _sent = false);
+        });
+      }
+      return true;
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted) return false;
       setState(() => _sending = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(chatErrorText(error))),
       );
+      return false;
     } finally {
       if (mounted && !_replyFocus.hasFocus) _continue();
     }
@@ -853,6 +941,7 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
                     focus: _replyFocus,
                     busy: _sending,
                     sent: _sent,
+                    liked: _liked.contains(note.id),
                     onSend: (text) => unawaited(_sendStatusReply(note, text)),
                   ),
                 if (widget.own)
@@ -883,6 +972,7 @@ class _StatusReplyBar extends StatefulWidget {
     required this.focus,
     required this.busy,
     required this.sent,
+    required this.liked,
     required this.onSend,
   });
 
@@ -890,6 +980,7 @@ class _StatusReplyBar extends StatefulWidget {
   final FocusNode focus;
   final bool busy;
   final bool sent;
+  final bool liked;
   final ValueChanged<String> onSend;
 
   @override
@@ -1001,10 +1092,22 @@ class _StatusReplyBarState extends State<_StatusReplyBar> {
                 tooltip: typed ? 'Send' : 'Like',
                 onPressed: widget.busy
                     ? null
-                    : () => widget.onSend(typed ? widget.controller.text : '❤️'),
+                    : () {
+                        if (!typed && widget.liked) return;
+                        widget.onSend(typed ? widget.controller.text : '❤️');
+                      },
                 icon: typed
                     ? const Icon(Icons.send_rounded, color: Colors.white)
-                    : const Text('❤️', style: TextStyle(fontSize: 26)),
+                    : AnimatedScale(
+                        scale: widget.liked ? 1.12 : 1,
+                        duration: const Duration(milliseconds: 180),
+                        curve: Curves.easeOutBack,
+                        child: Icon(
+                          widget.liked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                          color: widget.liked ? const Color(0xFFE53935) : Colors.white,
+                          size: 28,
+                        ),
+                      ),
               ),
             ],
           ),

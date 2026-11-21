@@ -27,6 +27,7 @@ import 'package:social_save/features/chat/chat_call.dart';
 import 'package:social_save/features/chat/chat_prefs.dart';
 import 'package:social_save/features/chat/chat_profile.dart';
 import 'package:social_save/features/chat/chat_services.dart';
+import 'package:social_save/features/chat/chat_status_screen.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
 import 'package:social_save/features/chat/chat_ux.dart';
 import 'package:social_save/features/chat/chat_voice.dart';
@@ -4045,18 +4046,23 @@ class ChatBubble extends StatelessWidget {
           } else if (statusParts != null) {
             final reply = statusParts.reply;
             final emoji = reply.isNotEmpty && emojiOnlyText(reply);
+            final openStatus = statusParts.id.isEmpty
+                ? null
+                : () => unawaited(openQuotedStatus(context, statusParts.id));
             body = IntrinsicWidth(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _Quote(
-                    name: 'Status',
-                    text: statusParts.snippet,
+                  _StatusQuote(
+                    snippet: statusParts.snippet,
                     dark: dark,
                     linkColor: link,
                     onUsername: onUsername,
                     highlight: highlight,
+                    photo: statusParts.photo,
+                    statusId: statusParts.id,
+                    onTap: openStatus,
                   ),
                   if (reply.isEmpty)
                     stamp
@@ -4398,6 +4404,169 @@ Widget _stamp(
       ],
     ),
   );
+}
+
+/// A status shown the way a replied message is, with the photo when it has one.
+class _StatusQuote extends StatelessWidget {
+  const _StatusQuote({
+    required this.snippet,
+    required this.dark,
+    required this.linkColor,
+    this.onUsername,
+    this.highlight = '',
+    this.photo = false,
+    this.statusId = '',
+    this.onTap,
+  });
+
+  final String snippet;
+  final bool dark;
+  final Color linkColor;
+  final ValueChanged<String>? onUsername;
+  final String highlight;
+  final bool photo;
+  final String statusId;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final words = snippet == 'Photo' ? '' : snippet;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 4),
+        padding: const EdgeInsets.fromLTRB(8, 4, 6, 4),
+        decoration: BoxDecoration(
+          color: dark ? const Color(0x33000000) : const Color(0x14000000),
+          borderRadius: BorderRadius.circular(8),
+          border: const Border(
+            left: BorderSide(color: Color(0xFF25D366), width: 3),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Status',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF25D366),
+                    ),
+                  ),
+                  if (words.isNotEmpty)
+                    ChatTapText(
+                      text: words,
+                      color: dark ? const Color(0xFFE9EDEF) : const Color(0xFF111B21),
+                      linkColor: linkColor,
+                      onUsername: onUsername,
+                      highlight: highlight,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: dark ? const Color(0xFFE9EDEF) : const Color(0xFF111B21),
+                      ),
+                    )
+                  else if (!photo)
+                    Text(
+                      snippet,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: dark ? const Color(0xFFE9EDEF) : const Color(0xFF111B21),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            if (photo) ...[
+              const SizedBox(width: 8),
+              _StatusThumb(id: statusId),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StatusThumb extends StatefulWidget {
+  const _StatusThumb({required this.id});
+
+  final String id;
+
+  @override
+  State<_StatusThumb> createState() => _StatusThumbState();
+}
+
+class _StatusThumbState extends State<_StatusThumb> {
+  Uint8List? _bytes;
+  var _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  @override
+  void didUpdateWidget(_StatusThumb oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.id != widget.id) {
+      _bytes = null;
+      _failed = false;
+      unawaited(_load());
+    }
+  }
+
+  Future<void> _load() async {
+    final id = widget.id.trim();
+    if (id.isEmpty) {
+      if (mounted) setState(() => _failed = true);
+      return;
+    }
+    try {
+      final bytes = await ChatApi().statusImage(id);
+      if (!mounted || id != widget.id) return;
+      setState(() {
+        _bytes = bytes;
+        _failed = bytes == null || bytes.isEmpty;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _failed = true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bytes = _bytes;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: SizedBox(
+        width: 54,
+        height: 72,
+        child: bytes != null && bytes.isNotEmpty
+            ? Image.memory(bytes, fit: BoxFit.cover)
+            : ColoredBox(
+                color: const Color(0x33000000),
+                child: Icon(
+                  _failed ? Icons.image_not_supported_outlined : Icons.image_outlined,
+                  color: Colors.white70,
+                  size: 22,
+                ),
+              ),
+      ),
+    );
+  }
 }
 
 class _Quote extends StatelessWidget {

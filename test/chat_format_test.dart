@@ -136,13 +136,24 @@ void main() {
     expect(statusReplyBody('Photo', 'on my way'), 'Status: Photo\non my way');
     expect(statusReplyBody('Photo', ''), 'Status: Photo');
     expect(statusReplyBody('', 'hi'), 'hi');
+    expect(
+      statusReplyBody('sunset', 'on my way', id: 'stabc', photo: true),
+      'Status#stabc|photo: sunset\non my way',
+    );
     final parts = parseStatusReply('Status: Photo\non my way');
     expect(parts?.snippet, 'Photo');
     expect(parts?.reply, 'on my way');
+    expect(parts?.id, '');
+    expect(parts?.photo, isFalse);
+    final photo = parseStatusReply('Status#stabc|photo: sunset\non my way');
+    expect(photo?.id, 'stabc');
+    expect(photo?.photo, isTrue);
+    expect(photo?.snippet, 'sunset');
+    expect(photo?.reply, 'on my way');
     expect(parseStatusReply('Status: hello')?.reply, '');
     expect(parseStatusReply('hello'), isNull);
     expect(statusReplyShown('Status: Photo\n❤️'), '❤️');
-    expect(chatPreview('Status: Photo\non my way', 'ada', 'ada'), 'You: on my way');
+    expect(chatPreview('Status#stabc|photo: sunset\non my way', 'ada', 'ada'), 'You: on my way');
     expect(chatPreview('Status: Photo\non my way', 'ben', 'ada'), 'on my way');
     expect(chatAlertBody('Status: Photo\non my way'), 'on my way');
     expect(chatAlertBody('Status: Photo'), 'Replied to a status');

@@ -122,26 +122,40 @@ String chatQuoteLabel(String text, {required bool voice, required bool photo}) {
 
 /// A status reply stored as plain text. The live server cannot keep a quote.
 class StatusReplyParts {
-  const StatusReplyParts({required this.snippet, required this.reply});
+  const StatusReplyParts({
+    required this.snippet,
+    required this.reply,
+    this.id = '',
+    this.photo = false,
+  });
 
   final String snippet;
   final String reply;
+
+  /// Status to open when the quote is tapped. Blank on older replies.
+  final String id;
+
+  /// The status is a photo, so the quote can show that picture.
+  final bool photo;
 }
+
+final _statusReplyLine = RegExp(r'^Status(?:#([a-z0-9]+)(\|photo)?)?: (.*)$');
 
 /// Null when [text] is an ordinary message.
 StatusReplyParts? parseStatusReply(String text) {
-  const prefix = 'Status: ';
-  if (!text.startsWith(prefix)) return null;
-  final rest = text.substring(prefix.length);
-  final split = rest.indexOf('\n');
-  if (split < 0) {
-    final snippet = rest.trim();
-    if (snippet.isEmpty) return null;
-    return StatusReplyParts(snippet: snippet, reply: '');
-  }
-  final snippet = rest.substring(0, split).trim();
+  final split = text.indexOf('\n');
+  final first = split < 0 ? text : text.substring(0, split);
+  final match = _statusReplyLine.firstMatch(first);
+  if (match == null) return null;
+  final snippet = (match.group(3) ?? '').trim();
   if (snippet.isEmpty) return null;
-  return StatusReplyParts(snippet: snippet, reply: rest.substring(split + 1).trim());
+  final reply = split < 0 ? '' : text.substring(split + 1).trim();
+  return StatusReplyParts(
+    snippet: snippet,
+    reply: reply,
+    id: match.group(1) ?? '',
+    photo: match.group(2) != null,
+  );
 }
 
 /// The words a person wrote, without the status line above them.
@@ -326,10 +340,14 @@ String statusReplySnippet(String text, {required bool photo}) {
 }
 
 /// What the other person reads. The live server cannot store a status as a quote.
-String statusReplyBody(String snippet, String typed) {
+String statusReplyBody(String snippet, String typed, {String id = '', bool photo = false}) {
   final line = snippet.trim();
   final body = typed.trim();
   if (line.isEmpty) return body;
-  if (body.isEmpty) return 'Status: $line';
-  return 'Status: $line\n$body';
+  final cleanId = id.trim().toLowerCase();
+  final head = cleanId.isEmpty
+      ? 'Status: $line'
+      : 'Status#$cleanId${photo ? '|photo' : ''}: $line';
+  if (body.isEmpty) return head;
+  return '$head\n$body';
 }
