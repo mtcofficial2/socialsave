@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
 import 'package:social_save/features/downloads/presentation/providers/downloads_controller.dart';
 import 'package:social_save/features/library/presentation/library_screen.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
 
 Future<bool> moveDownloadToVault(
   BuildContext context,
@@ -15,9 +16,7 @@ Future<bool> moveDownloadToVault(
   final path = record.localPath;
   if (path == null || path.isEmpty || !File(path).existsSync()) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('The file is no longer on this device.')),
-      );
+      AppSnack.info(context, 'The file is no longer on this device.');
     }
     return false;
   }
@@ -34,15 +33,9 @@ Future<bool> moveDownloadToVault(
         );
   }
   if (context.mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          deletePublic
+    AppSnack.info(context, deletePublic
               ? 'Moved to vault. Unlock Library with your PIN to watch it.'
-              : 'Copied to vault.',
-        ),
-      ),
-    );
+              : 'Copied to vault.');
   }
   return true;
 }

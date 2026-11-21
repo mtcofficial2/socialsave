@@ -40,6 +40,8 @@ import 'package:social_save/shared/widgets/page_layout.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
 import 'package:social_save/shared/widgets/video_thumbnail.dart';
 import 'package:social_save/web/web_relay.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 /// Picks the Home screen live: the new one, or the old one when
 /// Settings > Appearance > "Classic home screen" is on.
@@ -160,9 +162,7 @@ class _HomeScreenV2State extends ConsumerState<HomeScreenV2> with WidgetsBinding
     if (n < 2) return false;
     ref.read(homeControllerProvider.notifier).setUrl('');
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Saving $n links.')),
-      );
+      AppSnack.info(context, 'Saving $n links.');
     }
     return true;
   }
@@ -275,7 +275,7 @@ class _HomeScreenV2State extends ConsumerState<HomeScreenV2> with WidgetsBinding
                         ),
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: AppSpacing.xs),
                 Text(tag, style: TextStyle(fontSize: 14, height: 1.35, color: scheme.onSurfaceVariant)),
                 if (DesktopSupport.isWindows)
                   Padding(
@@ -294,7 +294,7 @@ class _HomeScreenV2State extends ConsumerState<HomeScreenV2> with WidgetsBinding
     final scheme = Theme.of(context).colorScheme;
     return [
       UrlInputCard(onAnalyze: _analyze, onPaste: _paste),
-      const SizedBox(height: 16),
+      const SizedBox(height: AppSpacing.lg),
       const FavoriteCreatorsRow(),
       _wakingRow(scheme),
     ];
@@ -319,7 +319,7 @@ class _HomeScreenV2State extends ConsumerState<HomeScreenV2> with WidgetsBinding
             const _HomeTools(),
             const SizedBox(height: 28),
             const SupportedPlatformsSection(),
-            const SizedBox(height: 16),
+            const SizedBox(height: AppSpacing.lg),
             const ComplianceNotice(compact: true),
             SizedBox(height: scheme.brightness == Brightness.dark ? 8 : 4),
           ],
@@ -344,12 +344,12 @@ class _HomeScreenV2State extends ConsumerState<HomeScreenV2> with WidgetsBinding
                 const UpdateCard(),
                 ..._primary(context),
                 const SaveQueueSection(),
-                const SizedBox(height: 24),
+                const SizedBox(height: AppSpacing.xl),
                 const ComplianceNotice(compact: true),
               ],
             ),
           ),
-          const SizedBox(width: 32),
+          const SizedBox(width: AppSpacing.xxl),
           Expanded(
             flex: 5,
             child: ListView(
@@ -430,7 +430,7 @@ class _HomeTools extends ConsumerWidget {
           'Send files, chat, and play what you saved.',
           style: TextStyle(fontSize: 13, height: 1.35, color: scheme.onSurfaceVariant),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: AppSpacing.sm),
         LayoutBuilder(
           builder: (context, constraints) {
             const columns = 4;
@@ -515,7 +515,7 @@ class _QuickTile extends StatelessWidget {
                   decoration: BoxDecoration(color: item.tint.withValues(alpha: 0.14), shape: BoxShape.circle),
                   child: Icon(item.icon, size: 22, color: item.tint),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: AppSpacing.sm),
                 Text(
                   item.label,
                   maxLines: 1,
@@ -614,18 +614,18 @@ class _RecentSection extends ConsumerWidget {
             ),
           ],
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: AppSpacing.xs),
         if (recent.isEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 4, bottom: 8),
             child: DecoratedBox(
               decoration: _softPanel(scheme),
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(AppSpacing.lg),
                 child: Row(
                   children: [
                     Icon(Icons.movie_outlined, color: scheme.primary),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: AppSpacing.md),
                     Expanded(
                       child: Text(
                         'Nothing saved yet. Paste a public link above and it will show up here.',

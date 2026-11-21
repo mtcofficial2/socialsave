@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:social_save/shared/widgets/app_logo.dart';
 import 'package:social_save/shared/widgets/liquid_glass.dart';
 import 'package:social_save/shared/widgets/premium_glass.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 class BrandHeader extends StatelessWidget {
   const BrandHeader({
@@ -118,9 +119,13 @@ class StitchNavBar extends StatelessWidget {
     // system inset, instead of reaching down into the gesture area.
     final inset = MediaQuery.paddingOf(context).bottom;
     final scheme = Theme.of(context).colorScheme;
-    return Padding(
+    // The pill has a fixed height, so its labels stop growing at 1.3x while
+    // the rest of the app follows the system text size.
+    return MediaQuery.withClampedTextScaling(
+      maxScaleFactor: 1.3,
+      child: Padding(
       // 1.0.49: floating pill, 64 px tall, at least 20 px above the bottom edge.
-      padding: EdgeInsets.fromLTRB(16, 0, 16, inset > 10 ? inset + 10 : 20),
+      padding: EdgeInsets.fromLTRB(AppSpacing.lg, 0, AppSpacing.lg, inset > 10 ? inset + 10 : 20),
       child: FloatingGlass(
         radius: 999,
         ghost: true,
@@ -165,6 +170,7 @@ class StitchNavBar extends StatelessWidget {
           ),
         ),
       ),
+      ),
     );
   }
 
@@ -187,7 +193,7 @@ class StitchNavBar extends StatelessWidget {
       child: Semantics(
         button: true,
         selected: selected,
-        label: label,
+        label: badge > 0 ? '$label, $badge active' : label,
         child: Padding(
           padding: const EdgeInsets.all(5),
           child: Material(
@@ -205,13 +211,13 @@ class StitchNavBar extends StatelessWidget {
                 children: [
                   AnimatedScale(
                     scale: selected ? 1.06 : 1.0,
-                    duration: const Duration(milliseconds: 260),
+                    duration: AppDurations.normal + const Duration(milliseconds: 60),
                     curve: Curves.easeOutBack,
                     child: Stack(
                       clipBehavior: Clip.none,
                       children: [
                         AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 200),
+                          duration: AppDurations.normal,
                           child: Icon(
                             selected ? selectedIcon : icon,
                             key: ValueKey(selected),
@@ -234,7 +240,7 @@ class StitchNavBar extends StatelessWidget {
                               alignment: Alignment.center,
                               decoration: BoxDecoration(
                                 color: scheme.primary,
-                                borderRadius: BorderRadius.circular(999),
+                                borderRadius: AppRadii.pillAll,
                                 border: Border.all(
                                   color: scheme.surface,
                                   width: 2,
@@ -242,11 +248,9 @@ class StitchNavBar extends StatelessWidget {
                               ),
                               child: Text(
                                 badge > 9 ? '9+' : '$badge',
-                                style: TextStyle(
-                                  color: scheme.onPrimary,
+                                style: context.tokens.badge.copyWith(
                                   fontSize: 10,
                                   fontWeight: FontWeight.w800,
-                                  height: 1,
                                 ),
                               ),
                             ),
@@ -256,9 +260,8 @@ class StitchNavBar extends StatelessWidget {
                   ),
                   const SizedBox(height: 3),
                   AnimatedDefaultTextStyle(
-                    duration: const Duration(milliseconds: 220),
-                    style: TextStyle(
-                      fontSize: 12,
+                    duration: AppDurations.normal,
+                    style: context.tokens.caption.copyWith(
                       fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
                       color: color,
                       height: 1.1,

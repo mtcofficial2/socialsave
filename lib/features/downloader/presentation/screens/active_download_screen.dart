@@ -18,6 +18,7 @@ import 'package:social_save/shared/widgets/glass.dart';
 import 'package:social_save/core/utils/formatters.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
 import 'package:social_save/shared/widgets/video_thumbnail.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 class ActiveDownloadScreen extends ConsumerWidget {
   const ActiveDownloadScreen({super.key, required this.taskId});
@@ -77,10 +78,10 @@ class ActiveDownloadScreen extends ConsumerWidget {
                     shape: BoxShape.circle,
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: AppSpacing.sm),
               ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: AppSpacing.lg),
             GlassCard(
               clipBehavior: Clip.antiAlias,
               child: Column(
@@ -98,7 +99,7 @@ class ActiveDownloadScreen extends ConsumerWidget {
                     ),
                   ),
                   Padding(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(AppSpacing.lg),
                     child: Column(
                       children: [
                         Row(
@@ -122,7 +123,7 @@ class ActiveDownloadScreen extends ConsumerWidget {
                                 ],
                               ),
                             ),
-                            const SizedBox(width: 12),
+                            const SizedBox(width: AppSpacing.md),
                             Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -157,7 +158,7 @@ class ActiveDownloadScreen extends ConsumerWidget {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: AppSpacing.lg),
                         Row(
                           children: [
                             Text(
@@ -169,7 +170,7 @@ class ActiveDownloadScreen extends ConsumerWidget {
                                 letterSpacing: -1,
                               ),
                             ),
-                            const SizedBox(width: 8),
+                            const SizedBox(width: AppSpacing.sm),
                             Expanded(
                               child: Text(
                                 '${formatters.bytes(task.receivedBytes)} / ${formatters.bytes(task.totalBytes)}',
@@ -197,7 +198,7 @@ class ActiveDownloadScreen extends ConsumerWidget {
                             ),
                           ),
                         ),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: AppSpacing.sm),
                         Align(
                           alignment: Alignment.centerLeft,
                           child: Text(
@@ -212,7 +213,7 @@ class ActiveDownloadScreen extends ConsumerWidget {
                         // 1.0.37: a finished save shows Share / Play only; the
                         // greyed-out Pause and Cancel stayed on screen before.
                         if (task.status != DownloadStatus.completed) ...[
-                        const SizedBox(height: 16),
+                        const SizedBox(height: AppSpacing.lg),
                         Row(
                           children: [
                             Expanded(
@@ -237,7 +238,7 @@ class ActiveDownloadScreen extends ConsumerWidget {
                                 ),
                               ),
                             ),
-                            const SizedBox(width: 12),
+                            const SizedBox(width: AppSpacing.md),
                             Expanded(
                               child: SizedBox(
                                 height: 52,
@@ -262,7 +263,7 @@ class ActiveDownloadScreen extends ConsumerWidget {
                         ],
                         if (task.status == DownloadStatus.failed &&
                             task.errorMessage != null) ...[
-                          const SizedBox(height: 12),
+                          const SizedBox(height: AppSpacing.md),
                           _FailureCard(
                             message: task.errorMessage!,
                             onRetry: () => manager.retry(task.id),
@@ -275,10 +276,10 @@ class ActiveDownloadScreen extends ConsumerWidget {
                           ),
                         ],
                         if (task.status == DownloadStatus.completed) ...[
-                          const SizedBox(height: 12),
+                          const SizedBox(height: AppSpacing.md),
                           _CompletedRow(task: task),
                           if (kIsWeb && (task.errorMessage ?? '').isNotEmpty) ...[
-                            const SizedBox(height: 8),
+                            const SizedBox(height: AppSpacing.sm),
                             Text(
                               task.errorMessage!,
                               style: TextStyle(
@@ -302,7 +303,7 @@ class ActiveDownloadScreen extends ConsumerWidget {
                     'Next in Queue',
                     style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: AppSpacing.sm),
                   CircleAvatar(
                     radius: 10,
                     backgroundColor: scheme.surfaceContainer,
@@ -310,7 +311,7 @@ class ActiveDownloadScreen extends ConsumerWidget {
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               ...queued.map(
                 (item) => GlassCard(
                   child: ListTile(
@@ -345,7 +346,7 @@ class ActiveDownloadScreen extends ConsumerWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
         color: scheme.surfaceContainer,
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: AppRadii.pillAll,
       ),
       child: Text(
         label,
@@ -468,7 +469,7 @@ class _FailureCard extends StatelessWidget {
               color: scheme.onErrorContainer,
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: AppSpacing.xs),
           Text(
             PhoneEngine.display(message),
             style: TextStyle(
@@ -489,7 +490,7 @@ class _FailureCard extends StatelessWidget {
                 label: const Text('Sign in to YouTube'),
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
           ],
           SizedBox(
             width: double.infinity,
@@ -505,7 +506,7 @@ class _FailureCard extends StatelessWidget {
             ),
           ),
           if (onTryServer != null && !PhoneEngine.isBotCheck(message)) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             SizedBox(
               width: double.infinity,
               height: 44,
@@ -545,7 +546,7 @@ class _CompletedRow extends ConsumerWidget {
             label: const Text('Share'),
           ),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: AppSpacing.md),
         Expanded(
           child: FilledButton.icon(
             onPressed: () async {

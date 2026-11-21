@@ -13,6 +13,7 @@ import 'package:social_save/features/updates/update_checker.dart';
 import 'package:social_save/shared/widgets/brand_header.dart';
 import 'package:social_save/shared/widgets/desktop_sidebar.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 class AppShell extends ConsumerWidget {
   const AppShell({super.key, required this.navigationShell});
@@ -54,7 +55,7 @@ class AppShell extends ConsumerWidget {
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 480),
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                padding: const EdgeInsets.fromLTRB(AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.md),
                 child: _MiniProgress(
                   title: current.title,
                   progress: current.progress,
@@ -148,7 +149,7 @@ class AppShell extends ConsumerWidget {
                   onPressed: () => context.push('/chat'),
                   child: const Icon(Icons.forum_rounded),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: AppSpacing.md),
                 FloatingActionButton.small(
                   key: const ValueKey('music-fab'),
                   heroTag: 'music-fab',
@@ -156,7 +157,7 @@ class AppShell extends ConsumerWidget {
                   onPressed: () => context.push('/music'),
                   child: const Icon(Icons.library_music_rounded),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: AppSpacing.md),
                 FloatingActionButton.extended(
                   key: const ValueKey('share-hub-fab'),
                   heroTag: 'share-fab',
@@ -195,8 +196,11 @@ class _MiniProgress extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return FloatingGlass(
-      radius: 24,
+    final tokens = context.tokens;
+    return MediaQuery.withClampedTextScaling(
+      maxScaleFactor: 1.4,
+      child: FloatingGlass(
+      radius: AppRadii.xl,
       bare: true,
       child: Semantics(
         button: true,
@@ -211,7 +215,7 @@ class _MiniProgress extends StatelessWidget {
             child: Row(
               children: [
                 ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: AppRadii.smAll,
                   child: SizedBox(
                     width: 40,
                     height: 40,
@@ -227,7 +231,7 @@ class _MiniProgress extends StatelessWidget {
                           ),
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: AppSpacing.md),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -236,9 +240,9 @@ class _MiniProgress extends StatelessWidget {
                         title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 13,
+                        style: tokens.itemSubtitle.copyWith(
                           fontWeight: FontWeight.w700,
+                          color: scheme.onSurface,
                         ),
                       ),
                       Text(
@@ -246,9 +250,9 @@ class _MiniProgress extends StatelessWidget {
                             ? '${(progress * 100).round()}%  •  $speed  •  ${others + 1} at once'
                             : '${(progress * 100).round()}%  •  $speed',
                         // 1.0.49: accent text on light glass fell under 4.5:1.
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: tokens.caption.copyWith(
                           color: scheme.onSurface.withValues(alpha: 0.72),
                         ),
                       ),
@@ -257,10 +261,12 @@ class _MiniProgress extends StatelessWidget {
                 ),
                 if (onPause != null)
                   IconButton(
+                    tooltip: 'Pause download',
                     onPressed: onPause,
                     icon: const Icon(Icons.pause_rounded, size: 20),
                   ),
                 IconButton(
+                  tooltip: 'Open download',
                   onPressed: onOpen,
                   icon: const Icon(Icons.open_in_new_rounded, size: 18),
                 ),
@@ -268,6 +274,7 @@ class _MiniProgress extends StatelessWidget {
             ),
           ),
         ),
+      ),
       ),
     );
   }

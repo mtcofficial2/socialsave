@@ -17,6 +17,9 @@ import 'package:social_save/features/home/presentation/providers/home_controller
 import 'package:social_save/shared/widgets/empty_state.dart';
 import 'package:social_save/shared/widgets/platform_badge.dart';
 import 'package:social_save/shared/widgets/video_thumbnail.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:social_save/shared/widgets/skeleton.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 class DownloadDetailScreen extends ConsumerWidget {
   const DownloadDetailScreen({super.key, required this.id});
@@ -30,7 +33,7 @@ class DownloadDetailScreen extends ConsumerWidget {
 
     return history.when(
       loading: () => const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
+        body: SkeletonList(count: 3),
       ),
       error: (error, _) => Scaffold(
         appBar: AppBar(title: const Text('Saved video')),
@@ -74,9 +77,9 @@ class DownloadDetailScreen extends ConsumerWidget {
                 durationSeconds: record.durationSeconds,
                 height: 200,
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.lg),
               PlatformBadge(platform: record.platform),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               Text(
                 record.title,
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
@@ -86,10 +89,10 @@ class DownloadDetailScreen extends ConsumerWidget {
                     ),
               ),
               if (record.author != null && record.author!.isNotEmpty) ...[
-                const SizedBox(height: 4),
+                const SizedBox(height: AppSpacing.xs),
                 Text(record.author!, style: TextStyle(color: scheme.onSurfaceVariant)),
               ],
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.md),
               Wrap(
                 spacing: 16,
                 runSpacing: 8,
@@ -99,18 +102,18 @@ class DownloadDetailScreen extends ConsumerWidget {
                 ],
               ),
               if (record.localPath != null && !kIsWeb) ...[
-                const SizedBox(height: 16),
+                const SizedBox(height: AppSpacing.lg),
                 Text(
                   'Saved file',
                   style: TextStyle(fontWeight: FontWeight.w700, color: scheme.onSurface),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: AppSpacing.xs),
                 SelectableText(
                   record.localPath!,
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
-              const SizedBox(height: 24),
+              const SizedBox(height: AppSpacing.xl),
               Row(
                 children: [
                   Expanded(
@@ -123,7 +126,7 @@ class DownloadDetailScreen extends ConsumerWidget {
                       label: const Text('Share'),
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: AppSpacing.md),
                   Expanded(
                     child: FilledButton.icon(
                       onPressed: () => openInAppPlayer(context, record),
@@ -134,7 +137,7 @@ class DownloadDetailScreen extends ConsumerWidget {
                 ],
               ),
               if (DesktopSupport.isWindows && record.localPath != null) ...[
-                const SizedBox(height: 8),
+                const SizedBox(height: AppSpacing.sm),
                 OutlinedButton.icon(
                   onPressed: () => DesktopSupport.revealInFolder(record.localPath!),
                   icon: const Icon(Icons.folder_open_outlined),
@@ -143,7 +146,7 @@ class DownloadDetailScreen extends ConsumerWidget {
               ],
               // Web: sending to a device and the Vault are app-only.
               if (!kIsWeb) ...[
-                const SizedBox(height: 8),
+                const SizedBox(height: AppSpacing.sm),
                 FilledButton.tonalIcon(
                   onPressed: record.localPath == null
                       ? null
@@ -151,7 +154,7 @@ class DownloadDetailScreen extends ConsumerWidget {
                   icon: const Icon(Icons.send_to_mobile_rounded),
                   label: const Text('Send to another phone or PC'),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: AppSpacing.sm),
                 OutlinedButton.icon(
                   onPressed: record.localPath == null
                       ? null
@@ -160,20 +163,18 @@ class DownloadDetailScreen extends ConsumerWidget {
                   label: const Text('Move to vault'),
                 ),
               ],
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               OutlinedButton.icon(
                 onPressed: () async {
                   await Clipboard.setData(ClipboardData(text: record.sourceUrl));
                   if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Link copied. You can download it again later.')),
-                    );
+                    AppSnack.info(context, 'Link copied. You can download it again later.');
                   }
                 },
                 icon: const Icon(Icons.link_rounded),
                 label: const Text('Copy link'),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               OutlinedButton.icon(
                 onPressed: () {
                   ref.read(homeControllerProvider.notifier).setUrl(record.sourceUrl);
@@ -182,7 +183,7 @@ class DownloadDetailScreen extends ConsumerWidget {
                 icon: const Icon(Icons.download_outlined),
                 label: const Text('Download again'),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               TextButton.icon(
                 onPressed: () async {
                   await controller.delete(record.id, deleteFile: true);
@@ -208,9 +209,7 @@ class DownloadDetailScreen extends ConsumerWidget {
       await action();
     } on AppException catch (error) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(error.message)),
-        );
+        AppSnack.error(context, error.message);
       }
     }
   }

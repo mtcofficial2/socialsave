@@ -47,6 +47,8 @@ import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/features/player/player_session.dart';
 import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/widgets/local_video_thumb.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 double _libraryGutter(BuildContext context) {
   final width = MediaQuery.sizeOf(context).width;
@@ -410,9 +412,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
     final path = await DeviceMediaService().resolvePlayablePath(video);
     if (!mounted) return;
     if (path == null || !File(path).existsSync()) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('This video could not be opened.')),
-      );
+      AppSnack.error(context, 'This video could not be opened.');
       return;
     }
     final queue = _device
@@ -454,9 +454,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
     final file = await ref.read(vaultServiceProvider).fileFor(item);
     if (!mounted) return;
     if (!file.existsSync()) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('This vault file is missing.')),
-      );
+      AppSnack.info(context, 'This vault file is missing.');
       return;
     }
     final queue = _vault
@@ -491,9 +489,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
       await DeviceMediaService().deletePublic(video);
     }
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(move ? 'Moved to vault' : 'Copied to vault')),
-    );
+    AppSnack.info(context, move ? 'Moved to vault' : 'Copied to vault');
     await _reload();
   }
 
@@ -559,7 +555,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
                     return Row(
                       children: [
                         SizedBox(width: switchWidth, child: switcher),
-                        const SizedBox(width: 16),
+                        const SizedBox(width: AppSpacing.lg),
                         Expanded(child: _searchField()),
                       ],
                     );
@@ -570,7 +566,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
             if (_tab == 0) ...[
               LayoutBuilder(
                 builder: (context, constraints) {
-                  if (constraints.maxWidth >= 640) return const SizedBox(height: 4);
+                  if (constraints.maxWidth >= 640) return const SizedBox(height: AppSpacing.xs);
                   return _Rise(
                     index: 2,
                     child: Padding(
@@ -580,7 +576,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
                   );
                 },
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.md),
               _Rise(
                 index: 3,
                 child: SizedBox(
@@ -636,7 +632,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
                       height: 14,
                       child: CircularProgressIndicator(strokeWidth: 2, color: look.accent),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: AppSpacing.sm),
                     Text(
                       'Looking for videos on this PC. ${_device.length} found',
                       style: TextStyle(color: look.muted, fontSize: 12),
@@ -644,7 +640,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
                   ],
                 ),
               ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             Expanded(
               child: LayoutBuilder(
                 builder: (context, constraints) {
@@ -817,7 +813,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
               style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
             ),
           ),
-          const SizedBox(width: 4),
+          const SizedBox(width: AppSpacing.xs),
         ],
       ),
     );
@@ -827,7 +823,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
     final scheme = Theme.of(context).colorScheme;
     return Container(
       height: 52,
-      padding: const EdgeInsets.all(4),
+      padding: const EdgeInsets.all(AppSpacing.xs),
       decoration: BoxDecoration(
         color: scheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(26),
@@ -876,7 +872,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(icon, size: 18, color: fg),
-              const SizedBox(width: 8),
+              const SizedBox(width: AppSpacing.sm),
               Text(label, style: TextStyle(color: fg, fontWeight: on ? FontWeight.w800 : FontWeight.w600, fontSize: 14)),
             ],
           ),
@@ -989,7 +985,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
       child: Row(
         children: [
           Icon(Icons.lock_rounded, color: look.accent, size: 18),
-          const SizedBox(width: 8),
+          const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: Text(
               'Private PIN Vault · AES-256',
@@ -1011,7 +1007,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
               padding: const EdgeInsets.symmetric(horizontal: 10),
               minimumSize: const Size(0, 32),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: AppRadii.mdAll,
                 side: BorderSide(color: look.border),
               ),
             ),
@@ -1173,15 +1169,9 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
         await ref.read(vaultServiceProvider).delete(item);
       }
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            copy
+      AppSnack.info(context, copy
                 ? 'Copied to Library. The vault copy is still locked.'
-                : 'Moved to Library. It is no longer in the vault.',
-          ),
-        ),
-      );
+                : 'Moved to Library. It is no longer in the vault.');
       setState(() => _tab = 0);
       await _reload();
     } on StateError catch (error) {
@@ -1191,11 +1181,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
       ).showSnackBar(SnackBar(content: Text(error.message)));
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Could not move this video back to Library.'),
-        ),
-      );
+      AppSnack.error(context, 'Could not move this video back to Library.');
     }
   }
 
@@ -1498,7 +1484,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
           ListTile(
             leading: const Icon(Icons.tv_rounded),
             title: const Text('Play on computer'),
-            subtitle: const Text('A Social Save computer on this Wi-Fi'),
+            subtitle: const Text('A SocialSave computer on this Wi-Fi'),
             onTap: () => Navigator.pop(context, 'tv'),
           ),
         ListTile(
@@ -1583,9 +1569,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
       final path = await DeviceMediaService().resolvePlayablePath(video);
       if (!mounted) return;
       if (path == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('That video is not on this phone.')),
-        );
+        AppSnack.info(context, 'That video is not on this phone.');
         return;
       }
       final refresh = await offerTiktokReady(context, path: path, title: video.title);
@@ -1615,11 +1599,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
         final ok = await PhoneBody.playOnTv(path: path, title: video.title);
         if (!mounted) return;
         if (!ok) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('No computer is on this Wi-Fi, and no TV app could open the video.'),
-            ),
-          );
+          AppSnack.info(context, 'No computer is on this Wi-Fi, and no TV app could open the video.');
         }
         return;
       }
@@ -1824,17 +1804,11 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
       _selected.removeWhere(goneIds.contains);
       if (_selected.isEmpty) _selectMode = false;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          deleted >= videos.length
+    AppSnack.success(context, deleted >= videos.length
               ? 'Deleted ${videos.length == 1 ? '1 video' : '${videos.length} videos'}${DesktopSupport.isWindows ? ' (moved to the Recycle Bin)' : ''}.'
               : deleted == 0
               ? 'Nothing was deleted.'
-              : 'Deleted $deleted of ${videos.length}. The rest were kept.',
-        ),
-      ),
-    );
+              : 'Deleted $deleted of ${videos.length}. The rest were kept.');
     ref.invalidate(downloadsControllerProvider);
   }
 
@@ -1861,9 +1835,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
     if (name == null || name.isEmpty) return;
     final ok = await DeviceMediaService().renamePublic(video, name);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(ok ? 'Renamed.' : 'Could not rename this video.')),
-    );
+    AppSnack.error(context, ok ? 'Renamed.' : 'Could not rename this video.');
     await _reload();
   }
 
@@ -2352,7 +2324,7 @@ class _VideoCard extends StatelessWidget {
     final card = Material(
       color: look.card,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: AppRadii.xlAll,
         side: BorderSide(
           color: missing
               ? Colors.transparent
@@ -2379,7 +2351,7 @@ class _VideoCard extends StatelessWidget {
           children: [
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.all(8),
+                padding: const EdgeInsets.all(AppSpacing.sm),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(18),
                   child: missing
@@ -2454,7 +2426,7 @@ class _VideoCard extends StatelessWidget {
                     foregroundColor: look.danger,
                     backgroundColor: look.dangerDim,
                     minimumSize: const Size.fromHeight(48),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    shape: RoundedRectangleBorder(borderRadius: AppRadii.lgAll),
                   ),
                   onPressed: onDelete,
                   icon: const Icon(Icons.delete_forever_rounded, size: 16),
@@ -2598,7 +2570,7 @@ class _VideoCard extends StatelessWidget {
                         shape: BoxShape.circle,
                       ),
                     ),
-                    const SizedBox(width: 4),
+                    const SizedBox(width: AppSpacing.xs),
                     Text(
                       platformName,
                       style: const TextStyle(
@@ -2623,7 +2595,7 @@ class _VideoCard extends StatelessWidget {
                 customBorder: const CircleBorder(),
                 onTap: onFavorite,
                 child: Padding(
-                  padding: const EdgeInsets.all(4),
+                  padding: const EdgeInsets.all(AppSpacing.xs),
                   child: Icon(
                     favorite
                         ? Icons.favorite_rounded
@@ -2666,7 +2638,7 @@ class _VideoCard extends StatelessWidget {
               child: Align(
                 alignment: Alignment.topRight,
                 child: Padding(
-                  padding: const EdgeInsets.all(8),
+                  padding: const EdgeInsets.all(AppSpacing.sm),
                   child: Container(
                     width: 22,
                     height: 22,
@@ -2961,7 +2933,7 @@ class _V2Empty extends StatelessWidget {
                     style: TextStyle(fontSize: 21, fontWeight: FontWeight.w800, letterSpacing: -0.4, color: look.ink),
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: AppSpacing.sm),
                 Text(
                   message,
                   textAlign: TextAlign.center,

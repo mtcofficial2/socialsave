@@ -108,7 +108,7 @@ class _BackgroundDetectScreenState extends ConsumerState<BackgroundDetectScreen>
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
           children: [
             Row(children: [
-              IconButton(onPressed: () => context.pop(), icon: const Icon(Icons.arrow_back_rounded)),
+              IconButton(tooltip: 'Back', onPressed: () => context.pop(), icon: const Icon(Icons.arrow_back_rounded)),
             ]),
             const Padding(
               padding: EdgeInsets.fromLTRB(4, 4, 4, 6),

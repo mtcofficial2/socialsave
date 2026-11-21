@@ -26,6 +26,8 @@ import 'package:social_save/shared/widgets/skeleton.dart';
 import 'package:social_save/shared/widgets/empty_state.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
 import 'package:social_save/shared/widgets/video_thumbnail.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 class DownloadsScreen extends ConsumerStatefulWidget {
   const DownloadsScreen({super.key});
@@ -162,7 +164,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                         return Column(
                           children: [
                             search,
-                            const SizedBox(height: 8),
+                            const SizedBox(height: AppSpacing.sm),
                             filters,
                           ],
                         );
@@ -170,14 +172,14 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                       return Row(
                         children: [
                           Expanded(child: filters),
-                          const SizedBox(width: 16),
+                          const SizedBox(width: AppSpacing.lg),
                           SizedBox(width: 320, child: search),
                         ],
                       );
                     },
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: AppSpacing.sm),
                 Expanded(
                   child: empty
                       ? EmptyState(
@@ -204,7 +206,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                                   padding: const EdgeInsets.only(bottom: 12),
                                   child: GlassCard(
                                     child: Padding(
-                                      padding: const EdgeInsets.all(16),
+                                      padding: const EdgeInsets.all(AppSpacing.lg),
                                       child: Column(
                                         children: [
                                           Row(
@@ -236,7 +238,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                                                   ],
                                                 ),
                                               ),
-                                              const SizedBox(width: 12),
+                                              const SizedBox(width: AppSpacing.md),
                                               Expanded(
                                                 child: Column(
                                                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -265,7 +267,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                                                         ),
                                                       ],
                                                     ),
-                                                    const SizedBox(height: 4),
+                                                    const SizedBox(height: AppSpacing.xs),
                                                     Text(
                                                       task.title,
                                                       maxLines: 1,
@@ -307,6 +309,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                                                       icon: const Icon(Icons.play_arrow_rounded, size: 18),
                                                     ),
                                                   IconButton(
+                                                    tooltip: 'Pause',
                                                     onPressed: task.status.canPause
                                                         ? () => ref
                                                             .read(downloadManagerProvider.notifier)
@@ -315,6 +318,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                                                     icon: const Icon(Icons.pause, size: 18),
                                                   ),
                                                   IconButton(
+                                                    tooltip: 'Cancel download',
                                                     onPressed: () => ref
                                                         .read(downloadManagerProvider.notifier)
                                                         .cancel(task.id),
@@ -324,7 +328,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                                               ),
                                             ],
                                           ),
-                                          const SizedBox(height: 12),
+                                          const SizedBox(height: AppSpacing.md),
                                           ClipRRect(
                                             borderRadius: BorderRadius.circular(99),
                                             // Glides between updates instead of stepping.
@@ -397,7 +401,7 @@ class _DownloadsHeading extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text('Downloads', style: pageTitleStyle(context)),
-          const SizedBox(height: 4),
+          const SizedBox(height: AppSpacing.xs),
           Text(
             'Saves in progress and videos already on this device.',
             style: TextStyle(fontSize: 13, height: 1.35, color: scheme.onSurfaceVariant),
@@ -430,10 +434,10 @@ class _FilterChip extends StatelessWidget {
       padding: const EdgeInsets.only(right: 8),
       child: Material(
         color: selected ? scheme.primaryContainer : scheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: AppRadii.pillAll,
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(999),
+          borderRadius: AppRadii.pillAll,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Row(
@@ -454,7 +458,7 @@ class _FilterChip extends StatelessWidget {
                       color: highlightCount && !selected
                           ? scheme.secondaryContainer
                           : Colors.white.withValues(alpha: selected ? 0.2 : 0.0),
-                      borderRadius: BorderRadius.circular(999),
+                      borderRadius: AppRadii.pillAll,
                     ),
                     child: Text(
                       count!,
@@ -494,14 +498,14 @@ class _FailedCard extends ConsumerWidget {
       padding: const EdgeInsets.only(bottom: 12),
       child: GlassCard(
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppSpacing.lg),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(task.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
-              const SizedBox(height: 4),
+              const SizedBox(height: AppSpacing.xs),
               Text(why, style: TextStyle(color: scheme.error, height: 1.35)),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               Align(
                 alignment: Alignment.centerRight,
                 child: FilledButton.tonalIcon(
@@ -606,7 +610,7 @@ class _HistoryCard extends ConsumerWidget {
       padding: const EdgeInsets.symmetric(horizontal: 24),
       decoration: BoxDecoration(color: scheme.secondaryContainer, borderRadius: BorderRadius.circular(20)),
       alignment: align,
-      child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon), const SizedBox(width: 8), Text(label)]),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon), const SizedBox(width: AppSpacing.sm), Text(label)]),
     );
   }
 
@@ -619,7 +623,7 @@ class _HistoryCard extends ConsumerWidget {
       padding: const EdgeInsets.only(bottom: 12),
       child: GlassCard(
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppSpacing.lg),
           child: Column(
             children: [
               Row(
@@ -649,7 +653,7 @@ class _HistoryCard extends ConsumerWidget {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: AppSpacing.md),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -660,7 +664,7 @@ class _HistoryCard extends ConsumerWidget {
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                               decoration: BoxDecoration(
                                 color: brand.withValues(alpha: 0.12),
-                                borderRadius: BorderRadius.circular(999),
+                                borderRadius: AppRadii.pillAll,
                               ),
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
@@ -691,7 +695,7 @@ class _HistoryCard extends ConsumerWidget {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 4),
+                        const SizedBox(height: AppSpacing.xs),
                         Text(
                           record.title,
                           maxLines: 1,
@@ -724,7 +728,7 @@ class _HistoryCard extends ConsumerWidget {
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               Row(
                 children: [
                   Icon(Icons.folder_outlined, size: 16, color: scheme.onSurfaceVariant),
@@ -737,7 +741,7 @@ class _HistoryCard extends ConsumerWidget {
                   ),
                   if (!_onOtherDevice) ...[
                     _roundIcon(context, Icons.share_outlined, () => _handle(context, ref, 'share')),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: AppSpacing.sm),
                   ],
                   _roundIcon(context, _onOtherDevice ? Icons.download_rounded : Icons.open_in_new, () => _handle(context, ref, 'open')),
                 ],
@@ -771,9 +775,7 @@ class _HistoryCard extends ConsumerWidget {
           if (kIsWeb) {
             await ref.read(webLibraryProvider.notifier).update(record.id, (m) => m.copyWith(vault: true));
             if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Moved to the Vault. Open it from Library.')),
-              );
+              AppSnack.info(context, 'Moved to the Vault. Open it from Library.');
             }
           } else {
             await moveDownloadToVault(context, ref, record);
@@ -782,9 +784,7 @@ class _HistoryCard extends ConsumerWidget {
           final path = record.localPath;
           if (path == null || path.isEmpty) {
             if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('That picture is not on this device.')),
-              );
+              AppSnack.info(context, 'That picture is not on this device.');
             }
           } else {
             await useDeviceCameraDetails(context, path);
@@ -807,7 +807,7 @@ class _HistoryCard extends ConsumerWidget {
       }
     } on AppException catch (error) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+        AppSnack.error(context, error.message);
       }
     }
   }

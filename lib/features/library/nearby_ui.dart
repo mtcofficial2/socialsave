@@ -217,6 +217,7 @@ class NearbyIncomingCard extends StatelessWidget {
                         ),
                       if (v.done)
                         IconButton(
+                          tooltip: 'Close',
                           onPressed: () => NearbyService.incoming.value = null,
                           icon: const Icon(Icons.close_rounded),
                         ),
@@ -339,7 +340,7 @@ class _NearbyDeviceChipsState extends State<NearbyDeviceChips> {
               ActionChip(
                 avatar: const Icon(Icons.notes_rounded, size: 18),
                 label: const Text('Phone log'),
-                tooltip: 'Read what Social Save did on the plugged-in phone',
+                tooltip: 'Read what SocialSave did on the plugged-in phone',
                 onPressed: () => showPhoneLog(context),
               ),
             if (cable && Plat.isWindows)

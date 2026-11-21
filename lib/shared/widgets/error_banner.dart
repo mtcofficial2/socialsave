@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:social_save/core/engine/phone_engine.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 class ErrorBanner extends StatelessWidget {
   const ErrorBanner({
@@ -29,7 +30,7 @@ class ErrorBanner extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
           color: scheme.errorContainer,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: AppRadii.mdAll,
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,

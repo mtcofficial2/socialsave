@@ -8,6 +8,7 @@ import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/features/library/bundle_transfer.dart';
 import 'package:social_save/features/library/bundle_ui.dart';
 import 'package:social_save/features/library/nearby_service.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
 
 /// One launchable app on this phone, with the APK files a send can use.
 class PhoneApp {
@@ -190,7 +191,7 @@ class _AppShareScreenState extends State<AppShareScreen> {
     final bundle = bundleForApps(chosen);
     if (bundle == null) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not read those apps.')));
+      AppSnack.error(context, 'Could not read those apps.');
       return;
     }
     final device = widget.device;

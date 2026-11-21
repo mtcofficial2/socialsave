@@ -17,6 +17,8 @@ import 'package:social_save/shared/models/media_format.dart';
 import 'package:social_save/shared/models/playlist_entry.dart';
 import 'package:social_save/shared/widgets/empty_state.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 class PlaylistScreen extends ConsumerStatefulWidget {
   const PlaylistScreen({super.key, required this.url});
@@ -161,11 +163,7 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
       targets.add(entry);
     }
     if (targets.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('These rows are channel tabs, not videos.'),
-        ),
-      );
+      AppSnack.info(context, 'These rows are channel tabs, not videos.');
       return;
     }
     setState(() {
@@ -248,11 +246,7 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
       }
       await notifier.add(home, name: _creatorName, avatarUrl: _creatorAvatar);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Saved on Home. Tap the creator there next time.'),
-        ),
-      );
+      AppSnack.success(context, 'Saved on Home. Tap the creator there next time.');
     } finally {
       _favBusy = false;
     }
@@ -291,7 +285,7 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
           Row(
             children: [
               _CreatorMark(name: name, avatarUrl: avatar),
-              const SizedBox(width: 12),
+              const SizedBox(width: AppSpacing.md),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -341,9 +335,7 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
       await FollowCreator.unfollow(_listUrl());
       if (!mounted) return;
       setState(() => _following = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Overnight checks stopped for this set.')),
-      );
+      AppSnack.info(context, 'Overnight checks stopped for this set.');
       return;
     }
     await FollowCreator.follow(
@@ -353,13 +345,7 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
     );
     if (!mounted) return;
     setState(() => _following = true);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'New public posts from this set will be queued overnight. The posts already listed stay as they are.',
-        ),
-      ),
-    );
+    AppSnack.info(context, 'New public posts from this set will be queued overnight. The posts already listed stay as they are.');
   }
 
   @override
@@ -487,7 +473,7 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
                   ),
                 ),
                 if (canFollowSet(widget.url)) ...[
-                  const SizedBox(height: 8),
+                  const SizedBox(height: AppSpacing.sm),
                   OutlinedButton.icon(
                     onPressed: _toggleFollow,
                     style: OutlinedButton.styleFrom(
@@ -551,7 +537,7 @@ class _VideoTile extends StatelessWidget {
       child: Material(
         color: look.card,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(24),
+          borderRadius: AppRadii.xlAll,
           side: BorderSide(
             color: picked ? look.accent : look.border.withValues(alpha: 0.45),
             width: picked ? 2 : 1,

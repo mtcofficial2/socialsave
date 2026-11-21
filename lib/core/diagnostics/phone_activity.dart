@@ -159,8 +159,8 @@ class PhoneActivity {
             'at': DateTime.now().toUtc().toIso8601String(),
             'kind': 'note',
             'title': 'Usage access is off',
-            'detail': 'Allow Social Save under Usage access on this phone to see the other apps it uses.',
-            'text': 'Allow Social Save under Usage access on this phone to see the other apps it uses.',
+            'detail': 'Allow SocialSave under Usage access on this phone to see the other apps it uses.',
+            'text': 'Allow SocialSave under Usage access on this phone to see the other apps it uses.',
           },
         ];
       }

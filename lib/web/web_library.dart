@@ -19,6 +19,7 @@ import 'package:social_save/shared/widgets/video_thumbnail.dart';
 import 'package:social_save/web/web_pages.dart';
 import 'package:social_save/web/web_saver.dart';
 import 'package:social_save/web/web_video.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
 
 // ---------------------------------------------------------------- metadata
 
@@ -269,9 +270,7 @@ class _WebPlayerScreenState extends ConsumerState<WebPlayerScreen> {
     if (!ok && item.sourceUrl != null) {
       await Clipboard.setData(ClipboardData(text: item.sourceUrl!));
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Link copied.')),
-        );
+        AppSnack.info(context, 'Link copied.');
       }
     }
   }
@@ -293,9 +292,7 @@ class _WebPlayerScreenState extends ConsumerState<WebPlayerScreen> {
               onPressed: () async {
                 final ok = await webSaveStoredVideo(_item.recordId!, '${_item.title}.mp4');
                 if (!ok && context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('No stored copy in this browser.')),
-                  );
+                  AppSnack.info(context, 'No stored copy in this browser.');
                 }
               },
             ),

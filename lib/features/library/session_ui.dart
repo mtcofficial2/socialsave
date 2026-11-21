@@ -25,6 +25,7 @@ import 'package:social_save/shared/routing/app_router.dart';
 import 'package:social_save/core/notifications/notification_service.dart';
 import 'package:social_save/features/library/usb_link.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
 
 /// Hooks [ShareSession] to the UI. Called from installNearbyUi().
 void installSessionUi() {
@@ -843,12 +844,10 @@ class _SessionScreenState extends State<SessionScreen> with SingleTickerProvider
     }
     if (!mounted) return;
     if (files.isNotEmpty) ShareSession.enqueue(files);
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text([
+    AppSnack.error(context, [
         if (files.isNotEmpty) 'Sending ${files.length} item${files.length == 1 ? '' : 's'}',
         if (missing > 0) '$missing could not be opened',
-      ].join(' · ')),
-    ));
+      ].join(' · '));
     if (files.isNotEmpty) _tabs.animateTo(1);
   }
 
@@ -862,7 +861,7 @@ class _SessionScreenState extends State<SessionScreen> with SingleTickerProvider
       if (mounted) _tabs.animateTo(1);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not open the picker: $e')));
+        AppSnack.error(context, 'Could not open the picker: $e');
       }
     } finally {
       if (mounted) setState(() => _picking = false);
@@ -875,7 +874,7 @@ class _SessionScreenState extends State<SessionScreen> with SingleTickerProvider
     final err = await ShareSession.reconnect();
     if (!mounted) return;
     setState(() => _reconnecting = false);
-    if (err != null) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+    if (err != null) AppSnack.info(context, err);
   }
 
   void _openPath(String path, String name) {

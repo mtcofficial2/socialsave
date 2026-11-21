@@ -150,7 +150,7 @@ List<WindowsImage> _windowsLogo() {
   return [
     WindowsImage(
       WindowsImage.getAssetUri('assets/brand/icon_192.png'),
-      altText: 'Social Save',
+      altText: 'SocialSave',
       placement: WindowsImagePlacement.appLogoOverride,
       crop: WindowsImageCrop.circle,
     ),

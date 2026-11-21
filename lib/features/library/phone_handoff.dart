@@ -49,6 +49,7 @@ import 'package:social_save/shared/routing/app_router.dart';
 import 'package:social_save/features/home/presentation/providers/home_controller.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:social_save/web/web_pages.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
 
 /// Sends one video to another SocialSave app (phone or PC) on the same Wi-Fi.
 ///
@@ -2405,9 +2406,7 @@ Future<bool> _receiveHandoff(BuildContext context, String raw, {String? mode, bo
 
 Future<void> showKeepSound(BuildContext context, String path, {String? title}) async {
   if (!Plat.isAndroid) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Saving the sound into Music runs on the phone.')),
-    );
+    AppSnack.info(context, 'Saving the sound into Music runs on the phone.');
     return;
   }
   final messenger = ScaffoldMessenger.of(context);

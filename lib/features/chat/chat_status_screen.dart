@@ -15,6 +15,8 @@ import 'package:social_save/features/chat/emoji_panel.dart';
 import 'package:social_save/features/chat/link_text.dart';
 import 'package:social_save/features/chat/status_fonts.dart';
 import 'package:social_save/features/chat/status_link_card.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:social_save/shared/widgets/skeleton.dart';
 
 const _seenKey = 'chat.status.seen.v1';
 const _likedKey = 'chat.status.liked.v1';
@@ -34,9 +36,7 @@ Future<void> openQuotedStatus(BuildContext context, String id) async {
       }
     }
     if (hit == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('That status is no longer up.')),
-      );
+      AppSnack.info(context, 'That status is no longer up.');
       return;
     }
     final owner = hit.name.trim();
@@ -62,9 +62,7 @@ Future<void> openQuotedStatus(BuildContext context, String id) async {
     );
   } catch (error) {
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(chatErrorText(error))),
-    );
+    AppSnack.error(context, chatErrorText(error));
   }
 }
 
@@ -267,7 +265,7 @@ class _ChatStatusScreenState extends State<ChatStatusScreen> {
         title: const Text('Status'),
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const SkeletonList(count: 6, leadingSize: 56, leadingRadius: 28)
           : RefreshIndicator(
               onRefresh: _load,
               child: ListView(
@@ -666,9 +664,7 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
     } catch (error) {
       if (!mounted) return false;
       setState(() => _sending = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(chatErrorText(error))),
-      );
+      AppSnack.error(context, chatErrorText(error));
       return false;
     } finally {
       if (mounted && !_replyFocus.hasFocus) _continue();
@@ -717,7 +713,7 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
     } catch (error) {
       if (!mounted) return;
       setState(() => _deleting = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(chatErrorText(error))));
+      AppSnack.error(context, chatErrorText(error));
       _continue();
     }
   }
@@ -853,6 +849,7 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
                         icon: const Icon(Icons.delete_outline, color: Colors.white),
                       ),
                     IconButton(
+                      tooltip: 'Close',
                       onPressed: () => Navigator.of(context).pop(),
                       icon: const Icon(Icons.close, color: Colors.white),
                     ),
@@ -1168,7 +1165,7 @@ class _StatusComposerState extends State<_StatusComposer> {
     } catch (error) {
       if (!mounted) return;
       final message = error is StateError ? error.message : chatErrorText(error);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      AppSnack.info(context, message);
     }
   }
 
@@ -1214,7 +1211,7 @@ class _StatusComposerState extends State<_StatusComposer> {
     } catch (error) {
       if (!mounted) return;
       setState(() => _busy = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(chatErrorText(error))));
+      AppSnack.error(context, chatErrorText(error));
     }
   }
 

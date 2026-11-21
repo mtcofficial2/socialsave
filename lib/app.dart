@@ -70,7 +70,9 @@ class SocialSaveApp extends ConsumerWidget {
         );
         final scaled = MediaQuery(
           data: MediaQuery.of(context).copyWith(
-            textScaler: MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.3),
+            // Honour large accessibility text up to 2x. Fixed-height chrome (tab
+            // bar, sidebar, mini player) clamps locally instead.
+            textScaler: MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 2.0),
           ),
           child: app,
         );

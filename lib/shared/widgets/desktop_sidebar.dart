@@ -5,6 +5,7 @@ import 'package:social_save/shared/widgets/premium_glass.dart';
 import 'package:social_save/core/constants/app_constants.dart';
 import 'package:social_save/shared/widgets/app_logo.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 class DesktopSidebar extends StatelessWidget {
   const DesktopSidebar({
@@ -29,7 +30,11 @@ class DesktopSidebar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return SizedBox(
+    final tokens = context.tokens;
+    // Fixed-width rail with fixed-height slots: labels stop growing at 1.3x.
+    return MediaQuery.withClampedTextScaling(
+      maxScaleFactor: 1.3,
+      child: SizedBox(
       width: kDesktopSidebarWidth,
       // 1.0.49: the rail is a glass column. Painted only (no backdrop
       // blur), so the whole window does not re-blur on every repaint.
@@ -61,7 +66,7 @@ class DesktopSidebar extends StatelessWidget {
                 onSelect: onSelect,
               ),
               if (onChat != null) ...[
-                const SizedBox(height: 10),
+                const SizedBox(height: AppSpacing.sm),
                 TextButton.icon(
                   key: const ValueKey('sidebar-chat'),
                   onPressed: onChat,
@@ -70,7 +75,7 @@ class DesktopSidebar extends StatelessWidget {
                 ),
               ],
               if (onMusic != null) ...[
-                const SizedBox(height: 10),
+                const SizedBox(height: AppSpacing.sm),
                 TextButton.icon(
                   key: const ValueKey('sidebar-music'),
                   onPressed: onMusic,
@@ -79,7 +84,7 @@ class DesktopSidebar extends StatelessWidget {
                 ),
               ],
               if (onShare != null) ...[
-                const SizedBox(height: 10),
+                const SizedBox(height: AppSpacing.md),
                 FilledButton.tonalIcon(
                   key: const ValueKey('sidebar-share'),
                   onPressed: onShare,
@@ -89,19 +94,16 @@ class DesktopSidebar extends StatelessWidget {
               ],
               const Spacer(),
               Padding(
-                padding: const EdgeInsets.fromLTRB(12, 12, 8, 0),
+                padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.sm, 0),
                 child: Text(
                   'SocialSave ${AppConstants.appVersion}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: scheme.onSurfaceVariant,
-                  ),
+                  style: tokens.caption,
                 ),
               ),
             ],
           ),
         ),
+      ),
       ),
     );
   }
@@ -202,14 +204,15 @@ class _SideDestinationState extends State<_SideDestination> {
     final row = Row(
       children: [
         Icon(selected ? widget.selectedIcon : widget.icon, size: 22, color: color),
-        const SizedBox(width: 12),
+        const SizedBox(width: AppSpacing.md),
         Expanded(
           child: Text(
             widget.label,
-            style: TextStyle(
-              fontSize: 14,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: context.tokens.label.copyWith(
               fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-              color: selected ? scheme.primary : scheme.onSurfaceVariant,
+              color: color,
             ),
           ),
         ),
@@ -220,15 +223,11 @@ class _SideDestinationState extends State<_SideDestination> {
             alignment: Alignment.center,
             decoration: BoxDecoration(
               color: scheme.primary,
-              borderRadius: BorderRadius.circular(999),
+              borderRadius: AppRadii.pillAll,
             ),
             child: Text(
               widget.badge > 9 ? '9+' : '${widget.badge}',
-              style: TextStyle(
-                color: scheme.onPrimary,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-              ),
+              style: context.tokens.badge,
             ),
           ),
       ],
@@ -246,14 +245,14 @@ class _SideDestinationState extends State<_SideDestination> {
         child: GestureDetector(
           onTap: widget.onTap,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 240),
-            curve: Curves.easeOutCubic,
+            duration: AppDurations.normal,
+            curve: AppDurations.curve,
             alignment: Alignment.centerLeft,
             decoration: BoxDecoration(
               color: !selected && _hover
                   ? scheme.onSurface.withValues(alpha: 0.06)
                   : Colors.transparent,
-              borderRadius: BorderRadius.circular(999),
+              borderRadius: AppRadii.pillAll,
             ),
             padding: const EdgeInsets.symmetric(horizontal: 14),
             child: row,

@@ -46,6 +46,6 @@ void main() {
     final line = returnReminderMessage(DateTime(2026, 1, 1, 9));
     expect(returnReminderLines, contains(line));
     expect(line, returnReminderLines.first);
-    expect(returnReminderTitle, 'Open Social Save');
+    expect(returnReminderTitle, 'Open SocialSave');
   });
 }

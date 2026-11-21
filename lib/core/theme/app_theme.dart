@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:social_save/core/theme/app_colors.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 import 'package:social_save/shared/widgets/liquid_glass.dart';
 
 class AppTheme {
@@ -59,6 +60,7 @@ class AppTheme {
 
     return base.copyWith(
       textTheme: text,
+      extensions: <ThemeExtension<dynamic>>[AppTokens.from(text, scheme)],
       visualDensity: VisualDensity.standard,
       // Material 3 "fade forwards" for pushed pages (Preview, player,
       // playlist, settings pages). Pages here have see-through backgrounds,

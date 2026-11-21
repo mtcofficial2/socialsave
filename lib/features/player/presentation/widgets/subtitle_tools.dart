@@ -8,6 +8,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/core/storage/media_store_service.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
 
 /// Subtitle look, remembered between videos.
 class SubtitlePrefs {
@@ -54,9 +55,7 @@ class SubtitleToolsRow extends StatelessWidget {
     final raw = medias.isEmpty ? '' : medias.first.uri;
     final path = raw.startsWith('file://') ? Uri.parse(raw).toFilePath() : raw;
     if (path.isEmpty || path.startsWith('http')) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Burning captions works on a video saved on this phone.')),
-      );
+      AppSnack.info(context, 'Burning captions works on a video saved on this phone.');
       return;
     }
     final yes = await showDialog<bool>(
@@ -99,7 +98,7 @@ class SubtitleToolsRow extends StatelessWidget {
       onChanged();
     } catch (_) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('That subtitle file could not be loaded.')));
+        AppSnack.error(context, 'That subtitle file could not be loaded.');
       }
     }
   }

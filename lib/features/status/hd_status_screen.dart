@@ -7,6 +7,7 @@ import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/features/library/session_media_picker.dart';
 import 'package:social_save/shared/widgets/liquid_glass.dart';
 import 'package:social_save/shared/widgets/local_video_thumb.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
 
 /// Home row that opens the HD status flow.
 class HdStatusEntry extends StatelessWidget {
@@ -197,15 +198,11 @@ class _HdStatusScreenState extends State<HdStatusScreen> {
       });
       if (!mounted) return;
       if (code == 'missing_app') {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('$name is not installed.')),
-        );
+        AppSnack.info(context, '$name is not installed.');
       }
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not open $name.')),
-      );
+      AppSnack.error(context, 'Could not open $name.');
     }
   }
 
@@ -222,6 +219,7 @@ class _HdStatusScreenState extends State<HdStatusScreen> {
               child: Row(
                 children: [
                   IconButton(
+                    tooltip: 'Back',
                     onPressed: () => context.pop(),
                     icon: const Icon(Icons.arrow_back_rounded),
                   ),
@@ -241,7 +239,7 @@ class _HdStatusScreenState extends State<HdStatusScreen> {
                   Padding(
                     padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
                     child: Text(
-                      'Pick a photo or video you already have. Social Save prepares it, then you post that file. It does not download anyone\'s stories, add a fade, or invent detail that was not in the original.',
+                      'Pick a photo or video you already have. SocialSave prepares it, then you post that file. It does not download anyone\'s stories, add a fade, or invent detail that was not in the original.',
                       style: TextStyle(height: 1.4, color: scheme.onSurfaceVariant),
                     ),
                   ),
@@ -249,7 +247,7 @@ class _HdStatusScreenState extends State<HdStatusScreen> {
                     Padding(
                       padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
                       child: Text(
-                        'This runs on the phone. Open Social Save there, choose the photo or video, then share the prepared file to WhatsApp, Instagram, or Facebook.',
+                        'This runs on the phone. Open SocialSave there, choose the photo or video, then share the prepared file to WhatsApp, Instagram, or Facebook.',
                         style: TextStyle(height: 1.4, color: scheme.onSurface),
                       ),
                     )

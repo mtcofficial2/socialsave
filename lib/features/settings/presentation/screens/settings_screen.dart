@@ -39,6 +39,8 @@ import 'package:social_save/features/library/share_hub.dart';
 import 'package:social_save/features/settings/presentation/widgets/engine_section.dart';
 import 'package:social_save/features/settings/presentation/widgets/phone_engine_section.dart';
 import 'package:social_save/features/settings/presentation/widgets/storage_section.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -55,10 +57,10 @@ class SettingsScreen extends ConsumerWidget {
           padding: pagePadding(context, top: 12, bottom: 32 + MediaQuery.paddingOf(context).bottom),
           children: [
             Text('Settings', style: pageTitleStyle(context)),
-            const SizedBox(height: 4),
+            const SizedBox(height: AppSpacing.xs),
             Text(
               'Downloads, playback, and how this device behaves.',
-              style: TextStyle(fontSize: 13, height: 1.35, color: scheme.onSurfaceVariant),
+              style: context.tokens.itemSubtitle,
             ),
             const SizedBox(height: 20),
             const _SettingsSearch(),
@@ -72,23 +74,23 @@ class SettingsScreen extends ConsumerWidget {
                 trailing: const Icon(Icons.chevron_right_rounded),
                 onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const TrustedDevicesScreen())),
               ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             DesktopColumns(
               sections: [
-                _Sec(title: 'Appearance & Theme', keys: 'appearance theme dark light system font typeface wallpaper color home shortcuts minimal liquid glass fuller log owner screen lock notification', child: Column(
+                _Sec(title: 'Appearance & theme', keys: 'appearance theme dark light system font typeface wallpaper color home shortcuts minimal liquid glass fuller log owner screen lock notification', child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-            _groupTitle(context, Icons.palette_outlined, 'Appearance & Theme'),
+            _groupTitle(context, Icons.palette_outlined, 'Appearance & theme'),
             GlassCard(
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(AppSpacing.lg),
                 child: Column(
                   children: [
-                    const Align(
+                    Align(
                       alignment: Alignment.centerLeft,
-                      child: Text('Interface Theme', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                      child: Text('Interface theme', style: context.tokens.itemTitle),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: AppSpacing.sm),
                     ThemeModePicker(
                       mode: settings.themeMode,
                       onChanged: controller.setThemeMode,
@@ -96,15 +98,15 @@ class SettingsScreen extends ConsumerWidget {
                     SwitchListTile(
                       key: const ValueKey('liquid-glass-switch'),
                       contentPadding: EdgeInsets.zero,
-                      title: const Text('Liquid glass', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                      title: Text('Liquid glass', style: context.tokens.itemTitle),
                       subtitle: Text(
                         'Glass lens on the tab bar, main buttons, players, the round download bubble, and the System, Light, and Dark switch',
-                        style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant),
+                        style: context.tokens.itemSubtitle,
                       ),
                       value: settings.liquidGlass,
                       onChanged: controller.setLiquidGlass,
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: AppSpacing.sm),
                     _navRow(
                       context,
                       icon: Icons.font_download_outlined,
@@ -122,7 +124,7 @@ class SettingsScreen extends ConsumerWidget {
                       },
                     ),
                     // Web: browsers give no wallpaper palette.
-                    if (!kIsWeb) const SizedBox(height: 8),
+                    if (!kIsWeb) const SizedBox(height: AppSpacing.sm),
                     if (!kIsWeb) Row(
                       children: [
                         CircleAvatar(
@@ -130,17 +132,17 @@ class SettingsScreen extends ConsumerWidget {
                           backgroundColor: scheme.primary,
                           child: const Icon(Icons.check, color: Colors.white, size: 16),
                         ),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: AppSpacing.md),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text('Wallpaper colors', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                              Text('Wallpaper colors', style: context.tokens.itemTitle),
                               Text(
                                 DesktopSupport.isWindows
                                     ? 'Uses the accent color from Windows'
                                     : 'Material You when the phone provides a palette',
-                                style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant),
+                                style: context.tokens.itemSubtitle,
                               ),
                             ],
                           ),
@@ -151,38 +153,38 @@ class SettingsScreen extends ConsumerWidget {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: AppSpacing.xs),
                     SwitchListTile(
                       key: const ValueKey('classic-home-switch'),
                       contentPadding: EdgeInsets.zero,
-                      title: const Text('Classic home screen', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                      subtitle: Text('Turn on to bring back the previous Home layout', style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant)),
+                      title: Text('Classic home screen', style: context.tokens.itemTitle),
+                      subtitle: Text('Turn on to bring back the previous Home layout', style: context.tokens.itemSubtitle),
                       value: settings.classicHome,
                       onChanged: controller.setClassicHome,
                     ),
                     SwitchListTile(
                       key: const ValueKey('minimal-shortcuts-switch'),
                       contentPadding: EdgeInsets.zero,
-                      title: const Text('Minimal home shortcuts', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                      subtitle: Text('Show Home shortcuts as icons and labels, without the card behind them', style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant)),
+                      title: Text('Minimal home shortcuts', style: context.tokens.itemTitle),
+                      subtitle: Text('Show Home shortcuts as icons and labels, without the card behind them', style: context.tokens.itemSubtitle),
                       value: settings.minimalShortcuts,
                       onChanged: controller.setMinimalShortcuts,
                     ),
                     SwitchListTile(
                       key: const ValueKey('usb-quick-switch'),
                       contentPadding: EdgeInsets.zero,
-                      title: const Text('USB cable: offer Share files', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                      subtitle: Text('When a USB cable connects this device to a phone or PC, offer a quick action that opens the share screen', style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant)),
+                      title: Text('USB cable: offer Share files', style: context.tokens.itemTitle),
+                      subtitle: Text('When a USB cable connects this device to a phone or PC, offer a quick action that opens the share screen', style: context.tokens.itemSubtitle),
                       value: settings.usbQuickAction,
                       onChanged: controller.setUsbQuickAction,
                     ),
                     if (Plat.isWindows)
                       ListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('Phone log', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                        title: Text('Phone log', style: context.tokens.itemTitle),
                         subtitle: Text(
-                          'When a phone with Social Save is plugged in, open the log and tap an app to see its passwords and activity. A password or a code stays hidden until the owner allows it. Social Save cannot open passwords saved in Google Password Manager or inside another app',
-                          style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant),
+                          'When a phone with SocialSave is plugged in, open the log and tap an app to see its passwords and activity. A password or a code stays hidden until the owner allows it. SocialSave cannot open passwords saved in Google Password Manager or inside another app',
+                          style: context.tokens.itemSubtitle,
                         ),
                         trailing: const Icon(Icons.notes_rounded),
                         onTap: () => showPhoneLog(context),
@@ -190,10 +192,10 @@ class SettingsScreen extends ConsumerWidget {
                     if (Plat.isWindows)
                       ListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('Control the phone', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                        title: Text('Control the phone', style: context.tokens.itemTitle),
                         subtitle: Text(
                           'Opens its own window. Drag, scroll, and type on a plugged-in phone. The phone shows the same actions. Words you type are not saved',
-                          style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant),
+                          style: context.tokens.itemSubtitle,
                         ),
                         trailing: const Icon(Icons.phonelink_rounded),
                         onTap: () => showPhoneControl(context),
@@ -202,16 +204,16 @@ class SettingsScreen extends ConsumerWidget {
                     SwitchListTile(
                       key: const ValueKey('classic-library-switch'),
                       contentPadding: EdgeInsets.zero,
-                      title: const Text('Classic library', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                      subtitle: Text('Turn on to bring back the previous Library layout', style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant)),
+                      title: Text('Classic library', style: context.tokens.itemTitle),
+                      subtitle: Text('Turn on to bring back the previous Library layout', style: context.tokens.itemSubtitle),
                       value: settings.classicLibrary,
                       onChanged: controller.setClassicLibrary,
                     ),
                     SwitchListTile(
                       key: const ValueKey('offer-copied-links-switch'),
                       contentPadding: EdgeInsets.zero,
-                      title: const Text('Offer to download copied links', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                      subtitle: Text(Plat.isAndroid ? 'Ask when you copy a video link and open SocialSave' : 'Ask when you copy a video link, even from the tray', style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant)),
+                      title: Text('Offer to download copied links', style: context.tokens.itemTitle),
+                      subtitle: Text(Plat.isAndroid ? 'Ask when you copy a video link and open SocialSave' : 'Ask when you copy a video link, even from the tray', style: context.tokens.itemSubtitle),
                       value: settings.offerCopiedLinks,
                       onChanged: controller.setOfferCopiedLinks,
                     ),
@@ -219,8 +221,8 @@ class SettingsScreen extends ConsumerWidget {
                       ListTile(
                         key: const ValueKey('background-detect-tile'),
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('Detect links in the background', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                        subtitle: Text('Bubble or the Download copied link tile, even when SocialSave is closed', style: TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant)),
+                        title: Text('Detect links in the background', style: context.tokens.itemTitle),
+                        subtitle: Text('Bubble or the Download copied link tile, even when SocialSave is closed', style: context.tokens.itemSubtitle),
                         trailing: const Icon(Icons.chevron_right_rounded),
                         onTap: () => context.push('/background-detect'),
                       ),
@@ -230,13 +232,13 @@ class SettingsScreen extends ConsumerWidget {
             ),
                   ],
                 )),
-                _Sec(title: 'Download Preferences', keys: 'download wifi update location quality resolution start queue', child: Column(
+                _Sec(title: 'Download preferences', keys: 'download wifi update location quality resolution start queue', child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-            _groupTitle(context, Icons.download_for_offline_outlined, 'Download Preferences'),
+            _groupTitle(context, Icons.download_for_offline_outlined, 'Download preferences'),
             GlassCard(
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(AppSpacing.lg),
                 child: Column(
                   children: [
                     // Web: the browser picks where files go and cannot tell
@@ -253,7 +255,7 @@ class SettingsScreen extends ConsumerWidget {
                       onChanged: controller.setWifiOnly,
                     ),
                     if (Plat.isAndroid) ...[
-                      const SizedBox(height: 16),
+                      const SizedBox(height: AppSpacing.lg),
                       _WifiAppUpdateRow(
                         row: (context, value, onChanged) => _toggleRow(
                           context,
@@ -266,7 +268,7 @@ class SettingsScreen extends ConsumerWidget {
                         ),
                       ),
                     ],
-                    const SizedBox(height: 16),
+                    const SizedBox(height: AppSpacing.lg),
                     _toggleRow(
                       context,
                       icon: Icons.play_arrow_rounded,
@@ -275,7 +277,7 @@ class SettingsScreen extends ConsumerWidget {
                       value: settings.autoStartDownloads,
                       onChanged: controller.setAutoStart,
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: AppSpacing.lg),
                     _toggleRow(
                       context,
                       icon: Icons.photo_library_outlined,
@@ -286,21 +288,21 @@ class SettingsScreen extends ConsumerWidget {
                         on ? DownloadLocation.publicDownloads : DownloadLocation.appStorage,
                       ),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: AppSpacing.md),
                     ],
                     _navRow(
                       context,
                       icon: Icons.high_quality_outlined,
-                      title: 'Default Resolution',
-                      subtitle: 'Best Quality (${settings.defaultQuality.label})',
+                      title: 'Default resolution',
+                      subtitle: 'Best quality (${settings.defaultQuality.label})',
                       trailing: settings.defaultQuality.label,
                       onTap: () => _pickQuality(context, controller, settings),
                     ),
-                    if (!kIsWeb) const SizedBox(height: 8),
+                    if (!kIsWeb) const SizedBox(height: AppSpacing.sm),
                     if (!kIsWeb) _navRow(
                       context,
                       icon: Icons.folder_special_outlined,
-                      title: 'Download Location',
+                      title: 'Download location',
                       subtitle: Plat.isWindows
                           ? r'Documents\SocialSave'
                           : settings.downloadLocation == DownloadLocation.publicDownloads
@@ -320,7 +322,7 @@ class SettingsScreen extends ConsumerWidget {
             _groupTitle(context, Icons.play_circle_outline, 'Player'),
             GlassCard(
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(AppSpacing.lg),
                 child: Column(
                   children: [
                     _toggleRow(
@@ -335,7 +337,7 @@ class SettingsScreen extends ConsumerWidget {
                       onChanged: controller.setAutoPlayNextInGallery,
                     ),
                     if (DesktopSupport.isWindows) ...[
-                      const SizedBox(height: 16),
+                      const SizedBox(height: AppSpacing.lg),
                       _toggleRow(
                         context,
                         icon: Icons.picture_in_picture_alt_rounded,
@@ -350,7 +352,7 @@ class SettingsScreen extends ConsumerWidget {
                           }
                         },
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: AppSpacing.lg),
                       _toggleRow(
                         context,
                         icon: Icons.tab_unselected_rounded,
@@ -379,7 +381,7 @@ class SettingsScreen extends ConsumerWidget {
             _groupTitle(context, Icons.phone_android_rounded, 'Phone'),
             GlassCard(
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(AppSpacing.lg),
                 child: Column(
                   children: [
                     _toggleRow(
@@ -390,7 +392,7 @@ class SettingsScreen extends ConsumerWidget {
                       value: settings.onlyWhileCharging,
                       onChanged: controller.setOnlyWhileCharging,
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: AppSpacing.lg),
                     _toggleRow(
                       context,
                       icon: Icons.battery_alert_rounded,
@@ -399,7 +401,7 @@ class SettingsScreen extends ConsumerWidget {
                       value: settings.pauseBelowBattery,
                       onChanged: controller.setPauseBelowBattery,
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: AppSpacing.lg),
                     _toggleRow(
                       context,
                       icon: Icons.stay_current_portrait_rounded,
@@ -408,7 +410,7 @@ class SettingsScreen extends ConsumerWidget {
                       value: settings.pocketPause,
                       onChanged: controller.setPocketPause,
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: AppSpacing.lg),
                     if (Plat.isAndroid) ...[
                       _toggleRow(
                         context,
@@ -418,7 +420,7 @@ class SettingsScreen extends ConsumerWidget {
                         value: settings.backgroundPlay,
                         onChanged: controller.setBackgroundPlay,
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: AppSpacing.lg),
                     ],
                     _toggleRow(
                       context,
@@ -428,7 +430,7 @@ class SettingsScreen extends ConsumerWidget {
                       value: settings.headsetControls,
                       onChanged: controller.setHeadsetControls,
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: AppSpacing.lg),
                     _toggleRow(
                       context,
                       icon: Icons.volume_up_rounded,
@@ -437,7 +439,7 @@ class SettingsScreen extends ConsumerWidget {
                       value: settings.volumeKeysSeek,
                       onChanged: controller.setVolumeKeysSeek,
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: AppSpacing.lg),
                     _toggleRow(
                       context,
                       icon: Icons.vibration_rounded,
@@ -446,7 +448,7 @@ class SettingsScreen extends ConsumerWidget {
                       value: settings.hapticAlerts,
                       onChanged: controller.setHapticAlerts,
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: AppSpacing.md),
                     _navRow(
                       context,
                       icon: Icons.folder_open_rounded,
@@ -463,14 +465,16 @@ class SettingsScreen extends ConsumerWidget {
             ),
                     ],
                   )),
+                // Niche tools live together under Advanced, collapsed by
+                // default. Search still finds everything inside it.
                 if (!kIsWeb)
-                  _Sec(title: 'Photos', keys: 'photo image camera metadata picture internet exif', child: Column(
+                  _Sec(title: 'Advanced', initiallyOpen: false, keys: 'advanced photo image camera metadata picture internet exif engine library backup restore index computer', child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       _groupTitle(context, Icons.photo_camera_outlined, 'Photos'),
                       GlassCard(
                         child: Padding(
-                          padding: const EdgeInsets.all(16),
+                          padding: const EdgeInsets.all(AppSpacing.lg),
                           child: _navRow(
                             context,
                             icon: Icons.photo_camera_outlined,
@@ -480,12 +484,7 @@ class SettingsScreen extends ConsumerWidget {
                           ),
                         ),
                       ),
-                    ],
-                  )),
-                if (!kIsWeb)
-                _Sec(title: 'Library & engine', keys: 'engine library backup restore index computer', child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
+                      const SizedBox(height: AppSpacing.lg),
             if (!kLocalEngine && Plat.isAndroid)
               PhoneEngineSection(
                 title: _groupTitle(context, Icons.memory_rounded, 'Download engine'),
@@ -503,7 +502,7 @@ class SettingsScreen extends ConsumerWidget {
             ),
             GlassCard(
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(AppSpacing.lg),
                 child: Column(
                   children: [
                     // The titles code is read on the website, so the
@@ -520,7 +519,7 @@ class SettingsScreen extends ConsumerWidget {
                           : 'A short code lists saved titles. Videos stay on this phone.',
                       onTap: () => _pairLibrary(context, ref),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: AppSpacing.sm),
                     ],
                     _navRow(
                       context,
@@ -529,7 +528,7 @@ class SettingsScreen extends ConsumerWidget {
                       subtitle: 'Encrypted titles and notes. Video files are not copied.',
                       onTap: () => _exportIndex(context, ref),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: AppSpacing.sm),
                     _navRow(
                       context,
                       icon: Icons.restore_rounded,
@@ -544,19 +543,19 @@ class SettingsScreen extends ConsumerWidget {
                   ],
                 )),
                 if (!kIsWeb)
-                _Sec(title: 'Notifications & System', keys: 'notifications alerts thumbnail system reminder', child: Column(
+                _Sec(title: 'Notifications & system', keys: 'notifications alerts thumbnail system reminder', child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-            _groupTitle(context, Icons.notifications_active_outlined, 'Notifications & System'),
+            _groupTitle(context, Icons.notifications_active_outlined, 'Notifications & system'),
             GlassCard(
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(AppSpacing.lg),
                 child: Column(
                   children: [
                     _toggleRow(
                       context,
                       icon: Icons.done_all,
-                      title: 'Download Complete Alerts',
+                      title: 'Download complete alerts',
                       subtitle: DesktopSupport.isWindows
                           ? 'A notice when a save finishes'
                           : 'Haptic chime when video parsing succeeds',
@@ -569,11 +568,11 @@ class SettingsScreen extends ConsumerWidget {
                       },
                     ),
                     if (Plat.isAndroid) ...[
-                      const SizedBox(height: 16),
+                      const SizedBox(height: AppSpacing.lg),
                       _toggleRow(
                         context,
                         icon: Icons.notifications_active_rounded,
-                        title: 'Remind me to open Social Save',
+                        title: 'Remind me to open SocialSave',
                         subtitle:
                             'If the app stays closed for about six hours, the phone reminds you. It repeats through the day until you open it, and stays quiet from 10 pm to 8 am.',
                         value: settings.returnReminders,
@@ -585,11 +584,11 @@ class SettingsScreen extends ConsumerWidget {
                         },
                       ),
                     ],
-                    const SizedBox(height: 16),
+                    const SizedBox(height: AppSpacing.lg),
                     _toggleRow(
                       context,
                       icon: Icons.preview_outlined,
-                      title: 'Thumbnail in Notification',
+                      title: 'Thumbnail in notification',
                       subtitle: DesktopSupport.isWindows
                           ? 'Show the video picture on the notice'
                           : 'Display creator thumbnail on lockscreen preview',
@@ -602,26 +601,26 @@ class SettingsScreen extends ConsumerWidget {
             ),
                   ],
                 )),
-                _Sec(title: 'Legal, Compliance & Privacy', keys: 'legal privacy terms policy compliance', child: Column(
+                _Sec(title: 'Legal, compliance & privacy', keys: 'legal privacy terms policy compliance', child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-            _groupTitle(context, Icons.gavel, 'Legal, Compliance & Privacy'),
+            _groupTitle(context, Icons.gavel, 'Legal, compliance & privacy'),
             GlassCard(
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(AppSpacing.lg),
                 child: Column(
                   children: [
                     Container(
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(AppSpacing.lg),
                       decoration: BoxDecoration(
                         color: scheme.secondaryContainer.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: AppRadii.mdAll,
                       ),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Icon(Icons.policy_outlined, color: scheme.secondary),
-                          const SizedBox(width: 12),
+                          const SizedBox(width: AppSpacing.md),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -638,7 +637,7 @@ class SettingsScreen extends ConsumerWidget {
                                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                                       decoration: BoxDecoration(
                                         color: scheme.primary.withValues(alpha: 0.1),
-                                        borderRadius: BorderRadius.circular(999),
+                                        borderRadius: AppRadii.pillAll,
                                       ),
                                       child: Text(
                                         '17 U.S.C. § 107',
@@ -666,11 +665,11 @@ class SettingsScreen extends ConsumerWidget {
                     ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: const Icon(Icons.description_outlined),
-                      title: const Text('Terms of Service & Copyright Policy'),
+                      title: const Text('Terms of service & copyright policy'),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () => context.push('/legal/terms'),
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: AppSpacing.xs),
                     // 1.0.37: real usage numbers; Clear only touches SocialSave's files.
                     if (!kIsWeb) const StorageSection(),
                   ],
@@ -695,14 +694,14 @@ class SettingsScreen extends ConsumerWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: AppSpacing.xs),
                 Text(
                   'SocialSave v${AppConstants.appVersion} • Compliant Video Archiver',
-                  style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                  style: context.tokens.itemSubtitle,
                 ),
                 Text(
                   'Encrypted local sandboxing • Zero cloud logging',
-                  style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                  style: context.tokens.itemSubtitle,
                 ),
               ],
             ),
@@ -716,11 +715,11 @@ class SettingsScreen extends ConsumerWidget {
     final scheme = Theme.of(context).colorScheme;
     final wide = isDesktopShell(context);
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8, left: 4),
+      padding: const EdgeInsets.only(bottom: AppSpacing.sm, left: AppSpacing.xs),
       child: Row(
         children: [
           Icon(icon, size: 16, color: scheme.primary),
-          const SizedBox(width: 8),
+          const SizedBox(width: AppSpacing.sm),
           Flexible(
             child: Text(
               wide ? title : title.toUpperCase(),
@@ -753,17 +752,17 @@ class SettingsScreen extends ConsumerWidget {
           height: 36,
           decoration: BoxDecoration(
             color: scheme.surfaceContainerLow,
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: AppRadii.mdAll,
           ),
           child: Icon(icon, color: scheme.primary, size: 20),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: AppSpacing.md),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-              Text(subtitle, style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+              Text(title, style: context.tokens.itemTitle),
+              Text(subtitle, style: context.tokens.itemSubtitle),
             ],
           ),
         ),
@@ -783,9 +782,9 @@ class SettingsScreen extends ConsumerWidget {
     final scheme = Theme.of(context).colorScheme;
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: AppRadii.mdAll,
       child: Padding(
-        padding: const EdgeInsets.all(8),
+        padding: const EdgeInsets.all(AppSpacing.sm),
         child: Row(
           children: [
             Container(
@@ -793,17 +792,17 @@ class SettingsScreen extends ConsumerWidget {
               height: 36,
               decoration: BoxDecoration(
                 color: scheme.surfaceContainer,
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: AppRadii.mdAll,
               ),
               child: Icon(icon, color: scheme.primary, size: 20),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: AppSpacing.md),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                  Text(subtitle, style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+                  Text(title, style: context.tokens.itemTitle),
+                  Text(subtitle, style: context.tokens.itemSubtitle),
                 ],
               ),
             ),
@@ -922,9 +921,7 @@ Future<void> _pairLibrary(BuildContext context, WidgetRef ref) async {
     }
     if (items.isEmpty) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Save a video first. The code lists titles only.')),
-      );
+      AppSnack.info(context, 'Save a video first. The code lists titles only.');
       return;
     }
     final code = await ref.read(mediaRepositoryProvider).createPair(items);
@@ -943,9 +940,7 @@ Future<void> _pairLibrary(BuildContext context, WidgetRef ref) async {
     );
   } catch (_) {
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Could not create a library code.')),
-    );
+    AppSnack.error(context, 'Could not create a library code.');
   }
 }
 
@@ -966,9 +961,7 @@ Future<void> _exportIndex(BuildContext context, WidgetRef ref) async {
       await saved.writeAsBytes(bytes, flush: true);
       await DesktopSupport.revealInFolder(saved.path);
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Backup saved to ${saved.path}')),
-      );
+      AppSnack.success(context, 'Backup saved to ${saved.path}');
       return;
     }
     final dir = await getTemporaryDirectory();
@@ -977,12 +970,10 @@ Future<void> _exportIndex(BuildContext context, WidgetRef ref) async {
     await Share.shareXFiles([XFile(file.path)], text: 'SocialSave library index');
   } on FormatException catch (error) {
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+    AppSnack.error(context, error.message);
   } catch (_) {
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Could not create the backup.')),
-    );
+    AppSnack.error(context, 'Could not create the backup.');
   }
 }
 
@@ -1021,17 +1012,13 @@ Future<void> _importIndex(BuildContext context, WidgetRef ref) async {
       await ref.read(libraryCatalogProvider.notifier).replace(LibraryCatalog.decode(catalog));
     }
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Library index restored. Video files stay where they were saved.')),
-    );
+    AppSnack.info(context, 'Library index restored. Video files stay where they were saved.');
   } on FormatException catch (error) {
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+    AppSnack.error(context, error.message);
   } catch (_) {
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Could not restore that backup. Check the passphrase.')),
-    );
+    AppSnack.error(context, 'Could not restore that backup. Check the passphrase.');
   }
 }
 
@@ -1084,8 +1071,9 @@ class _SettingsSearch extends StatelessWidget {
 /// A settings group that can be collapsed and is hidden when it does not
 /// match the search box.
 class _Sec extends StatefulWidget {
-  const _Sec({required this.title, required this.keys, required this.child});
+  const _Sec({required this.title, required this.keys, required this.child, this.initiallyOpen = true});
   final String title;
+  final bool initiallyOpen;
   final String keys;
   final Widget child;
 
@@ -1094,7 +1082,7 @@ class _Sec extends StatefulWidget {
 }
 
 class _SecState extends State<_Sec> {
-  bool _open = true;
+  late bool _open = widget.initiallyOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -1120,7 +1108,7 @@ class _SecState extends State<_Sec> {
               ),
             ),
             AnimatedSize(
-              duration: const Duration(milliseconds: 200),
+              duration: AppDurations.normal,
               alignment: Alignment.topCenter,
               child: open ? widget.child : const SizedBox(width: double.infinity),
             ),
@@ -1180,14 +1168,13 @@ class _FullerLogTileState extends State<_FullerLogTile> {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final subtitle = TextStyle(fontSize: 13, height: 1.3, color: scheme.onSurfaceVariant);
+    final subtitle = context.tokens.itemSubtitle;
     return Column(
       children: [
         SwitchListTile(
           key: const ValueKey('fuller-log-switch'),
           contentPadding: EdgeInsets.zero,
-          title: const Text('Fuller phone log', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+          title: Text('Fuller phone log', style: context.tokens.itemTitle),
           subtitle: Text(
             'When you say yes, a computer on the cable can also see the screen, the lock, apps that opened, and the title and words of each notification',
             style: subtitle,
@@ -1206,7 +1193,7 @@ class _FullerLogTileState extends State<_FullerLogTile> {
         SwitchListTile(
           key: const ValueKey('secret-log-switch'),
           contentPadding: EdgeInsets.zero,
-          title: const Text('Show passwords and codes', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+          title: Text('Show passwords and codes', style: context.tokens.itemTitle),
           subtitle: Text(
             _on
                 ? 'A notification that shows a password or a code keeps those words. Off replaces them with Hidden. Older hidden lines stay hidden'

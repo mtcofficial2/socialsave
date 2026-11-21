@@ -456,7 +456,7 @@ class UsbLink {
           serial: serial,
           name: fallbackName,
           lines: const [],
-          problem: 'Update Social Save on this phone, then plug it in again.',
+          problem: 'Update SocialSave on this phone, then plug it in again.',
         );
       }
       if (res.statusCode != 200) {
@@ -465,7 +465,7 @@ class UsbLink {
           serial: serial,
           name: fallbackName,
           lines: _logs[serial]?.lines ?? const [],
-          problem: 'Open Social Save on the phone. The log is not answering yet.',
+          problem: 'Open SocialSave on the phone. The log is not answering yet.',
         );
       }
       final j = jsonDecode(await utf8.decoder.bind(res).join());
@@ -495,7 +495,7 @@ class UsbLink {
         serial: serial,
         name: fallbackName,
         lines: _logs[serial]?.lines ?? const [],
-        problem: 'Open Social Save on the phone. The log is not answering yet.',
+        problem: 'Open SocialSave on the phone. The log is not answering yet.',
       );
     } finally {
       client.close(force: true);

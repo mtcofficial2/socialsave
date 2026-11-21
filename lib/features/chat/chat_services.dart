@@ -7,6 +7,7 @@ import 'package:social_save/features/chat/chat_status_screen.dart';
 import 'package:social_save/features/chat/chat_prefs.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
 import 'package:social_save/shared/routing/app_router.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
 
 /// The recovery code is shown once. It is not stored on this device.
 Future<void> showRecoveryCode(BuildContext context, String code) {
@@ -41,9 +42,7 @@ Future<void> showRecoveryCode(BuildContext context, String code) {
             onPressed: () async {
               await Clipboard.setData(ClipboardData(text: shown));
               if (!context.mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Recovery code copied')),
-              );
+              AppSnack.info(context, 'Recovery code copied');
             },
             child: const Text('Copy'),
           ),
@@ -161,9 +160,7 @@ Future<void> showChatPrivacy(BuildContext context) async {
     user = await ChatApi().me();
   } catch (error) {
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(chatErrorText(error))),
-    );
+    AppSnack.error(context, chatErrorText(error));
     return;
   }
   if (!context.mounted) return;
@@ -188,9 +185,7 @@ Future<void> showChatPrivacy(BuildContext context) async {
               );
             } catch (error) {
               if (!context.mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text(chatErrorText(error))),
-              );
+              AppSnack.error(context, chatErrorText(error));
             }
           }
 
@@ -359,9 +354,7 @@ Future<void> showStarredMessages(BuildContext context) async {
     rows = await ChatApi().stars();
   } catch (error) {
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(chatErrorText(error))),
-    );
+    AppSnack.error(context, chatErrorText(error));
     return;
   }
   if (!context.mounted) return;
@@ -419,9 +412,7 @@ Future<FolderChoice?> showChatFolders(
     rows = await api.labels();
   } catch (error) {
     if (!context.mounted) return null;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(chatErrorText(error))),
-    );
+    AppSnack.error(context, chatErrorText(error));
     return null;
   }
   if (!context.mounted) return null;
@@ -471,9 +462,7 @@ Future<FolderChoice?> showChatFolders(
                         setSheet(() => items = next);
                       } catch (error) {
                         if (!context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text(chatErrorText(error))),
-                        );
+                        AppSnack.error(context, chatErrorText(error));
                       }
                     },
                     trailing: IconButton(
@@ -489,9 +478,7 @@ Future<FolderChoice?> showChatFolders(
                           });
                         } catch (error) {
                           if (!context.mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text(chatErrorText(error))),
-                          );
+                          AppSnack.error(context, chatErrorText(error));
                         }
                       },
                       icon: const Icon(Icons.delete_outline_rounded),
@@ -510,9 +497,7 @@ Future<FolderChoice?> showChatFolders(
                       setSheet(() => items = next);
                     } catch (error) {
                       if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(chatErrorText(error))),
-                      );
+                      AppSnack.error(context, chatErrorText(error));
                     }
                   },
                 ),
@@ -532,9 +517,7 @@ Future<void> showChatDevices(BuildContext context) async {
     rows = await api.deviceSessions();
   } catch (error) {
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(chatErrorText(error))),
-    );
+    AppSnack.error(context, chatErrorText(error));
     return;
   }
   if (!context.mounted) return;
@@ -579,9 +562,7 @@ Future<void> showChatDevices(BuildContext context) async {
                                 });
                               } catch (error) {
                                 if (!context.mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text(chatErrorText(error))),
-                                );
+                                AppSnack.error(context, chatErrorText(error));
                               }
                             },
                             icon: const Icon(Icons.logout_rounded),
@@ -597,9 +578,7 @@ Future<void> showChatDevices(BuildContext context) async {
                       setSheet(() => items = next);
                     } catch (error) {
                       if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(chatErrorText(error))),
-                      );
+                      AppSnack.error(context, chatErrorText(error));
                     }
                   },
                 ),
@@ -635,9 +614,7 @@ Future<void> showRotateRecovery(BuildContext context) async {
     await showRecoveryCode(context, code);
   } catch (error) {
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(chatErrorText(error))),
-    );
+    AppSnack.error(context, chatErrorText(error));
   }
 }
 
@@ -830,9 +807,7 @@ Future<void> showScheduledMessages(BuildContext context, String threadId) async 
     rows = await api.schedules();
   } catch (error) {
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(chatErrorText(error))),
-    );
+    AppSnack.error(context, chatErrorText(error));
     return;
   }
   if (!context.mounted) return;
@@ -887,9 +862,7 @@ Future<void> showScheduledMessages(BuildContext context, String threadId) async 
                                 });
                               } catch (error) {
                                 if (!context.mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text(chatErrorText(error))),
-                                );
+                                AppSnack.error(context, chatErrorText(error));
                               }
                             },
                             icon: const Icon(Icons.edit_outlined),
@@ -907,9 +880,7 @@ Future<void> showScheduledMessages(BuildContext context, String threadId) async 
                                 });
                               } catch (error) {
                                 if (!context.mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text(chatErrorText(error))),
-                                );
+                                AppSnack.error(context, chatErrorText(error));
                               }
                             },
                             icon: const Icon(Icons.close_rounded),

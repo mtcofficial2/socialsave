@@ -74,7 +74,7 @@ class DesktopTray with TrayListener, WindowListener {
             ? '${ShareSession.statusTitle} · ${ShareSession.statusText}'
             : HotspotShare.hostRunning.value
             ? 'SocialSave · PC hotspot on, waiting for a phone'
-            : 'Social Save · messages on';
+            : 'SocialSave · messages on';
         final t = tip.length > 120 ? '${tip.substring(0, 119)}…' : tip;
         if (t != _tip) {
           _tip = t;
@@ -106,9 +106,9 @@ class DesktopTray with TrayListener, WindowListener {
   Future<void> _menu() async {
     if (!_sharing && _messages) {
       await trayManager.setContextMenu(Menu(items: [
-        MenuItem(key: 'status', label: 'Social Save', disabled: true),
+        MenuItem(key: 'status', label: 'SocialSave', disabled: true),
         MenuItem.separator(),
-        MenuItem(key: 'open', label: 'Open Social Save'),
+        MenuItem(key: 'open', label: 'Open SocialSave'),
         MenuItem(key: 'quit', label: 'Quit'),
       ]));
       return;

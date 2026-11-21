@@ -43,6 +43,7 @@ import 'package:social_save/features/settings/presentation/providers/settings_co
 import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
 
 class InAppPlayerScreen extends ConsumerStatefulWidget {
   static bool keyLog = false;
@@ -662,13 +663,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     final path = _session.filePath;
     if (path == null || !File(path).existsSync()) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Save the video on this phone before playing it on a computer.',
-            ),
-          ),
-        );
+        AppSnack.info(context, 'Save the video on this phone before playing it on a computer.');
       }
       return;
     }
@@ -686,11 +681,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     if (outcome != MirrorOutcome.none || !mounted) return;
     final ok = await PhoneBody.playOnTv(path: path, title: _session.title);
     if (!ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No TV app on this phone could open the video.'),
-        ),
-      );
+      AppSnack.info(context, 'No TV app on this phone could open the video.');
     }
   }
 
@@ -1294,9 +1285,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     final bytes = await _player.screenshot();
     if (bytes == null || !mounted) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not capture this frame.')),
-        );
+        AppSnack.error(context, 'Could not capture this frame.');
       }
       return;
     }
@@ -1312,13 +1301,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     final path = _session.filePath;
     if (path == null || !File(path).existsSync()) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Download the video first to open it in another app.',
-            ),
-          ),
-        );
+        AppSnack.info(context, 'Download the video first to open it in another app.');
       }
       return;
     }
@@ -1428,11 +1411,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     _syncPipAspect();
     final ok = await PipController.enter();
     if (!ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('This device cannot play over other apps.'),
-        ),
-      );
+      AppSnack.error(context, 'This device cannot play over other apps.');
     }
   }
 
@@ -2832,6 +2811,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       child: Row(
         children: [
           IconButton(
+            tooltip: _fs ? 'Exit full screen' : 'Back',
             onPressed: () {
               if (_fs) {
                 unawaited(_setFs(false));

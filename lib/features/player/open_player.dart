@@ -6,6 +6,7 @@ import 'package:social_save/features/downloads/domain/entities/download_record.d
 import 'package:social_save/features/player/player_session.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:social_save/web/web_library.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
 
 Future<void> openInAppPlayer(
   BuildContext context,
@@ -19,9 +20,7 @@ Future<void> openInAppPlayer(
   }
   if (path == null || path.isEmpty || !File(path).existsSync()) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('The file is no longer on this device.')),
-      );
+      AppSnack.info(context, 'The file is no longer on this device.');
     }
     return;
   }

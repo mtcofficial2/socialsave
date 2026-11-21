@@ -8,6 +8,7 @@ import 'package:social_save/shared/widgets/platform_badge.dart';
 import 'package:social_save/shared/widgets/glass.dart';
 import 'package:social_save/shared/widgets/liquid_glass.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 class UrlInputCard extends ConsumerStatefulWidget {
   const UrlInputCard({
@@ -98,7 +99,7 @@ class _UrlInputCardState extends ConsumerState<UrlInputCard> {
                             size: 20,
                             color: scheme.primary,
                           ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: AppSpacing.sm),
                     Expanded(
                       child: TextField(
                         key: const Key('url-input'),
@@ -138,11 +139,11 @@ class _UrlInputCardState extends ConsumerState<UrlInputCard> {
               ),
             ),
             if (ready) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               Row(
                 children: [
                   PlatformBadge(platform: platform, compact: true),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: AppSpacing.sm),
                   Expanded(
                     child: Text(
                       state.isAnalyzing ? 'Opening this link…' : 'Ready to open',
@@ -158,7 +159,7 @@ class _UrlInputCardState extends ConsumerState<UrlInputCard> {
               ),
             ],
             if (state.canPasteLink) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               Text(
                 'A link is ready to paste.',
                 style: TextStyle(
@@ -176,11 +177,11 @@ class _UrlInputCardState extends ConsumerState<UrlInputCard> {
                 onOpenSite: state.url.isEmpty ? null : () => openWebLink(state.url),
               ),
             ],
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             Row(
               children: [
                 Expanded(child: _pasteButton(state, emphasizePaste)),
-                const SizedBox(width: 8),
+                const SizedBox(width: AppSpacing.sm),
                 Expanded(child: _analyzeButton(state, scheme, emphasizePaste)),
               ],
             ),

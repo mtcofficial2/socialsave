@@ -7,6 +7,7 @@ import 'package:social_save/features/chat/chat_prefs.dart';
 import 'package:social_save/features/chat/chat_services.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
 
 /// Account and chat controls. One quiet page, reached from the Settings tab.
 class ChatSettingsPage extends StatefulWidget {
@@ -76,9 +77,7 @@ class _ChatSettingsPageState extends State<ChatSettingsPage> {
     } catch (error) {
       if (!mounted) return;
       setState(() => _requests = !on);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(chatErrorText(error))),
-      );
+      AppSnack.error(context, chatErrorText(error));
     }
   }
 

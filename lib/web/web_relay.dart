@@ -17,6 +17,7 @@ import 'package:social_save/shared/models/download_status.dart';
 import 'package:social_save/web/web_library.dart';
 import 'package:social_save/web/web_pages.dart';
 import 'package:social_save/web/web_saver.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
 
 const _maxBytes = 200 * 1024 * 1024;
 
@@ -129,9 +130,7 @@ Future<void> showRelaySend(BuildContext context) async {
   );
   if (picked == null || !context.mounted) return;
   if (picked.size > _maxBytes) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('That file is over the 200 MB limit.')),
-    );
+    AppSnack.info(context, 'That file is over the 200 MB limit.');
     return;
   }
   await showDialog<void>(
@@ -204,9 +203,7 @@ class _SendPicker extends ConsumerWidget {
                     );
                     if (!context.mounted) return;
                     if (file == null) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('No stored copy of that video in this browser.')),
-                      );
+                      AppSnack.info(context, 'No stored copy of that video in this browser.');
                       return;
                     }
                     Navigator.pop(context, file);

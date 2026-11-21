@@ -32,6 +32,7 @@ import 'package:social_save/shared/widgets/glass.dart';
 import 'package:social_save/shared/widgets/windows_drop_zone.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:social_save/web/web_library.dart';
+import 'package:social_save/shared/widgets/empty_state.dart';
 
 /// Set before runApp by the `--open <path>` test switch.
 String debugInitialLocation = '/';
@@ -218,8 +219,10 @@ final appRouter = GoRouter(
         }
         final media = extra;
         if (media is! MediaInfo) {
-          return _page(state, const Scaffold(
-            body: Center(child: Text('No video information was provided.')),
+          return _page(state, const _MissingPage(
+            icon: Icons.video_file_outlined,
+            title: 'Video details are missing',
+            message: 'This link did not bring its video details. Go back to Home and paste the link again.',
           ));
         }
         return _page(state, PreviewScreen(media: media), modal: true);
@@ -257,8 +260,10 @@ final appRouter = GoRouter(
         final extra = state.extra;
         if (extra is WebPlayerArgs) return _page(state, WebPlayerScreen(args: extra), modal: true);
         if (extra is! PlayerSession) {
-          return _page(state, const Scaffold(
-            body: Center(child: Text('Nothing to play.')),
+          return _page(state, const _MissingPage(
+            icon: Icons.play_disabled_rounded,
+            title: 'Nothing to play',
+            message: 'This video is no longer available here. Open it again from your Library or Downloads.',
           ));
         }
         return _page(state, InAppPlayerScreen(session: extra), modal: true);
@@ -266,3 +271,37 @@ final appRouter = GoRouter(
     ),
   ],
 );
+
+/// Shown when a page is opened without the data it needs (for example a
+/// stale deep link). Offers a clear way out instead of a bare message.
+class _MissingPage extends StatelessWidget {
+  const _MissingPage({required this.icon, required this.title, required this.message});
+
+  final IconData icon;
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      appBar: AppBar(
+        leading: BackButton(
+          onPressed: () => context.canPop() ? context.pop() : context.go('/'),
+        ),
+      ),
+      body: SafeArea(
+        child: EmptyState(
+          icon: icon,
+          title: title,
+          message: message,
+          action: FilledButton.icon(
+            onPressed: () => context.go('/'),
+            icon: const Icon(Icons.home_rounded),
+            label: const Text('Go home'),
+          ),
+        ),
+      ),
+    );
+  }
+}

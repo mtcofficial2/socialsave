@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 class EmptyState extends StatelessWidget {
   const EmptyState({
@@ -18,7 +19,8 @@ class EmptyState extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Center(
-      child: Padding(
+      child: SingleChildScrollView(
+        child: Padding(
         padding: const EdgeInsets.all(32),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 420),
@@ -60,11 +62,12 @@ class EmptyState extends StatelessWidget {
                 textAlign: TextAlign.center,
               ),
               if (action != null) ...[
-                const SizedBox(height: 20),
+                const SizedBox(height: AppSpacing.xl),
                 action!,
               ],
             ],
           ),
+        ),
         ),
       ),
     );

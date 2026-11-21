@@ -19,6 +19,8 @@ import 'package:social_save/features/chat/chat_ui.dart';
 import 'package:social_save/features/chat/chat_ux.dart';
 import 'package:social_save/shared/widgets/app_logo.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:social_save/shared/widgets/skeleton.dart';
 
 enum _ContactKind { phone, email }
 
@@ -537,9 +539,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       final group = await _api.createGroup(name);
       if (!mounted) return;
       setState(() => _busy = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Group code ${group.code}')),
-      );
+      AppSnack.info(context, 'Group code ${group.code}');
       await _openSaved(
         ChatThreadSummary(
           id: group.id,
@@ -1021,7 +1021,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             const SizedBox(height: 8),
             Text(
               step
-                  ? 'People will not see this. Social Save does not send a code. The same phone or email, username, and password sign this device in.'
+                  ? 'People will not see this. SocialSave does not send a code. The same phone or email, username, and password sign this device in.'
                   : 'A new username creates the account. Your existing username and password sign this device in. This phone and the PC can stay signed in together.',
               style: TextStyle(
                 fontSize: 14,
@@ -1297,9 +1297,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           : groups
           ? 'No archived groups.'
           : 'No archived chats.';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(label)),
-      );
+      AppSnack.info(context, label);
       return;
     }
     setState(() {
@@ -1425,9 +1423,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         );
       } catch (error) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(chatErrorText(error))),
-        );
+        AppSnack.error(context, chatErrorText(error));
       }
       return;
     }
@@ -1480,13 +1476,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final name = item.label.trim().isEmpty
         ? (item.group ? 'this group' : 'this chat')
         : item.label.trim();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          on ? 'Notifications muted for $name' : 'Notifications on for $name',
-        ),
-      ),
-    );
+    AppSnack.info(context, on ? 'Notifications muted for $name' : 'Notifications on for $name');
   }
 
   Future<void> _hideThread(ChatThreadSummary item) async {
@@ -2136,21 +2126,24 @@ class _Waiting extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const CircularProgressIndicator(),
-            const SizedBox(height: 16),
-            Text(
+    // Placeholder rows shaped like the chat list, so the page does not jump
+    // when the chats arrive.
+    return SafeArea(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const LinearProgressIndicator(minHeight: 2),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+            child: Text(
               text,
-              textAlign: TextAlign.center,
               style: TextStyle(height: 1.4, color: scheme.onSurfaceVariant),
             ),
-          ],
-        ),
+          ),
+          const Expanded(
+            child: SkeletonList(count: 8, leadingSize: 52, leadingRadius: 26),
+          ),
+        ],
       ),
     );
   }

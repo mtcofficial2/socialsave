@@ -262,9 +262,9 @@ String phoneLogAppCount(PhoneLogAppRow row) {
 /// What the password list says when that app has no password row.
 String phoneLogPasswordEmpty(String app) {
   if (app == phoneLogGoogleKey) {
-    return 'Social Save cannot open passwords saved in Google Password Manager or inside another app. It keeps a password only when Gmail, Chrome, or Google showed it on a notification and the owner allowed it.';
+    return 'SocialSave cannot open passwords saved in Google Password Manager or inside another app. It keeps a password only when Gmail, Chrome, or Google showed it on a notification and the owner allowed it.';
   }
-  return 'No password from $app is on this log. Social Save keeps a password only when that app showed it on a notification and the owner allowed it. Passwords saved inside the app stay there.';
+  return 'No password from $app is on this log. SocialSave keeps a password only when that app showed it on a notification and the owner allowed it. Passwords saved inside the app stay there.';
 }
 
 /// The short words on a password row before it is opened.
@@ -342,7 +342,7 @@ class _PhoneLogSheetState extends State<PhoneLogSheet> {
                   Expanded(
                     child: phones.isEmpty
                         ? Text(
-                            'Plug in a phone with Social Save open and USB debugging allowed.',
+                            'Plug in a phone with SocialSave open and USB debugging allowed.',
                             style: theme.textTheme.bodyMedium,
                           )
                         : Column(
@@ -686,7 +686,7 @@ const _sections = <(String, String, IconData)>[
   ('secrets', 'Passwords', Icons.key_rounded),
   ('apps', 'Apps', Icons.apps_rounded),
   ('screen', 'Screen', Icons.phone_android_rounded),
-  ('social', 'Social Save', Icons.notes_rounded),
+  ('social', 'SocialSave', Icons.notes_rounded),
 ];
 
 class _SectionButton extends StatelessWidget {

@@ -11,6 +11,7 @@ import 'package:record/record.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_format.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
 
 typedef ChatRecView = ({int ms, List<double> levels, bool paused});
 
@@ -565,7 +566,7 @@ class _ChatVoiceBubbleState extends State<ChatVoiceBubble> {
   }
 
   void _fail() {
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('That voice note could not be played.')));
+    AppSnack.error(context, 'That voice note could not be played.');
   }
 
   String get _rateLabel {
@@ -913,9 +914,7 @@ class _ChatSongBubbleState extends State<ChatSongBubble> {
   }
 
   void _fail() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('That song could not be played.')),
-    );
+    AppSnack.error(context, 'That song could not be played.');
   }
 
   String get _length {

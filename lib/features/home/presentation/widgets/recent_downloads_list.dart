@@ -9,6 +9,7 @@ import 'package:social_save/features/downloads/presentation/providers/downloads_
 import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
 import 'package:social_save/shared/widgets/video_thumbnail.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 class RecentDownloadsSection extends ConsumerWidget {
   const RecentDownloadsSection({super.key});
@@ -93,7 +94,7 @@ class _RecentRow extends ConsumerWidget {
       child: Material(
         color: scheme.surfaceContainerLow,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: AppRadii.lgAll,
           side: BorderSide(color: scheme.outlineVariant),
         ),
         clipBehavior: Clip.antiAlias,
@@ -113,7 +114,7 @@ class _RecentRow extends ConsumerWidget {
                     borderRadius: 10,
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: AppSpacing.md),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -143,7 +144,7 @@ class _RecentRow extends ConsumerWidget {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: AppSpacing.xs),
                       Text(
                         record.title,
                         maxLines: 1,
@@ -153,7 +154,7 @@ class _RecentRow extends ConsumerWidget {
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: AppSpacing.xs),
                       Row(
                         children: [
                           Text(
@@ -165,7 +166,7 @@ class _RecentRow extends ConsumerWidget {
                               color: scheme.onSurfaceVariant,
                             ),
                           ),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: AppSpacing.sm),
                           Icon(
                             Icons.check_circle,
                             size: 14,
@@ -173,7 +174,7 @@ class _RecentRow extends ConsumerWidget {
                               Theme.of(context).brightness,
                             ),
                           ),
-                          const SizedBox(width: 4),
+                          const SizedBox(width: AppSpacing.xs),
                           Text(
                             'Saved',
                             style: TextStyle(

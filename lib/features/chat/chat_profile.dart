@@ -14,6 +14,7 @@ import 'package:social_save/core/storage/media_store_service.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_format.dart';
 import 'package:social_save/features/chat/chat_thread_screen.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
 
 /// Saves this person's profile photo. The sentence is what to show afterwards.
 Future<String> downloadChatProfilePhoto(
@@ -172,8 +173,8 @@ Future<void> showChatProfile(
                   const SizedBox(height: 6),
                   Text(
                     mine
-                        ? 'This is your Social Save profile'
-                        : 'Social Save profile',
+                        ? 'This is your SocialSave profile'
+                        : 'SocialSave profile',
                     style: TextStyle(
                       color: scheme.onSurfaceVariant,
                       height: 1.35,
@@ -323,9 +324,7 @@ Future<void> showChatProfile(
                                 await ChatApi().reportUser(username);
                                 if (!context.mounted) return;
                                 setSheet(() => busy = false);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Report sent')),
-                                );
+                                AppSnack.info(context, 'Report sent');
                               } catch (error) {
                                 if (!context.mounted) return;
                                 setSheet(() {
@@ -367,9 +366,7 @@ Future<void> showChatProfile(
                             );
                             if (!context.mounted) return;
                             setSheet(() => busy = false);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text(text)),
-                            );
+                            AppSnack.info(context, text);
                           },
                     icon: const Icon(Icons.download_rounded),
                     label: const Text('Download photo'),
@@ -379,9 +376,7 @@ Future<void> showChatProfile(
                     onPressed: () async {
                       await Clipboard.setData(ClipboardData(text: '@$name'));
                       if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Username copied')),
-                      );
+                      AppSnack.info(context, 'Username copied');
                     },
                     icon: const Icon(Icons.copy_rounded),
                     label: const Text('Copy username'),
@@ -766,15 +761,9 @@ Future<void> showChatGroup(
                                 final next = await savedInvite(168);
                                 if (!context.mounted) return;
                                 setSheet(() => busy = false);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      next.isEmpty
+                                AppSnack.info(context, next.isEmpty
                                           ? 'Invite link replaced'
-                                          : 'New code $next, expires in 7 days',
-                                    ),
-                                  ),
-                                );
+                                          : 'New code $next, expires in 7 days');
                               } catch (error) {
                                 setSheet(() {
                                   busy = false;
@@ -822,9 +811,7 @@ Future<void> showChatGroup(
                       onPressed: () async {
                         await Clipboard.setData(ClipboardData(text: code));
                         if (!context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Group code copied')),
-                        );
+                        AppSnack.info(context, 'Group code copied');
                       },
                       icon: const Icon(Icons.copy_rounded),
                       label: const Text('Copy code'),

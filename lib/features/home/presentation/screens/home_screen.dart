@@ -34,6 +34,7 @@ import 'package:social_save/features/updates/update_card.dart';
 import 'package:social_save/shared/widgets/brand_header.dart';
 import 'package:social_save/shared/widgets/compliance_notice.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -150,9 +151,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     if (n < 2) return false;
     ref.read(homeControllerProvider.notifier).setUrl('');
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Saving $n links.')),
-      );
+      AppSnack.info(context, 'Saving $n links.');
     }
     return true;
   }

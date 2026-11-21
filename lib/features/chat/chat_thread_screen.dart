@@ -33,6 +33,7 @@ import 'package:social_save/features/chat/chat_ux.dart';
 import 'package:social_save/features/chat/chat_voice.dart';
 import 'package:social_save/features/chat/chat_wall.dart';
 import 'package:social_save/features/chat/chat_wallpaper.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
 
 /// A direct chat. On a phone this is its own page. On a wide window it sits
 /// beside the chat list.
@@ -1063,7 +1064,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
               ListTile(
                 leading: const Icon(Icons.music_note_outlined),
                 title: const Text('Saved song'),
-                subtitle: const Text('A song already saved in Social Save'),
+                subtitle: const Text('A song already saved in SocialSave'),
                 minTileHeight: 48,
                 onTap: () => Navigator.pop(context, 'song'),
               ),
@@ -1959,9 +1960,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
         if (text.isEmpty) return;
         await Clipboard.setData(ClipboardData(text: text));
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Message copied')),
-        );
+        AppSnack.info(context, 'Message copied');
       case 'edit':
         _beginEdit(message);
       case 'star':
@@ -2192,9 +2191,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
         _statusReply = false;
         _error = null;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Message scheduled')),
-      );
+      AppSnack.info(context, 'Message scheduled');
     } catch (error) {
       if (!mounted) return;
       setState(() => _error = chatErrorText(error));
@@ -2306,9 +2303,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     try {
       await _api.setStar(_threadId, message.id, on: true);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Saved to starred messages')),
-      );
+      AppSnack.success(context, 'Saved to starred messages');
     } catch (error) {
       if (!mounted) return;
       setState(() => _error = chatErrorText(error));

@@ -29,6 +29,7 @@ import 'package:social_save/shared/widgets/error_banner.dart';
 import 'package:social_save/shared/widgets/platform_badge.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
 import 'package:social_save/shared/widgets/video_thumbnail.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 class PreviewScreen extends ConsumerStatefulWidget {
   const PreviewScreen({super.key, this.media, this.pendingUrl});
@@ -149,6 +150,7 @@ class _PreviewBody extends ConsumerWidget {
             Row(
               children: [
                 IconButton(
+                  tooltip: 'Back',
                   onPressed: () => Navigator.maybePop(context),
                   icon: const Icon(Icons.arrow_back_rounded),
                 ),
@@ -167,7 +169,7 @@ class _PreviewBody extends ConsumerWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             GlassCard(
               clipBehavior: Clip.antiAlias,
               child: Column(
@@ -188,7 +190,7 @@ class _PreviewBody extends ConsumerWidget {
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                           decoration: BoxDecoration(
                             color: Colors.white.withValues(alpha: 0.92),
-                            borderRadius: BorderRadius.circular(999),
+                            borderRadius: AppRadii.pillAll,
                           ),
                           child: Row(
                             children: [
@@ -214,7 +216,7 @@ class _PreviewBody extends ConsumerWidget {
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                             decoration: BoxDecoration(
                               color: Colors.black54,
-                              borderRadius: BorderRadius.circular(999),
+                              borderRadius: AppRadii.pillAll,
                             ),
                             child: Text(
                               '${format!.width} × ${format.height}',
@@ -237,7 +239,7 @@ class _PreviewBody extends ConsumerWidget {
                                 height: 64,
                                 child: previewing
                                     ? const Padding(
-                                        padding: EdgeInsets.all(16),
+                                        padding: EdgeInsets.all(AppSpacing.lg),
                                         child: CircularProgressIndicator(strokeWidth: 2),
                                       )
                                     : const Icon(Icons.play_arrow_rounded, size: 36, color: AppColors.primary),
@@ -249,7 +251,7 @@ class _PreviewBody extends ConsumerWidget {
                     ],
                   ),
                   Padding(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(AppSpacing.lg),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -271,18 +273,18 @@ class _PreviewBody extends ConsumerWidget {
                           ].join('  •  '),
                           style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                         ),
-                        const SizedBox(height: 12),
+                        const SizedBox(height: AppSpacing.md),
                         if (media.canDownload)
                           Container(
-                            padding: const EdgeInsets.all(12),
+                            padding: const EdgeInsets.all(AppSpacing.md),
                             decoration: BoxDecoration(
                               color: AppColors.successBg(Theme.of(context).brightness),
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: AppRadii.mdAll,
                             ),
                             child: Row(
                               children: [
                                 Icon(Icons.verified_outlined, color: AppColors.successFg(Theme.of(context).brightness), size: 20),
-                                const SizedBox(width: 8),
+                                const SizedBox(width: AppSpacing.sm),
                                 Expanded(
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -326,14 +328,14 @@ class _PreviewBody extends ConsumerWidget {
                 ),
                 const Spacer(),
                 Icon(Icons.tune, size: 16, color: scheme.primary),
-                const SizedBox(width: 4),
+                const SizedBox(width: AppSpacing.xs),
                 Text(
                   '${media.formats.length} available',
                   style: TextStyle(color: scheme.primary, fontSize: 12, fontWeight: FontWeight.w600),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             ...media.formats.map((item) {
               final selected = format?.id == item.id;
               return Padding(
@@ -342,14 +344,14 @@ class _PreviewBody extends ConsumerWidget {
                   color: selected
                       ? scheme.secondaryContainer.withValues(alpha: 0.22)
                       : scheme.surfaceContainerLowest,
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: AppRadii.lgAll,
                   child: InkWell(
-                    borderRadius: BorderRadius.circular(16),
+                    borderRadius: AppRadii.lgAll,
                     onTap: () => ref
                         .read(previewControllerProvider(media).notifier)
                         .selectFormat(item),
                     child: Padding(
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(AppSpacing.lg),
                       child: Row(
                         children: [
                           Container(
@@ -363,7 +365,7 @@ class _PreviewBody extends ConsumerWidget {
                                 ? Icon(Icons.check, size: 16, color: scheme.onPrimary)
                                 : null,
                           ),
-                          const SizedBox(width: 12),
+                          const SizedBox(width: AppSpacing.md),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -387,7 +389,7 @@ class _PreviewBody extends ConsumerWidget {
                                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                                         decoration: BoxDecoration(
                                           color: scheme.primary,
-                                          borderRadius: BorderRadius.circular(999),
+                                          borderRadius: AppRadii.pillAll,
                                         ),
                                         child: Text(
                                           'Selected',
@@ -433,9 +435,9 @@ class _PreviewBody extends ConsumerWidget {
                 message: error!,
                 onOpenSite: () => openWebLink(media.sourceUrl),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.md),
             ],
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             OutlinedButton.icon(
               onPressed: !media.canDownload || format == null || previewing
                   ? null
@@ -443,7 +445,7 @@ class _PreviewBody extends ConsumerWidget {
               icon: const Icon(Icons.play_circle_outline),
               label: Text(previewing ? 'Opening preview…' : 'Play without downloading'),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             FilledButton.icon(
               onPressed: !media.canDownload || format == null || starting
                   ? null
@@ -451,7 +453,7 @@ class _PreviewBody extends ConsumerWidget {
               icon: const Icon(Icons.download_rounded),
               label: Text(starting ? 'Starting…' : 'Start Download ($sizeLabel)'),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             SizedBox(
               height: 52,
               child: FilledButton.tonal(
@@ -497,11 +499,12 @@ class _LookupScaffold extends StatelessWidget {
             Row(
               children: [
                 IconButton(
+                  tooltip: 'Back',
                   onPressed: () => Navigator.maybePop(context),
                   icon: const Icon(Icons.arrow_back_rounded),
                 ),
                 PlatformLogo(platform: platform, size: 28),
-                const SizedBox(width: 8),
+                const SizedBox(width: AppSpacing.sm),
                 Expanded(
                   child: Text(
                     platform == SocialPlatform.unknown
@@ -512,7 +515,7 @@ class _LookupScaffold extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             if (loading && _QuickLook.idOf(url) != null)
               _QuickLook(url: url)
             else if (loading)
@@ -521,7 +524,7 @@ class _LookupScaffold extends StatelessWidget {
               const SkeletonBox(height: 180, radius: 16)
             else
               VideoThumbnail(url: null, height: 180, borderRadius: 16),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             Text(
               url,
               maxLines: 2,
@@ -529,23 +532,23 @@ class _LookupScaffold extends StatelessWidget {
               style: TextStyle(color: scheme.onSurfaceVariant),
             ),
             if (loading) ...[
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.lg),
               const SkeletonBox(height: 20, width: 260, radius: 6),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               const SkeletonBox(height: 14, width: 160, radius: 6),
               const SizedBox(height: 20),
               Row(
                 children: const [
                   Expanded(child: SkeletonBox(height: 44)),
-                  SizedBox(width: 8),
+                  SizedBox(width: AppSpacing.sm),
                   Expanded(child: SkeletonBox(height: 44)),
-                  SizedBox(width: 8),
+                  SizedBox(width: AppSpacing.sm),
                   Expanded(child: SkeletonBox(height: 44)),
                 ],
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.lg),
               const SkeletonBox(height: 52, radius: 14),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.md),
               Text(
                 'Reading video details…',
                 textAlign: TextAlign.center,
@@ -553,7 +556,7 @@ class _LookupScaffold extends StatelessWidget {
               ),
             ],
             if (error != null) ...[
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.md),
               ErrorBanner(
                 message: error!,
                 onRetry: onRetry,
@@ -739,7 +742,7 @@ class _QuickLookState extends State<_QuickLook> {
           borderRadius: 16,
         ),
         if (_title != null) ...[
-          const SizedBox(height: 12),
+          const SizedBox(height: AppSpacing.md),
           Text(
             _title!,
             maxLines: 2,

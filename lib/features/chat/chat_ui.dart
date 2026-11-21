@@ -8,6 +8,7 @@ import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_drafts.dart';
 import 'package:social_save/features/chat/chat_format.dart';
 import 'package:social_save/features/chat/chat_live.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
 
 /// Colors, radii, and spacing for chat. These match the chat canvas we
 /// already ship. Nothing here is a third-party brand mark.
@@ -1212,9 +1213,7 @@ Future<bool> openUsernameChat(
     return true;
   } catch (error) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(chatErrorText(error))),
-      );
+      AppSnack.error(context, chatErrorText(error));
     }
     return false;
   }

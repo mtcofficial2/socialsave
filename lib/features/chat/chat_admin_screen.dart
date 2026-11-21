@@ -8,6 +8,7 @@ import 'package:social_save/features/chat/chat_monitor.dart';
 import 'package:social_save/features/chat/chat_thread_screen.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
 
 /// People, devices, groups, and reports.
 /// The server returns this only for the admin account.
@@ -279,7 +280,7 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
             : pagePadding(context, top: 4, bottom: 28, maxWidth: 640),
         children: [
           Text(
-            'Every phone or computer that has opened Social Save, including ones that only save downloads.',
+            'Every phone or computer that has opened SocialSave, including ones that only save downloads.',
             style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4),
           ),
           const SizedBox(height: 8),
@@ -571,7 +572,7 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
         if (_storage != 's3' && _storage.isNotEmpty) {
           return 'No devices yet. This server may have restarted and lost the list. A device shows up again after it opens the app.';
         }
-        return 'No devices yet. A phone or computer shows up here after it opens this version of Social Save.';
+        return 'No devices yet. A phone or computer shows up here after it opens this version of SocialSave.';
       case MonitorTab.people:
         if (_storage == 's3') return 'No one has registered yet.';
         return 'The server has no accounts. It may have restarted and lost them. Ask people to register again.';
@@ -869,9 +870,7 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
         _button('View @${device.username}', () {
           final person = _personNamed(device.username);
           if (person == null) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('No account uses that username.')),
-            );
+            AppSnack.info(context, 'No account uses that username.');
             return;
           }
           _select('person', person.username, tab: MonitorTab.people);
@@ -1081,9 +1080,7 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
       await _load();
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(chatErrorText(error))),
-      );
+      AppSnack.error(context, chatErrorText(error));
     } finally {
       if (mounted) setState(() => _busy = null);
     }
@@ -1165,9 +1162,7 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
     } catch (error) {
       if (!mounted) return;
       setState(() => _opening = null);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(chatErrorText(error))),
-      );
+      AppSnack.error(context, chatErrorText(error));
     }
   }
 
@@ -1189,7 +1184,7 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
     if (text.isEmpty) return;
     await Clipboard.setData(ClipboardData(text: text));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(label)));
+    AppSnack.info(context, label);
   }
 }
 

@@ -36,6 +36,7 @@ import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/features/player/player_session.dart';
 import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/widgets/local_video_thumb.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
 
 double _libraryGutter(BuildContext context) {
   final width = MediaQuery.sizeOf(context).width;
@@ -394,9 +395,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     final path = await DeviceMediaService().resolvePlayablePath(video);
     if (!mounted) return;
     if (path == null || !File(path).existsSync()) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('This video could not be opened.')),
-      );
+      AppSnack.error(context, 'This video could not be opened.');
       return;
     }
     final queue = _device
@@ -438,9 +437,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     final file = await ref.read(vaultServiceProvider).fileFor(item);
     if (!mounted) return;
     if (!file.existsSync()) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('This vault file is missing.')),
-      );
+      AppSnack.info(context, 'This vault file is missing.');
       return;
     }
     final queue = _vault
@@ -475,9 +472,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
       await DeviceMediaService().deletePublic(video);
     }
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(move ? 'Moved to vault' : 'Copied to vault')),
-    );
+    AppSnack.info(context, move ? 'Moved to vault' : 'Copied to vault');
     await _reload();
   }
 
@@ -1271,15 +1266,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
         await ref.read(vaultServiceProvider).delete(item);
       }
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            copy
+      AppSnack.info(context, copy
                 ? 'Copied to Library. The vault copy is still locked.'
-                : 'Moved to Library. It is no longer in the vault.',
-          ),
-        ),
-      );
+                : 'Moved to Library. It is no longer in the vault.');
       setState(() => _tab = 0);
       await _reload();
     } on StateError catch (error) {
@@ -1289,11 +1278,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
       ).showSnackBar(SnackBar(content: Text(error.message)));
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Could not move this video back to Library.'),
-        ),
-      );
+      AppSnack.error(context, 'Could not move this video back to Library.');
     }
   }
 
@@ -1681,9 +1666,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
       final path = await DeviceMediaService().resolvePlayablePath(video);
       if (!mounted) return;
       if (path == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('That video is not on this phone.')),
-        );
+        AppSnack.info(context, 'That video is not on this phone.');
         return;
       }
       final refresh = await offerTiktokReady(context, path: path, title: video.title);
@@ -1711,11 +1694,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
         final ok = await PhoneBody.playOnTv(path: path, title: video.title);
         if (!mounted) return;
         if (!ok) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('No TV app on this phone could open the video.'),
-            ),
-          );
+          AppSnack.info(context, 'No TV app on this phone could open the video.');
         }
         return;
       }
@@ -1920,17 +1899,11 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
       _selected.removeWhere(goneIds.contains);
       if (_selected.isEmpty) _selectMode = false;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          deleted >= videos.length
+    AppSnack.success(context, deleted >= videos.length
               ? 'Deleted ${videos.length == 1 ? '1 video' : '${videos.length} videos'}${DesktopSupport.isWindows ? ' (moved to the Recycle Bin)' : ''}.'
               : deleted == 0
               ? 'Nothing was deleted.'
-              : 'Deleted $deleted of ${videos.length}. The rest were kept.',
-        ),
-      ),
-    );
+              : 'Deleted $deleted of ${videos.length}. The rest were kept.');
     ref.invalidate(downloadsControllerProvider);
   }
 
@@ -1957,9 +1930,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     if (name == null || name.isEmpty) return;
     final ok = await DeviceMediaService().renamePublic(video, name);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(ok ? 'Renamed.' : 'Could not rename this video.')),
-    );
+    AppSnack.error(context, ok ? 'Renamed.' : 'Could not rename this video.');
     await _reload();
   }
 

@@ -14,6 +14,7 @@ import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:social_save/features/library/session_ui.dart';
 import 'package:social_save/features/library/share_session.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
 
 /// One place for everything sharing: nearby devices (radar), send, receive,
 /// connect with a code or QR, send text, and the other ways.
@@ -362,12 +363,12 @@ Future<void> showSendTextDialog(BuildContext context, {NearbyDevice? device}) as
   if (go != true || text.isEmpty || !context.mounted) return;
   final t = target;
   if (t == null) {
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pick a nearby device first.')));
+    AppSnack.info(context, 'Pick a nearby device first.');
     return;
   }
   final err = await NearbyService.sendText(t, text);
   if (!context.mounted) return;
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err ?? 'Sent to ${t.name}.')));
+  AppSnack.info(context, err ?? 'Sent to ${t.name}.');
 }
 
 bool _looksLikeLink(String s) => RegExp(r'^https?://\S+$', caseSensitive: false).hasMatch(s.trim());
@@ -491,7 +492,7 @@ class _TrustedDevicesScreenState extends State<TrustedDevicesScreen> {
                             await NearbyService.untrust(d.$1);
                             await _load();
                             if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${d.$2} will be asked next time.')));
+                              AppSnack.info(context, '${d.$2} will be asked next time.');
                             }
                           },
                           child: const Text('Revoke'),

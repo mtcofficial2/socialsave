@@ -5,6 +5,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:social_save/features/library/nearby_service.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
 
 /// A saved video playing on a Social Save computer on this Wi-Fi.
 class MirrorCommand {
@@ -192,7 +193,7 @@ class LanMirror {
       final text = await utf8.decoder.bind(res).join();
       if (res.statusCode == HttpStatus.notFound) {
         _files.remove(token);
-        return '${computer.name} needs the newer Social Save before it can play this.';
+        return '${computer.name} needs the newer SocialSave before it can play this.';
       }
       if (res.statusCode != HttpStatus.ok) {
         _files.remove(token);
@@ -208,10 +209,10 @@ class LanMirror {
       return null;
     } on SocketException {
       _files.remove(token);
-      return 'Could not reach ${computer.name}. Keep both on the same Wi-Fi, and allow Social Save in the computer firewall.';
+      return 'Could not reach ${computer.name}. Keep both on the same Wi-Fi, and allow SocialSave in the computer firewall.';
     } catch (_) {
       _files.remove(token);
-      return '${computer.name} did not answer. Open Social Save on the computer and try again.';
+      return '${computer.name} did not answer. Open SocialSave on the computer and try again.';
     } finally {
       client.close(force: true);
     }
@@ -350,7 +351,7 @@ class LanMirror {
   }
 
   static void _note(BuildContext context, String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    AppSnack.info(context, message);
   }
 
   static String _ext(String raw) {

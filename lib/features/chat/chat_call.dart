@@ -1632,6 +1632,7 @@ class _CallAction extends StatelessWidget {
         Transform.scale(
           scale: scale,
           child: IconButton.filled(
+            tooltip: label,
             style: IconButton.styleFrom(
               backgroundColor: color,
               foregroundColor: Colors.white,

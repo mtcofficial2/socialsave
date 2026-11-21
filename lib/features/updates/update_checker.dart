@@ -84,7 +84,7 @@ class _UpdateCheckerState extends ConsumerState<UpdateChecker>
         builder: (dialogContext) => AlertDialog(
           title: const Text('Update available'),
           content: Text(
-            'Social Save ${update.version} is the latest. You have $current. Download it, then install it on this phone.',
+            'SocialSave ${update.version} is the latest. You have $current. Download it, then install it on this phone.',
           ),
           actions: [
             TextButton(

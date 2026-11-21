@@ -12,6 +12,7 @@ import 'package:social_save/features/library/transfer_meter.dart';
 import 'package:social_save/features/player/player_session.dart';
 import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/routing/app_router.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
 
 String sizeLabel(int bytes) {
   const kb = 1024, mb = 1024 * 1024, gb = 1024 * 1024 * 1024;
@@ -28,7 +29,7 @@ Future<void> pickAndSendBundle(BuildContext context, {required bool folder}) asy
     bundle = folder ? await pickAnyFolder() : await pickAnyFiles();
   } catch (e) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not open the picker: $e')));
+      AppSnack.error(context, 'Could not open the picker: $e');
     }
     return;
   }
@@ -218,7 +219,7 @@ class _ReceivedScreenState extends State<ReceivedScreen> {
     final n = await DeviceMediaService.deletePaths(paths);
     if (!mounted) return;
     _selected.clear();
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(n == paths.length ? 'Deleted.' : 'Deleted $n of ${paths.length}.')));
+    AppSnack.info(context, n == paths.length ? 'Deleted.' : 'Deleted $n of ${paths.length}.');
     await _load();
   }
 
@@ -275,7 +276,7 @@ class _ReceivedScreenState extends State<ReceivedScreen> {
               onPressed: () => openWithSystem(_dir!.path),
               icon: const Icon(Icons.folder_open_rounded),
             ),
-          IconButton(onPressed: _load, icon: const Icon(Icons.refresh_rounded)),
+          IconButton(tooltip: 'Refresh', onPressed: _load, icon: const Icon(Icons.refresh_rounded)),
         ],
       ),
       body: _items.isEmpty

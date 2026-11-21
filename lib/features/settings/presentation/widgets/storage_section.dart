@@ -7,6 +7,8 @@ import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/platform/media_events.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/features/library/share_session.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 import 'package:social_save/core/platform/disk_space_stub.dart'
     if (dart.library.ffi) 'package:social_save/core/platform/disk_space_ffi.dart';
 
@@ -94,7 +96,7 @@ class _StorageSectionState extends ConsumerState<StorageSection> {
       _clearing = false;
       _usage = _load();
     });
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cache cleared')));
+    AppSnack.info(context, 'Cache cleared');
   }
 
   @override
@@ -115,7 +117,7 @@ class _StorageSectionState extends ConsumerState<StorageSection> {
             Row(
               children: [
                 Icon(Icons.pie_chart_outline_rounded, color: scheme.onSurfaceVariant),
-                const SizedBox(width: 16),
+                const SizedBox(width: AppSpacing.lg),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -134,7 +136,7 @@ class _StorageSectionState extends ConsumerState<StorageSection> {
               ],
             ),
             if (space != null) ...[
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.md),
               ClipRRect(
                 borderRadius: BorderRadius.circular(6),
                 child: SizedBox(
@@ -155,7 +157,7 @@ class _StorageSectionState extends ConsumerState<StorageSection> {
                 ),
               ),
             ],
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             _line(context, scheme.primary, 'Saved videos',
                 u == null ? '…' : '${u.videos} · ${_bytes(u.videoBytes)}'),
             const SizedBox(height: 6),
@@ -165,7 +167,7 @@ class _StorageSectionState extends ConsumerState<StorageSection> {
                   child: _line(context, scheme.primary.withValues(alpha: 0.35), 'Thumbnails and temporary files',
                       u == null ? '…' : _bytes(u.cacheBytes)),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: AppSpacing.sm),
                 FilledButton.tonal(
                   key: const ValueKey('storage-clear-cache'),
                   style: FilledButton.styleFrom(
@@ -190,7 +192,7 @@ class _StorageSectionState extends ConsumerState<StorageSection> {
     return Row(
       children: [
         Container(width: 10, height: 10, decoration: BoxDecoration(color: dot, shape: BoxShape.circle)),
-        const SizedBox(width: 8),
+        const SizedBox(width: AppSpacing.sm),
         Expanded(child: Text(label, style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant))),
         Text(value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
       ],

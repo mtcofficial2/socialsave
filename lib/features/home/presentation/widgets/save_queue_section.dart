@@ -3,6 +3,7 @@ import 'package:social_save/shared/widgets/glass.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:social_save/features/home/presentation/providers/home_controller.dart';
 import 'package:social_save/features/home/presentation/providers/save_queue.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 class SaveQueueSection extends ConsumerWidget {
   const SaveQueueSection({super.key});
@@ -26,14 +27,14 @@ class SaveQueueSection extends ConsumerWidget {
           label: const Text('Add to queue'),
         ),
         if (items.isNotEmpty) ...[
-          const SizedBox(height: 12),
+          const SizedBox(height: AppSpacing.md),
           Text(
             'Queue',
             style: Theme.of(
               context,
             ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: AppSpacing.sm),
           ...items.map((item) {
             final label = switch (item.phase) {
               SavePhase.waiting => 'Waiting',

@@ -67,23 +67,38 @@ class SkeletonGrid extends StatelessWidget {
 
 /// List row placeholders (Downloads, Received).
 class SkeletonList extends StatelessWidget {
-  const SkeletonList({super.key, this.count = 6, this.padding});
+  const SkeletonList({
+    super.key,
+    this.count = 6,
+    this.padding,
+    this.leadingSize = 72,
+    this.leadingRadius = 12,
+  });
 
   final int count;
   final EdgeInsets? padding;
 
+  /// Size of the leading block: 72 for thumbnails, about 52 for avatars.
+  final double leadingSize;
+
+  /// Corner of the leading block. Half of [leadingSize] draws a circle.
+  final double leadingRadius;
+
   @override
   Widget build(BuildContext context) {
-    return ListView.separated(
+    return Semantics(
+      label: 'Loading',
+      child: ExcludeSemantics(
+        child: ListView.separated(
       physics: const NeverScrollableScrollPhysics(),
       padding: padding ?? const EdgeInsets.fromLTRB(16, 8, 16, 24),
       itemCount: count,
       separatorBuilder: (_, _) => const SizedBox(height: 12),
-      itemBuilder: (context, _) => const Row(
+      itemBuilder: (context, _) => Row(
         children: [
-          SkeletonBox(width: 72, height: 72),
-          SizedBox(width: 12),
-          Expanded(
+          SkeletonBox(width: leadingSize, height: leadingSize, radius: leadingRadius),
+          const SizedBox(width: 12),
+          const Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -94,6 +109,8 @@ class SkeletonList extends StatelessWidget {
             ),
           ),
         ],
+      ),
+        ),
       ),
     );
   }

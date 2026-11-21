@@ -3,6 +3,7 @@ import 'package:social_save/shared/widgets/page_layout.dart';
 import 'package:social_save/core/constants/app_constants.dart';
 import 'package:social_save/shared/widgets/app_logo.dart';
 import 'package:social_save/shared/widgets/compliance_notice.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 class AboutScreen extends StatelessWidget {
   const AboutScreen({super.key});
@@ -16,7 +17,7 @@ class AboutScreen extends StatelessWidget {
         padding: pagePadding(context, top: 8, maxWidth: 720),
         children: [
           const Center(child: AppLogo(size: 72)),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.lg),
           Text(
             AppConstants.appName,
             textAlign: TextAlign.center,
@@ -25,13 +26,13 @@ class AboutScreen extends StatelessWidget {
                   letterSpacing: -0.4,
                 ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: AppSpacing.sm),
           Center(
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
                 color: scheme.secondaryContainer,
-                borderRadius: BorderRadius.circular(999),
+                borderRadius: AppRadii.pillAll,
               ),
               child: Text(
                 'Version ${AppConstants.appVersion}',
@@ -53,7 +54,7 @@ class AboutScreen extends StatelessWidget {
                   height: 1.55,
                 ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.lg),
           const ComplianceNotice(),
         ],
       ),

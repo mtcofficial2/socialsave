@@ -428,7 +428,7 @@ class _PhoneControlSheetState extends State<PhoneControlSheet> {
                 const SizedBox(height: 10),
                 if (_phones.isEmpty)
                   Text(
-                    _problem.isEmpty ? 'Plug in a phone with Social Save open and USB debugging allowed.' : _problem,
+                    _problem.isEmpty ? 'Plug in a phone with SocialSave open and USB debugging allowed.' : _problem,
                     style: theme.textTheme.bodyMedium,
                   )
                 else
@@ -754,12 +754,12 @@ class _PhoneControlSheetState extends State<PhoneControlSheet> {
     }
     if (!_named) {
       return Text(
-        'Update Social Save on the phone to see app names. You can still drag the screen, use Back, Home, and Recents, and type.',
+        'Update SocialSave on the phone to see app names. You can still drag the screen, use Back, Home, and Recents, and type.',
         style: theme.textTheme.bodyMedium?.copyWith(height: 1.35),
       );
     }
     if (_apps.isEmpty) {
-      return Text('This phone has no launchable apps Social Save can open.', style: theme.textTheme.bodyMedium);
+      return Text('This phone has no launchable apps SocialSave can open.', style: theme.textTheme.bodyMedium);
     }
     if (yours.isEmpty && system.isEmpty) {
       return Text('No app matches that search.', style: theme.textTheme.bodyMedium);

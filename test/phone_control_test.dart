@@ -224,7 +224,7 @@ void main() {
         ),
       ),
     );
-    expect(find.textContaining('Update Social Save on the phone'), findsOneWidget);
+    expect(find.textContaining('Update SocialSave on the phone'), findsOneWidget);
     expect(find.byKey(const ValueKey('phone-control-screen')), findsOneWidget);
     expect(find.byKey(const ValueKey('phone-control-home')), findsOneWidget);
   });

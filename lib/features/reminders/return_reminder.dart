@@ -14,13 +14,13 @@ const returnReminderMorningMinute = 15;
 
 /// Keep these sentences in step with [ReturnReminder] in ReturnReminder.kt.
 const returnReminderLines = <String>[
-  'Social Save is still here. Open it to save a video or check your chats.',
-  'You have not opened Social Save in a while. Your library is waiting.',
-  'Open Social Save so it stays easy to find on this phone.',
-  'A quick visit keeps Social Save close. Paste a link or open a chat.',
+  'SocialSave is still here. Open it to save a video or check your chats.',
+  'You have not opened SocialSave in a while. Your library is waiting.',
+  'Open SocialSave so it stays easy to find on this phone.',
+  'A quick visit keeps SocialSave close. Paste a link or open a chat.',
 ];
 
-const returnReminderTitle = 'Open Social Save';
+const returnReminderTitle = 'Open SocialSave';
 
 /// Day of the year starting at 0, so 1 January is 0.
 int returnReminderDayIndex(DateTime at) {

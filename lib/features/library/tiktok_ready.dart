@@ -9,6 +9,7 @@ import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:social_save/shared/widgets/premium_glass.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/core/storage/media_store_service.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
 
 const _videoExts = {'mp4', 'm4v', 'mov', 'mkv', 'webm'};
 
@@ -128,7 +129,7 @@ Future<bool> offerTiktokReady(
 
 void _note(BuildContext context, String text) {
   if (!context.mounted) return;
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  AppSnack.info(context, text);
 }
 
 /// Opens the live export progress dialog. Call the result to close it.

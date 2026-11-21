@@ -13,6 +13,8 @@ import 'package:social_save/features/library/nearby_service.dart';
 import 'package:social_save/features/library/nearby_ui.dart';
 import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
 import 'package:social_save/shared/widgets/liquid_glass.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:social_save/shared/widgets/skeleton.dart';
 
 String _fmt(Duration d) {
   final m = d.inMinutes;
@@ -56,7 +58,7 @@ class AlbumArt extends StatelessWidget {
 Future<void> sendSong(BuildContext context, Song s) async {
   final path = s.path;
   if (path == null || !File(path).existsSync()) {
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('This song is not available as a file to send.')));
+    AppSnack.info(context, 'This song is not available as a file to send.');
     return;
   }
   NearbyService.ping();
@@ -206,7 +208,7 @@ class _MusicScreenState extends State<MusicScreen> {
         body: ListenableBuilder(
           listenable: Listenable.merge([_lib, _ctl]),
           builder: (context, _) {
-            if (_lib.loading && !_lib.loaded) return const Center(child: CircularProgressIndicator());
+            if (_lib.loading && !_lib.loaded) return const SkeletonList(count: 8, leadingSize: 52);
             if (_lib.denied) return _permission(context);
             if (_lib.songs.isEmpty) {
               return RefreshIndicator(

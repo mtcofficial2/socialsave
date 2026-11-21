@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:social_save/core/engine/local_engine.dart';
 import 'package:social_save/shared/widgets/glass.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 /// Desktop: the bundled download engine (status, yt-dlp version, update).
 class EngineSection extends StatelessWidget {
@@ -18,7 +19,7 @@ class EngineSection extends StatelessWidget {
         title,
         GlassCard(
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(AppSpacing.lg),
             child: ValueListenableBuilder<EngineStatus>(
               valueListenable: LocalEngine.status,
               builder: (context, s, _) {
@@ -34,7 +35,7 @@ class EngineSection extends StatelessWidget {
                     Row(
                       children: [
                         Icon(Icons.memory_rounded, color: color),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: AppSpacing.md),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -53,10 +54,10 @@ class EngineSection extends StatelessWidget {
                       ],
                     ),
                     if (s.message.isNotEmpty) ...[
-                      const SizedBox(height: 8),
+                      const SizedBox(height: AppSpacing.sm),
                       Text(s.message, style: TextStyle(color: scheme.error, fontSize: 12.5)),
                     ],
-                    const SizedBox(height: 12),
+                    const SizedBox(height: AppSpacing.md),
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
@@ -66,7 +67,7 @@ class EngineSection extends StatelessWidget {
                         _chip(context, s.hasDeno ? 'YouTube solver: deno' : 'YouTube solver missing'),
                       ],
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: AppSpacing.md),
                     Row(
                       children: [
                         FilledButton.tonalIcon(
@@ -88,7 +89,7 @@ class EngineSection extends StatelessWidget {
                               : const Icon(Icons.system_update_alt_rounded),
                           label: Text(s.updating ? 'Checking…' : 'Check for yt-dlp update'),
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: AppSpacing.sm),
                         if (!s.ready)
                           TextButton(
                             onPressed: () => LocalEngine.restart(),
