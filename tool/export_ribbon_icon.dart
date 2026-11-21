@@ -66,8 +66,8 @@ void main(List<String> args) {
   };
   final android = '$root/android/app/src/main/res';
   for (final entry in mip.entries) {
-    png(_square(master, entry.value), '$android/${entry.key}/ic_launcher.png');
-    png(_square(master, entry.value), '$android/${entry.key}/ic_launcher_round.png');
+    png(_square(foreground, entry.value), '$android/${entry.key}/ic_launcher.png');
+    png(_square(foreground, entry.value), '$android/${entry.key}/ic_launcher_round.png');
     png(_square(white, entry.value), '$android/${entry.key}/ic_launcher_monochrome.png');
   }
   for (final entry in fg.entries) {
@@ -79,7 +79,7 @@ void main(List<String> args) {
   for (final entry in notice.entries) {
     png(_square(white, entry.value), '$android/${entry.key}/ic_notification.png');
   }
-  png(_square(master, 192), '$android/drawable-nodpi/ic_notification_logo.png');
+  png(_square(foreground, 192), '$android/drawable-nodpi/ic_notification_logo.png');
 
   png(_square(master, 32), '$root/web/favicon.png');
   png(_square(master, 192), '$root/web/icons/Icon-192.png');

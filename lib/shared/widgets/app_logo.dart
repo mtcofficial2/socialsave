@@ -14,14 +14,17 @@ class AppLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Windows and Android use the ribbon alone, so the page or launcher
+    // color shows through. Other targets keep the filled tile.
+    final bare = Plat.isWindows || Plat.isAndroid;
     final image = Image.asset(
-      Plat.isWindows ? 'assets/brand/icon_foreground_1024.png' : 'assets/brand/icon_1024.png',
+      bare ? 'assets/brand/icon_foreground_1024.png' : 'assets/brand/icon_1024.png',
       width: size,
       height: size,
       fit: BoxFit.contain,
       filterQuality: FilterQuality.high,
     );
-    final mark = Plat.isWindows
+    final mark = bare
         ? image
         : ClipRRect(
             borderRadius: BorderRadius.circular(size * 0.28),
