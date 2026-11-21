@@ -60,6 +60,10 @@ class ChatRecorder {
   AudioRecorder? _recorder;
   Timer? _tick;
   DateTime? _started;
+  // Counts only the time the microphone is really recording: it stops while
+  // paused and is read before the file is finalised, so the length sent with
+  // the note matches the audio instead of including start/stop delays.
+  final Stopwatch _clock = Stopwatch();
   final List<double> _samples = [];
   // Every level of this take (the live view keeps only the last 48).
   final List<double> _take = [];
@@ -105,6 +109,9 @@ class ChatRecorder {
     _samples.clear();
     _take.clear();
     _started = DateTime.now();
+    _clock
+      ..reset()
+      ..start();
     _publish();
     _tick?.cancel();
     _tick = Timer.periodic(AppDurations.fast, (_) => unawaited(_sample()));
@@ -117,10 +124,13 @@ class ChatRecorder {
     try {
       if (paused) {
         await recorder.resume();
-        _started = DateTime.now().subtract(Duration(milliseconds: shownMs));
+        _clock.start();
+        _started = DateTime.now().subtract(Duration(milliseconds: _clock.elapsedMilliseconds));
         paused = false;
       } else {
         await recorder.pause();
+        _clock.stop();
+        shownMs = _clock.elapsedMilliseconds;
         paused = true;
       }
     } catch (e) { logQuiet('chat_voice', e); }
@@ -132,7 +142,7 @@ class ChatRecorder {
     final started = _started;
     final recorder = _recorder;
     if (started == null || recorder == null) return;
-    shownMs = DateTime.now().difference(started).inMilliseconds;
+    shownMs = _clock.elapsedMilliseconds;
     if (shownMs >= 60000) {
       shownMs = 60000;
       _publish();
@@ -165,8 +175,9 @@ class ChatRecorder {
   Future<({String path, int ms, String levels})?> stop({required bool send}) async {
     _tick?.cancel();
     _tick = null;
+    _clock.stop();
+    final recordedMs = _clock.elapsedMilliseconds;
     final started = _started;
-    final frozen = paused ? shownMs : null;
     _started = null;
     recording = false;
     paused = false;
@@ -188,7 +199,7 @@ class ChatRecorder {
     } catch (_) {
       path = null;
     }
-    final ms = frozen ?? (started == null ? shownMs : DateTime.now().difference(started).inMilliseconds);
+    final ms = started == null ? shownMs : recordedMs;
     final levels = encodeVoiceLevels(_take);
     _samples.clear();
     _take.clear();
@@ -451,6 +462,12 @@ class _ChatVoiceBubbleState extends State<ChatVoiceBubble> {
   StreamSubscription<Duration>? _positionSub;
   StreamSubscription<bool>? _playingSub;
   StreamSubscription<bool>? _doneSub;
+  StreamSubscription<Duration>? _durationSub;
+  // The real length of the audio, as the player reports it after loading.
+  Duration _duration = Duration.zero;
+  // True from the end of playback until it is started again, so a late
+  // position update cannot move the bar after the sound has stopped.
+  bool _ended = false;
   bool _busy = false;
   bool _playing = false;
   bool _heard = false;
@@ -471,6 +488,7 @@ class _ChatVoiceBubbleState extends State<ChatVoiceBubble> {
     await _positionSub?.cancel();
     await _playingSub?.cancel();
     await _doneSub?.cancel();
+    await _durationSub?.cancel();
     final player = _player;
     _player = null;
     await player?.dispose();
@@ -493,6 +511,7 @@ class _ChatVoiceBubbleState extends State<ChatVoiceBubble> {
     if (previous != null && previous != this) await previous._pause();
     _active = this;
     _heard = true;
+    _ended = false;
     if (_player != null) {
       try {
         if (_rate != 1) await _player!.setRate(_rate);
@@ -507,15 +526,26 @@ class _ChatVoiceBubbleState extends State<ChatVoiceBubble> {
       final path = await _file();
       if (!mounted || path == null) return;
       final player = Player();
+      // The bar follows only the player's own position, so it moves exactly
+      // as fast as the sound, at any speed, and stops when the sound stops.
       _positionSub = player.stream.position.listen((value) {
-        if (mounted) setState(() => _position = value);
+        if (!mounted || _ended || _seeking) return;
+        setState(() => _position = value);
+      });
+      _durationSub = player.stream.duration.listen((value) {
+        if (mounted && value > Duration.zero && value != _duration) {
+          setState(() => _duration = value);
+        }
       });
       _playingSub = player.stream.playing.listen((value) {
-        if (mounted) setState(() => _playing = value);
+        if (!mounted) return;
+        if (value && _ended) return;
+        setState(() => _playing = value);
       });
       _doneSub = player.stream.completed.listen((done) async {
         if (!done || !mounted) return;
         setState(() {
+          _ended = true;
           _playing = false;
           _position = Duration.zero;
         });
@@ -566,9 +596,15 @@ class _ChatVoiceBubbleState extends State<ChatVoiceBubble> {
     if (queued != null) await _seekTo(queued);
   }
 
+  int get _totalMs => chatVoiceTotalMs(
+        playerMs: _duration.inMilliseconds,
+        sentMs: widget.message.voiceMs,
+      );
+
   Future<void> _seekOnce(double fraction) async {
-    final total = widget.message.voiceMs;
+    final total = _totalMs;
     if (total <= 0) return;
+    _ended = false;
     final ms = (total * fraction.clamp(0.0, 1.0)).round().clamp(0, total);
     if (mounted) setState(() => _position = Duration(milliseconds: ms));
     final player = _player;
@@ -629,9 +665,13 @@ class _ChatVoiceBubbleState extends State<ChatVoiceBubble> {
   @override
   Widget build(BuildContext context) {
     final paint = _VoicePaint.of(mine: widget.mine, dark: widget.dark);
-    final totalMs = widget.message.voiceMs <= 0 ? 1 : widget.message.voiceMs;
-    final progress = (_position.inMilliseconds / totalMs).clamp(0.0, 1.0);
-    final shown = _playing || _position > Duration.zero ? (totalMs - _position.inMilliseconds).clamp(0, totalMs) : widget.message.voiceMs;
+    final totalMs = _totalMs;
+    final progress = chatVoiceProgress(positionMs: _position.inMilliseconds, totalMs: totalMs);
+    final shown = chatVoiceClockMs(
+      positionMs: _position.inMilliseconds,
+      totalMs: totalMs,
+      active: _playing || _position > Duration.zero,
+    );
     return Padding(
       padding: const EdgeInsets.only(top: 3, bottom: 1),
       child: Row(
@@ -1023,4 +1063,24 @@ class _ChatSongBubbleState extends State<ChatSongBubble> {
       ),
     );
   }
+}
+
+/// The length the voice bar measures against: the player's real duration once
+/// it is known, otherwise the length recorded with the note.
+int chatVoiceTotalMs({required int playerMs, required int sentMs}) {
+  if (playerMs > 0) return playerMs;
+  return sentMs > 0 ? sentMs : 0;
+}
+
+/// How much of the bar is filled, from the player's position only.
+double chatVoiceProgress({required int positionMs, required int totalMs}) {
+  if (totalMs <= 0 || positionMs <= 0) return 0;
+  return (positionMs / totalMs).clamp(0.0, 1.0);
+}
+
+/// The time under the bar: time left while playing or paused part-way, the
+/// full length otherwise.
+int chatVoiceClockMs({required int positionMs, required int totalMs, required bool active}) {
+  if (!active) return totalMs;
+  return (totalMs - positionMs).clamp(0, totalMs);
 }

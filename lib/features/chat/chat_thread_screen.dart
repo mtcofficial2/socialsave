@@ -129,6 +129,9 @@ class _ChatThreadViewState extends State<ChatThreadView>
   bool _emojiOpen = false;
   bool _finishingVoice = false;
   int _below = 0;
+  // How many of the newest messages the list builds. Older ones are added a
+  // page at a time as you scroll up, so long chats open light.
+  int _window = chatThreadFirstPage;
   int _after = 0;
   int _peerDelivered = 0;
   int _peerRead = 0;
@@ -294,7 +297,13 @@ class _ChatThreadViewState extends State<ChatThreadView>
 
   void _onScroll() {
     if (!_scroll.hasClients) return;
-    final distance = _scroll.position.maxScrollExtent - _scroll.position.pixels;
+    // The list is reversed: offset 0 is the newest message at the bottom.
+    final position = _scroll.position;
+    if (position.maxScrollExtent - position.pixels < 800 &&
+        _window < _shown.length) {
+      setState(() => _window = chatThreadNextWindow(_window, _shown.length));
+    }
+    final distance = position.pixels;
     final stick = distance < 96;
     if (stick == _stickToEnd) return;
     setState(() {
@@ -472,32 +481,74 @@ class _ChatThreadViewState extends State<ChatThreadView>
 
   GlobalKey _keyFor(int id) => _rowKeys.putIfAbsent(id, GlobalKey.new);
 
-  void _scrollToMessage(int id) {
+  /// Brings a message into view. Its page is loaded first, then the list
+  /// steps toward its row by position until the row is built, and finally
+  /// lines it up near the top (the list is reversed, so 0.8 is near the top).
+  void _scrollToMessage(int id, {int attempt = 0}) {
+    if (!mounted) return;
+    final index = _shown.indexWhere((item) => item.id == id);
+    if (index < 0) return;
+    final needed = chatThreadWindowFor(index, _shown.length, _window);
+    if (needed != _window) {
+      setState(() => _window = needed);
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _scrollToMessage(id, attempt: attempt),
+      );
+      return;
+    }
     final current = _rowKeys[id]?.currentContext;
     if (current != null) {
       unawaited(
         Scrollable.ensureVisible(
           current,
-          duration: const Duration(milliseconds: 220),
-          alignment: 0.2,
+          duration: attempt == 0 ? const Duration(milliseconds: 220) : Duration.zero,
+          alignment: 0.8,
         ),
       );
       return;
     }
-    final index = _messages.indexWhere((item) => item.id == id);
-    if (index < 0 || !_scroll.hasClients) return;
-    final fraction = index / _messages.length;
-    final target = _scroll.position.maxScrollExtent * fraction;
-    _scroll.jumpTo(target.clamp(0, _scroll.position.maxScrollExtent));
+    if (attempt >= 8 || !_scroll.hasClients) return;
+    final rows = _rows();
+    final row = rows.indexWhere((item) => item.message?.id == id);
+    if (row < 0) return;
+    final position = _scroll.position;
+    final target = chatReversedOffsetGuess(
+      row: row,
+      rows: rows.length,
+      maxExtent: position.maxScrollExtent,
+    );
+    _scroll.jumpTo(target);
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _scrollToMessage(id, attempt: attempt + 1),
+    );
+  }
+
+  /// Keeps what you are reading in place while new messages arrive below.
+  /// The list is reversed, so rows added at the bottom would otherwise push
+  /// everything up.
+  void _holdView() {
+    if (!_scroll.hasClients || _scroll.position.pixels < 1) return;
+    int? anchorId;
+    double? before;
+    for (final entry in _rowKeys.entries) {
+      final box = entry.value.currentContext?.findRenderObject();
+      if (box is! RenderBox || !box.attached || !box.hasSize) continue;
+      anchorId = entry.key;
+      before = box.localToGlobal(Offset.zero).dy;
+      break;
+    }
+    if (anchorId == null || before == null) return;
+    final id = anchorId;
+    final oldDy = before;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final next = _rowKeys[id]?.currentContext;
-      if (next == null) return;
-      unawaited(
-        Scrollable.ensureVisible(
-          next,
-          duration: const Duration(milliseconds: 180),
-          alignment: 0.2,
-        ),
+      if (!mounted || !_scroll.hasClients) return;
+      final box = _rowKeys[id]?.currentContext?.findRenderObject();
+      if (box is! RenderBox || !box.attached) return;
+      final shift = box.localToGlobal(Offset.zero).dy - oldDy;
+      if (shift.abs() < 0.5) return;
+      final position = _scroll.position;
+      _scroll.jumpTo(
+        (position.pixels - shift).clamp(0.0, position.maxScrollExtent),
       );
     });
   }
@@ -849,6 +900,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       _applyLand(combined, finish: true);
       final justLanded = !landedBefore && _landed;
       final stick = _stickToEnd;
+      if (!stick && fresh.isNotEmpty) _holdView();
       setState(() {
         _messages = combined;
         _after = next;
@@ -964,7 +1016,8 @@ class _ChatThreadViewState extends State<ChatThreadView>
   void _jump({required bool animate}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scroll.hasClients) return;
-      final target = _scroll.position.maxScrollExtent;
+      // Reversed list: the newest message sits at offset 0.
+      const target = 0.0;
       if (!animate) {
         _scroll.jumpTo(target);
         return;
@@ -1070,6 +1123,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     final isNew = !placed;
     final mine = message.name == _me && _me.isNotEmpty;
     final stick = _stickToEnd || mine;
+    if (isNew && !stick) _holdView();
     setState(() {
       _messages = next;
       if (message.id > _after) _after = message.id;
@@ -2948,16 +3002,32 @@ class _ChatThreadViewState extends State<ChatThreadView>
                   Builder(
                     builder: (context) {
                       final rows = _rows();
+                      final more = _window < _shown.length;
+                      // Reversed: the newest message is built first at the
+                      // bottom, so the chat opens on it with no jump.
                       return ListView.builder(
                         controller: _scroll,
+                        reverse: true,
                         padding: EdgeInsets.fromLTRB(
                           12,
                           _pinned.isNotEmpty && !_searching ? 72 : 12,
                           12,
                           12,
                         ),
-                        itemCount: rows.length,
-                        itemBuilder: (context, index) {
+                        itemCount: rows.length + (more ? 1 : 0),
+                        itemBuilder: (context, slot) {
+                          if (slot >= rows.length) {
+                            return const Padding(
+                              padding: EdgeInsets.symmetric(vertical: AppSpacing.md),
+                              child: Center(
+                                child: SizedBox.square(
+                                  dimension: 18,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                ),
+                              ),
+                            );
+                          }
+                          final index = rows.length - 1 - slot;
                           final row = rows[index];
                           if (row.banner != null) {
                             return ChatDayPill(label: row.banner!);
@@ -3630,7 +3700,8 @@ class _ChatThreadViewState extends State<ChatThreadView>
       if (hidden.contains(message.id)) continue;
       if (message.name != _me && message.id > _seenAtOpen) newCount++;
     }
-    for (final message in shown) {
+    final start = (shown.length - _window).clamp(0, shown.length);
+    for (final message in shown.skip(start)) {
       if (hidden.contains(message.id)) continue;
       final local = message.at.toLocal();
       final day = DateTime(local.year, local.month, local.day);

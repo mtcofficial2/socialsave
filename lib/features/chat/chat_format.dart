@@ -437,3 +437,37 @@ String statusReplyBody(String snippet, String typed, {String id = '', bool photo
   if (body.isEmpty) return head;
   return '$head\n$body';
 }
+
+/// How many of the newest messages a chat builds when it opens.
+const chatThreadFirstPage = 60;
+
+/// How many more older messages are added each time you scroll near the top.
+const chatThreadPage = 50;
+
+/// The next window size once you scroll near the oldest built message.
+int chatThreadNextWindow(int window, int total) {
+  final next = window + chatThreadPage;
+  return next > total ? total : next;
+}
+
+/// The window size that includes the message at [index] (oldest first),
+/// with a few rows of context above it. Never shrinks the window.
+int chatThreadWindowFor(int index, int total, int window) {
+  if (index < 0 || index >= total) return window;
+  var needed = total - index + 10;
+  if (needed > total) needed = total;
+  return needed > window ? needed : window;
+}
+
+/// A first guess at the scroll offset of [row] (oldest first) in a reversed
+/// list, where offset 0 shows the newest row. Rows differ in height, so the
+/// caller steps toward the row until it is built, then lines it up exactly.
+double chatReversedOffsetGuess({
+  required int row,
+  required int rows,
+  required double maxExtent,
+}) {
+  if (rows <= 1 || maxExtent <= 0) return 0;
+  final fromBottom = (rows - 1 - row).clamp(0, rows - 1);
+  return (maxExtent * fromBottom / (rows - 1)).clamp(0.0, maxExtent);
+}
