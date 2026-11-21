@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:social_save/features/chat/chat_api.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// Conversations kept on this phone so they open with no data and no Wi-Fi.
 ///
@@ -437,7 +438,7 @@ class _Book {
           logs[id] = await _logFromJson(Map<String, dynamic>.from(body));
         }
       }
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_history', e); }
   }
 
   Future<void> flush() async {

@@ -105,7 +105,7 @@ func (s *Server) Router() http.Handler {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins: []string{"*"},
 		AllowedMethods: []string{http.MethodGet, http.MethodPost, http.MethodOptions},
-		AllowedHeaders: []string{"Authorization", "Content-Type", "X-API-Key", "X-Chat-Token", "X-Voice-Ms", "X-Reply-Id", "X-Chat-Caption", "X-Chat-File-Name", "X-Chat-Clip"},
+		AllowedHeaders: []string{"Authorization", "Content-Type", "X-API-Key", "X-Chat-Token", "X-Voice-Ms", "X-Voice-Levels", "X-Reply-Id", "X-Chat-Caption", "X-Chat-File-Name", "X-Chat-Clip"},
 		MaxAge:         300,
 	}))
 	r.Use(s.limit)

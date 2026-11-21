@@ -8,6 +8,7 @@ import 'package:social_save/core/config/env_config.dart';
 import 'package:social_save/features/downloader/data/datasources/byte_ranges.dart';
 import 'package:social_save/core/errors/error_messages.dart';
 import 'package:social_save/core/errors/exceptions.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 class DownloadProgress {
   const DownloadProgress({
@@ -106,7 +107,7 @@ class LocalAwareFileDownloader implements FileDownloader {
     }
     try {
       await source.parent.delete(recursive: true);
-    } catch (_) {}
+    } catch (e) { logQuiet('file_downloader', e); }
   }
 }
 

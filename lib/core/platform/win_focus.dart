@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:ffi/ffi.dart';
 import 'package:win32/win32.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// Windows: gives keyboard focus back to this app's Flutter view. Needed
 /// after the window style changes for full screen, which can leave the
@@ -49,6 +50,6 @@ class WinFocus {
         BringWindowToTop(top);
       }
       if (view != 0) SetFocus(view);
-    } catch (_) {}
+    } catch (e) { logQuiet('win_focus', e); }
   }
 }

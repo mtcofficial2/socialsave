@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 import 'package:path/path.dart' as p;
 import 'package:win32/win32.dart' as w;
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 const windowsVideoExtensions = {
   'mp4', 'mkv', 'webm', 'mov', 'avi', 'm4v', '3gp', 'wmv', 'flv', 'ts',
@@ -50,7 +51,7 @@ List<String> windowsDefaultVideoRoots() {
       if (type != _driveFixed) continue;
       roots.add('$letter\\Videos');
     }
-  } catch (_) {}
+  } catch (e) { logQuiet('windows_video_scan', e); }
   return roots.where((dir) => Directory(dir).existsSync()).toList();
 }
 

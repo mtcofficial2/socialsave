@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
 import 'package:social_save/shared/widgets/liquid_glass.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 const _doneKey = 'socialsave_onboarding_done_v1';
 
@@ -65,7 +66,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       } else {
         await Permission.notification.request();
       }
-    } catch (_) {}
+    } catch (e) { logQuiet('onboarding', e); }
     if (mounted) unawaited(_page.nextPage(duration: const Duration(milliseconds: 300), curve: Curves.easeOut));
   }
 

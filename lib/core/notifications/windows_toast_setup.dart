@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:ffi/ffi.dart';
 import 'package:path/path.dart' as p;
 import 'package:win32/win32.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// The id Windows uses to decide this app may show a toast.
 const windowsNotificationAppId = 'com.socialsave.SocialSave';
@@ -22,7 +23,7 @@ void ensureWindowsNotificationIdentity() {
   try {
     _setProcessAppId();
     _writeShortcut();
-  } catch (_) {}
+  } catch (e) { logQuiet('windows_toast_setup', e); }
 }
 
 void _setProcessAppId() {

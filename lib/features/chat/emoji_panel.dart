@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/features/chat/emoji_catalog.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 /// The emoji sheet on a message or status field.
 ///
@@ -98,11 +99,11 @@ class _EmojiPanelState extends State<EmojiPanel> {
               height: 40,
               child: ListView(
                 scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
                 children: [
                   for (final name in chips)
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs),
                       child: ChoiceChip(
                         label: Text(name),
                         selected: _search.text.trim().isEmpty && _group == name,

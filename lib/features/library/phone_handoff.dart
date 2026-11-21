@@ -50,6 +50,7 @@ import 'package:social_save/features/home/presentation/providers/home_controller
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:social_save/web/web_pages.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// Sends one video to another SocialSave app (phone or PC) on the same Wi-Fi.
 ///
@@ -186,7 +187,7 @@ class PhoneHandoff {
     for (final n in [first, 47329, 47330]) {
       try {
         return await HttpServer.bind(InternetAddress.anyIPv4, n, shared: false);
-      } catch (_) {}
+      } catch (e) { logQuiet('phone_handoff', e); }
     }
     return HttpServer.bind(InternetAddress.anyIPv4, 0);
   }
@@ -211,12 +212,12 @@ class PhoneHandoff {
           try {
             request.response.statusCode = HttpStatus.notFound;
             await request.response.close();
-          } catch (_) {}
+          } catch (e) { logQuiet('phone_handoff', e); }
           continue;
         }
         unawaited(_handle(request, _file, offer));
       }
-    } catch (_) {}
+    } catch (e) { logQuiet('phone_handoff', e); }
   }
 
   static Future<void> _serveApk(HttpRequest request, File apk) async {
@@ -338,7 +339,7 @@ class PhoneHandoff {
     } catch (_) {
       try {
         await res.close();
-      } catch (_) {}
+      } catch (e) { logQuiet('phone_handoff', e); }
     }
   }
 
@@ -371,7 +372,7 @@ class PhoneHandoff {
     if (server != null) {
       try {
         await server.close(force: true);
-      } catch (_) {}
+      } catch (e) { logQuiet('phone_handoff', e); }
     }
   }
 
@@ -436,7 +437,7 @@ class PhoneHandoff {
         for (final t in targets) {
           try {
             udp.send(message, t, discoveryPort);
-          } catch (_) {}
+          } catch (e) { logQuiet('phone_handoff', e); }
         }
         await Future.any([found.future, Future<void>.delayed(const Duration(milliseconds: 600))]);
       }
@@ -581,7 +582,7 @@ class PhoneHandoff {
           fileName: p.basename(dest.path),
           mimeType: _mimeOf(dest.path).mimeType,
         );
-      } catch (_) {}
+      } catch (e) { logQuiet('phone_handoff', e); }
     } else {
       DesktopSupport.cachedVideos = null;
     }
@@ -617,7 +618,7 @@ class PhoneHandoff {
         await for (final req in server) {
           unawaited(_handleDrop(req, code));
         }
-      } catch (_) {}
+      } catch (e) { logQuiet('phone_handoff', e); }
     }());
     try {
       final udp = await RawDatagramSocket.bind(InternetAddress.anyIPv4, discoveryPort, reuseAddress: true);
@@ -630,7 +631,7 @@ class PhoneHandoff {
         if (String.fromCharCodes(dg.data).trim() != 'SSWHO $code') return;
         udp.send('SSHERE $code ${server.port}'.codeUnits, dg.address, dg.port);
       });
-    } catch (_) {}
+    } catch (e) { logQuiet('phone_handoff', e); }
     return code;
   }
 
@@ -693,7 +694,7 @@ class PhoneHandoff {
       if (!ok) {
         try {
           await dest.delete();
-        } catch (_) {}
+        } catch (e) { logQuiet('phone_handoff', e); }
         drop.value = DropState(title: title, received: got, total: total, failed: true);
         res.statusCode = HttpStatus.badRequest;
         await res.close();
@@ -719,7 +720,7 @@ class PhoneHandoff {
       try {
         res.statusCode = HttpStatus.internalServerError;
         await res.close();
-      } catch (_) {}
+      } catch (e) { logQuiet('phone_handoff', e); }
     }
   }
 
@@ -731,7 +732,7 @@ class PhoneHandoff {
     if (s != null) {
       try {
         await s.close(force: true);
-      } catch (_) {}
+      } catch (e) { logQuiet('phone_handoff', e); }
     }
   }
 
@@ -1357,7 +1358,8 @@ class _HotspotSendDialogState extends State<_HotspotSendDialog> {
           _stopPoll();
           if (mounted) await then();
         }
-      } catch (_) {
+      } catch (e) {
+        logQuiet('phone_handoff', e);
       } finally {
         busy = false;
       }
@@ -2120,7 +2122,7 @@ Future<bool> receiveHandoff(BuildContext context, String raw, {String? mode}) as
   var has5 = true;
   try {
     has5 = (await HotspotShare.status())['has5'] != false;
-  } catch (_) {}
+  } catch (e) { logQuiet('phone_handoff', e); }
   while (true) {
     progress.step.value = 0;
     if (join.on5 && !has5) {
@@ -2909,7 +2911,7 @@ void _pumpOverlay(ProviderContainer c, String id, int gen) {
         Map<String, Object?> prep = const {};
         try {
           prep = await MediaStoreService().uploadPrepProgress();
-        } catch (_) {}
+        } catch (e) { logQuiet('phone_handoff', e); }
         final read = _prepRead(prep);
         percent = read.$1;
         speed = read.$2;
@@ -2930,7 +2932,7 @@ void _pumpOverlay(ProviderContainer c, String id, int gen) {
           'speed': speed,
           'state': state,
         });
-      } catch (_) {}
+      } catch (e) { logQuiet('phone_handoff', e); }
       // The TikTok question and the rewrite still need this timer.
       // done, failed, and cancelled are the last frame.
       if (state != 'running' && state != 'ask') stop();
@@ -3022,7 +3024,7 @@ void installOverlayHandlers(ProviderContainer? Function() container) {
       _bgMedia[u] = m;
       final q = qualitySummary(m);
       await MediaEvents.channel.invokeMethod<void>('overlayMeta', {'url': args, 'title': m.title, 'heights': q.heights, 'audio': q.audio});
-    } catch (_) {}
+    } catch (e) { logQuiet('phone_handoff', e); }
   });
   MediaEvents.on('overlayCancel', (args) async {
     final id = (args is String && args.isNotEmpty) ? args : _overlayTaskId;
@@ -3087,7 +3089,7 @@ Future<void> runBgDownload(ProviderContainer c, String pref, String url, {bool f
         await Future<void>.delayed(const Duration(milliseconds: 600));
         try {
           await MediaEvents.channel.invokeMethod<void>('moveToBack');
-        } catch (_) {}
+        } catch (e) { logQuiet('phone_handoff', e); }
       }
       return;
     }
@@ -3097,14 +3099,14 @@ Future<void> runBgDownload(ProviderContainer c, String pref, String url, {bool f
       try {
         await MediaEvents.channel.invokeMethod<void>('overlayProgress', {'id': '', 'title': 'Already saved on this phone', 'percent': 1.0, 'speed': '', 'state': 'done'});
         if (foreground) await MediaEvents.channel.invokeMethod<void>('moveToBack');
-      } catch (_) {}
+      } catch (e) { logQuiet('phone_handoff', e); }
       return;
     }
   }
   if (gen == _bubbleGen) _bubbleOwnsUi = false;
   try {
     await MediaEvents.channel.invokeMethod<void>('overlayProgress', {'id': '', 'title': '', 'percent': 0.0, 'speed': '', 'state': 'failed'});
-  } catch (_) {}
+  } catch (e) { logQuiet('phone_handoff', e); }
   if (foreground) unawaited(offerLink(url));
 }
 
@@ -3134,7 +3136,7 @@ void listenForQuickActions() {
       try {
         try {
           await MediaEvents.channel.invokeMethod<void>('consumeQuickAction');
-        } catch (_) {}
+        } catch (e) { logQuiet('phone_handoff', e); }
         final c = _appContainer();
         if (c == null) return;
         await runBgDownload(c, pref, url, foreground: true);
@@ -3147,7 +3149,7 @@ void listenForQuickActions() {
     try {
       try {
         await MediaEvents.channel.invokeMethod<void>('consumeQuickAction');
-      } catch (_) {}
+      } catch (e) { logQuiet('phone_handoff', e); }
       await Future<void>.delayed(const Duration(milliseconds: 400));
       final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
       if (ctx == null || !ctx.mounted) return;
@@ -3199,7 +3201,7 @@ void listenForQuickActions() {
       String? setUrl;
       try {
         setUrl = await MediaEvents.channel.invokeMethod<String>('consumeSharedSet');
-      } catch (_) {}
+      } catch (e) { logQuiet('phone_handoff', e); }
       if (setUrl != null && setUrl.trim().isNotEmpty) {
         appRouter.push('/playlist', extra: setUrl.trim());
         return;
@@ -3207,7 +3209,7 @@ void listenForQuickActions() {
       String? text;
       try {
         text = await MediaEvents.channel.invokeMethod<String>('consumeSharedText');
-      } catch (_) {}
+      } catch (e) { logQuiet('phone_handoff', e); }
       if (text == null || text.trim().isEmpty) return;
       final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
       if (ctx == null || !ctx.mounted) return;
@@ -3237,6 +3239,6 @@ void listenForQuickActions() {
     try {
       final a = await MediaEvents.channel.invokeMethod<dynamic>('consumeQuickAction');
       if (a != null) await run(a);
-    } catch (_) {}
+    } catch (e) { logQuiet('phone_handoff', e); }
   });
 }

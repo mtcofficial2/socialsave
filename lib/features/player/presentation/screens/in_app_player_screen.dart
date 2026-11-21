@@ -44,6 +44,8 @@ import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 class InAppPlayerScreen extends ConsumerStatefulWidget {
   static bool keyLog = false;
@@ -278,7 +280,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
           try {
             final dynamic native = _player.platform;
             unawaited(native.setProperty('hwdec', 'auto-safe') as Future<void>);
-          } catch (_) {}
+          } catch (e) { logQuiet('in_app_player_screen', e); }
         }
         setState(() => _frameWidth = value);
         _syncPipAspect();
@@ -780,7 +782,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         // still works, so keep the player open instead of failing.
         try {
           await _player.play();
-        } catch (_) {}
+        } catch (e) { logQuiet('in_app_player_screen', e); }
       } else if (widget.autoPlay) {
         await _player.play();
       }
@@ -823,7 +825,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         await _player.setSubtitleTrack(
           SubtitleTrack.uri(Uri.file(file.path).toString(), title: 'Captions'),
         );
-      } catch (_) {}
+      } catch (e) { logQuiet('in_app_player_screen', e); }
       return;
     }
   }
@@ -848,7 +850,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       for (final e in props.entries) {
         await native.setProperty(e.key, e.value);
       }
-    } catch (_) {}
+    } catch (e) { logQuiet('in_app_player_screen', e); }
   }
 
   /// libmpv settings for smooth seeking on PC.
@@ -870,7 +872,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       for (final e in props.entries) {
         await native.setProperty(e.key, e.value);
       }
-    } catch (_) {}
+    } catch (e) { logQuiet('in_app_player_screen', e); }
   }
 
   Future<Duration?> _savedStart() async {
@@ -941,7 +943,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   Future<void> _seekResume(Duration target) async {
     final now = DateTime.now();
     if (_lastForceSeek != null &&
-        now.difference(_lastForceSeek!) < const Duration(milliseconds: 350)) {
+        now.difference(_lastForceSeek!) < AppDurations.slow) {
       return;
     }
     _lastForceSeek = now;
@@ -1068,7 +1070,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       });
       try {
         await done.future.timeout(const Duration(seconds: 15));
-      } catch (_) {}
+      } catch (e) { logQuiet('in_app_player_screen', e); }
       await sub.cancel();
       final ms = sw.elapsedMilliseconds - acted;
       total += ms;
@@ -1166,7 +1168,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       } else {
         await prefs.setDouble(_speedPrefKey, rate);
       }
-    } catch (_) {}
+    } catch (e) { logQuiet('in_app_player_screen', e); }
   }
 
   Future<void> _restoreRate() async {
@@ -1177,7 +1179,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       final rate = saved.clamp(0.25, 4.0).toDouble();
       await _player.setRate(rate);
       if (mounted) setState(() => _rate = rate);
-    } catch (_) {}
+    } catch (e) { logQuiet('in_app_player_screen', e); }
   }
 
   Future<void> _toggleLoop() async {
@@ -1212,7 +1214,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       try {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool(_fitPrefKey, _fit == BoxFit.cover);
-      } catch (_) {}
+      } catch (e) { logQuiet('in_app_player_screen', e); }
     }());
   }
 
@@ -1222,7 +1224,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       if ((prefs.getBool(_fitPrefKey) ?? false) && mounted) {
         setState(() => _fit = BoxFit.cover);
       }
-    } catch (_) {}
+    } catch (e) { logQuiet('in_app_player_screen', e); }
   }
 
   void _toggleAB() {
@@ -1573,7 +1575,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     if (!on && widget.fullscreenOnly && DesktopSupport.isWindows) {
       try {
         await _mkChannel.invokeMethod<void>('Utils.ExitNativeFullscreen');
-      } catch (_) {}
+      } catch (e) { logQuiet('in_app_player_screen', e); }
       if (!mounted) return;
       setState(() => _fs = false);
       Navigator.of(context).pop(
@@ -1598,7 +1600,12 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
       } else {
         await _applyOrientation();
       }
-    } catch (_) {}
+    } catch (e, st) {
+      logQuiet('player.fullscreen', e, st);
+      if (mounted) {
+        AppSnack.error(context, "Full screen isn't available right now.");
+      }
+    }
     if (on) _showChrome();
     _refocus();
     _flash(
@@ -1679,7 +1686,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         }
         if (last != null &&
             pos != null &&
-            now.difference(last) < const Duration(milliseconds: 350) &&
+            now.difference(last) < AppDurations.slow &&
             (e.position - pos).distance < 24) {
           _lastClick = null;
           unawaited(_toggleFs());
@@ -1857,7 +1864,12 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         forward ? 'Next frame' : 'Previous frame',
         icon: forward ? Icons.skip_next_rounded : Icons.skip_previous_rounded,
       );
-    } catch (_) {}
+    } catch (e, st) {
+      logQuiet('player.frame_step', e, st);
+      if (mounted) {
+        AppSnack.error(context, "This video can't step frame by frame.");
+      }
+    }
   }
 
   Future<void> _playPrevious() async {
@@ -2116,14 +2128,14 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                       'Double-tap sides to skip 10s. Hold to play at 2x. Drag right for volume, left for brightness.',
                       style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: AppSpacing.lg),
                     const PlayerSectionHeader('Sleep timer', Icons.bedtime_rounded),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: AppSpacing.xs),
                     Text(
                       'The screen dims when the timer ends.',
                       style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: AppSpacing.sm),
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
@@ -2156,9 +2168,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                           ),
                       ],
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: AppSpacing.lg),
                     const PlayerSectionHeader('Speed', Icons.speed_rounded),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: AppSpacing.sm),
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
@@ -2278,7 +2290,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                         'Audio',
                         style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: AppSpacing.xs),
                       Wrap(
                         spacing: 8,
                         children: [
@@ -2296,14 +2308,14 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                             ),
                         ],
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: AppSpacing.md),
                     ],
                     if (_player.state.tracks.subtitle.isNotEmpty) ...[
                       Text(
                         'Captions',
                         style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: AppSpacing.xs),
                       Wrap(
                         spacing: 8,
                         children: [
@@ -2651,7 +2663,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                       ),
                     ),
                   ),
-                  SizedBox(width: 12),
+                  SizedBox(width: AppSpacing.md),
                   Text(
                     'Tap to Unlock',
                     style: TextStyle(
@@ -2665,13 +2677,13 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
             ),
           ),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: AppSpacing.lg),
         Container(
-          margin: const EdgeInsets.symmetric(horizontal: 32),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          margin: const EdgeInsets.symmetric(horizontal: AppSpacing.xxl),
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: AppSpacing.sm),
           decoration: BoxDecoration(
             color: const Color(0x99000000),
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: AppRadii.mdAll,
           ),
           child: const Text(
             'Controls are locked so a tap does not change playback.',
@@ -2829,7 +2841,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
             ),
           ),
           PlatformLogo(platform: _session.platform, size: 22),
-          const SizedBox(width: 8),
+          const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -3022,7 +3034,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
             child: RepaintBoundary(
               child: _DockSeek(player: _player, themed: _themedChrome),
             ),
@@ -3399,7 +3411,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                       if (_error != null)
                         Center(
                           child: Padding(
-                            padding: const EdgeInsets.all(24),
+                            padding: const EdgeInsets.all(AppSpacing.xl),
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
@@ -3414,7 +3426,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                                 ),
                                 if (_session.filePath != null &&
                                     !_session.isVault) ...[
-                                  const SizedBox(height: 16),
+                                  const SizedBox(height: AppSpacing.lg),
                                   FilledButton(
                                     onPressed: _openExternal,
                                     child: const Text('Open in another app'),
@@ -3764,7 +3776,7 @@ class _DockSeekState extends State<_DockSeek> {
             style: TextStyle(color: fg, fontSize: 12),
           ),
         ),
-        const SizedBox(width: 8),
+        const SizedBox(width: AppSpacing.sm),
         Expanded(
           child: LayoutBuilder(
             builder: (context, constraints) {
@@ -3800,7 +3812,7 @@ class _DockSeekState extends State<_DockSeek> {
             },
           ),
         ),
-        const SizedBox(width: 8),
+        const SizedBox(width: AppSpacing.sm),
         SizedBox(
           width: 56,
           child: Text(
@@ -3907,12 +3919,12 @@ class _EndCard extends StatelessWidget {
       color: const Color(0xCC000000),
       child: Center(
         child: Padding(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(AppSpacing.xl),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               const Icon(Icons.replay_rounded, color: Colors.white, size: 40),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.md),
               const Text(
                 'Video ended',
                 style: TextStyle(
@@ -3922,14 +3934,14 @@ class _EndCard extends StatelessWidget {
                 ),
               ),
               if (showTimer) ...[
-                const SizedBox(height: 8),
+                const SizedBox(height: AppSpacing.sm),
                 Text(
                   'Next in $countdown s',
                   style: const TextStyle(color: Colors.white70, fontSize: 16),
                 ),
                 if (nextTitle != null)
                   Padding(
-                    padding: const EdgeInsets.only(top: 4),
+                    padding: const EdgeInsets.only(top: AppSpacing.xs),
                     child: Text(
                       nextTitle!,
                       maxLines: 2,
@@ -3940,7 +3952,7 @@ class _EndCard extends StatelessWidget {
                   ),
               ] else if (!hasNext)
                 const Padding(
-                  padding: EdgeInsets.only(top: 8),
+                  padding: EdgeInsets.only(top: AppSpacing.sm),
                   child: Text(
                     'That was the last video in this list.',
                     style: TextStyle(color: Colors.white70),
@@ -3953,7 +3965,7 @@ class _EndCard extends StatelessWidget {
                 label: const Text('Rewatch'),
               ),
               if (showTimer && onPlayNext != null) ...[
-                const SizedBox(height: 8),
+                const SizedBox(height: AppSpacing.sm),
                 TextButton(
                   onPressed: onPlayNext,
                   child: const Text(

@@ -90,66 +90,70 @@ type chatUser struct {
 }
 
 type chatMessage struct {
-	ID        int64          `json:"id"`
-	From      string         `json:"from"`
-	Name      string         `json:"name"`
-	Text      string         `json:"text"`
-	Links     []string       `json:"links,omitempty"`
-	At        int64          `json:"at"`
-	Status    string         `json:"status,omitempty"`
-	Voice     string         `json:"voice,omitempty"`
-	VoiceMs   int            `json:"voiceMs,omitempty"`
-	VoiceType string         `json:"voiceType,omitempty"`
-	Reply     int64          `json:"reply,omitempty"`
-	ReplyName string         `json:"replyName,omitempty"`
-	ReplyText string         `json:"replyText,omitempty"`
-	Photo     string         `json:"photo,omitempty"`
-	PhotoType string         `json:"photoType,omitempty"`
-	Song      string         `json:"song,omitempty"`
-	SongName  string         `json:"songName,omitempty"`
-	SongMs    int            `json:"songMs,omitempty"`
-	SongType  string         `json:"songType,omitempty"`
-	EditedAt  int64          `json:"editedAt,omitempty"`
-	Touched   int64          `json:"touched,omitempty"`
-	Reactions []chatReaction `json:"reactions,omitempty"`
-	Poll      *chatPoll      `json:"poll,omitempty"`
-	Card      *chatCard      `json:"card,omitempty"`
-	Place     *chatPlace     `json:"place,omitempty"`
-	Expires   int64          `json:"expires,omitempty"`
-	Call      string         `json:"call,omitempty"`
-	CallMs    int            `json:"callMs,omitempty"`
-	File      string         `json:"file,omitempty"`
-	FileName  string         `json:"fileName,omitempty"`
-	FileType  string         `json:"fileType,omitempty"`
-	FileSize  int64          `json:"fileSize,omitempty"`
-	Clip      bool           `json:"clip,omitempty"`
+	ID      int64    `json:"id"`
+	From    string   `json:"from"`
+	Name    string   `json:"name"`
+	Text    string   `json:"text"`
+	Links   []string `json:"links,omitempty"`
+	At      int64    `json:"at"`
+	Status  string   `json:"status,omitempty"`
+	Voice   string   `json:"voice,omitempty"`
+	VoiceMs int      `json:"voiceMs,omitempty"`
+	// VoiceLevels is the recorded loudness, one digit 0-9 per bar, so the
+	// bubble can draw the real waveform. Empty for older notes.
+	VoiceLevels string         `json:"voiceLevels,omitempty"`
+	VoiceType   string         `json:"voiceType,omitempty"`
+	Reply       int64          `json:"reply,omitempty"`
+	ReplyName   string         `json:"replyName,omitempty"`
+	ReplyText   string         `json:"replyText,omitempty"`
+	Photo       string         `json:"photo,omitempty"`
+	PhotoType   string         `json:"photoType,omitempty"`
+	Song        string         `json:"song,omitempty"`
+	SongName    string         `json:"songName,omitempty"`
+	SongMs      int            `json:"songMs,omitempty"`
+	SongType    string         `json:"songType,omitempty"`
+	EditedAt    int64          `json:"editedAt,omitempty"`
+	Touched     int64          `json:"touched,omitempty"`
+	Reactions   []chatReaction `json:"reactions,omitempty"`
+	Poll        *chatPoll      `json:"poll,omitempty"`
+	Card        *chatCard      `json:"card,omitempty"`
+	Place       *chatPlace     `json:"place,omitempty"`
+	Expires     int64          `json:"expires,omitempty"`
+	Call        string         `json:"call,omitempty"`
+	CallMs      int            `json:"callMs,omitempty"`
+	File        string         `json:"file,omitempty"`
+	FileName    string         `json:"fileName,omitempty"`
+	FileType    string         `json:"fileType,omitempty"`
+	FileSize    int64          `json:"fileSize,omitempty"`
+	Clip        bool           `json:"clip,omitempty"`
 }
 
 // chatExtra is everything a message carries besides its text. ReplyName and
 // ReplyText are a snapshot, so the quote stays after older messages are trimmed.
 type chatExtra struct {
-	Reply     int64
-	ReplyName string
-	ReplyText string
-	Voice     string
-	VoiceMs   int
-	VoiceType string
-	Photo     string
-	PhotoType string
-	Song      string
-	SongName  string
-	SongMs    int
-	SongType  string
-	Poll      *chatPoll
-	Card      *chatCard
-	Place     *chatPlace
-	Call      string
-	CallMs    int
-	File      string
-	FileName  string
-	FileType  string
-	FileSize  int64
-	Clip      bool
+	Reply       int64
+	ReplyName   string
+	ReplyText   string
+	Voice       string
+	VoiceMs     int
+	VoiceLevels string
+	VoiceType   string
+	Photo       string
+	PhotoType   string
+	Song        string
+	SongName    string
+	SongMs      int
+	SongType    string
+	Poll        *chatPoll
+	Card        *chatCard
+	Place       *chatPlace
+	Call        string
+	CallMs      int
+	File        string
+	FileName    string
+	FileType    string
+	FileSize    int64
+	Clip        bool
 }
 
 // chatSeen is how far this person has received or opened the conversation.
@@ -932,7 +936,7 @@ func (c *chatRoom) post(ctx context.Context, user chatUser, threadID, text strin
 	return item, nil
 }
 
-func (c *chatRoom) postVoice(ctx context.Context, user chatUser, threadID string, body []byte, ms int, reply int64) (chatMessage, error) {
+func (c *chatRoom) postVoice(ctx context.Context, user chatUser, threadID string, body []byte, ms int, levels string, reply int64) (chatMessage, error) {
 	if len(body) == 0 || len(body) > chatVoiceMax {
 		return chatMessage{}, chatRejected("That voice note is too large.")
 	}
@@ -993,7 +997,7 @@ func (c *chatRoom) postVoice(ctx context.Context, user chatUser, threadID string
 	}
 	item := c.appendMessageLocked(thread, user, "Voice message", chatExtra{
 		Reply: reply, ReplyName: replyName, ReplyText: replyText,
-		Voice: id, VoiceMs: ms, VoiceType: kind,
+		Voice: id, VoiceMs: ms, VoiceLevels: chatVoiceLevels(levels), VoiceType: kind,
 	})
 	a, b := thread.A, thread.B
 	c.mu.Unlock()
@@ -1072,33 +1076,34 @@ func (c *chatRoom) appendMessageLocked(thread *chatThread, user chatUser, text s
 		thread.Next = 1
 	}
 	item := chatMessage{
-		ID:        thread.Next,
-		From:      user.ID,
-		Name:      user.Username,
-		Text:      text,
-		At:        time.Now().UnixMilli(),
-		Voice:     extra.Voice,
-		VoiceMs:   extra.VoiceMs,
-		VoiceType: extra.VoiceType,
-		Reply:     extra.Reply,
-		ReplyName: extra.ReplyName,
-		ReplyText: extra.ReplyText,
-		Photo:     extra.Photo,
-		PhotoType: extra.PhotoType,
-		Song:      extra.Song,
-		SongName:  extra.SongName,
-		SongMs:    extra.SongMs,
-		SongType:  extra.SongType,
-		Poll:      extra.Poll,
-		Card:      extra.Card,
-		Place:     extra.Place,
-		Call:      extra.Call,
-		CallMs:    extra.CallMs,
-		File:      extra.File,
-		FileName:  extra.FileName,
-		FileType:  extra.FileType,
-		FileSize:  extra.FileSize,
-		Clip:      extra.Clip,
+		ID:          thread.Next,
+		From:        user.ID,
+		Name:        user.Username,
+		Text:        text,
+		At:          time.Now().UnixMilli(),
+		Voice:       extra.Voice,
+		VoiceMs:     extra.VoiceMs,
+		VoiceLevels: extra.VoiceLevels,
+		VoiceType:   extra.VoiceType,
+		Reply:       extra.Reply,
+		ReplyName:   extra.ReplyName,
+		ReplyText:   extra.ReplyText,
+		Photo:       extra.Photo,
+		PhotoType:   extra.PhotoType,
+		Song:        extra.Song,
+		SongName:    extra.SongName,
+		SongMs:      extra.SongMs,
+		SongType:    extra.SongType,
+		Poll:        extra.Poll,
+		Card:        extra.Card,
+		Place:       extra.Place,
+		Call:        extra.Call,
+		CallMs:      extra.CallMs,
+		File:        extra.File,
+		FileName:    extra.FileName,
+		FileType:    extra.FileType,
+		FileSize:    extra.FileSize,
+		Clip:        extra.Clip,
 	}
 	if thread.Vanish > 0 && item.Call == "" {
 		item.Expires = item.At + int64(thread.Vanish)*1000
@@ -2210,7 +2215,7 @@ func (s *Server) chatThreadVoice(w http.ResponseWriter, r *http.Request) {
 		writeChatError(w, http.StatusBadRequest, "That voice note could not be sent.")
 		return
 	}
-	item, err := s.chat.postVoice(r.Context(), user, chi.URLParam(r, "id"), body, ms, chatHeaderReply(r))
+	item, err := s.chat.postVoice(r.Context(), user, chi.URLParam(r, "id"), body, ms, r.Header.Get("X-Voice-Levels"), chatHeaderReply(r))
 	if err != nil {
 		writeChatFailure(w, err)
 		return
@@ -2372,4 +2377,20 @@ func writeChatError(w http.ResponseWriter, status int, message string) {
 		Success: false,
 		Error:   models.ErrorBody{Code: "bad_request", Message: message},
 	})
+}
+
+// chatVoiceLevels keeps a voice note's waveform only when it is the compact
+// form the app sends: up to 64 digits, each 0-9. Anything else is dropped so
+// a bad header can never break the message.
+func chatVoiceLevels(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || len(raw) > 64 {
+		return ""
+	}
+	for _, r := range raw {
+		if r < '0' || r > '9' {
+			return ""
+		}
+	}
+	return raw
 }

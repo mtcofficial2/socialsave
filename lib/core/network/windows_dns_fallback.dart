@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:social_save/core/platform/plat.dart';
 import 'dart:convert';
 import 'dart:io';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// Windows only. Some routers' DNS refuses to resolve a public host, so
 /// every request fails with "offline". When the system lookup fails we ask
@@ -28,7 +29,7 @@ class WindowsDnsFallback {
       final found = await InternetAddress.lookup(host)
           .timeout(const Duration(seconds: 4));
       if (found.isNotEmpty) return found;
-    } catch (_) {}
+    } catch (e) { logQuiet('windows_dns_fallback', e); }
     final cached = _cache[host];
     if (cached != null && cached.isNotEmpty) return cached;
     for (final server in const ['1.1.1.1', '8.8.8.8', '1.0.0.1']) {
@@ -38,7 +39,7 @@ class WindowsDnsFallback {
           _cache[host] = ips;
           return ips;
         }
-      } catch (_) {}
+      } catch (e) { logQuiet('windows_dns_fallback', e); }
     }
     throw SocketException('Could not resolve $host');
   }

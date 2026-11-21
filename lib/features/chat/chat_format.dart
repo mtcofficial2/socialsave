@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:social_save/features/chat/chat_ui.dart';
+import 'package:social_save/features/chat/chat_api.dart';
 
 enum ChatDay { today, yesterday, older }
 
@@ -102,12 +104,96 @@ String chatTick({
   String status = '',
 }) {
   if (!mine) return '';
-  if (status == 'failed' || status == 'sending') return status;
+  if (status == 'failed' || status == 'sending' || status == 'queued') return status;
   if (id <= 0) return '';
   if (peerRead >= id) return 'read';
   if (peerDelivered >= id) return 'delivered';
   if (status == 'read' || status == 'delivered' || status == 'sent') return status;
   return 'sent';
+}
+
+/// What a screen reader says before a message's own text: who sent it, what
+/// kind it is, when, and (for your messages) whether it was delivered.
+String chatBubbleSemantics({
+  required bool mine,
+  required String sender,
+  required String time,
+  String tick = '',
+  bool voice = false,
+  int voiceMs = 0,
+  bool photo = false,
+  bool file = false,
+  bool song = false,
+  bool poll = false,
+  bool edited = false,
+}) {
+  final parts = <String>[mine ? 'You' : (sender.trim().isEmpty ? 'Message' : sender.trim())];
+  if (voice) {
+    final seconds = (voiceMs / 1000).round();
+    parts.add(seconds > 0 ? 'voice note, $seconds seconds' : 'voice note');
+  } else if (photo) {
+    parts.add('photo');
+  } else if (song) {
+    parts.add('song');
+  } else if (file) {
+    parts.add('file');
+  } else if (poll) {
+    parts.add('poll');
+  }
+  if (time.isNotEmpty) parts.add(time);
+  if (edited) parts.add('edited');
+  switch (tick) {
+    case 'sending':
+      parts.add('sending');
+    case 'failed':
+      parts.add('not sent, tap to retry');
+    case 'queued':
+      parts.add('waiting for network');
+    case 'sent':
+      parts.add('sent');
+    case 'delivered':
+      parts.add('delivered');
+    case 'read':
+      parts.add('read');
+  }
+  return parts.join(', ');
+}
+
+/// Queued (offline) messages in the order they were written.
+List<ChatMessage> chatResendOrder(List<ChatMessage> messages) {
+  final queued = [
+    for (final message in messages)
+      if (message.id < 0 && message.status == 'queued') message,
+  ];
+  queued.sort((a, b) {
+    final byTime = a.at.compareTo(b.at);
+    return byTime != 0 ? byTime : b.id.compareTo(a.id);
+  });
+  return queued;
+}
+
+/// Whether the server already has [local] (a send that got through just as
+/// the connection dropped): one of my server messages with the same content,
+/// written within two minutes of it.
+bool chatAlreadyDelivered(ChatMessage local, List<ChatMessage> messages, {required String me}) {
+  if (me.isEmpty) return false;
+  for (final item in messages) {
+    if (item.id <= 0 || item.name != me) continue;
+    if (item.at.difference(local.at).inSeconds.abs() > 120) continue;
+    final kind = local.pendingKind;
+    if (kind == 'voice') {
+      if (item.isVoice && (item.voiceMs - local.voiceMs).abs() < 1500) return true;
+    } else if (kind == 'photo') {
+      if (item.isPhoto && item.text.trim() == local.text.trim()) return true;
+    } else if (kind == 'song') {
+      if (item.isSong && item.songName == local.songName) return true;
+    } else if (kind == 'file' || kind == 'clip') {
+      if (item.isFile && item.fileName == local.fileName) return true;
+    } else if (!item.isVoice && !item.isPhoto && !item.isFile && !item.isSong) {
+      if (item.text.trim() == local.text.trim()) return true;
+    }
+  }
+  return false;
 }
 
 /// The line quoted above a reply. Voice and photo keep a short label.
@@ -212,8 +298,8 @@ String chatClock(int milliseconds) {
 
 /// Sent and delivered stay gray. Read is blue. No washed-out alpha.
 Color chatTickColor(String status, {required bool dark}) {
-  if (status == 'read') return const Color(0xFF53BDEB);
-  return dark ? const Color(0xFFAEBAC1) : const Color(0xFF667781);
+  if (status == 'read') return ChatUiTokens.linkDark;
+  return ChatUiTokens.time(dark);
 }
 
 /// One slice of a message or status. A link and a username are never both set.

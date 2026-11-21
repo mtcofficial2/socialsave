@@ -8,6 +8,7 @@ import 'package:social_save/features/chat/chat_prefs.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
 import 'package:social_save/shared/routing/app_router.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 /// The recovery code is shown once. It is not stored on this device.
 Future<void> showRecoveryCode(BuildContext context, String code) {
@@ -26,7 +27,7 @@ Future<void> showRecoveryCode(BuildContext context, String code) {
             const Text(
               'Write this down. It is shown once and replaces the previous code.',
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             SelectableText(
               shown,
               style: const TextStyle(
@@ -104,7 +105,7 @@ Future<ChatRegistration?> showRecoverAccount(BuildContext context) async {
                   ),
                 ),
                 if (problem != null) ...[
-                  const SizedBox(height: 8),
+                  const SizedBox(height: AppSpacing.sm),
                   Text(
                     problem!,
                     style: TextStyle(color: Theme.of(context).colorScheme.error),
@@ -224,7 +225,7 @@ Future<void> showChatPrivacy(BuildContext context) async {
                   'Privacy',
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: AppSpacing.xs),
                 const Text('People you already chat with count as contacts.'),
                 choice('Online', online, (value) => online = value),
                 choice('Last seen', seen, (value) => seen = value),
@@ -254,7 +255,7 @@ Future<void> showChatPrivacy(BuildContext context) async {
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: AppSpacing.sm),
                 const Text(
                   'Turning receipts off still clears your unread count. The other person sees delivered.',
                 ),
@@ -1047,7 +1048,7 @@ class ChatPollView extends StatelessWidget {
         const SizedBox(height: 6),
         for (var i = 0; i < poll.choices.length; i++)
           Padding(
-            padding: const EdgeInsets.only(bottom: 4),
+            padding: const EdgeInsets.only(bottom: AppSpacing.xs),
             child: InkWell(
               onTap: closed ? null : () => onVote(i, false),
               child: Row(
@@ -1093,7 +1094,7 @@ class ChatCardView extends StatelessWidget {
     return Row(
       children: [
         const Icon(Icons.contact_page_outlined),
-        const SizedBox(width: 8),
+        const SizedBox(width: AppSpacing.sm),
         Expanded(child: Text(lines.join('\n'))),
       ],
     );
@@ -1114,7 +1115,7 @@ class ChatPlaceView extends StatelessWidget {
       child: Row(
         children: [
           const Icon(Icons.place_outlined),
-          const SizedBox(width: 8),
+          const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: Text('$title\n${place.link}'),
           ),

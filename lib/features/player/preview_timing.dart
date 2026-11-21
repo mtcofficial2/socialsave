@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// Preview start-up timing (1.0.45). Each step is logged with the time since
 /// the Preview tap, to the debug console and to
@@ -40,6 +41,6 @@ class PreviewTiming {
     try {
       File('${Directory.systemTemp.path}${Platform.pathSeparator}socialsave_preview.log')
           .writeAsStringSync('${DateTime.now().toIso8601String()} $line\n', mode: FileMode.append, flush: true);
-    } catch (_) {}
+    } catch (e) { logQuiet('preview_timing', e); }
   }
 }

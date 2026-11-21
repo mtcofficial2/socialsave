@@ -8,6 +8,7 @@ import 'package:social_save/features/library/session_media_picker.dart';
 import 'package:social_save/shared/widgets/liquid_glass.dart';
 import 'package:social_save/shared/widgets/local_video_thumb.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// Home row that opens the HD status flow.
 class HdStatusEntry extends StatelessWidget {
@@ -138,7 +139,7 @@ class _HdStatusScreenState extends State<HdStatusScreen> {
       try {
         final text = await _channel.invokeMethod<String>('statusProgress');
         if (mounted && text != null && text.isNotEmpty) setState(() => _progress = text);
-      } catch (_) {}
+      } catch (e) { logQuiet('hd_status_screen', e); }
     });
     try {
       final raw = await _channel.invokeMethod<Map<Object?, Object?>>('statusPrepare', {

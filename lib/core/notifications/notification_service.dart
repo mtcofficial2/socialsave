@@ -12,6 +12,7 @@ import 'package:social_save/core/notifications/windows_toast_setup_stub.dart'
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
 import 'package:social_save/features/downloader/creator_notice.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 const _notificationLogo = DrawableResourceAndroidBitmap('ic_notification_logo');
 
@@ -80,7 +81,7 @@ Future<bool> deliverChatNotificationReply(String payload, String text) async {
     try {
       final keep = NotificationService.onReplySent;
       if (keep != null) await keep(id, sent);
-    } catch (_) {}
+    } catch (e) { logQuiet('notification_service', e); }
     return true;
   } catch (_) {
     if (_recentReplyKey == key) {
@@ -129,7 +130,7 @@ Future<List<WindowsImage>> _windowsFace(
         ),
       ];
     }
-  } catch (_) {}
+  } catch (e) { logQuiet('notification_service', e); }
   return _windowsLogo();
 }
 
@@ -342,7 +343,7 @@ class NotificationService {
             payload: payload,
           );
           return true;
-        } catch (_) {}
+        } catch (e) { logQuiet('notification_service', e); }
       }
       try {
         await _plugin.show(
@@ -359,7 +360,7 @@ class NotificationService {
           payload: payload,
         );
         return true;
-      } catch (_) {}
+      } catch (e) { logQuiet('notification_service', e); }
     }
     return false;
   }
@@ -410,7 +411,7 @@ class NotificationService {
         if (callPending != null && callPending.contains('|')) {
           _deliverCall(callPending);
         }
-      } catch (_) {}
+      } catch (e) { logQuiet('notification_service', e); }
     }
     try {
       await _plugin
@@ -479,12 +480,12 @@ class NotificationService {
     try {
       await sendWithToken(picture);
       return true;
-    } catch (_) {}
+    } catch (e) { logQuiet('notification_service', e); }
     if (picture != null && picture.isNotEmpty) {
       try {
         await sendWithToken(null);
         return true;
-      } catch (_) {}
+      } catch (e) { logQuiet('notification_service', e); }
     }
     return false;
   }
@@ -516,7 +517,7 @@ class NotificationService {
           iOS: DarwinNotificationDetails(presentAlert: true),
         ),
       );
-    } catch (_) {}
+    } catch (e) { logQuiet('notification_service', e); }
   }
 
   Future<bool> showChat({
@@ -619,7 +620,7 @@ class NotificationService {
           'token': token,
         });
         return;
-      } catch (_) {}
+      } catch (e) { logQuiet('notification_service', e); }
     }
     const details = NotificationDetails(
       android: AndroidNotificationDetails(
@@ -654,11 +655,11 @@ class NotificationService {
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       try {
         await _androidChatNotify.invokeMethod<void>('cancelCall');
-      } catch (_) {}
+      } catch (e) { logQuiet('notification_service', e); }
     }
     try {
       await _plugin.cancel(incomingCallId);
-    } catch (_) {}
+    } catch (e) { logQuiet('notification_service', e); }
   }
 
   /// One notice when a followed creator has new public videos ready to download.

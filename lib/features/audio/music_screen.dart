@@ -15,6 +15,7 @@ import 'package:social_save/features/player/presentation/screens/in_app_player_s
 import 'package:social_save/shared/widgets/liquid_glass.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
 import 'package:social_save/shared/widgets/skeleton.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 String _fmt(Duration d) {
   final m = d.inMinutes;
@@ -813,7 +814,7 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
     if (path != null && mounted) {
       try {
         scheme = await ColorScheme.fromImageProvider(provider: FileImage(File(path)), brightness: brightness);
-      } catch (_) {}
+      } catch (e) { logQuiet('music_screen', e); }
     }
     if (mounted && _schemeKey == key) {
       setState(() {

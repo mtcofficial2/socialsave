@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
+import 'package:social_save/features/chat/chat_ui.dart';
 import 'package:social_save/features/chat/chat_link_stub.dart'
     if (dart.library.io) 'package:social_save/features/chat/chat_link_io.dart';
 
@@ -61,10 +63,10 @@ class ChatLinkCard extends StatelessWidget {
         final dark = Theme.of(context).brightness == Brightness.dark;
         final title = preview.title.trim();
         return Padding(
-          padding: const EdgeInsets.only(bottom: 4),
+          padding: const EdgeInsets.only(bottom: AppSpacing.xs),
           child: Material(
-            color: dark ? const Color(0xFF0B141A) : const Color(0xFFF7F4EF),
-            borderRadius: BorderRadius.circular(8),
+            color: dark ? ChatUiTokens.canvasDark : const Color(0xFFF7F4EF),
+            borderRadius: AppRadii.smAll,
             clipBehavior: Clip.antiAlias,
             child: InkWell(
               onTap: () => onOpen(url),
@@ -89,7 +91,7 @@ class ChatLinkCard extends StatelessWidget {
                         style: TextStyle(
                           fontSize: 13.5,
                           fontWeight: FontWeight.w700,
-                          color: dark ? const Color(0xFFE9EDEF) : const Color(0xFF111B21),
+                          color: ChatUiTokens.text(dark),
                         ),
                       ),
                     ),

@@ -40,6 +40,7 @@ import 'package:social_save/shared/models/media_info.dart';
 import 'package:social_save/web/web_saver.dart';
 import 'package:social_save/core/config/hosted_api.dart';
 import 'package:uuid/uuid.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 final downloadManagerProvider =
     NotifierProvider<DownloadManager, DownloadManagerState>(DownloadManager.new);
@@ -255,7 +256,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
   Future<void> _noteQueued(String url) async {
     try {
       await ref.read(libraryCatalogProvider.notifier).removeLater(url);
-    } catch (_) {}
+    } catch (e) { logQuiet('download_manager', e); }
     try {
       final records = await ref.read(downloadsRepositoryProvider).getAll();
       for (final record in records) {
@@ -264,7 +265,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
         }
       }
       ref.invalidate(downloadsControllerProvider);
-    } catch (_) {}
+    } catch (e) { logQuiet('download_manager', e); }
   }
 
   Future<void> start(String id) async {
@@ -419,7 +420,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
         var needs = false;
         try {
           needs = await MediaStoreService().needsTiktokWork(savedPath);
-        } catch (_) {}
+        } catch (e) { logQuiet('download_manager', e); }
         if (needs && !token.isCancelled) {
           // Only when the user chose "Yes, TikTok-ready" at Download.
           final yes = _tiktokTasks.contains(readyTask.id);
@@ -435,7 +436,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
                 savedPath = ready;
                 readyTask = readyTask.copyWith(localPath: ready);
               }
-            } catch (_) {}
+            } catch (e) { logQuiet('download_manager', e); }
             closePrep?.call();
           }
         }
@@ -498,7 +499,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
               }
             }
             await _fileSaved(finished, kept);
-          } catch (_) {}
+          } catch (e) { logQuiet('download_manager', e); }
         }());
       }
       final settings = ref.read(settingsControllerProvider);
@@ -740,7 +741,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     _tokens[id]?.cancel('cancelled');
     try {
       await MediaStoreService().cancelUploadPrep();
-    } catch (_) {}
+    } catch (e) { logQuiet('download_manager', e); }
     if (deletePartial) {
       await _deletePartial(task.localPath);
     }
@@ -998,7 +999,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       }
       await _persist();
       await _signalActive();
-    } catch (_) {}
+    } catch (e) { logQuiet('download_manager', e); }
   }
 
   Future<void> _assertNetwork(AppSettings settings) async {
@@ -1123,11 +1124,11 @@ class DownloadManager extends Notifier<DownloadManagerState> {
           await catalog.addToCollection(author, key);
         }
       }
-    } catch (_) {}
+    } catch (e) { logQuiet('download_manager', e); }
     if (task.platform == SocialPlatform.youtube || task.platform == SocialPlatform.tiktok) {
       try {
         await PhoneEngine.saveCaptions(url: task.sourceUrl, beside: path);
-      } catch (_) {}
+      } catch (e) { logQuiet('download_manager', e); }
     }
   }
 
@@ -1147,7 +1148,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
         jsonEncode(keep.map((task) => task.toJson()).toList()),
       );
       await prefs.setBool('socialsave_resume_pending', active.isNotEmpty);
-    } catch (_) {}
+    } catch (e) { logQuiet('download_manager', e); }
   }
 
   Future<void> _restore() async {
@@ -1184,7 +1185,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
           unawaited(start(resumed.id));
         }
       }
-    } catch (_) {}
+    } catch (e) { logQuiet('download_manager', e); }
   }
 
   Future<void> _signal(DownloadTask task) async {
@@ -1221,7 +1222,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
         'progress': progress,
         'paused': task.status != DownloadStatus.running,
       });
-    } catch (_) {}
+    } catch (e) { logQuiet('download_manager', e); }
   }
 
   Future<void> _signalActive() async {
@@ -1246,7 +1247,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
   Future<void> _stopSignal() async {
     try {
       await MediaEvents.channel.invokeMethod<void>('stopKeepAlive');
-    } catch (_) {}
+    } catch (e) { logQuiet('download_manager', e); }
   }
 
   Future<int> _existingBytes(String? path) async {
@@ -1264,7 +1265,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
     try {
       final onBubble = await MediaStoreService().askTiktokOnBubble(title);
       if (onBubble != null) return onBubble;
-    } catch (_) {}
+    } catch (e) { logQuiet('download_manager', e); }
     final ask = inAppTiktokAsk;
     if (ask == null) return false;
     try {
@@ -1285,7 +1286,7 @@ class DownloadManager extends Notifier<DownloadManagerState> {
       try {
         final pick = await ask(title);
         if (pick != null) return pick;
-      } catch (_) {}
+      } catch (e) { logQuiet('download_manager', e); }
     }
     // App not on screen (share sheet, bubble): ask on the bubble.
     return _askTiktok(title);

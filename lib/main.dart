@@ -56,6 +56,7 @@ import 'package:social_save/features/audio/music_screen.dart' as test_music;
 import 'package:social_save/features/player/preview_timing.dart';
 import 'package:social_save/features/downloader/presentation/screens/preview_screen.dart' show resolvePreviewStream;
 import 'package:social_save/features/downloader/presentation/providers/preview_controller.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -364,7 +365,7 @@ Future<void> main(List<String> args) async {
   AppTheme.light(fontFamily: settings.fontFamily);
   try {
     await GoogleFonts.pendingFonts().timeout(const Duration(seconds: 4));
-  } catch (_) {}
+  } catch (e) { logQuiet('main', e); }
 
   // "Download on this phone (no server)": keep yt-dlp current (daily, only
   // while the switch is on).
@@ -621,7 +622,7 @@ Future<void> _runWeb() async {
   AppTheme.light(fontFamily: settings.fontFamily);
   try {
     await GoogleFonts.pendingFonts().timeout(const Duration(seconds: 4));
-  } catch (_) {}
+  } catch (e) { logQuiet('main', e); }
   unawaited(ChatApi().reportInstall());
   runApp(
     ProviderScope(
@@ -808,7 +809,7 @@ Future<void> _pairTest(String role, String file, [String? file2]) async {
     print('debug pair-test host result=ok (session ended: ${ShareSession.endReason})');
     try {
       await portFile.delete();
-    } catch (_) {}
+    } catch (e) { logQuiet('main', e); }
     await Future<void>.delayed(const Duration(seconds: 1));
     exit(0);
   }

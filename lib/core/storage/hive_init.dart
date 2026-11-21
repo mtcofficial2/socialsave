@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:social_save/core/constants/app_constants.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 class HiveInit {
   const HiveInit();
@@ -47,7 +48,7 @@ class HiveInit {
     } finally {
       try {
         await handle?.close();
-      } catch (_) {}
+      } catch (e) { logQuiet('hive_init', e); }
     }
   }
 }

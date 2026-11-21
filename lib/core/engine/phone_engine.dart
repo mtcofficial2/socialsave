@@ -10,6 +10,7 @@ import 'package:social_save/core/utils/platform_detector.dart';
 import 'package:social_save/shared/models/download_ticket.dart';
 import 'package:social_save/shared/models/media_format.dart';
 import 'package:social_save/shared/models/media_info.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// A missing switch is on when this phone can run downloads itself.
 /// A saved choice is kept, including an explicit off.
@@ -107,7 +108,7 @@ class PhoneEngine {
   static Future<bool> refreshYouTubeSignIn() async {
     try {
       youTubeSignedIn.value = await _channel.invokeMethod<bool>('ytSignedIn') ?? false;
-    } catch (_) {}
+    } catch (e) { logQuiet('phone_engine', e); }
     return youTubeSignedIn.value;
   }
 
@@ -115,13 +116,13 @@ class PhoneEngine {
   static Future<void> signInYouTube() async {
     try {
       await _channel.invokeMethod<bool>('ytSignIn');
-    } catch (_) {}
+    } catch (e) { logQuiet('phone_engine', e); }
   }
 
   static Future<void> signOutYouTube() async {
     try {
       await _channel.invokeMethod<bool>('ytSignOut');
-    } catch (_) {}
+    } catch (e) { logQuiet('phone_engine', e); }
     youTubeSignedIn.value = false;
   }
 
@@ -174,7 +175,7 @@ class PhoneEngine {
     if (!evenIfOff && !await isEnabled()) return;
     try {
       await _channel.invokeMethod<bool>('warm');
-    } catch (_) {}
+    } catch (e) { logQuiet('phone_engine', e); }
   }
 
   static bool _tiktokWarmStarted = false;
@@ -279,13 +280,13 @@ class PhoneEngine {
   static Future<void> cancel(String jobId) async {
     try {
       await _channel.invokeMethod<bool>('cancel', {'id': _id(jobId)});
-    } catch (_) {}
+    } catch (e) { logQuiet('phone_engine', e); }
   }
 
   static Future<void> cleanup(String jobId) async {
     try {
       await _channel.invokeMethod<bool>('cleanup', {'id': _id(jobId)});
-    } catch (_) {}
+    } catch (e) { logQuiet('phone_engine', e); }
   }
 
   // ---- yt-dlp JSON -> MediaInfo (same ids as the server's formats.go) ----

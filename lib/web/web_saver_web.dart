@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:js_interop';
 
 import 'package:web/web.dart' as web;
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 final _blobs = <String>{};
 final _urlByKey = <String, String>{};
@@ -81,7 +82,7 @@ Future<void> _askPersistence() async {
   _askedPersistence = true;
   try {
     await web.window.navigator.storage.persist().toDart;
-  } catch (_) {}
+  } catch (e) { logQuiet('web_saver_web', e); }
 }
 
 class _Cancelled implements Exception {
@@ -249,7 +250,7 @@ Future<void> webDeleteStoredVideo(String key) async {
     final db = await _db();
     final store = db.transaction(_storeName.toJS, 'readwrite').objectStore(_storeName);
     await _request(store.delete(key.toJS));
-  } catch (_) {}
+  } catch (e) { logQuiet('web_saver_web', e); }
 }
 
 /// Downloads the stored copy again (to the browser's Downloads folder).
@@ -284,7 +285,7 @@ Future<bool> webShare({
           return true;
         }
       }
-    } catch (_) {}
+    } catch (e) { logQuiet('web_saver_web', e); }
   }
   try {
     final data = web.ShareData(title: title, text: title, url: url ?? '');

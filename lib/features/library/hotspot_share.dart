@@ -9,6 +9,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/shared/widgets/liquid_glass.dart';
 import 'package:social_save/features/library/pc_hotspot.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// Xender-style "Fast share": the sending phone opens its own local-only
 /// Wi-Fi hotspot and the receiving phone joins it, so the file goes phone
@@ -208,7 +209,7 @@ class HotspotShare {
             r = (await linkInfo())?.band;
           }
         }
-      } catch (_) {}
+      } catch (e) { logQuiet('hotspot_share', e); }
     }
     liveBandLabel.value = r;
     return r;
@@ -237,7 +238,7 @@ class HotspotShare {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_sysSsidKey, ssid);
       await prefs.setString(_sysPassKey, password);
-    } catch (_) {}
+    } catch (e) { logQuiet('hotspot_share', e); }
   }
 
   /// Uses the phone's own Mobile Hotspot (already on) instead of SocialSave's
@@ -247,7 +248,7 @@ class HotspotShare {
     for (var i = 0; ip == null && i < 20; i++) {
       try {
         ip = (await status())['apIp'] as String?;
-      } catch (_) {}
+      } catch (e) { logQuiet('hotspot_share', e); }
       if (ip == null) await Future<void>.delayed(const Duration(milliseconds: 300));
     }
     final info = HotspotInfo(
@@ -273,7 +274,7 @@ class HotspotShare {
       try {
         final v = (await SharedPreferences.getInstance()).getString(_bandKey);
         if (v == 'auto' || v == '5' || v == '2.4') band.value = v!;
-      } catch (_) {}
+      } catch (e) { logQuiet('hotspot_share', e); }
     }
     return band.value;
   }
@@ -283,7 +284,7 @@ class HotspotShare {
     _bandLoaded = true;
     try {
       await (await SharedPreferences.getInstance()).setString(_bandKey, v);
-    } catch (_) {}
+    } catch (e) { logQuiet('hotspot_share', e); }
   }
 
   /// Starts the hotspot. Returns ssid / password / ip.
@@ -398,7 +399,7 @@ class HotspotShare {
         if (band == null || ssid == null) continue;
         return (ssid: ssid, band: band.replaceAll(' GHz', ''), channel: field(block, 'Channel') ?? '?');
       }
-    } catch (_) {}
+    } catch (e) { logQuiet('hotspot_share', e); }
     return null;
   }
 
@@ -413,7 +414,7 @@ class HotspotShare {
     hostRunning.value = false;
     try {
       await _channel.invokeMethod<void>('stop');
-    } catch (_) {}
+    } catch (e) { logQuiet('hotspot_share', e); }
   }
 
   /// Joins the sender's hotspot and routes this app's traffic over it.
@@ -434,7 +435,7 @@ class HotspotShare {
     joinedLinkUp.value = false;
     try {
       await _channel.invokeMethod<void>('leave');
-    } catch (_) {}
+    } catch (e) { logQuiet('hotspot_share', e); }
   }
 
   /// Hotspot details carried in a scanned link, or null.

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/notifications/notification_service.dart';
 import 'package:social_save/core/platform/plat.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// How long Social Save can sit closed before the phone asks the owner back.
 const returnReminderGap = Duration(hours: 6);
@@ -87,7 +88,7 @@ class ReturnReminder {
       await prefs.setBool(_askedKey, true);
       try {
         await NotificationService().requestPermission();
-      } catch (_) {}
+      } catch (e) { logQuiet('return_reminder', e); }
     }
     try {
       if (!enabled) {
@@ -98,6 +99,6 @@ class ReturnReminder {
       await channel.invokeMethod<void>('schedule', <String, Object>{
         'at': at.millisecondsSinceEpoch,
       });
-    } catch (_) {}
+    } catch (e) { logQuiet('return_reminder', e); }
   }
 }

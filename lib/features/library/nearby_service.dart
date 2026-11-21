@@ -18,6 +18,7 @@ import 'package:social_save/core/platform/player_identity.dart';
 import 'package:social_save/features/library/phone_control.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:social_save/features/library/usb_link.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// Another SocialSave app seen on this Wi-Fi.
 class NearbyDevice {
@@ -200,7 +201,7 @@ class NearbyService {
       if (Plat.isAndroid) {
         try {
           await _media.invokeMethod<bool>('nearbyLock', {'on': true});
-        } catch (_) {}
+        } catch (e) { logQuiet('nearby_service', e); }
       }
       await _openInbox();
       await _openBeacon();
@@ -218,7 +219,7 @@ class NearbyService {
     try {
       final n = await _media.invokeMethod<String>('deviceName');
       if (n != null && n.trim().isNotEmpty) return n.trim();
-    } catch (_) {}
+    } catch (e) { logQuiet('nearby_service', e); }
     return 'Android phone';
   }
 
@@ -247,7 +248,7 @@ class NearbyService {
         ));
         // Answer a newcomer right away so lists fill in quickly.
         if (json['hello'] == true) _sendBeacon(to: dg.address);
-      } catch (_) {}
+      } catch (e) { logQuiet('nearby_service', e); }
     });
     unawaited(_refreshIfaces());
     _sendBeacon(hello: true);
@@ -270,7 +271,7 @@ class NearbyService {
         for (final i in list)
           for (final a in i.addresses) (i.name.toLowerCase(), a.address),
       ];
-    } catch (_) {}
+    } catch (e) { logQuiet('nearby_service', e); }
   }
 
   static String _linkFor(String host) {
@@ -346,12 +347,12 @@ class NearbyService {
           final q = ip.split('.');
           targets.add(InternetAddress('${q[0]}.${q[1]}.${q[2]}.255'));
         }
-      } catch (_) {}
+      } catch (e) { logQuiet('nearby_service', e); }
     }
     for (final t in targets) {
       try {
         udp.send(data, t, beaconPort);
-      } catch (_) {}
+      } catch (e) { logQuiet('nearby_service', e); }
     }
   }
 
@@ -367,7 +368,7 @@ class NearbyService {
       try {
         server = await HttpServer.bind(InternetAddress.anyIPv4, n);
         break;
-      } catch (_) {}
+      } catch (e) { logQuiet('nearby_service', e); }
     }
     final srv = server ?? await HttpServer.bind(InternetAddress.anyIPv4, 0);
     _inbox = srv;
@@ -410,7 +411,7 @@ class NearbyService {
     Map<String, dynamic> names = {};
     try {
       names = jsonDecode(prefs.getString(_trustedNamesKey) ?? '{}') as Map<String, dynamic>;
-    } catch (_) {}
+    } catch (e) { logQuiet('nearby_service', e); }
     return [for (final i in ids) (i, '${names[i] ?? 'Device ${i.substring(0, i.length < 6 ? i.length : 6)}'}')];
   }
 
@@ -436,7 +437,7 @@ class NearbyService {
     List<dynamic> l = [];
     try {
       l = jsonDecode(prefs.getString(_textsKey) ?? '[]') as List;
-    } catch (_) {}
+    } catch (e) { logQuiet('nearby_service', e); }
     l.insert(0, {'from': from, 'text': text});
     if (l.length > 30) l = l.sublist(0, 30);
     await prefs.setString(_textsKey, jsonEncode(l));
@@ -674,7 +675,7 @@ class NearbyService {
       try {
         res.statusCode = HttpStatus.internalServerError;
         await res.close();
-      } catch (_) {}
+      } catch (e) { logQuiet('nearby_service', e); }
     }
   }
 
@@ -715,13 +716,13 @@ class NearbyService {
         } else {
           reason = 'the file arrived damaged (checksum mismatch)';
         }
-      } catch (_) {}
+      } catch (e) { logQuiet('nearby_service', e); }
     }
     final ok = reason == null && (total >= 0 ? got == total : got > 32);
     if (!ok) {
       try {
         await dest.delete();
-      } catch (_) {}
+      } catch (e) { logQuiet('nearby_service', e); }
       res.statusCode = HttpStatus.badRequest;
       res.headers.contentType = ContentType.json;
       res.write(jsonEncode({'ok': false, 'reason': reason ?? 'incomplete'}));
@@ -778,7 +779,7 @@ class NearbyService {
       // Cancelled or cut off: never leave a partial file behind.
       try {
         await dest.delete();
-      } catch (_) {}
+      } catch (e) { logQuiet('nearby_service', e); }
       res.statusCode = HttpStatus.badRequest;
       await res.close();
       incoming.value = IncomingProgress(
@@ -840,7 +841,7 @@ class NearbyService {
       Map<String, dynamic> names = {};
       try {
         names = jsonDecode(prefs.getString(_trustedNamesKey) ?? '{}') as Map<String, dynamic>;
-      } catch (_) {}
+      } catch (e) { logQuiet('nearby_service', e); }
       names[deviceId] = known;
       await prefs.setString(_trustedNamesKey, jsonEncode(names));
     }
@@ -884,7 +885,7 @@ class NearbyService {
       if (total > 0 && total <= _hashLimit) {
         try {
           up.headers.set('x-sha256', (await sha256.bind(file.openRead()).first).toString());
-        } catch (_) {}
+        } catch (e) { logQuiet('nearby_service', e); }
       }
       var sent = 0;
       await up.addStream(TransferBoost.read(file).map((chunk) {
@@ -898,13 +899,13 @@ class NearbyService {
       if (upRes.statusCode == 200) {
         try {
           lastVerified.value = (jsonDecode(body) as Map)['verified'] == true;
-        } catch (_) {}
+        } catch (e) { logQuiet('nearby_service', e); }
         return null;
       }
       var why = 'HTTP ${upRes.statusCode}';
       try {
         why = '${(jsonDecode(body) as Map)['reason'] ?? why}';
-      } catch (_) {}
+      } catch (e) { logQuiet('nearby_service', e); }
       if (why.contains('damaged')) return 'The file arrived damaged on ${device.name}. Tap send again to retry.';
       return '${device.name} could not save the file ($why). Check that it has free storage space and try again.';
     } on SocketException {
@@ -1004,7 +1005,7 @@ class NearbyService {
           client = HttpClient()..connectionTimeout = const Duration(seconds: 3);
           final end = await client.postUrl(Uri.http('${device.host}:${device.port}', '/endb/$token', {'cancel': '1'}));
           await (await end.close().timeout(const Duration(seconds: 3))).drain<void>();
-        } catch (_) {}
+        } catch (e) { logQuiet('nearby_service', e); }
       }
       await TransferBoost.end();
       client.close(force: true);

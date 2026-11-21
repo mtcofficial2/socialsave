@@ -13,6 +13,7 @@ import 'package:social_save/core/diagnostics/plain_log.dart';
 import 'package:social_save/core/platform/device_name_io.dart'
     if (dart.library.html) 'package:social_save/core/platform/device_name_stub.dart';
 import 'package:social_save/core/platform/plat.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 const chatTokenKey = 'chat.token.v1';
 const chatUsernameKey = 'chat.username.v1';
@@ -1132,7 +1133,7 @@ String callCandidateForPeer(String encoded, String? lanIp) {
       final out = jsonEncode(next);
       return out.length > 2000 ? encoded : out;
     }
-  } catch (_) {}
+  } catch (e) { logQuiet('chat_api', e); }
   final line = _swapMdnsHost(encoded, ip);
   return line.length > 2000 ? encoded : line;
 }
@@ -1359,6 +1360,7 @@ class ChatMessage {
     this.status = '',
     this.voice = '',
     this.voiceMs = 0,
+    this.voiceLevels = '',
     this.voiceType = '',
     this.reply = 0,
     this.replyName = '',
@@ -1395,6 +1397,10 @@ class ChatMessage {
   final String status;
   final String voice;
   final int voiceMs;
+
+  /// Recorded loudness, one digit 0-9 per bar (see [decodeVoiceLevels]).
+  /// Empty for notes sent before 1.0.124.
+  final String voiceLevels;
   final String voiceType;
   final int reply;
   final String replyName;
@@ -1443,6 +1449,7 @@ class ChatMessage {
       status: status ?? this.status,
       voice: voice,
       voiceMs: voiceMs,
+      voiceLevels: voiceLevels,
       voiceType: voiceType,
       reply: reply,
       replyName: replyName,
@@ -1488,6 +1495,7 @@ class ChatMessage {
       status: status,
       voice: voice,
       voiceMs: voiceMs,
+      voiceLevels: voiceLevels.isNotEmpty ? voiceLevels : local.voiceLevels,
       voiceType: voiceType,
       reply: quote ? reply : local.reply,
       replyName: quote ? replyName : local.replyName,
@@ -1527,6 +1535,7 @@ class ChatMessage {
       status: status,
       voice: voice,
       voiceMs: voiceMs,
+      voiceLevels: voiceLevels,
       voiceType: voiceType,
       reply: reply,
       replyName: replyName,
@@ -1582,6 +1591,7 @@ class ChatMessage {
       status: (json['status'] as String?)?.trim() ?? '',
       voice: (json['voice'] as String?)?.trim() ?? '',
       voiceMs: (json['voiceMs'] as num?)?.toInt() ?? 0,
+      voiceLevels: (json['voiceLevels'] as String?)?.trim() ?? '',
       voiceType: (json['voiceType'] as String?)?.trim() ?? '',
       reply: (json['reply'] as num?)?.toInt() ?? 0,
       replyName: (json['replyName'] as String?)?.trim() ?? '',
@@ -1634,6 +1644,7 @@ class ChatMessage {
       'status': status,
       'voice': voice,
       'voiceMs': voiceMs,
+      if (voiceLevels.isNotEmpty) 'voiceLevels': voiceLevels,
       'voiceType': voiceType,
       'reply': reply,
       'replyName': replyName,
@@ -1798,7 +1809,7 @@ class ChatApi {
         ),
       );
       _reportedAt = DateTime.now();
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_api', e); }
   }
 
   Future<ChatAdminSnapshot> directory() async {
@@ -2686,7 +2697,7 @@ class ChatApi {
       final name = await appDeviceName();
       final platform = chatDevicePlatform() ?? '';
       await touchDevice(name: name, platform: platform);
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_api', e); }
   }
 
   Future<void> touchDevice({String name = '', String platform = ''}) async {
@@ -3003,12 +3014,15 @@ class ChatApi {
     Uint8List bytes,
     int milliseconds, {
     int reply = 0,
+    String levels = '',
   }) async {
     PlainLog.note('Sent a voice note.');
     final auth = await _auth();
     final headers = Map<String, dynamic>.from(auth.headers ?? {});
     headers['Content-Type'] = 'application/octet-stream';
     headers['X-Voice-Ms'] = '$milliseconds';
+    // Older servers ignore this header, so notes still send without it.
+    if (levels.isNotEmpty) headers['X-Voice-Levels'] = levels;
     if (reply > 0) headers['X-Reply-Id'] = '$reply';
     final response = await _dio.post<dynamic>(
       '/api/v1/chat/threads/$id/voice',
@@ -3068,6 +3082,31 @@ class ChatApi {
 bool chatNeedsRegister(Object error) {
   if (error is ChatSignedOut) return true;
   return error is DioException && error.response?.statusCode == 401;
+}
+
+/// True when a request failed because this device could not reach the chat
+/// server at all (no network, DNS failure, refused or timed-out connection).
+/// Such sends are queued and go out again by themselves once the connection
+/// returns. Timeouts after the request left (send/receive) are not counted,
+/// because the server may already have the message.
+bool chatIsOffline(Object error) {
+  if (error.runtimeType.toString() == 'SocketException') return true;
+  if (error is! DioException || error.response != null) return false;
+  switch (error.type) {
+    case DioExceptionType.connectionError:
+    case DioExceptionType.connectionTimeout:
+      return true;
+    case DioExceptionType.unknown:
+      final detail = '${error.error ?? ''} ${error.message ?? ''}'.toLowerCase();
+      return detail.contains('socketexception') ||
+          detail.contains('host lookup') ||
+          detail.contains('network is unreachable') ||
+          detail.contains('connection refused') ||
+          detail.contains('connection reset') ||
+          detail.contains('no address associated');
+    default:
+      return false;
+  }
 }
 
 /// The sentence to show when a chat request fails.
@@ -3161,7 +3200,7 @@ class ChatImages {
         _bytes[id] = bytes;
         return bytes;
       }
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_api', e); }
     final pending = _loading.remove(id);
     if (pending != null) unawaited(pending);
     return null;

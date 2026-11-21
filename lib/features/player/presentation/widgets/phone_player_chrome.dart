@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/widgets/liquid_glass.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 /// Height label such as 1080p, using the shorter side of the frame.
 String? phoneResolutionLabel(int? width, int? height) {
@@ -101,6 +102,10 @@ class PhonePlayerChrome extends StatelessWidget {
   static const onViolet = Color(0xFF31009A);
   static const ink = Color(0xFF1B1B1B);
   static const pill = Color(0xFF2A2A2A);
+  /// Secondary icons and labels over the picture.
+  static const mutedInk = Color(0xFFC9C4D8);
+  /// Shadow that keeps white text readable on bright frames.
+  static const textShadow = Color(0xCC000000);
 
   @override
   Widget build(BuildContext context) {
@@ -163,7 +168,7 @@ class PhonePlayerChrome extends StatelessWidget {
             children: [
               _header(),
               if (!landscape && (resolution != null || vault)) ...[
-                const SizedBox(height: 2),
+                const SizedBox(height: AppSpacing.xxs),
                 _pills(resolution),
               ],
               Expanded(
@@ -184,7 +189,7 @@ class PhonePlayerChrome extends StatelessWidget {
               RepaintBoundary(
                 child: _PhoneSeek(player: player, centerLabel: resolution),
               ),
-              const SizedBox(height: 2),
+              const SizedBox(height: AppSpacing.xxs),
               _actionRow(context),
             ],
           ),
@@ -216,7 +221,7 @@ class PhonePlayerChrome extends StatelessWidget {
                         fontSize: 14,
                         height: 1.2,
                         shadows: [
-                          Shadow(color: Color(0xCC000000), blurRadius: 3),
+                          Shadow(color: PhonePlayerChrome.textShadow, blurRadius: 3),
                         ],
                       ),
                     ),
@@ -231,7 +236,7 @@ class PhonePlayerChrome extends StatelessWidget {
                   color: Color(0xE6C7C5D4),
                   fontSize: 11,
                   height: 1.2,
-                  shadows: [Shadow(color: Color(0xCC000000), blurRadius: 3)],
+                  shadows: [Shadow(color: PhonePlayerChrome.textShadow, blurRadius: 3)],
                 ),
               ),
             ],
@@ -269,7 +274,7 @@ class PhonePlayerChrome extends StatelessWidget {
     return Align(
       alignment: Alignment.centerLeft,
       child: Padding(
-        padding: const EdgeInsets.only(left: 12),
+        padding: const EdgeInsets.only(left: AppSpacing.md),
         child: Row(
           children: [
             if (resolution != null)
@@ -298,7 +303,7 @@ class PhonePlayerChrome extends StatelessWidget {
                 ),
               ),
             if (vault) ...[
-              const SizedBox(width: 8),
+              const SizedBox(width: AppSpacing.sm),
               _pill(
                 child: const Row(
                   mainAxisSize: MainAxisSize.min,
@@ -306,13 +311,13 @@ class PhonePlayerChrome extends StatelessWidget {
                     Icon(
                       Icons.lock_rounded,
                       size: 14,
-                      color: Color(0xFFC9C4D8),
+                      color: PhonePlayerChrome.mutedInk,
                     ),
-                    SizedBox(width: 4),
+                    SizedBox(width: AppSpacing.xs),
                     Text(
                       'Vault',
                       style: TextStyle(
-                        color: Color(0xFFC9C4D8),
+                        color: PhonePlayerChrome.mutedInk,
                         fontSize: 11,
                         fontWeight: FontWeight.w500,
                       ),
@@ -334,7 +339,7 @@ class PhonePlayerChrome extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: AppSpacing.xs),
         child: child,
       ),
     );
@@ -363,7 +368,7 @@ class PhonePlayerChrome extends StatelessWidget {
         borderRadius: BorderRadius.circular(6),
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: AppSpacing.xxs),
         child: Text(
           name,
           style: const TextStyle(
@@ -450,19 +455,19 @@ class PhonePlayerChrome extends StatelessWidget {
           loop ? Icons.repeat_one_rounded : Icons.repeat_rounded,
           onLoop,
           loop ? 'Loop on' : 'Repeat',
-          color: loop ? violet : const Color(0xFFC9C4D8),
+          color: loop ? violet : PhonePlayerChrome.mutedInk,
         ),
         _iconButton(
           muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
           onMute,
           muted ? 'Unmute' : 'Volume',
-          color: const Color(0xFFC9C4D8),
+          color: PhonePlayerChrome.mutedInk,
         ),
         _iconButton(
           filling ? Icons.aspect_ratio_rounded : Icons.fit_screen_rounded,
           onFit,
           filling ? 'Fit to screen' : 'Fill screen',
-          color: const Color(0xFFC9C4D8),
+          color: PhonePlayerChrome.mutedInk,
         ),
         _iconButton(
           fullscreen ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded,
@@ -488,7 +493,7 @@ class PhonePlayerChrome extends StatelessWidget {
       ),
     );
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 2),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xxs),
       child: Material(
         color: glass ? Colors.transparent : pill.withValues(alpha: 0.82),
         borderRadius: BorderRadius.circular(999),
@@ -781,7 +786,7 @@ class _PhoneSeekState extends State<_PhoneSeek> {
           },
         ),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs),
           child: Row(
             children: [
               SizedBox(
@@ -810,7 +815,7 @@ class _PhoneSeekState extends State<_PhoneSeek> {
                           child: Padding(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 6,
-                              vertical: 2,
+                              vertical: AppSpacing.xxs,
                             ),
                             child: Text(
                               widget.centerLabel!,
@@ -830,7 +835,7 @@ class _PhoneSeekState extends State<_PhoneSeek> {
                   _clock(_duration),
                   textAlign: TextAlign.right,
                   style: const TextStyle(
-                    color: Color(0xFFC9C4D8),
+                    color: PhonePlayerChrome.mutedInk,
                     fontSize: 12,
                     fontFeatures: [FontFeature.tabularFigures()],
                   ),

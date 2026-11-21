@@ -3,6 +3,7 @@ import 'package:social_save/core/platform/plat.dart';
 import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// Keeps transfers at full Wi-Fi speed.
 ///
@@ -22,7 +23,7 @@ class TransferBoost {
     if (_active == 1 && Plat.isAndroid) {
       try {
         await _media.invokeMethod<bool>('wifiLock', {'on': true});
-      } catch (_) {}
+      } catch (e) { logQuiet('transfer_boost', e); }
     }
   }
 
@@ -32,7 +33,7 @@ class TransferBoost {
     if (_active == 0 && Plat.isAndroid) {
       try {
         await _media.invokeMethod<bool>('wifiLock', {'on': false});
-      } catch (_) {}
+      } catch (e) { logQuiet('transfer_boost', e); }
     }
   }
 
@@ -105,7 +106,7 @@ Future<int> writeStreamToFile(Stream<List<int>> input, File dest, {void Function
     if (writing != null) {
       try {
         await writing;
-      } catch (_) {}
+      } catch (e) { logQuiet('transfer_boost', e); }
     }
     await raf.close();
   }

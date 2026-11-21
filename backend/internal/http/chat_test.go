@@ -389,6 +389,17 @@ func TestChatPhotoVoiceAndPresence(t *testing.T) {
 	if err := json.Unmarshal(voice.Body.Bytes(), &created); err != nil || created.Message.Voice == "" {
 		t.Fatalf("voice id %s", voice.Body.String())
 	}
+	if bytes.Contains(voice.Body.Bytes(), []byte(`"voiceLevels"`)) {
+		t.Fatalf("voice without levels should not carry them %s", voice.Body.String())
+	}
+	leveled := postChatRawHeaders(app, "/api/v1/chat/threads/"+thread.ID+"/voice", ada.token, wav, map[string]string{"X-Voice-Ms": "1300", "X-Voice-Levels": "0259731"})
+	if leveled.Code != http.StatusOK || !bytes.Contains(leveled.Body.Bytes(), []byte(`"voiceLevels":"0259731"`)) {
+		t.Fatalf("voice levels %d %s", leveled.Code, leveled.Body.String())
+	}
+	junk := postChatRawHeaders(app, "/api/v1/chat/threads/"+thread.ID+"/voice", ada.token, wav, map[string]string{"X-Voice-Ms": "1300", "X-Voice-Levels": "9x<script>"})
+	if junk.Code != http.StatusOK || bytes.Contains(junk.Body.Bytes(), []byte(`"voiceLevels"`)) {
+		t.Fatalf("junk voice levels %d %s", junk.Code, junk.Body.String())
+	}
 	again := postChatRaw(app, "/api/v1/chat/threads/"+thread.ID+"/voice", ada.token, wav, "X-Voice-Ms", "1500")
 	if again.Code != http.StatusOK {
 		t.Fatalf("second voice %d %s", again.Code, again.Body.String())
@@ -882,4 +893,18 @@ func TestChatGroupsReactionsBlockAndSong(t *testing.T) {
 	if song.Code != http.StatusOK || !bytes.Contains(song.Body.Bytes(), []byte(`"song"`)) {
 		t.Fatalf("song %d %s", song.Code, song.Body.String())
 	}
+}
+
+func postChatRawHeaders(app *Server, path, token string, body []byte, headers map[string]string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+	if token != "" {
+		request.Header.Set("X-Chat-Token", token)
+	}
+	request.Header.Set("Content-Type", "application/octet-stream")
+	for key, value := range headers {
+		request.Header.Set(key, value)
+	}
+	response := httptest.NewRecorder()
+	app.Router().ServeHTTP(response, request)
+	return response
 }

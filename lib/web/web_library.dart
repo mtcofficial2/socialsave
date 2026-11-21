@@ -20,6 +20,7 @@ import 'package:social_save/web/web_pages.dart';
 import 'package:social_save/web/web_saver.dart';
 import 'package:social_save/web/web_video.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 // ---------------------------------------------------------------- metadata
 
@@ -94,7 +95,7 @@ class WebLibraryController extends Notifier<Map<String, WebItemMeta>> {
         for (final e in data.entries)
           e.key: WebItemMeta.fromJson(Map<String, Object?>.from(e.value as Map)),
       };
-    } catch (_) {}
+    } catch (e) { logQuiet('web_library', e); }
   }
 
   Future<void> _save() async {

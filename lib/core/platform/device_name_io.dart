@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/services.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// Maker and model, or the operating system on a computer. Not a serial.
 Future<String> appDeviceModel() async {
@@ -10,7 +11,7 @@ Future<String> appDeviceModel() async {
         'socialsave/media',
       ).invokeMethod<String>('deviceModel');
       return model?.trim() ?? '';
-    } catch (_) {}
+    } catch (e) { logQuiet('device_name_io', e); }
     return '';
   }
   if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
@@ -30,7 +31,7 @@ Future<String> appDeviceName() async {
       ).invokeMethod<String>('deviceName');
       final trimmed = name?.trim() ?? '';
       if (trimmed.isNotEmpty) return trimmed;
-    } catch (_) {}
+    } catch (e) { logQuiet('device_name_io', e); }
     return 'Android phone';
   }
   if (Platform.isWindows) {

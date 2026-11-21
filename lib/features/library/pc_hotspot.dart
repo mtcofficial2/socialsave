@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// Windows Mobile hotspot for "Fast share" from a PC (Xender-style): the PC
 /// opens a Wi-Fi hotspot named SocialSave-1234 with an 8-digit password and
@@ -106,7 +107,7 @@ class PcHotspot {
             if (a.address.startsWith('192.168.137.')) return a.address;
           }
         }
-      } catch (_) {}
+      } catch (e) { logQuiet('pc_hotspot', e); }
       await Future<void>.delayed(const Duration(milliseconds: 500));
     }
     return null;

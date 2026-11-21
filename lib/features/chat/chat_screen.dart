@@ -21,6 +21,8 @@ import 'package:social_save/shared/widgets/app_logo.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
 import 'package:social_save/shared/widgets/skeleton.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 enum _ContactKind { phone, email }
 
@@ -298,7 +300,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _myStatusCount = mine;
         _streak = streak;
       });
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_screen', e); }
   }
 
   Future<void> _register() async {
@@ -646,7 +648,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 'New chat',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.md),
               TextField(
                 controller: controller,
                 autofocus: true,
@@ -657,7 +659,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   prefixText: '@',
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.md),
               TextField(
                 controller: seen,
                 maxLength: 40,
@@ -670,7 +672,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   helperText: 'Only you see this. The username stays the address.',
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.md),
               FilledButton(onPressed: submit, child: const Text('Message')),
             ],
           ),
@@ -1018,7 +1020,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               step ? 'Sign in or register' : 'Your username',
               style: pageTitleStyle(context),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             Text(
               step
                   ? 'People will not see this. SocialSave does not send a code. The same phone or email, username, and password sign this device in.'
@@ -1029,7 +1031,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 color: scheme.onSurfaceVariant,
               ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: AppSpacing.xl),
             if (step) ...[
               SegmentedButton<_ContactKind>(
                 segments: const [
@@ -1051,7 +1053,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         _error = null;
                       }),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.lg),
               TextField(
                 controller: _contact,
                 enabled: !_busy,
@@ -1081,7 +1083,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   prefixText: '@',
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               TextField(
                 controller: _password,
                 enabled: !_busy,
@@ -1108,7 +1110,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               ),
             ],
             if (_error != null) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               Text(
                 _error!,
                 style: TextStyle(color: scheme.error, height: 1.35),
@@ -1139,7 +1141,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             ],
             if (_busy)
               Padding(
-                padding: const EdgeInsets.only(top: 12),
+                padding: const EdgeInsets.only(top: AppSpacing.md),
                 child: Text(
                   'The first open can take a moment.',
                   style: TextStyle(
@@ -1166,7 +1168,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             _error ?? 'Chat is not reachable right now.',
             style: TextStyle(color: scheme.error, height: 1.4),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.lg),
           FilledButton(
             onPressed: () => unawaited(_boot()),
             child: const Text('Try again'),
@@ -1594,7 +1596,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           hits.putIfAbsent(hit.thread, () => text);
         }
       }
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_screen', e); }
     if (!mounted) return;
     final current = _find.text.trim().toLowerCase().replaceFirst(RegExp(r'^@'), '');
     if (current != query) return;
@@ -2107,7 +2109,7 @@ class _EmptyPane extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(Icons.forum_rounded, size: 48, color: scheme.onSurfaceVariant),
-          const SizedBox(height: 12),
+          const SizedBox(height: AppSpacing.md),
           Text(
             'Select a chat to start messaging',
             style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4),

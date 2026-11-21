@@ -3,6 +3,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/platform/media_events.dart';
 import 'package:social_save/shared/widgets/liquid_glass.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 const _facingPref = 'socialsave_qr_camera_facing';
 
@@ -46,11 +47,11 @@ class _QrScannerState extends State<QrScanner> {
     var facings = const <String>[];
     try {
       facings = await MediaEvents.channel.invokeListMethod<String>('cameraFacings') ?? const [];
-    } catch (_) {}
+    } catch (e) { logQuiet('qr_scanner', e); }
     String? saved;
     try {
       saved = (await SharedPreferences.getInstance()).getString(_facingPref);
-    } catch (_) {}
+    } catch (e) { logQuiet('qr_scanner', e); }
     if (!mounted) return;
     if (facings.isEmpty) {
       // Unknown (older build): let the plugin try its default.
@@ -74,7 +75,7 @@ class _QrScannerState extends State<QrScanner> {
     await old?.dispose();
     try {
       await (await SharedPreferences.getInstance()).setString(_facingPref, facing == CameraFacing.front ? 'front' : 'back');
-    } catch (_) {}
+    } catch (e) { logQuiet('qr_scanner', e); }
     if (!mounted) return;
     setState(() => _controller = MobileScannerController(facing: facing, formats: const [BarcodeFormat.qrCode]));
   }

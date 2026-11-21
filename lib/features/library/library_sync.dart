@@ -12,6 +12,7 @@ import 'package:social_save/features/downloads/presentation/providers/downloads_
 import 'package:social_save/features/library/library_catalog.dart';
 import 'package:social_save/shared/models/download_status.dart';
 import 'package:social_save/shared/models/social_platform.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// The library list shared with a connected phone or computer.
 /// Files stay where they were saved. The other screen gets the titles.
@@ -144,7 +145,7 @@ class LibrarySync {
       try {
         final json = jsonDecode(raw);
         if (json is Map) records.add(DownloadRecord.fromJson(Map<String, dynamic>.from(json)));
-      } catch (_) {}
+      } catch (e) { logQuiet('library_sync', e); }
     }
     records.sort((a, b) => b.downloadedAt.compareTo(a.downloadedAt));
     return records;

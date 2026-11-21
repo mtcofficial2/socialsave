@@ -17,6 +17,8 @@ import 'package:social_save/features/chat/status_fonts.dart';
 import 'package:social_save/features/chat/status_link_card.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
 import 'package:social_save/shared/widgets/skeleton.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 const _seenKey = 'chat.status.seen.v1';
 const _likedKey = 'chat.status.liked.v1';
@@ -313,7 +315,7 @@ class _ChatStatusScreenState extends State<ChatStatusScreen> {
                       padding: EdgeInsets.fromLTRB(88, 0, 16, 4),
                       child: Text(
                         'Come back tomorrow to keep your streak.',
-                        style: TextStyle(color: Color(0xFF667781), fontSize: 12.5),
+                        style: TextStyle(color: ChatUiTokens.timeLight, fontSize: 12.5),
                       ),
                     ),
                   if (names.isNotEmpty)
@@ -321,7 +323,7 @@ class _ChatStatusScreenState extends State<ChatStatusScreen> {
                       padding: EdgeInsets.fromLTRB(16, 18, 16, 6),
                       child: Text(
                         'Recent updates',
-                        style: TextStyle(fontWeight: FontWeight.w600, color: Color(0xFF667781)),
+                        style: TextStyle(fontWeight: FontWeight.w600, color: ChatUiTokens.timeLight),
                       ),
                     ),
                   if (names.isEmpty && _problem == null)
@@ -329,7 +331,7 @@ class _ChatStatusScreenState extends State<ChatStatusScreen> {
                       padding: EdgeInsets.fromLTRB(16, 28, 16, 16),
                       child: Text(
                         'No updates right now. A text update stays up for 24 hours.',
-                        style: TextStyle(color: Color(0xFF667781)),
+                        style: TextStyle(color: ChatUiTokens.timeLight),
                       ),
                     ),
                   for (final name in names)
@@ -383,9 +385,9 @@ class StatusFace extends StatelessWidget {
       child: CustomPaint(
         painter: _StatusRingPainter(segments: count, seen: seen),
         child: Padding(
-          padding: const EdgeInsets.all(4),
+          padding: const EdgeInsets.all(AppSpacing.xs),
           child: CircleAvatar(
-            backgroundColor: const Color(0xFF1F2C34),
+            backgroundColor: ChatUiTokens.fieldDark,
             child: Text(
               letter.isEmpty ? '?' : letter.substring(0, 1).toUpperCase(),
               style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
@@ -447,8 +449,8 @@ class _StatusRingPainter extends CustomPainter {
       ..strokeCap = StrokeCap.round;
     if (count <= 1) {
       final opened = seen.isNotEmpty && seen.first;
-      paint.color = opened ? const Color(0xFF8696A0) : ChatUiTokens.brand;
-      if (seen.isEmpty) paint.color = const Color(0xFF8696A0);
+      paint.color = opened ? ChatUiTokens.iconMuted : ChatUiTokens.brand;
+      if (seen.isEmpty) paint.color = ChatUiTokens.iconMuted;
       canvas.drawArc(rect, 0, math.pi * 2, false, paint);
       return;
     }
@@ -457,7 +459,7 @@ class _StatusRingPainter extends CustomPainter {
     final start = -math.pi / 2 + gap / 2;
     for (var i = 0; i < count; i++) {
       final opened = i < seen.length && seen[i];
-      paint.color = opened ? const Color(0xFF8696A0) : ChatUiTokens.brand;
+      paint.color = opened ? ChatUiTokens.iconMuted : ChatUiTokens.brand;
       canvas.drawArc(rect, start + i * (sweep + gap), sweep, false, paint);
     }
   }
@@ -555,7 +557,7 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
   Future<void> _sendView(String id) async {
     try {
       await ChatApi().markStatusView(id);
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_status_screen', e); }
   }
 
   void _onBarDone() {
@@ -790,7 +792,7 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
                         for (var i = 0; i < _notes.length; i++)
                           Expanded(
                             child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 2),
+                              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xxs),
                               child: ClipRRect(
                                 borderRadius: BorderRadius.circular(2),
                                 child: LinearProgressIndicator(
@@ -878,7 +880,7 @@ class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderS
                           const Spacer(),
                         if (note.text.isNotEmpty)
                           Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl, vertical: AppSpacing.md),
                             child: ChatTapText(
                               text: note.text,
                               color: Colors.white,
@@ -1021,7 +1023,7 @@ class _StatusReplyBarState extends State<_StatusReplyBar> {
     final typed = widget.controller.text.trim().isNotEmpty;
     final open = widget.focus.hasFocus;
     return Padding(
-      padding: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.only(top: AppSpacing.sm),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -1035,14 +1037,14 @@ class _StatusReplyBarState extends State<_StatusReplyBar> {
             ),
           if (open)
             Padding(
-              padding: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.only(bottom: AppSpacing.sm),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
                   for (final emoji in _statusReactions)
                     InkWell(
                       onTap: widget.busy ? null : () => widget.onSend(emoji),
-                      borderRadius: BorderRadius.circular(24),
+                      borderRadius: AppRadii.xlAll,
                       child: Padding(
                         padding: const EdgeInsets.all(6),
                         child: Text(emoji, style: const TextStyle(fontSize: 28)),
@@ -1068,7 +1070,7 @@ class _StatusReplyBarState extends State<_StatusReplyBar> {
                     filled: true,
                     fillColor: Colors.white.withValues(alpha: 0.16),
                     isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: AppSpacing.md),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(28),
                       borderSide: const BorderSide(color: Colors.white54),
@@ -1084,7 +1086,7 @@ class _StatusReplyBarState extends State<_StatusReplyBar> {
                   ),
                 ),
               ),
-              const SizedBox(width: 4),
+              const SizedBox(width: AppSpacing.xs),
               IconButton(
                 tooltip: typed ? 'Send' : 'Like',
                 onPressed: widget.busy
@@ -1101,7 +1103,7 @@ class _StatusReplyBarState extends State<_StatusReplyBar> {
                         curve: Curves.easeOutBack,
                         child: Icon(
                           widget.liked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-                          color: widget.liked ? const Color(0xFFE53935) : Colors.white,
+                          color: widget.liked ? ChatUiTokens.danger : Colors.white,
                           size: 28,
                         ),
                       ),
@@ -1320,7 +1322,7 @@ class _StatusComposerState extends State<_StatusComposer> {
                           children: [
                             Positioned.fill(
                               child: ClipRRect(
-                                borderRadius: BorderRadius.circular(16),
+                                borderRadius: AppRadii.lgAll,
                                 child: Image.memory(_photo!, fit: BoxFit.contain),
                               ),
                             ),
@@ -1370,9 +1372,9 @@ class _StatusComposerState extends State<_StatusComposer> {
               height: 72,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
                 itemCount: statusFontChoices.length,
-                separatorBuilder: (context, index) => const SizedBox(width: 8),
+                separatorBuilder: (context, index) => const SizedBox(width: AppSpacing.sm),
                 itemBuilder: (context, index) {
                   final picked = index == _font;
                   final choice = statusFontChoices[index];
@@ -1468,7 +1470,7 @@ class _StatusPhotoState extends State<_StatusPhoto> {
     final bytes = _bytes;
     if (bytes != null && bytes.isNotEmpty) {
       return ClipRRect(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: AppRadii.lgAll,
         child: Image.memory(bytes, fit: BoxFit.contain),
       );
     }

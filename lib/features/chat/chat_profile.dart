@@ -15,6 +15,9 @@ import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_format.dart';
 import 'package:social_save/features/chat/chat_thread_screen.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
+import 'package:social_save/features/chat/chat_ui.dart';
 
 /// Saves this person's profile photo. The sentence is what to show afterwards.
 Future<String> downloadChatProfilePhoto(
@@ -58,7 +61,7 @@ Future<String> downloadChatProfilePhoto(
       );
       try {
         if (await file.exists()) await file.delete();
-      } catch (_) {}
+      } catch (e) { logQuiet('chat_profile', e); }
       if (saved == null || saved.isEmpty) {
         return 'That photo could not be saved.';
       }
@@ -134,7 +137,7 @@ Future<void> showChatProfile(
                     photoRev: rev,
                     online: !mine && online,
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: AppSpacing.lg),
                   Text(
                     shown.isNotEmpty
                         ? shown
@@ -147,7 +150,7 @@ Future<void> showChatProfile(
                     ),
                   ),
                   if (!mine && shown.isNotEmpty && shown != name) ...[
-                    const SizedBox(height: 4),
+                    const SizedBox(height: AppSpacing.xs),
                     Text(
                       '@$name',
                       textAlign: TextAlign.center,
@@ -163,7 +166,7 @@ Future<void> showChatProfile(
                       presence,
                       style: TextStyle(
                         color: online
-                            ? const Color(0xFF25D366)
+                            ? ChatUiTokens.brand
                             : scheme.onSurfaceVariant,
                         fontWeight: FontWeight.w600,
                         height: 1.35,
@@ -181,7 +184,7 @@ Future<void> showChatProfile(
                     ),
                   ),
                   if (mine) ...[
-                    const SizedBox(height: 8),
+                    const SizedBox(height: AppSpacing.sm),
                     Text(
                       'Registered with ${contact.trim()}',
                       textAlign: TextAlign.center,
@@ -194,7 +197,7 @@ Future<void> showChatProfile(
                   const SizedBox(height: 18),
                   if (onMedia != null)
                     Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
                       child: FilledButton.tonalIcon(
                         onPressed: () {
                           final open = onMedia;
@@ -242,7 +245,7 @@ Future<void> showChatProfile(
                       label: const Text('Change photo'),
                     ),
                   if (!mine && onSeenName != null) ...[
-                    const SizedBox(height: 8),
+                    const SizedBox(height: AppSpacing.sm),
                     FilledButton.tonalIcon(
                       onPressed: busy
                           ? null
@@ -279,7 +282,7 @@ Future<void> showChatProfile(
                     ),
                   ],
                   if (!mine && onBlock != null) ...[
-                    const SizedBox(height: 8),
+                    const SizedBox(height: AppSpacing.sm),
                     FilledButton.tonalIcon(
                       onPressed: busy
                           ? null
@@ -311,7 +314,7 @@ Future<void> showChatProfile(
                       ),
                       label: Text(blockedNow ? 'Unblock' : 'Block'),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: AppSpacing.sm),
                     TextButton.icon(
                       onPressed: busy
                           ? null
@@ -337,7 +340,7 @@ Future<void> showChatProfile(
                       label: const Text('Report'),
                     ),
                   ],
-                  if (mine) const SizedBox(height: 8),
+                  if (mine) const SizedBox(height: AppSpacing.sm),
                   if (mine && onLogOut != null) ...[
                     TextButton.icon(
                       onPressed: () {
@@ -350,7 +353,7 @@ Future<void> showChatProfile(
                         style: TextStyle(color: scheme.error),
                       ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: AppSpacing.sm),
                   ],
                   FilledButton.tonalIcon(
                     onPressed: busy || name.isEmpty
@@ -371,7 +374,7 @@ Future<void> showChatProfile(
                     icon: const Icon(Icons.download_rounded),
                     label: const Text('Download photo'),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: AppSpacing.sm),
                   FilledButton.tonalIcon(
                     onPressed: () async {
                       await Clipboard.setData(ClipboardData(text: '@$name'));
@@ -382,7 +385,7 @@ Future<void> showChatProfile(
                     label: const Text('Copy username'),
                   ),
                   if (problem != null) ...[
-                    const SizedBox(height: 12),
+                    const SizedBox(height: AppSpacing.md),
                     Text(
                       problem!,
                       textAlign: TextAlign.center,
@@ -500,7 +503,7 @@ Future<void> showChatGroup(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   ChatFace(name: shown.isEmpty ? 'Group' : shown, size: 96),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: AppSpacing.lg),
                   Text(
                     shown.isEmpty ? 'Group' : shown,
                     textAlign: TextAlign.center,
@@ -516,7 +519,7 @@ Future<void> showChatGroup(
                     style: TextStyle(color: scheme.onSurfaceVariant),
                   ),
                   if (onMedia != null) ...[
-                    const SizedBox(height: 12),
+                    const SizedBox(height: AppSpacing.md),
                     FilledButton.tonalIcon(
                       onPressed: () {
                         final open = onMedia;
@@ -528,11 +531,11 @@ Future<void> showChatGroup(
                     ),
                   ],
                   if (aboutText.isNotEmpty) ...[
-                    const SizedBox(height: 8),
+                    const SizedBox(height: AppSpacing.sm),
                     Text(aboutText, textAlign: TextAlign.center),
                   ],
                   if (rulesText.isNotEmpty) ...[
-                    const SizedBox(height: 4),
+                    const SizedBox(height: AppSpacing.xs),
                     Text(
                       rulesText,
                       textAlign: TextAlign.center,
@@ -545,7 +548,7 @@ Future<void> showChatGroup(
                       child: Text('Only admins can post'),
                     ),
                   if (code.isNotEmpty) ...[
-                    const SizedBox(height: 8),
+                    const SizedBox(height: AppSpacing.sm),
                     Text(
                       'Code $code',
                       style: const TextStyle(
@@ -555,7 +558,7 @@ Future<void> showChatGroup(
                       ),
                     ),
                   ],
-                  const SizedBox(height: 12),
+                  const SizedBox(height: AppSpacing.md),
                   if (people.isNotEmpty)
                     ConstrainedBox(
                       constraints: const BoxConstraints(maxHeight: 180),
@@ -662,7 +665,7 @@ Future<void> showChatGroup(
                       ),
                     ),
                   if (canManage && onInfo != null) ...[
-                    const SizedBox(height: 8),
+                    const SizedBox(height: AppSpacing.sm),
                     FilledButton.tonalIcon(
                       onPressed: busy
                           ? null
@@ -690,7 +693,7 @@ Future<void> showChatGroup(
                       icon: const Icon(Icons.info_outline_rounded),
                       label: const Text('Description'),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: AppSpacing.sm),
                     FilledButton.tonalIcon(
                       onPressed: busy
                           ? null
@@ -747,7 +750,7 @@ Future<void> showChatGroup(
                     ),
                   ],
                   if (canManage && onInvite != null) ...[
-                    const SizedBox(height: 8),
+                    const SizedBox(height: AppSpacing.sm),
                     FilledButton.tonalIcon(
                       onPressed: busy
                           ? null
@@ -776,7 +779,7 @@ Future<void> showChatGroup(
                     ),
                   ],
                   if (canManage) ...[
-                  const SizedBox(height: 8),
+                  const SizedBox(height: AppSpacing.sm),
                   FilledButton.tonalIcon(
                     onPressed: busy
                         ? null
@@ -805,7 +808,7 @@ Future<void> showChatGroup(
                     icon: const Icon(Icons.person_add_alt_1_rounded),
                     label: const Text('Add person'),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: AppSpacing.sm),
                   if (code.isNotEmpty)
                     FilledButton.tonalIcon(
                       onPressed: () async {
@@ -816,7 +819,7 @@ Future<void> showChatGroup(
                       icon: const Icon(Icons.copy_rounded),
                       label: const Text('Copy code'),
                     ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: AppSpacing.sm),
                   FilledButton.tonalIcon(
                     onPressed: busy
                         ? null
@@ -846,7 +849,7 @@ Future<void> showChatGroup(
                     label: const Text('Rename group'),
                   ),
                   ],
-                  const SizedBox(height: 8),
+                  const SizedBox(height: AppSpacing.sm),
                   TextButton.icon(
                     onPressed: busy
                         ? null
@@ -898,7 +901,7 @@ Future<void> showChatGroup(
                     ),
                   ),
                   if (problem != null) ...[
-                    const SizedBox(height: 12),
+                    const SizedBox(height: AppSpacing.md),
                     Text(
                       problem!,
                       textAlign: TextAlign.center,

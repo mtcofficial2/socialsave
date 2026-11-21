@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/features/downloads/domain/repositories/downloads_repository.dart';
 import 'package:social_save/features/library/vault_service.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// 1.0.14: puts vault videos that showed up in the gallery back where they
 /// belong.
@@ -58,7 +59,7 @@ class VaultRecovery {
       for (final f in public) {
         try {
           bySize.putIfAbsent(f.lengthSync(), () => []).add(f);
-        } catch (_) {}
+        } catch (e) { logQuiet('vault_recovery', e); }
       }
       var removed = 0, restored = 0, failures = 0;
       final gone = <String>{};
@@ -121,7 +122,7 @@ class VaultRecovery {
   static Future<bool> _removePublic(File f) async {
     try {
       await f.delete();
-    } catch (_) {}
+    } catch (e) { logQuiet('vault_recovery', e); }
     if (f.existsSync()) {
       try {
         await _media.invokeMethod<int>('deleteMedia', {
@@ -129,11 +130,11 @@ class VaultRecovery {
             {'id': null, 'path': f.path, 'uri': null},
           ],
         });
-      } catch (_) {}
+      } catch (e) { logQuiet('vault_recovery', e); }
     }
     try {
       await _media.invokeMethod<void>('scanFile', {'path': f.path});
-    } catch (_) {}
+    } catch (e) { logQuiet('vault_recovery', e); }
     return !f.existsSync();
   }
 

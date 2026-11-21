@@ -8,6 +8,8 @@ import 'package:social_save/features/chat/chat_services.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 /// Account and chat controls. One quiet page, reached from the Settings tab.
 class ChatSettingsPage extends StatefulWidget {
@@ -60,7 +62,7 @@ class _ChatSettingsPageState extends State<ChatSettingsPage> {
       final me = await ChatApi().me();
       if (!mounted) return;
       setState(() => _requests = me.messageRequests);
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_settings', e); }
   }
 
   Future<void> _setRequests(bool on) async {
@@ -96,7 +98,7 @@ class _ChatSettingsPageState extends State<ChatSettingsPage> {
     if (on) return;
     try {
       await const MethodChannel('socialsave/chat_notify').invokeMethod<void>('hidePop');
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_settings', e); }
   }
 
   @override
@@ -110,7 +112,7 @@ class _ChatSettingsPageState extends State<ChatSettingsPage> {
     return ListView(
       padding: pagePadding(context, top: 8, bottom: 28, maxWidth: 520),
       children: [
-        const SizedBox(height: 12),
+        const SizedBox(height: AppSpacing.md),
         Semantics(
           button: true,
           label: 'Edit profile for $shown',
@@ -120,7 +122,7 @@ class _ChatSettingsPageState extends State<ChatSettingsPage> {
             child: widget.avatar,
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: AppSpacing.md),
         Text(
           shown,
           textAlign: TextAlign.center,
@@ -131,7 +133,7 @@ class _ChatSettingsPageState extends State<ChatSettingsPage> {
           ),
         ),
         if (widget.contact.trim().isNotEmpty) ...[
-          const SizedBox(height: 4),
+          const SizedBox(height: AppSpacing.xs),
           Text(
             widget.contact.trim(),
             textAlign: TextAlign.center,
@@ -308,15 +310,15 @@ class _Group extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = ChatUiTokens.dark(context);
-    final line = dark ? const Color(0xFF1F2C34) : const Color(0xFFE4E7EA);
+    final line = ChatUiTokens.line(dark);
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: dark ? const Color(0xFF111B21) : Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        color: ChatUiTokens.surface(dark),
+        borderRadius: AppRadii.lgAll,
         border: Border.all(color: line),
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: AppRadii.lgAll,
         child: Column(
           children: [
             for (var i = 0; i < children.length; i++) ...[
@@ -375,7 +377,7 @@ class _LinkRow extends StatelessWidget {
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: 52),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: AppSpacing.sm),
           child: Row(
             children: [
               Icon(icon, color: color, size: 22),
@@ -439,7 +441,7 @@ class _SwitchRow extends StatelessWidget {
                       letterSpacing: -0.2,
                     ),
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: AppSpacing.xxs),
                   Text(
                     subtitle,
                     style: TextStyle(

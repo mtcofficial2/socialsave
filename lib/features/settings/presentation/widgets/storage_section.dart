@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -9,6 +10,7 @@ import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/features/library/share_session.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
 import 'package:social_save/core/theme/app_tokens.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 import 'package:social_save/core/platform/disk_space_stub.dart'
     if (dart.library.ffi) 'package:social_save/core/platform/disk_space_ffi.dart';
 
@@ -34,7 +36,7 @@ Future<DeviceSpace?> readDeviceSpace() async {
       if (r == null) return null;
       return DeviceSpace(r.$1, r.$2);
     }
-  } catch (_) {}
+  } catch (e) { logQuiet('storage_section', e); }
   return null;
 }
 
@@ -72,31 +74,44 @@ class _StorageSectionState extends ConsumerState<StorageSection> {
             final f = File(path);
             if (!f.existsSync()) continue;
             size = f.lengthSync();
-          } catch (_) {}
+          } catch (e) { logQuiet('storage_section', e); }
         }
         videos++;
         bytes += size;
       }
-    } catch (_) {}
+    } catch (e) { logQuiet('storage_section', e); }
     var cache = 0;
     try {
       cache = await ref.read(downloadPathServiceProvider).cacheSizeBytes();
-    } catch (_) {}
+    } catch (e) { logQuiet('storage_section', e); }
     return _Usage(videos: videos, videoBytes: bytes, cacheBytes: cache, space: await readDeviceSpace());
   }
 
   Future<void> _clear() async {
     setState(() => _clearing = true);
+    var failed = false;
     try {
       await ref.read(downloadPathServiceProvider).clearCache(keepTransfers: ShareSession.active);
       await ref.read(thumbnailCacheManagerProvider).emptyCache();
-    } catch (_) {}
+    } catch (e, st) {
+      failed = true;
+      logQuiet('storage.clear', e, st);
+    }
     if (!mounted) return;
     setState(() {
       _clearing = false;
       _usage = _load();
     });
-    AppSnack.info(context, 'Cache cleared');
+    if (failed) {
+      AppSnack.error(
+        context,
+        "Some of the cache couldn't be cleared.",
+        actionLabel: 'Retry',
+        onAction: () => unawaited(_clear()),
+      );
+    } else {
+      AppSnack.info(context, 'Cache cleared');
+    }
   }
 
   @override

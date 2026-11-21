@@ -12,6 +12,7 @@ import 'package:social_save/shared/widgets/liquid_glass.dart';
 import 'package:social_save/features/library/app_share.dart';
 import 'package:social_save/features/library/device_media.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// What the session picker can list.
 enum MediaKind { video, image, audio, app }
@@ -222,7 +223,7 @@ class MediaCatalog {
           await f.openRead(0, 1).drain<void>();
           return f;
         }
-      } catch (_) {}
+      } catch (e) { logQuiet('session_media_picker', e); }
     }
     if (!Plat.isAndroid) return null;
     final copied = await DeviceMediaService().resolvePlayablePath(

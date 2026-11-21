@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:social_save/core/platform/plat.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// Android side of a connected session: a foreground service with a
 /// persistent "Connected to …" notification (Open / Disconnect), wake and
@@ -44,7 +45,7 @@ class SessionKeepAlive {
     unawaited(Future<void>.delayed(const Duration(seconds: 2), () async {
       try {
         if (await _channel.invokeMethod<bool>('takeOpen') == true) onOpen?.call();
-      } catch (_) {}
+      } catch (e) { logQuiet('session_keepalive', e); }
     }));
   }
 
@@ -85,14 +86,14 @@ class SessionKeepAlive {
     _running = false;
     try {
       await _channel.invokeMethod<bool>('stop');
-    } catch (_) {}
+    } catch (e) { logQuiet('session_keepalive', e); }
   }
 
   static Future<void> received(String title, String text) async {
     if (!supported) return;
     try {
       await _channel.invokeMethod<bool>('received', {'title': title, 'text': text});
-    } catch (_) {}
+    } catch (e) { logQuiet('session_keepalive', e); }
   }
 
   static Future<bool> batteryExempt() async {
@@ -108,6 +109,6 @@ class SessionKeepAlive {
     if (!supported) return;
     try {
       await _channel.invokeMethod<bool>('requestBatteryExempt');
-    } catch (_) {}
+    } catch (e) { logQuiet('session_keepalive', e); }
   }
 }

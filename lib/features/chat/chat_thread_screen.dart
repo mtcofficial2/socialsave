@@ -34,6 +34,10 @@ import 'package:social_save/features/chat/chat_voice.dart';
 import 'package:social_save/features/chat/chat_wall.dart';
 import 'package:social_save/features/chat/chat_wallpaper.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
+import 'package:social_save/shared/widgets/empty_state.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 
 /// A direct chat. On a phone this is its own page. On a wide window it sits
 /// beside the chat list.
@@ -139,6 +143,9 @@ class _ChatThreadViewState extends State<ChatThreadView>
   // activity lines listen, so a typing blip no longer rebuilds the thread.
   final ValueNotifier<int> _activityTick = ValueNotifier<int>(0);
   StreamSubscription<ChatLiveEvent>? _live;
+  StreamSubscription<List<ConnectivityResult>>? _net;
+  Timer? _resendTimer;
+  bool _resending = false;
   final Map<int, GlobalKey> _rowKeys = {};
   int _localSeq = 0;
   int? _replyId;
@@ -189,6 +196,20 @@ class _ChatThreadViewState extends State<ChatThreadView>
     if (mounted) setState(() {});
   }
 
+  /// A recoverable problem after something the user did (send, attach,
+  /// record, delete...): a short snackbar instead of the red banner, which
+  /// stays for "chat not found" and a chat that could not load at all.
+  void _chatProblem(String? text) {
+    if (!mounted || text == null || text.trim().isEmpty) return;
+    AppSnack.error(context, text);
+  }
+
+  /// A how-to hint (not a failure), such as "Hold to record".
+  void _chatHint(String text) {
+    if (!mounted) return;
+    AppSnack.info(context, text);
+  }
+
   @override
   void didUpdateWidget(ChatThreadView oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -203,6 +224,19 @@ class _ChatThreadViewState extends State<ChatThreadView>
     unawaited(ChatPrefs.ensure());
     ChatAlerts.holdThread(_threadId);
     _live = ChatLive.instance.events.listen(_onLive);
+    ChatLive.instance.connected.addListener(_onLiveConnection);
+    try {
+      _net = Connectivity().onConnectivityChanged.listen(
+        (results) {
+          if (!results.contains(ConnectivityResult.none)) {
+            _scheduleResend();
+          }
+        },
+        onError: (Object e) => logQuiet('chat_thread.connectivity', e),
+      );
+    } catch (e) {
+      logQuiet('chat_thread.connectivity', e);
+    }
     ChatLive.revision.addListener(_onTypingClock);
     _scroll.addListener(_onScroll);
     _text.addListener(_onDraftChanged);
@@ -221,6 +255,9 @@ class _ChatThreadViewState extends State<ChatThreadView>
     ChatAlerts.releaseThread(_threadId);
     _live?.cancel();
     ChatLive.revision.removeListener(_onTypingClock);
+    ChatLive.instance.connected.removeListener(_onLiveConnection);
+    _net?.cancel();
+    _resendTimer?.cancel();
     ChatLive.instance.typing(_threadId, on: false);
     ChatLive.instance.recording(_threadId, on: false);
     _poll?.cancel();
@@ -792,6 +829,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
           if (mounted) setState(() {});
         }
         if (presenceChanged || _error != null) setState(() => _error = null);
+        if (_messages.any((item) => item.status == 'queued')) _scheduleResend();
         if (presenceChanged) _remember();
         unawaited(_noteRead());
         return;
@@ -929,6 +967,13 @@ class _ChatThreadViewState extends State<ChatThreadView>
     });
   }
 
+  /// The empty chat's quick-send chip.
+  void _sayHi() {
+    if (_threadId.isEmpty || _recording) return;
+    _text.text = 'Hi 👋';
+    unawaited(_send());
+  }
+
   Future<void> _send() async {
     final text = _text.text.trim();
     if (text.isEmpty || _recording || _threadId.isEmpty) return;
@@ -941,10 +986,11 @@ class _ChatThreadViewState extends State<ChatThreadView>
         _ingest(message);
       } catch (error) {
         if (!mounted) return;
-        setState(() => _error = chatErrorText(error));
+        _chatProblem(chatErrorText(error));
       }
       return;
     }
+    unawaited(HapticFeedback.lightImpact());
     final status = _statusReply && _replyText.trim().isNotEmpty;
     final body = status ? statusReplyBody(_replyText, text) : text;
     final reply = status ? 0 : (_replyId ?? 0);
@@ -969,10 +1015,10 @@ class _ChatThreadViewState extends State<ChatThreadView>
           if (!mounted) return;
           _replaceLocal(local.id, message);
           return;
-        } catch (_) {}
+        } catch (e) { logQuiet('chat_thread_screen', e); }
       }
       if (mounted && _messages.any((item) => item.id == local.id)) {
-        _mark(local.id, 'failed');
+        _markFailed(local.id, error);
       }
     }
   }
@@ -1172,7 +1218,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     final status = await Permission.camera.request();
     if (!mounted) return;
     if (!status.isGranted) {
-      setState(() => _error = 'Allow the camera to take a photo.');
+      _chatProblem('Allow the camera to take a photo.');
       return;
     }
     String? path;
@@ -1182,7 +1228,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       ).invokeMethod<String>('capturePhoto');
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = chatErrorText(error));
+      _chatProblem(chatErrorText(error));
       return;
     }
     if (path == null || path.isEmpty || !mounted) return;
@@ -1193,10 +1239,9 @@ class _ChatThreadViewState extends State<ChatThreadView>
       await _previewAndSend([fitted]);
     } catch (error) {
       if (!mounted) return;
-      setState(
-        () => _error = error is StateError
+      _chatProblem(error is StateError
             ? error.message
-            : chatErrorText(error),
+            : chatErrorText(error)
       );
     }
   }
@@ -1233,13 +1278,12 @@ class _ChatThreadViewState extends State<ChatThreadView>
       }
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = chatErrorText(error));
+      _chatProblem(chatErrorText(error));
       return;
     }
     if (!mounted) return;
     if (songs.isEmpty) {
-      setState(
-        () => _error = 'No saved song under 16 MB is on this device.',
+      _chatProblem('No saved song under 16 MB is on this device.'
       );
       return;
     }
@@ -1277,7 +1321,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       final bytes = await File(path).readAsBytes();
       if (bytes.length > 16 * 1024 * 1024) {
         if (!mounted) return;
-        setState(() => _error = 'That song is too large to send in chat.');
+        _chatProblem('That song is too large to send in chat.');
         return;
       }
       final reply = _replyId ?? 0;
@@ -1308,10 +1352,10 @@ class _ChatThreadViewState extends State<ChatThreadView>
     } catch (error) {
       if (!mounted) return;
       if (localId != null && _messages.any((item) => item.id == localId)) {
-        _mark(localId, 'failed');
+        _markFailed(localId, error);
         return;
       }
-      setState(() => _error = chatErrorText(error));
+      _chatProblem(chatErrorText(error));
     }
   }
 
@@ -1336,22 +1380,21 @@ class _ChatThreadViewState extends State<ChatThreadView>
     if (picked == null || !mounted) return;
     final name = picked.name;
     if (clip ? !chatIsClipName(name) : !chatIsDocumentName(name)) {
-      setState(() => _error = clip ? 'Choose a short clip.' : 'Choose a document.');
+      _chatHint(clip ? 'Choose a short clip.' : 'Choose a document.');
       return;
     }
     final bytes = await picked.readAsBytes();
     if (!mounted) return;
     final cap = clip ? chatClipMaxBytes : chatDocMaxBytes;
     if (bytes.length > cap) {
-      setState(
-        () => _error = clip
+      _chatProblem(clip
             ? 'That short clip is too large.'
-            : 'That document is too large.',
+            : 'That document is too large.'
       );
       return;
     }
     if (bytes.isEmpty) {
-      setState(() => _error = 'Choose a file first.');
+      _chatHint('Choose a file first.');
       return;
     }
     await _sendChosenFile(bytes, name: name, clip: clip);
@@ -1396,10 +1439,10 @@ class _ChatThreadViewState extends State<ChatThreadView>
     } catch (error) {
       if (!mounted) return;
       if (localId != null && _messages.any((item) => item.id == localId)) {
-        _mark(localId, 'failed');
+        _markFailed(localId, error);
         return;
       }
-      setState(() => _error = chatErrorText(error));
+      _chatProblem(chatErrorText(error));
     }
   }
 
@@ -1409,7 +1452,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
           (message.file.isEmpty ? null : await _api.chatFile(message.file));
       if (!mounted) return;
       if (bytes == null || bytes.isEmpty) {
-        setState(() => _error = 'That file was not found.');
+        _chatProblem('That file was not found.');
         return;
       }
       if (kIsWeb) return;
@@ -1420,7 +1463,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       await OpenFilex.open(path);
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = chatErrorText(error));
+      _chatProblem(chatErrorText(error));
     }
   }
 
@@ -1440,10 +1483,9 @@ class _ChatThreadViewState extends State<ChatThreadView>
       }
     } catch (error) {
       if (!mounted) return;
-      setState(
-        () => _error = error is StateError
+      _chatProblem(error is StateError
             ? error.message
-            : chatErrorText(error),
+            : chatErrorText(error)
       );
       return;
     }
@@ -1511,14 +1553,60 @@ class _ChatThreadViewState extends State<ChatThreadView>
     } catch (error) {
       if (!mounted) return;
       if (localId != null && _messages.any((item) => item.id == localId)) {
-        _mark(localId, 'failed');
+        _markFailed(localId, error);
         return;
       }
       if (localId != null) return;
-      setState(
-        () =>
-            _error = error is StateError ? error.message : chatErrorText(error),
+      _chatProblem(error is StateError ? error.message : chatErrorText(error)
       );
+    }
+  }
+
+  /// A send that could not reach the server waits as "queued" and goes out
+  /// again on its own; any other failure stays "failed" for tap-to-retry.
+  void _markFailed(int id, Object error) {
+    _mark(id, chatIsOffline(error) ? 'queued' : 'failed');
+  }
+
+  void _onLiveConnection() {
+    if (ChatLive.instance.connected.value) _scheduleResend();
+  }
+
+  /// Waits a moment (networks flap when they come back), then resends.
+  void _scheduleResend() {
+    if (!mounted || !_messages.any((item) => item.status == 'queued')) return;
+    _resendTimer?.cancel();
+    _resendTimer = Timer(const Duration(milliseconds: 1200), () {
+      unawaited(_resendQueued());
+    });
+  }
+
+  /// Sends every queued message again, oldest first. A message the server
+  /// already has (the first try got through before the line dropped) is
+  /// matched against the fresh history and removed instead of sent twice.
+  /// Stops at the first one that is still offline.
+  Future<void> _resendQueued() async {
+    if (_resending || !mounted) return;
+    _resending = true;
+    try {
+      await _refresh();
+      if (!mounted) return;
+      final queued = chatResendOrder(_messages);
+      for (final message in queued) {
+        if (!mounted) return;
+        final current = _messages.where((item) => item.id == message.id);
+        if (current.isEmpty || current.first.status != 'queued') continue;
+        if (chatAlreadyDelivered(message, _messages, me: _me)) {
+          _drop(message.id);
+          continue;
+        }
+        await _retry(current.first);
+        if (!mounted) return;
+        final after = _messages.where((item) => item.id == message.id);
+        if (after.isNotEmpty && after.first.status == 'queued') break;
+      }
+    } finally {
+      _resending = false;
     }
   }
 
@@ -1575,7 +1663,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       // A lost chat gets a fresh id, so the next tap on retry goes through.
       if (mounted && _chatGone(error)) await _reopen();
       if (mounted && _messages.any((item) => item.id == message.id)) {
-        _mark(message.id, 'failed');
+        _markFailed(message.id, error);
       }
     }
   }
@@ -1585,6 +1673,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     String kind = '',
     Uint8List? bytes,
     int voiceMs = 0,
+    String voiceLevels = '',
     String songName = '',
     int songMs = 0,
     int reply = 0,
@@ -1604,6 +1693,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       at: DateTime.now(),
       status: 'sending',
       voiceMs: voiceMs,
+      voiceLevels: voiceLevels,
       songName: songName,
       songMs: songMs,
       reply: reply,
@@ -1707,7 +1797,8 @@ class _ChatThreadViewState extends State<ChatThreadView>
   }
 
   void _onMicTap() {
-    setState(() => _error = 'Hold to record');
+    unawaited(HapticFeedback.selectionClick());
+    _chatHint('Hold the mic to record a voice note.');
   }
 
   void _onMicHoldStart(LongPressStartDetails _) {
@@ -1715,6 +1806,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     _voiceLockArm = false;
     _voiceHolding = true;
     _voiceReleasePending = false;
+    unawaited(HapticFeedback.mediumImpact());
     setState(() => _voiceHint = 'Slide left to cancel. Slide up to lock.');
     unawaited(_startVoice());
   }
@@ -1723,6 +1815,9 @@ class _ChatThreadViewState extends State<ChatThreadView>
     final cancel = details.offsetFromOrigin.dx < -72;
     final lock = details.offsetFromOrigin.dy < -72 && !cancel;
     if (cancel == _voiceCancel && lock == _voiceLockArm) return;
+    if ((cancel && !_voiceCancel) || (lock && !_voiceLockArm)) {
+      unawaited(HapticFeedback.selectionClick());
+    }
     setState(() {
       _voiceCancel = cancel;
       _voiceLockArm = lock;
@@ -1741,12 +1836,14 @@ class _ChatThreadViewState extends State<ChatThreadView>
     _voiceLockArm = false;
     _voiceCancel = false;
     if (lock) {
+      unawaited(HapticFeedback.heavyImpact());
       setState(() {
         _voiceLocked = true;
         _voiceHint = '';
       });
       return;
     }
+    if (!send) unawaited(HapticFeedback.lightImpact());
     setState(() => _voiceHint = '');
     if (!_recording) {
       _voiceReleasePending = true;
@@ -1763,10 +1860,10 @@ class _ChatThreadViewState extends State<ChatThreadView>
     if (problem != null) {
       _voiceReleasePending = false;
       setState(() {
-        _error = problem;
         _voiceHolding = false;
         _voiceHint = '';
       });
+      _chatProblem(problem);
       return;
     }
     setState(() {
@@ -1798,7 +1895,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       });
       if (!send || taken == null) return;
       if (taken.ms < 500) {
-        setState(() => _error = 'That voice note was too short.');
+        _chatProblem('That voice note was too short.');
         return;
       }
       final file = File(taken.path);
@@ -1806,7 +1903,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       unawaited(file.delete());
       if (!mounted) return;
       if (bytes.isEmpty) {
-        setState(() => _error = 'That voice note could not be sent.');
+        _chatProblem('That voice note could not be sent.');
         return;
       }
       final ms = taken.ms > 60000 ? 60000 : taken.ms;
@@ -1818,6 +1915,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
         kind: 'voice',
         bytes: bytes,
         voiceMs: ms,
+        voiceLevels: taken.levels,
         reply: reply,
         replyName: replyName,
         replyText: replyText,
@@ -1833,6 +1931,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
         bytes,
         ms,
         reply: reply,
+        levels: taken.levels,
       );
       if (!mounted || !_messages.any((item) => item.id == voiceLocal)) return;
       _replaceLocal(voiceLocal, message);
@@ -1845,11 +1944,11 @@ class _ChatThreadViewState extends State<ChatThreadView>
         _voiceHint = '';
       });
       if (voiceLocal < 0 && _messages.any((item) => item.id == voiceLocal)) {
-        _mark(voiceLocal, 'failed');
+        _markFailed(voiceLocal, error);
         return;
       }
       if (voiceLocal < 0) return;
-      setState(() => _error = chatErrorText(error));
+      _chatProblem(chatErrorText(error));
     } finally {
       _finishingVoice = false;
     }
@@ -1913,8 +2012,30 @@ class _ChatThreadViewState extends State<ChatThreadView>
     return message.text.trim().isNotEmpty;
   }
 
+  /// One row of the long-press menu: icon + label, red for destructive.
+  PopupMenuItem<String> _menuItem(
+    String value,
+    IconData icon,
+    String label, {
+    bool danger = false,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = danger ? scheme.error : scheme.onSurface;
+    return PopupMenuItem<String>(
+      value: value,
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: danger ? scheme.error : scheme.onSurfaceVariant),
+          const SizedBox(width: AppSpacing.md),
+          Text(label, style: TextStyle(color: color)),
+        ],
+      ),
+    );
+  }
+
   Future<void> _openMessageMenu(ChatMessage message, Offset at) async {
     if (!mounted || message.id <= 0) return;
+    unawaited(HapticFeedback.mediumImpact());
     final overlay = Overlay.of(context).context.findRenderObject();
     if (overlay is! RenderBox) return;
     final chosen = await showMenu<String>(
@@ -1925,29 +2046,32 @@ class _ChatThreadViewState extends State<ChatThreadView>
       ),
       items: [
         const _ReactionMenuRow(),
-        const PopupMenuItem(value: 'reply', child: Text('Reply')),
+        _menuItem('reply', Icons.reply_rounded, 'Reply'),
         if (message.text.trim().isNotEmpty)
-          const PopupMenuItem(value: 'copy', child: Text('Copy')),
+          _menuItem('copy', Icons.copy_rounded, 'Copy'),
         if (_canEdit(message))
-          const PopupMenuItem(value: 'edit', child: Text('Edit')),
-        const PopupMenuItem(value: 'star', child: Text('Star')),
-        PopupMenuItem(
-          value: 'pin',
-          child: Text(_pinned.contains(message.id) ? 'Unpin' : 'Pin'),
+          _menuItem('edit', Icons.edit_outlined, 'Edit'),
+        _menuItem('star', Icons.star_outline_rounded, 'Star'),
+        _menuItem(
+          'pin',
+          _pinned.contains(message.id) ? Icons.push_pin : Icons.push_pin_outlined,
+          _pinned.contains(message.id) ? 'Unpin' : 'Pin',
         ),
         if (message.name == _me && _me.isNotEmpty)
-          const PopupMenuItem(value: 'info', child: Text('Info')),
+          _menuItem('info', Icons.info_outline_rounded, 'Info'),
         if (chatCanForward(message))
-          const PopupMenuItem(value: 'forward', child: Text('Forward')),
+          _menuItem('forward', Icons.forward_rounded, 'Forward'),
         if (message.links.isNotEmpty)
-          const PopupMenuItem(value: 'link', child: Text('Save link')),
-        PopupMenuItem(
-          value: 'select',
-          child: Text(_selected.contains(message.id) ? 'Deselect' : 'Select'),
+          _menuItem('link', Icons.download_rounded, 'Save link'),
+        _menuItem(
+          'select',
+          Icons.check_circle_outline_rounded,
+          _selected.contains(message.id) ? 'Deselect' : 'Select',
         ),
-        const PopupMenuItem(value: 'delete', child: Text('Delete')),
+        const PopupMenuDivider(),
+        _menuItem('delete', Icons.delete_outline_rounded, 'Delete', danger: true),
         if (message.name == _me && _me.isNotEmpty)
-          const PopupMenuItem(value: 'unsend', child: Text('Unsend')),
+          _menuItem('unsend', Icons.undo_rounded, 'Unsend', danger: true),
       ],
     );
     if (!mounted || chosen == null) return;
@@ -2015,7 +2139,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       child: Row(
         children: [
           Padding(
-            padding: const EdgeInsets.only(right: 4),
+            padding: const EdgeInsets.only(right: AppSpacing.xs),
             child: Text(
               '${_selected.length}',
               style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
@@ -2138,7 +2262,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       _ingest(message);
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = chatErrorText(error));
+      _chatProblem(chatErrorText(error));
     }
   }
 
@@ -2151,7 +2275,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       _ingest(message);
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = chatErrorText(error));
+      _chatProblem(chatErrorText(error));
     }
   }
 
@@ -2164,7 +2288,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       _ingest(message);
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = chatErrorText(error));
+      _chatProblem(chatErrorText(error));
     }
   }
 
@@ -2198,7 +2322,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       AppSnack.info(context, 'Message scheduled');
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = chatErrorText(error));
+      _chatProblem(chatErrorText(error));
     }
   }
 
@@ -2235,7 +2359,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       setState(() => _vanish = seconds);
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = chatErrorText(error));
+      _chatProblem(chatErrorText(error));
     }
   }
 
@@ -2261,7 +2385,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       _ingest(updated);
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = chatErrorText(error));
+      _chatProblem(chatErrorText(error));
     }
   }
 
@@ -2272,11 +2396,12 @@ class _ChatThreadViewState extends State<ChatThreadView>
       setState(() => _request = false);
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = chatErrorText(error));
+      _chatProblem(chatErrorText(error));
     }
   }
 
   Future<void> _react(ChatMessage message, String emoji) async {
+    unawaited(HapticFeedback.selectionClick());
     setState(_selected.clear);
     try {
       final updated = await _api.react(_threadId, message.id, emoji);
@@ -2284,7 +2409,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       _ingest(updated);
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = chatErrorText(error));
+      _chatProblem(chatErrorText(error));
     }
   }
 
@@ -2310,7 +2435,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       AppSnack.success(context, 'Saved to starred messages');
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = chatErrorText(error));
+      _chatProblem(chatErrorText(error));
     }
   }
 
@@ -2322,7 +2447,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       setState(() => _pinned = pinned);
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = chatErrorText(error));
+      _chatProblem(chatErrorText(error));
     }
   }
 
@@ -2365,7 +2490,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       );
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = chatErrorText(error));
+      _chatProblem(chatErrorText(error));
     }
   }
 
@@ -2378,9 +2503,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     await Clipboard.setData(ClipboardData(text: text));
     if (!mounted) return;
     setState(_selected.clear);
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Message copied')));
+    AppSnack.info(context, 'Message copied');
   }
 
   Future<void> _deletePicked() async {
@@ -2408,7 +2531,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       await _api.unsend(_threadId, message.id);
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = chatErrorText(error));
+      _chatProblem(chatErrorText(error));
       return;
     }
     _drop(message.id);
@@ -2426,7 +2549,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       threads = await _api.threads();
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = chatErrorText(error));
+      _chatProblem(chatErrorText(error));
       return;
     }
     if (!mounted) return;
@@ -2435,7 +2558,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
         if (item.id != _threadId) item,
     ];
     if (others.isEmpty) {
-      setState(() => _error = 'There is no other chat to forward to.');
+      _chatProblem('There is no other chat to forward to.');
       return;
     }
     final target = await showModalBottomSheet<ChatThreadSummary>(
@@ -2464,7 +2587,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       }
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = chatErrorText(error));
+      _chatProblem(chatErrorText(error));
       return;
     }
     if (!mounted) return;
@@ -2488,6 +2611,9 @@ class _ChatThreadViewState extends State<ChatThreadView>
             ),
             TextButton(
               onPressed: () => Navigator.pop(context, true),
+              style: TextButton.styleFrom(
+                foregroundColor: Theme.of(context).colorScheme.error,
+              ),
               child: Text(action),
             ),
           ],
@@ -2591,11 +2717,41 @@ class _ChatThreadViewState extends State<ChatThreadView>
                     _openMedia(title);
                   } else if (value == 'wall') {
                     unawaited(_pickWallpaper());
+                  } else if (value == 'search') {
+                    setState(() => _searching = true);
+                  } else if (value == 'mute') {
+                    unawaited(_toggleMute());
+                  } else if (value == 'vanish') {
+                    unawaited(_setVanish());
+                  } else if (value == 'block') {
+                    unawaited(_confirmBlock(title));
                   }
                 },
-                itemBuilder: (context) => const [
-                  PopupMenuItem(value: 'media', child: Text('Media')),
-                  PopupMenuItem(value: 'wall', child: Text('Wallpaper')),
+                itemBuilder: (context) => [
+                  _menuItem('search', Icons.search_rounded, 'Search'),
+                  _menuItem('media', Icons.perm_media_outlined, 'Media'),
+                  _menuItem(
+                    'mute',
+                    ChatInboxFilter.isMuted(_threadId)
+                        ? Icons.notifications_active_outlined
+                        : Icons.notifications_off_outlined,
+                    ChatInboxFilter.isMuted(_threadId) ? 'Unmute' : 'Mute',
+                  ),
+                  _menuItem(
+                    'vanish',
+                    Icons.timer_outlined,
+                    _vanish > 0 ? 'Disappearing messages: on' : 'Disappearing messages',
+                  ),
+                  _menuItem('wall', Icons.wallpaper_rounded, 'Wallpaper'),
+                  if (!_isGroup) ...[
+                    const PopupMenuDivider(),
+                    _menuItem(
+                      'block',
+                      Icons.block_rounded,
+                      _blocked ? 'Unblock' : 'Block',
+                      danger: !_blocked,
+                    ),
+                  ],
                 ],
               ),
           ],
@@ -2621,7 +2777,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
                   photoRev: _peerPhoto,
                   online: _peerOnline,
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: AppSpacing.md),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -2664,7 +2820,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
                                 fontSize: 12.5,
                                 fontWeight: FontWeight.w600,
                                 color: _peerOnline
-                                    ? const Color(0xFF25D366)
+                                    ? ChatUiTokens.brand
                                     : scheme.onSurfaceVariant,
                               ),
                             );
@@ -2710,7 +2866,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
           Material(
             color: scheme.errorContainer,
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: AppSpacing.sm),
               child: Text(
                 _error!,
                 style: TextStyle(color: scheme.onErrorContainer, height: 1.35),
@@ -2736,16 +2892,16 @@ class _ChatThreadViewState extends State<ChatThreadView>
                     right: 12,
                     child: Material(
                       color: scheme.brightness == Brightness.dark
-                          ? const Color(0xFF1F2C34)
+                          ? ChatUiTokens.fieldDark
                           : Colors.white,
                       elevation: 0,
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: AppRadii.lgAll,
                       child: ListTile(
                         dense: true,
                         minTileHeight: 48,
                         leading: const Icon(
                           Icons.push_pin_rounded,
-                          color: Color(0xFF25D366),
+                          color: ChatUiTokens.brand,
                         ),
                         title: Text(
                           _pinnedPreview(),
@@ -2760,15 +2916,21 @@ class _ChatThreadViewState extends State<ChatThreadView>
                   const Center(child: CircularProgressIndicator())
                 else if (_shown.isEmpty)
                   Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(32),
-                      child: Text(
-                        'No messages yet. Say hello, or paste a public link. Tap a link to save it.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: scheme.onSurfaceVariant,
-                          height: 1.4,
-                        ),
+                    child: SingleChildScrollView(
+                      child: EmptyState(
+                        icon: Icons.chat_bubble_outline_rounded,
+                        title: _searching ? 'No matches' : 'No messages yet',
+                        message: _searching
+                            ? 'Try a different word.'
+                            : 'Say hello, or paste a public link. Tap a link to save it.',
+                        action: _searching || _blocked
+                            ? null
+                            : ActionChip(
+                                key: const ValueKey('chat-say-hi'),
+                                avatar: const Icon(Icons.waving_hand_outlined, size: 18),
+                                label: const Text('Say hi 👋'),
+                                onPressed: _sayHi,
+                              ),
                       ),
                     ),
                   )
@@ -2814,7 +2976,29 @@ class _ChatThreadViewState extends State<ChatThreadView>
                           final picked = _selected.contains(message.id);
                           // Each bubble paints on its own layer, so selection,
                           // swipe-to-reply and list scrolling reuse its picture.
+                          final tick = chatTick(
+                            mine: mine,
+                            id: message.id,
+                            peerDelivered: _peerDelivered,
+                            peerRead: _peerRead,
+                            status: message.status,
+                          );
                           Widget bubble = RepaintBoundary(
+                            child: Semantics(
+                            container: true,
+                            label: chatBubbleSemantics(
+                              mine: mine,
+                              sender: message.name,
+                              time: TimeOfDay.fromDateTime(message.at.toLocal()).format(context),
+                              tick: tick,
+                              voice: message.isVoice,
+                              voiceMs: message.voiceMs,
+                              photo: message.isPhoto,
+                              file: message.isFile,
+                              song: message.isSong,
+                              poll: message.isPoll,
+                              edited: message.isEdited,
+                            ),
                             child: ChatBubble(
                             key: _keyFor(message.id),
                             message: message,
@@ -2823,13 +3007,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
                             tail: tail,
                             tight: tight,
                             api: _api,
-                            tick: chatTick(
-                              mine: mine,
-                              id: message.id,
-                              peerDelivered: _peerDelivered,
-                              peerRead: _peerRead,
-                              status: message.status,
-                            ),
+                            tick: tick,
                             me: _me,
                             onPoll: (choice, close) =>
                                 unawaited(_vote(message, choice, close)),
@@ -2853,7 +3031,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
                             onReactions: message.reactions.isEmpty
                                 ? null
                                 : () => _showReactions(message),
-                            onRetry: message.status == 'failed'
+                            onRetry: message.status == 'failed' || message.status == 'queued'
                                 ? () => unawaited(_retry(message))
                                 : null,
                             onLongPress: (details) {
@@ -2867,6 +3045,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
                             onDoubleTap: _canHeartTap(message)
                                 ? () => unawaited(_react(message, '❤️'))
                                 : null,
+                            ),
                             ),
                           );
                           if (_mouseMenu && message.id > 0) {
@@ -2958,7 +3137,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
                     tick: _activityTick,
                     threadId: _threadId,
                     builder: (recording) => Padding(
-                      padding: const EdgeInsets.only(left: 14, bottom: 4),
+                      padding: const EdgeInsets.only(left: 14, bottom: AppSpacing.xs),
                       child: Align(
                         alignment: Alignment.centerLeft,
                         child: ChatActivityLine(recording: recording),
@@ -2971,11 +3150,11 @@ class _ChatThreadViewState extends State<ChatThreadView>
                       padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
                       decoration: BoxDecoration(
                         color: scheme.brightness == Brightness.dark
-                            ? const Color(0xFF1F2C34)
+                            ? ChatUiTokens.fieldDark
                             : Colors.white,
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: AppRadii.mdAll,
                         border: const Border(
-                          left: BorderSide(color: Color(0xFF25D366), width: 3),
+                          left: BorderSide(color: ChatUiTokens.brand, width: 3),
                         ),
                       ),
                       child: Row(
@@ -2984,7 +3163,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
                             child: Text(
                               'Editing',
                               style: TextStyle(
-                                color: Color(0xFF25D366),
+                                color: ChatUiTokens.brand,
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
@@ -3018,13 +3197,13 @@ class _ChatThreadViewState extends State<ChatThreadView>
                   else ...[
                   if (_request && !_isGroup)
                     Container(
-                      margin: const EdgeInsets.only(bottom: 8),
+                      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
                       padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
                       decoration: BoxDecoration(
                         color: scheme.brightness == Brightness.dark
-                            ? const Color(0xFF1F2C34)
+                            ? ChatUiTokens.fieldDark
                             : Colors.white,
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: AppRadii.mdAll,
                       ),
                       child: Row(
                         children: [
@@ -3046,11 +3225,11 @@ class _ChatThreadViewState extends State<ChatThreadView>
                       padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
                       decoration: BoxDecoration(
                         color: scheme.brightness == Brightness.dark
-                            ? const Color(0xFF1F2C34)
+                            ? ChatUiTokens.fieldDark
                             : Colors.white,
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: AppRadii.mdAll,
                         border: const Border(
-                          left: BorderSide(color: Color(0xFF25D366), width: 3),
+                          left: BorderSide(color: ChatUiTokens.brand, width: 3),
                         ),
                       ),
                       child: Row(
@@ -3064,7 +3243,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
-                                    color: Color(0xFF25D366),
+                                    color: ChatUiTokens.brand,
                                     fontWeight: FontWeight.w700,
                                     fontSize: 13,
                                   ),
@@ -3092,7 +3271,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
                     ),
                   if (_voiceHint.isNotEmpty)
                     Padding(
-                      padding: const EdgeInsets.only(left: 14, bottom: 4),
+                      padding: const EdgeInsets.only(left: 14, bottom: AppSpacing.xs),
                       child: Align(
                         alignment: Alignment.centerLeft,
                         child: Text(
@@ -3183,6 +3362,33 @@ class _ChatThreadViewState extends State<ChatThreadView>
     _scrollToMessage(id);
   }
 
+  Future<void> _toggleMute() async {
+    final on = !ChatInboxFilter.isMuted(_threadId);
+    try {
+      await ChatInboxFilter.setMuted(_threadId, on: on);
+      if (!mounted) return;
+      setState(() {});
+      AppSnack.info(context, on ? 'Chat muted' : 'Chat unmuted');
+    } catch (error) {
+      logQuiet('chat_thread.mute', error);
+      _chatProblem("Couldn't change notifications for this chat.");
+    }
+  }
+
+  Future<void> _confirmBlock(String title) async {
+    if (_blocked) {
+      await _setBlocked(false);
+      return;
+    }
+    final yes = await _confirm(
+      'Block $title?',
+      "They won't be able to message or call you. You can unblock them later.",
+      'Block',
+    );
+    if (!yes || !mounted) return;
+    await _setBlocked(true);
+  }
+
   Future<void> _setBlocked(bool on) async {
     final handle = widget.username.replaceFirst(RegExp(r'^@'), '').trim();
     if (handle.isEmpty) return;
@@ -3192,7 +3398,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
       setState(() => _blocked = blocked);
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = chatErrorText(error));
+      _chatProblem(chatErrorText(error));
     }
   }
 
@@ -3268,7 +3474,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
         );
       } catch (error) {
         if (!mounted) return;
-        setState(() => _error = chatErrorText(error));
+        _chatProblem(chatErrorText(error));
       }
       return;
     }
@@ -3579,7 +3785,7 @@ class ChatAvatar extends StatelessWidget {
               width: dot,
               height: dot,
               decoration: BoxDecoration(
-                color: const Color(0xFF25D366),
+                color: ChatUiTokens.brand,
                 shape: BoxShape.circle,
                 border: Border.all(
                   color: Theme.of(context).colorScheme.surface,
@@ -3621,7 +3827,7 @@ class _ReactionMenuRowState extends State<_ReactionMenuRow> {
           InkWell(
             onTap: () => Navigator.pop(context, 'react:$emoji'),
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs, vertical: AppSpacing.sm),
               child: Text(emoji, style: const TextStyle(fontSize: 22)),
             ),
           ),
@@ -3667,22 +3873,22 @@ class _MouseMessageBarState extends State<_MouseMessageBar> {
           widget.child,
           if (_open)
             Padding(
-              padding: const EdgeInsets.only(top: 2),
+              padding: const EdgeInsets.only(top: AppSpacing.xxs),
               child: Material(
                 elevation: 2,
-                color: dark ? const Color(0xFF1F2C34) : Colors.white,
+                color: ChatUiTokens.field(dark),
                 borderRadius: BorderRadius.circular(20),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       for (final emoji in const ['👍', '❤️', '😂', '😮', '😢', '🙏'])
                         InkWell(
                           onTap: () => widget.onReact(emoji),
-                          borderRadius: BorderRadius.circular(16),
+                          borderRadius: AppRadii.lgAll,
                           child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
+                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: AppSpacing.xs),
                             child: Text(emoji, style: const TextStyle(fontSize: 18)),
                           ),
                         ),
@@ -3835,21 +4041,21 @@ class ChatBubble extends StatelessWidget {
                     height: 1.15,
                   ),
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: AppSpacing.xxs),
                 DecoratedBox(
                   decoration: BoxDecoration(
                     color: dark ? const Color(0x66000000) : const Color(0xCCFFFFFF),
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: AppRadii.smAll,
                   ),
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(6, 1, 4, 1),
                     child: _stamp(
                       time,
-                      dark ? Colors.white : const Color(0xFF667781),
+                      dark ? Colors.white : ChatUiTokens.timeLight,
                       tick,
                       tickColor: tick == 'read'
-                          ? const Color(0xFF53BDEB)
-                          : (dark ? Colors.white70 : const Color(0xFF667781)),
+                          ? ChatUiTokens.linkDark
+                          : (dark ? Colors.white70 : ChatUiTokens.timeLight),
                       onRetry: onRetry,
                       edited: message.isEdited,
                     ),
@@ -3882,7 +4088,7 @@ class ChatBubble extends StatelessWidget {
                 ? ((max - 16) > 280 ? 280.0 : (max - 16))
                 : cardWidth;
             final overlayTick = tick == 'read'
-                ? const Color(0xFF53BDEB)
+                ? ChatUiTokens.linkDark
                 : Colors.white;
             final Widget picture;
             if (!wide) {
@@ -3937,7 +4143,7 @@ class ChatBubble extends StatelessWidget {
                     ],
                   ),
                   if (!barePhoto) ...[
-                    const SizedBox(height: 4),
+                    const SizedBox(height: AppSpacing.xs),
                     _TimedLine(
                       text: ChatTapText(
                         text: message.text,
@@ -4330,10 +4536,10 @@ class _ReactionBadge extends StatelessWidget {
       onTap: onTap,
       child: DecoratedBox(
       decoration: BoxDecoration(
-        color: dark ? const Color(0xFF1F2C34) : Colors.white,
+        color: ChatUiTokens.field(dark),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: dark ? const Color(0xFF2A3942) : const Color(0xFFE4E7EA),
+          color: dark ? const Color(0xFF2A3942) : ChatUiTokens.lineLight,
         ),
         boxShadow: const [
           BoxShadow(
@@ -4344,24 +4550,24 @@ class _ReactionBadge extends StatelessWidget {
         ],
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: AppSpacing.xxs),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             for (final entry in counts.entries) ...[
               Text(entry.key, style: const TextStyle(fontSize: 16, height: 1.1)),
               if (entry.value > 1) ...[
-                const SizedBox(width: 2),
+                const SizedBox(width: AppSpacing.xxs),
                 Text(
                   '${entry.value}',
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
-                    color: dark ? Colors.white70 : const Color(0xFF667781),
+                    color: dark ? Colors.white70 : ChatUiTokens.timeLight,
                   ),
                 ),
               ],
-              if (entry.key != counts.keys.last) const SizedBox(width: 4),
+              if (entry.key != counts.keys.last) const SizedBox(width: AppSpacing.xs),
             ],
           ],
         ),
@@ -4386,6 +4592,9 @@ Widget _stamp(
   if (tick == 'failed') {
     icon = Icons.error_outline;
     iconColor = const Color(0xFFEF5350);
+  } else if (tick == 'queued') {
+    icon = Icons.cloud_off_rounded;
+    size = 13;
   } else if (tick == 'sending') {
     icon = Icons.schedule_rounded;
     size = 13;
@@ -4398,7 +4607,7 @@ Widget _stamp(
   }
   final mark = icon == null
       ? const SizedBox.shrink()
-      : tick == 'failed' && onRetry != null
+      : (tick == 'failed' || tick == 'queued') && onRetry != null
       ? IconButton(
           tooltip: 'Tap to retry',
           onPressed: onRetry,
@@ -4413,6 +4622,18 @@ Widget _stamp(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
+        if (tick == 'queued') ...[
+          Text(
+            'Waiting for network',
+            style: TextStyle(
+              fontSize: 11,
+              height: 1.1,
+              color: timeColor,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+          const SizedBox(width: AppSpacing.xs),
+        ],
         if (edited) ...[
           Text(
             'edited',
@@ -4434,7 +4655,7 @@ Widget _stamp(
             fontWeight: onDark ? FontWeight.w600 : FontWeight.w400,
           ),
         ),
-        if (icon != null) ...[const SizedBox(width: 2), mark],
+        if (icon != null) ...[const SizedBox(width: AppSpacing.xxs), mark],
       ],
     ),
   );
@@ -4468,13 +4689,13 @@ class _StatusQuote extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        margin: const EdgeInsets.only(bottom: 4),
+        margin: const EdgeInsets.only(bottom: AppSpacing.xs),
         padding: const EdgeInsets.fromLTRB(8, 4, 6, 4),
         decoration: BoxDecoration(
-          color: dark ? const Color(0x33000000) : const Color(0x14000000),
-          borderRadius: BorderRadius.circular(8),
+          color: ChatUiTokens.shadow(dark),
+          borderRadius: AppRadii.smAll,
           border: const Border(
-            left: BorderSide(color: Color(0xFF25D366), width: 3),
+            left: BorderSide(color: ChatUiTokens.brand, width: 3),
           ),
         ),
         child: Row(
@@ -4491,13 +4712,13 @@ class _StatusQuote extends StatelessWidget {
                     style: TextStyle(
                       fontSize: 12.5,
                       fontWeight: FontWeight.w700,
-                      color: Color(0xFF25D366),
+                      color: ChatUiTokens.brand,
                     ),
                   ),
                   if (words.isNotEmpty)
                     ChatTapText(
                       text: words,
-                      color: dark ? const Color(0xFFE9EDEF) : const Color(0xFF111B21),
+                      color: ChatUiTokens.text(dark),
                       linkColor: linkColor,
                       onUsername: onUsername,
                       highlight: highlight,
@@ -4505,7 +4726,7 @@ class _StatusQuote extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 13,
-                        color: dark ? const Color(0xFFE9EDEF) : const Color(0xFF111B21),
+                        color: ChatUiTokens.text(dark),
                       ),
                     )
                   else if (!photo)
@@ -4515,14 +4736,14 @@ class _StatusQuote extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 13,
-                        color: dark ? const Color(0xFFE9EDEF) : const Color(0xFF111B21),
+                        color: ChatUiTokens.text(dark),
                       ),
                     ),
                 ],
               ),
             ),
             if (photo) ...[
-              const SizedBox(width: 8),
+              const SizedBox(width: AppSpacing.sm),
               _StatusThumb(id: statusId),
             ],
           ],
@@ -4584,7 +4805,7 @@ class _StatusThumbState extends State<_StatusThumb> {
   Widget build(BuildContext context) {
     final bytes = _bytes;
     return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: AppRadii.smAll,
       child: SizedBox(
         width: 54,
         height: 72,
@@ -4627,13 +4848,13 @@ class _Quote extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        margin: const EdgeInsets.only(bottom: 4),
+        margin: const EdgeInsets.only(bottom: AppSpacing.xs),
         padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
         decoration: BoxDecoration(
-          color: dark ? const Color(0x33000000) : const Color(0x14000000),
+          color: ChatUiTokens.shadow(dark),
           borderRadius: BorderRadius.circular(6),
           border: const Border(
-            left: BorderSide(color: Color(0xFF25D366), width: 3),
+            left: BorderSide(color: ChatUiTokens.brand, width: 3),
           ),
         ),
         child: Column(
@@ -4646,12 +4867,12 @@ class _Quote extends StatelessWidget {
               style: const TextStyle(
                 fontSize: 12.5,
                 fontWeight: FontWeight.w700,
-                color: Color(0xFF25D366),
+                color: ChatUiTokens.brand,
               ),
             ),
             ChatTapText(
               text: text,
-              color: dark ? const Color(0xFFE9EDEF) : const Color(0xFF111B21),
+              color: ChatUiTokens.text(dark),
               linkColor: linkColor,
               onUsername: onUsername,
               highlight: highlight,
@@ -4659,7 +4880,7 @@ class _Quote extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontSize: 13,
-                color: dark ? const Color(0xFFE9EDEF) : const Color(0xFF111B21),
+                color: ChatUiTokens.text(dark),
               ),
             ),
           ],

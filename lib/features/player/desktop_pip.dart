@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// Picture in picture on Windows: the same window becomes a small,
 /// borderless, always-on-top player in the bottom-right corner. The player
@@ -100,7 +101,7 @@ class DesktopPip {
       await prefs.setDouble(_kX, now.left);
       await prefs.setDouble(_kY, now.top);
       await prefs.setDouble(_tall ? _kWTall : _kW, now.width);
-    } catch (_) {}
+    } catch (e) { logQuiet('desktop_pip', e); }
     await windowManager.setAspectRatio(0);
     await windowManager.setMinimumSize(const Size(360, 480));
     await windowManager.setAlwaysOnTop(false);

@@ -6,6 +6,7 @@ import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/features/library/hotspot_share.dart';
 import 'package:social_save/features/library/pc_hotspot.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// 1.0.39: guided Hotspot share. One blocker at a time, each with a clear
 /// step card and one button; the dialog moves on by itself when the blocker
@@ -287,7 +288,7 @@ class _WifiOffBannerState extends State<WifiOffBanner> {
       final s = await HotspotShare.status();
       final off = s['wifiOn'] != true;
       if (mounted && off != _off) setState(() => _off = off);
-    } catch (_) {}
+    } catch (e) { logQuiet('hotspot_guide', e); }
   }
 
   @override
@@ -479,7 +480,7 @@ Future<bool> runPreflight(BuildContext context, {required String title, required
       }
     }
     if (ok) return true;
-  } catch (_) {}
+  } catch (e) { logQuiet('hotspot_guide', e); }
   if (!context.mounted) return false;
   return await showDialog<bool>(
         context: context,
@@ -571,7 +572,7 @@ class _PreflightDialogState extends State<PreflightDialog> with WidgetsBindingOb
     try {
       final note = await widget.items[i].fix();
       if (mounted && note != null) setState(() => _note = note);
-    } catch (_) {}
+    } catch (e) { logQuiet('hotspot_guide', e); }
   }
 
   @override

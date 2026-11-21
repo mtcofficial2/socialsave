@@ -15,6 +15,7 @@ import 'package:social_save/features/library/library_sync.dart';
 import 'package:social_save/features/library/nearby_service.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// The other device in a [ShareSession].
 class SessionPeer {
@@ -1095,7 +1096,8 @@ class ShareSession {
         req.headers.contentType = ContentType.json;
         req.write(jsonEncode({'token': token}));
         await (await req.close().timeout(const Duration(seconds: 3))).drain<void>();
-      } catch (_) {
+      } catch (e) {
+        logQuiet('share_session', e);
       } finally {
         client.close(force: true);
       }
@@ -1208,14 +1210,14 @@ class ShareSession {
         'token': token,
         'at': DateTime.now().millisecondsSinceEpoch,
       }));
-    } catch (_) {}
+    } catch (e) { logQuiet('share_session', e); }
   }
 
   static Future<void> _clearSaved() async {
     if (!persist) return;
     try {
       (await SharedPreferences.getInstance()).remove(_savedKey);
-    } catch (_) {}
+    } catch (e) { logQuiet('share_session', e); }
   }
 
   /// The app was closed while connected (Wi-Fi / cable): pick the session
@@ -1250,7 +1252,7 @@ class ShareSession {
         '${j['token']}',
         restored: true,
       );
-    } catch (_) {}
+    } catch (e) { logQuiet('share_session', e); }
   }
 
   static Future<void> _loadHistory() async {
@@ -1259,7 +1261,7 @@ class ShareSession {
       final prefs = await SharedPreferences.getInstance();
       final list = (jsonDecode(prefs.getString(_historyKey) ?? '[]') as List).map(ReceivedRecord.fromJson).whereType<ReceivedRecord>().toList();
       history.value = list;
-    } catch (_) {}
+    } catch (e) { logQuiet('share_session', e); }
   }
 
   static void _remember(ReceivedRecord r) {
@@ -1271,7 +1273,7 @@ class ShareSession {
       try {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString(_historyKey, jsonEncode([for (final x in list) x.toJson()]));
-      } catch (_) {}
+      } catch (e) { logQuiet('share_session', e); }
     }());
   }
 
@@ -1279,7 +1281,7 @@ class ShareSession {
     history.value = const [];
     try {
       (await SharedPreferences.getInstance()).remove(_historyKey);
-    } catch (_) {}
+    } catch (e) { logQuiet('share_session', e); }
   }
 
   // ------------------------------------------------------------ transfers

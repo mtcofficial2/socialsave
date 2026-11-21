@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:social_save/features/library/nearby_service.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// A saved video playing on a Social Save computer on this Wi-Fi.
 class MirrorCommand {
@@ -113,7 +114,8 @@ class LanMirror {
       req.write(jsonEncode({'token': token, 'action': action, 'positionMs': positionMs}));
       final res = await req.close().timeout(const Duration(seconds: 4));
       await res.drain<void>();
-    } catch (_) {
+    } catch (e) {
+      logQuiet('lan_mirror', e);
     } finally {
       client.close(force: true);
     }

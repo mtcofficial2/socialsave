@@ -12,6 +12,9 @@ import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_format.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
+import 'package:social_save/features/chat/chat_ui.dart';
 
 typedef ChatRecView = ({int ms, List<double> levels, bool paused});
 
@@ -58,6 +61,8 @@ class ChatRecorder {
   Timer? _tick;
   DateTime? _started;
   final List<double> _samples = [];
+  // Every level of this take (the live view keeps only the last 48).
+  final List<double> _take = [];
   bool _reading = false;
   bool _limitSent = false;
   bool recording = false;
@@ -98,10 +103,11 @@ class ChatRecorder {
     _limitSent = false;
     shownMs = 0;
     _samples.clear();
+    _take.clear();
     _started = DateTime.now();
     _publish();
     _tick?.cancel();
-    _tick = Timer.periodic(const Duration(milliseconds: 120), (_) => unawaited(_sample()));
+    _tick = Timer.periodic(AppDurations.fast, (_) => unawaited(_sample()));
     return null;
   }
 
@@ -117,7 +123,7 @@ class ChatRecorder {
         await recorder.pause();
         paused = true;
       }
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_voice', e); }
     _publish();
   }
 
@@ -139,7 +145,9 @@ class ChatRecorder {
     _reading = true;
     try {
       final amp = await recorder.getAmplitude();
-      _samples.add(_level(amp.current));
+      final level = _level(amp.current);
+      _samples.add(level);
+      _take.add(level);
       if (_samples.length > 48) _samples.removeAt(0);
     } catch (_) {
       _samples.add(0.16);
@@ -154,7 +162,7 @@ class ChatRecorder {
     view.value = (ms: shownMs, levels: List<double>.from(_samples), paused: paused);
   }
 
-  Future<({String path, int ms})?> stop({required bool send}) async {
+  Future<({String path, int ms, String levels})?> stop({required bool send}) async {
     _tick?.cancel();
     _tick = null;
     final started = _started;
@@ -167,8 +175,9 @@ class ChatRecorder {
     if (!send) {
       try {
         await recorder.cancel();
-      } catch (_) {}
+      } catch (e) { logQuiet('chat_voice', e); }
       _samples.clear();
+      _take.clear();
       shownMs = 0;
       _publish();
       return null;
@@ -180,11 +189,13 @@ class ChatRecorder {
       path = null;
     }
     final ms = frozen ?? (started == null ? shownMs : DateTime.now().difference(started).inMilliseconds);
+    final levels = encodeVoiceLevels(_take);
     _samples.clear();
+    _take.clear();
     shownMs = 0;
     _publish();
     if (path == null || path.isEmpty) return null;
-    return (path: path, ms: ms);
+    return (path: path, ms: ms, levels: levels);
   }
 
   Future<void> dispose() async {
@@ -195,7 +206,7 @@ class ChatRecorder {
       if (recording) {
         try {
           await recorder.cancel();
-        } catch (_) {}
+        } catch (e) { logQuiet('chat_voice', e); }
       }
       await recorder.dispose();
     }
@@ -211,6 +222,46 @@ double _level(double db) {
   if (scaled < 0.16) return 0.16;
   if (scaled > 1) return 1;
   return scaled;
+}
+
+/// Squeezes a take's loudness (0.0-1.0 per sample) into at most [bars]
+/// digits 0-9, averaging neighbours, so it fits in one small header.
+String encodeVoiceLevels(List<double> samples, {int bars = 48}) {
+  if (samples.isEmpty || bars <= 0) return '';
+  final count = samples.length < bars ? samples.length : bars;
+  final out = StringBuffer();
+  for (var i = 0; i < count; i++) {
+    final start = (i * samples.length / count).floor();
+    var end = ((i + 1) * samples.length / count).floor();
+    if (end <= start) end = start + 1;
+    var sum = 0.0;
+    for (var j = start; j < end; j++) {
+      sum += samples[j];
+    }
+    final avg = (sum / (end - start)).clamp(0.0, 1.0);
+    out.write((avg * 9).round());
+  }
+  return out.toString();
+}
+
+/// Bar heights (0.2-1.0) from [encodeVoiceLevels] output, stretched or
+/// squeezed to [count] bars. Returns an empty list when [code] is not valid.
+List<double> decodeVoiceLevels(String code, int count) {
+  if (count <= 0 || code.isEmpty || !RegExp(r'^[0-9]+$').hasMatch(code)) {
+    return const [];
+  }
+  final raw = [for (final unit in code.codeUnits) (unit - 48) / 9.0];
+  return List<double>.generate(count, (index) {
+    final at = (index * raw.length / count).floor().clamp(0, raw.length - 1);
+    return (0.2 + raw[at] * 0.8).clamp(0.2, 1.0);
+  });
+}
+
+/// The bars a voice bubble draws: the real recording when the note carries
+/// its levels, otherwise a stable made-up shape for older notes.
+List<double> voiceBarsFor({required String levels, required String seed, required int count}) {
+  final real = decodeVoiceLevels(levels, count);
+  return real.isNotEmpty ? real : voiceBars(seed, count);
 }
 
 /// Stable bar heights for a voice note. The same id always draws the same shape.
@@ -258,16 +309,16 @@ class ChatRecordingBar extends StatelessWidget {
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   color: scheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(24),
+                  borderRadius: AppRadii.xlAll,
                 ),
                 child: SizedBox(
                   height: 48,
                   child: Padding(
-                    padding: const EdgeInsets.only(left: 14, right: 12),
+                    padding: const EdgeInsets.only(left: 14, right: AppSpacing.md),
                     child: Row(
                       children: [
                         _RecDot(paused: rec.paused),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: AppSpacing.sm),
                         Text(
                           chatClock(rec.ms),
                           style: TextStyle(
@@ -297,7 +348,7 @@ class ChatRecordingBar extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(width: 2),
+            const SizedBox(width: AppSpacing.xxs),
             IconButton(
               tooltip: rec.paused ? 'Resume' : 'Pause',
               onPressed: onPause,
@@ -305,7 +356,7 @@ class ChatRecordingBar extends StatelessWidget {
             ),
             IconButton.filled(
               tooltip: 'Send voice note',
-              style: IconButton.styleFrom(backgroundColor: const Color(0xFF25D366), foregroundColor: Colors.white),
+              style: IconButton.styleFrom(backgroundColor: ChatUiTokens.brand, foregroundColor: Colors.white),
               onPressed: onSend,
               icon: const Icon(Icons.send_rounded),
             ),
@@ -369,14 +420,14 @@ class _VoicePaint {
 
   factory _VoicePaint.of({required bool mine, required bool dark}) {
     const green = Color(0xFF00A884);
-    final meta = dark ? const Color(0xFFAEBAC1) : const Color(0xFF667781);
+    final meta = ChatUiTokens.time(dark);
     if (mine && !dark) {
-      return _VoicePaint(button: Colors.white, icon: const Color(0xFF008069), played: const Color(0xFF008069), rest: const Color(0xFF8EB8A8), meta: meta);
+      return _VoicePaint(button: Colors.white, icon: ChatUiTokens.brandDeep, played: ChatUiTokens.brandDeep, rest: const Color(0xFF8EB8A8), meta: meta);
     }
     if (mine && dark) {
-      return _VoicePaint(button: const Color(0xFFE9EDEF), icon: const Color(0xFF005C4B), played: const Color(0xFFE9EDEF), rest: const Color(0xFF6F8A82), meta: meta);
+      return _VoicePaint(button: ChatUiTokens.textDark, icon: ChatUiTokens.outgoingDark, played: ChatUiTokens.textDark, rest: const Color(0xFF6F8A82), meta: meta);
     }
-    return _VoicePaint(button: green, icon: Colors.white, played: green, rest: dark ? const Color(0xFF8696A0) : const Color(0xFFCDD5DB), meta: meta);
+    return _VoicePaint(button: green, icon: Colors.white, played: green, rest: dark ? ChatUiTokens.iconMuted : const Color(0xFFCDD5DB), meta: meta);
   }
 }
 
@@ -428,7 +479,7 @@ class _ChatVoiceBubbleState extends State<ChatVoiceBubble> {
   Future<void> _pause() async {
     try {
       await _player?.pause();
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_voice', e); }
     if (mounted) setState(() => _playing = false);
   }
 
@@ -471,7 +522,7 @@ class _ChatVoiceBubbleState extends State<ChatVoiceBubble> {
         try {
           await player.seek(Duration.zero);
           await player.pause();
-        } catch (_) {}
+        } catch (e) { logQuiet('chat_voice', e); }
       });
       _player = player;
       await player.open(Media(path));
@@ -496,7 +547,7 @@ class _ChatVoiceBubbleState extends State<ChatVoiceBubble> {
     });
     try {
       await _player?.setRate(next);
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_voice', e); }
   }
 
   Future<void> _seekTo(double fraction) async {
@@ -591,7 +642,7 @@ class _ChatVoiceBubbleState extends State<ChatVoiceBubble> {
             paint: paint,
             onPressed: () => unawaited(_toggle()),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -611,9 +662,10 @@ class _ChatVoiceBubbleState extends State<ChatVoiceBubble> {
                               onHorizontalDragUpdate: width <= 0 ? null : (details) => unawaited(_seekTo(details.localPosition.dx / width)),
                               child: CustomPaint(
                                 painter: _BarsPainter(
-                                  levels: voiceBars(
-                                    widget.message.voice.isEmpty ? '${widget.message.id}' : widget.message.voice,
-                                    count,
+                                  levels: voiceBarsFor(
+                                    levels: widget.message.voiceLevels,
+                                    seed: widget.message.voice.isEmpty ? '${widget.message.id}' : widget.message.voice,
+                                    count: count,
                                   ),
                                   progress: progress,
                                   played: paint.played,
@@ -621,7 +673,7 @@ class _ChatVoiceBubbleState extends State<ChatVoiceBubble> {
                                   fromEnd: false,
                                   showThumb: true,
                                 ),
-                                child: const SizedBox(height: 32),
+                                child: const SizedBox(height: AppSpacing.xxl),
                               ),
                             );
                           },
@@ -645,7 +697,7 @@ class _ChatVoiceBubbleState extends State<ChatVoiceBubble> {
                 Row(
                   children: [
                     Icon(Icons.mic_rounded, size: 14, color: paint.meta),
-                    const SizedBox(width: 2),
+                    const SizedBox(width: AppSpacing.xxs),
                     Text(chatClock(shown), style: TextStyle(fontSize: 12, height: 1.1, color: paint.meta)),
                   ],
                 ),
@@ -842,7 +894,7 @@ class _ChatSongBubbleState extends State<ChatSongBubble> {
   Future<void> _pause() async {
     try {
       await _player?.pause();
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_voice', e); }
     if (mounted) setState(() => _playing = false);
   }
 
@@ -880,7 +932,7 @@ class _ChatSongBubbleState extends State<ChatSongBubble> {
         try {
           await player.seek(Duration.zero);
           await player.pause();
-        } catch (_) {}
+        } catch (e) { logQuiet('chat_voice', e); }
       });
       _player = player;
       await player.open(Media(path));
@@ -942,7 +994,7 @@ class _ChatSongBubbleState extends State<ChatSongBubble> {
             paint: paint,
             onPressed: () => unawaited(_toggle()),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -954,7 +1006,7 @@ class _ChatSongBubbleState extends State<ChatSongBubble> {
                   style: TextStyle(
                     fontWeight: FontWeight.w700,
                     color: widget.dark
-                        ? const Color(0xFFE9EDEF)
+                        ? ChatUiTokens.textDark
                         : const Color(0xFF111B21),
                   ),
                 ),

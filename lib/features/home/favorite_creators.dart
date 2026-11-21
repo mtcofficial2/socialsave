@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/utils/platform_detector.dart';
 import 'package:social_save/core/utils/set_link.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// A YouTube channel or TikTok profile kept on Home.
 class FavoriteCreator {
@@ -175,13 +176,13 @@ class FavoriteCreatorsController extends Notifier<List<FavoriteCreator>> {
       final page = await ref.read(mediaRepositoryProvider).playlistPage(url).timeout(const Duration(seconds: 25));
       name = creatorDisplayName(page.name);
       if (isCreatorPortrait(page.avatarUrl)) avatar = page.avatarUrl!.trim();
-    } catch (_) {}
+    } catch (e) { logQuiet('favorite_creators', e); }
     if (avatar == null) {
       try {
         final media = await ref.read(mediaRepositoryProvider).analyze(url).timeout(const Duration(seconds: 20));
         name ??= creatorDisplayName(media.author) ?? creatorDisplayName(media.title);
         if (isCreatorPortrait(media.thumbnailUrl)) avatar = media.thumbnailUrl!.trim();
-      } catch (_) {}
+      } catch (e) { logQuiet('favorite_creators', e); }
     }
     await _ready;
     final index = state.indexWhere((item) => item.url == url);

@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:social_save/core/config/build_flags.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// State of the bundled download engine, shown in Settings.
 class EngineStatus {
@@ -82,7 +83,7 @@ class LocalEngine {
     _stopping = false;
     try {
       Directory(dataDir).createSync(recursive: true);
-    } catch (_) {}
+    } catch (e) { logQuiet('local_engine', e); }
     _port = await _freePort();
     await _spawn();
     unawaited(_dailyUpdate());
@@ -106,13 +107,13 @@ class LocalEngine {
       final s = await ServerSocket.bind(InternetAddress.loopbackIPv4, _port);
       await s.close();
       return _port;
-    } catch (_) {}
+    } catch (e) { logQuiet('local_engine', e); }
     for (var p = 47390; p < 47400; p++) {
       try {
         final s = await ServerSocket.bind(InternetAddress.loopbackIPv4, p);
         await s.close();
         return p;
-      } catch (_) {}
+      } catch (e) { logQuiet('local_engine', e); }
     }
     final s = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
     final p = s.port;
@@ -189,7 +190,7 @@ class LocalEngine {
     try {
       log = File(_logPath).openWrite();
       log.writeln('[${DateTime.now().toIso8601String()}] start port=$_port yt-dlp=$ytdlpVersion ($ytdlp)');
-    } catch (_) {}
+    } catch (e) { logQuiet('local_engine', e); }
     try {
       final p = await Process.start(
         exe,
@@ -205,7 +206,7 @@ class LocalEngine {
           log?.writeln('[${DateTime.now().toIso8601String()}] exit $code');
           await log?.flush();
           await log?.close();
-        } catch (_) {}
+        } catch (e) { logQuiet('local_engine', e); }
         if (_process == p) _process = null;
         if (_stopping) return;
         status.value = status.value.copyWith(state: 'failed', message: 'The download engine stopped (code $code).');
@@ -239,7 +240,7 @@ class LocalEngine {
             if (!_ready.isCompleted) _ready.complete(true);
             return;
           }
-        } catch (_) {}
+        } catch (e) { logQuiet('local_engine', e); }
         await Future<void>.delayed(const Duration(milliseconds: 250));
       }
       if (!_ready.isCompleted) {
@@ -260,7 +261,7 @@ class LocalEngine {
     p?.kill();
     try {
       await p?.exitCode.timeout(const Duration(seconds: 5));
-    } catch (_) {}
+    } catch (e) { logQuiet('local_engine', e); }
     _stopping = false;
     _restarts = 0;
     _port = await _freePort();
@@ -274,7 +275,7 @@ class LocalEngine {
     try {
       final last = DateTime.tryParse(stamp.readAsStringSync().trim());
       if (last != null && DateTime.now().difference(last) < const Duration(hours: 20)) return;
-    } catch (_) {}
+    } catch (e) { logQuiet('local_engine', e); }
     // Let the app settle first; never compete with the first analyze.
     await Future<void>.delayed(const Duration(seconds: 20));
     final changed = await updateYtdlp();
@@ -300,7 +301,7 @@ class LocalEngine {
       final tag = (latest['tag_name'] as String? ?? '').trim();
       try {
         File('$dataDir$_sep$_stampName').writeAsStringSync(DateTime.now().toIso8601String());
-      } catch (_) {}
+      } catch (e) { logQuiet('local_engine', e); }
       final (_, current) = _pickYtdlp();
       if (tag.isEmpty || tag.compareTo(current) <= 0) return false;
       final base = 'https://github.com/yt-dlp/yt-dlp/releases/download/$tag';
@@ -351,7 +352,7 @@ class LocalEngine {
     p?.kill();
     try {
       await p?.exitCode.timeout(const Duration(seconds: 5));
-    } catch (_) {}
+    } catch (e) { logQuiet('local_engine', e); }
     try {
       await swap();
     } finally {

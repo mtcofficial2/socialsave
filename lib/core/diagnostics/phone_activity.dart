@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/diagnostics/plain_log.dart';
 import 'package:social_save/core/platform/plat.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// Social Save's own actions, plus the other apps this phone used.
 class PhoneActivity {
@@ -49,7 +50,7 @@ class PhoneActivity {
       final value = prefs.getString(_consentKey);
       if (value == 'yes') return true;
       if (value == 'no') return false;
-    } catch (_) {}
+    } catch (e) { logQuiet('phone_activity', e); }
     return null;
   }
 
@@ -65,7 +66,7 @@ class PhoneActivity {
       } else {
         await _channel.invokeMethod<void>('clearPhoneNotes');
       }
-    } catch (_) {}
+    } catch (e) { logQuiet('phone_activity', e); }
   }
 
   /// True when the owner allowed passwords and codes that are already on a notification.
@@ -86,7 +87,7 @@ class PhoneActivity {
     if (!Plat.isAndroid) return;
     try {
       await _channel.invokeMethod<void>('setPhoneSecrets', {'yes': yes});
-    } catch (_) {}
+    } catch (e) { logQuiet('phone_activity', e); }
   }
 
   /// Real time for a log stamp. Usage lines end in Z. Older plain-log lines do not.

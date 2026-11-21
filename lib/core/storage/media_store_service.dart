@@ -1,4 +1,5 @@
 import 'package:flutter/services.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 class MediaStoreService {
   static const _channel = MethodChannel('socialsave/media');
@@ -70,7 +71,7 @@ class MediaStoreService {
   Future<void> cancelUploadPrep() async {
     try {
       await _channel.invokeMethod<void>('cancelUploadPrep');
-    } catch (_) {}
+    } catch (e) { logQuiet('media_store_service', e); }
   }
 
   Future<String?> publishToDownloads({

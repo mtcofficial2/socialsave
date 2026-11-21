@@ -12,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/platform/media_events.dart';
 import 'package:social_save/core/platform/phone_body.dart';
 import 'package:social_save/core/platform/plat.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 class Song {
   const Song({
@@ -111,7 +112,7 @@ class AudioLibrary extends ChangeNotifier {
     try {
       if ((await Permission.audio.request()).isGranted) return true;
       if ((await Permission.storage.request()).isGranted) return true;
-    } catch (_) {}
+    } catch (e) { logQuiet('audio_service', e); }
     return false;
   }
 
@@ -213,7 +214,7 @@ class AudioLibrary extends ChangeNotifier {
         if (_skipPath(f)) continue;
         out.add(_fileSong(f, 'f:'));
       }
-    } catch (_) {}
+    } catch (e) { logQuiet('audio_service', e); }
     return out;
   }
 
@@ -230,7 +231,7 @@ class AudioLibrary extends ChangeNotifier {
     int added = 0;
     try {
       added = File(path).statSync().modified.millisecondsSinceEpoch ~/ 1000;
-    } catch (_) {}
+    } catch (e) { logQuiet('audio_service', e); }
     return Song(key: '$prefix$path', path: path, title: title, artist: artist, album: folder, folder: folder, durationMs: 0, addedAt: added);
   }
 
@@ -267,7 +268,7 @@ class AudioLibrary extends ChangeNotifier {
             final ext = p.extension(e.path).replaceFirst('.', '').toLowerCase();
             if (_audioExt.contains(ext) || e.isDirectory) _changed();
           }, onError: (_) {}));
-        } catch (_) {}
+        } catch (e) { logQuiet('audio_service', e); }
       }
       try {
         await for (final e in dir.list(recursive: true, followLinks: false).handleError((_) {})) {
@@ -277,7 +278,7 @@ class AudioLibrary extends ChangeNotifier {
           out.add(_fileSong(e.path, 'w:'));
           if (out.length > 30000) break;
         }
-      } catch (_) {}
+      } catch (e) { logQuiet('audio_service', e); }
     }
     return out;
   }
@@ -413,7 +414,7 @@ class AudioController extends ChangeNotifier {
     try {
       final pl = jsonDecode(prefs.getString('socialsave_audio_playlists') ?? '{}') as Map<String, dynamic>;
       playlists = {for (final e in pl.entries) e.key: [for (final k in (e.value as List)) '$k']};
-    } catch (_) {}
+    } catch (e) { logQuiet('audio_service', e); }
     shuffle = prefs.getBool('socialsave_audio_shuffle') ?? false;
     repeat = AudioRepeat.values[(prefs.getInt('socialsave_audio_repeat') ?? 0).clamp(0, 2)];
     speed = prefs.getDouble('socialsave_audio_speed') ?? 1.0;
@@ -443,7 +444,7 @@ class AudioController extends ChangeNotifier {
           position.value = Duration(milliseconds: (raw['pos'] as num?)?.toInt() ?? 0);
         }
       }
-    } catch (_) {}
+    } catch (e) { logQuiet('audio_service', e); }
     notifyListeners();
   }
 
@@ -504,7 +505,7 @@ class AudioController extends ChangeNotifier {
       await pl.open(Media(queue[i].source), play: play);
       await pl.setRate(speed);
       if (seekTo != null && seekTo > Duration.zero) await pl.seek(seekTo);
-    } catch (_) {}
+    } catch (e) { logQuiet('audio_service', e); }
     _phone();
     unawaited(_persist());
   }
@@ -587,7 +588,7 @@ class AudioController extends ChangeNotifier {
     sleepAt = null;
     try {
       await _player?.stop();
-    } catch (_) {}
+    } catch (e) { logQuiet('audio_service', e); }
     queue = [];
     index = -1;
     playing = false;

@@ -14,6 +14,9 @@ import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/features/library/desktop_tray.dart';
 import 'package:social_save/features/library/firewall_check.dart';
 import 'package:social_save/shared/routing/app_router.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
 
 const _callConfig = {
   'sdpSemantics': 'unified-plan',
@@ -55,7 +58,7 @@ class ChatCallMedia {
         await Helper.setAndroidAudioConfiguration(
           AndroidAudioConfiguration.communication,
         );
-      } catch (_) {}
+      } catch (e) { logQuiet('chat_call', e); }
     }
     final pc = await createPeerConnection(_callConfig);
     _pc = pc;
@@ -129,9 +132,9 @@ class ChatCallMedia {
         if (gen != _playGen) return;
         try {
           await Helper.setVolume(1, track);
-        } catch (_) {}
+        } catch (e) { logQuiet('chat_call', e); }
       });
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_call', e); }
     if (gen != _playGen) return;
     ChatCalls.instance.hear();
   }
@@ -205,7 +208,7 @@ class ChatCallMedia {
       final pick = chosen;
       if (pick == null) return;
       await Helper.selectAudioOutput(pick.deviceId);
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_call', e); }
   }
 
   Future<String> _localSdp(RTCSessionDescription desc) async {
@@ -281,7 +284,7 @@ class ChatCallMedia {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is Map) parsed = Map<String, dynamic>.from(decoded);
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_call', e); }
     final candidate = RTCIceCandidate(
       parsed == null ? raw : (parsed['candidate'] as String?) ?? raw,
       parsed?['sdpMid'] as String?,
@@ -300,10 +303,15 @@ class ChatCallMedia {
     }
   }
 
-  Future<void> setSpeaker(bool on) async {
+  /// Returns false when the phone refused the switch.
+  Future<bool> setSpeaker(bool on) async {
     try {
       await Helper.setSpeakerphoneOn(on);
-    } catch (_) {}
+      return true;
+    } catch (e) {
+      logQuiet('chat_call.speaker', e);
+      return false;
+    }
   }
 
   /// One speaker change, then restore the level a device switch clears.
@@ -314,7 +322,7 @@ class ChatCallMedia {
         for (final track in stream.getAudioTracks()) {
           try {
             await Helper.setVolume(1, track);
-          } catch (_) {}
+          } catch (e) { logQuiet('chat_call', e); }
         }
       }
     });
@@ -328,7 +336,7 @@ class ChatCallMedia {
     for (final candidate in queued) {
       try {
         await pc.addCandidate(candidate);
-      } catch (_) {}
+      } catch (e) { logQuiet('chat_call', e); }
     }
   }
 
@@ -347,23 +355,23 @@ class ChatCallMedia {
         for (final track in local.getTracks()) {
           try {
             await track.stop();
-          } catch (_) {}
+          } catch (e) { logQuiet('chat_call', e); }
         }
         try {
           await local.dispose();
-        } catch (_) {}
+        } catch (e) { logQuiet('chat_call', e); }
       }
       if (pc != null) {
         try {
           await pc.close();
-        } catch (_) {}
+        } catch (e) { logQuiet('chat_call', e); }
         try {
           await pc.dispose();
-        } catch (_) {}
+        } catch (e) { logQuiet('chat_call', e); }
       }
       try {
         await Helper.setSpeakerphoneOn(false);
-      } catch (_) {}
+      } catch (e) { logQuiet('chat_call', e); }
     });
   }
 }
@@ -457,7 +465,7 @@ class ChatCalls {
       try {
         final sdp = await _media.restartOffer();
         _sendSdp(sdp);
-      } catch (_) {}
+      } catch (e) { logQuiet('chat_call', e); }
       if (status == 'active' && outgoing && !_linked && !_finishing) _syncLink();
     });
   }
@@ -510,7 +518,7 @@ class ChatCalls {
       if (_finishing || epoch != _callEpoch) {
         try {
           await _api.endCall(call.id);
-        } catch (_) {}
+        } catch (e) { logQuiet('chat_call', e); }
         return;
       }
       active = call;
@@ -571,7 +579,7 @@ class ChatCalls {
           if (answer.isEmpty) return;
           _lastRemote = event.sdp;
           _sendSdp(answer);
-        } catch (_) {}
+        } catch (e) { logQuiet('chat_call', e); }
       }
       return;
     }
@@ -685,7 +693,7 @@ class ChatCalls {
       revision.value++;
       _present();
       _armWatch();
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_call', e); }
   }
 
   Future<void> _watchLive() async {
@@ -707,7 +715,7 @@ class ChatCalls {
       }
       if (!callIsOver(kind)) kind = 'ended';
       await _finish(kind: kind);
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_call', e); }
   }
 
   /// Answer tapped on the call notice. The call screen opens on that call.
@@ -724,7 +732,7 @@ class ChatCalls {
         await accept();
         return;
       }
-      await Future<void>.delayed(const Duration(milliseconds: 350));
+      await Future<void>.delayed(AppDurations.slow);
     }
   }
 
@@ -803,7 +811,7 @@ class ChatCalls {
     if (id.isNotEmpty) {
       try {
         await _api.answerCall(id, accept: false);
-      } catch (_) {}
+      } catch (e) { logQuiet('chat_call', e); }
     }
     await done;
   }
@@ -822,7 +830,7 @@ class ChatCalls {
         } else {
           await _api.endCall(id);
         }
-      } catch (_) {}
+      } catch (e) { logQuiet('chat_call', e); }
     }
     await done;
   }
@@ -846,17 +854,21 @@ class ChatCalls {
     );
   }
 
-  Future<void> setSpeaker(bool on) async {
+  /// Returns false when the speaker could not be switched (the call page
+  /// tells the user).
+  Future<bool> setSpeaker(bool on) async {
     _routeGen++;
     _routeChosen = true;
     _speakerRetry?.cancel();
     speaker = on;
+    var ok = true;
     if (Plat.isWindows) {
       await _media.routePlayback(preferSpeaker: on);
     } else {
-      await _media.setSpeaker(on);
+      ok = await _media.setSpeaker(on);
     }
     revision.value++;
+    return ok;
   }
 
   void _rememberIce(String ready) {
@@ -910,7 +922,7 @@ class ChatCalls {
     if (!outgoing || sdp.isEmpty || sdp == _lastRemote || _finishing) return;
     try {
       if (await _media.acceptAnswer(sdp)) _lastRemote = sdp;
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_call', e); }
   }
 
   void _dropAccept() {
@@ -1017,7 +1029,7 @@ class ChatCalls {
     revision.value++;
     try {
       await _endRing().timeout(const Duration(seconds: 2));
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_call', e); }
     if (_shown) {
       await Future<void>.delayed(const Duration(milliseconds: 680));
     }
@@ -1042,7 +1054,7 @@ class ChatCalls {
     revision.value++;
     try {
       await _media.close().timeout(const Duration(seconds: 4));
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_call', e); }
     _finishing = false;
   }
 
@@ -1069,7 +1081,7 @@ class ChatCalls {
     showGeneralDialog<void>(
       context: context,
       barrierDismissible: false,
-      barrierColor: const Color(0xFF0B141A),
+      barrierColor: ChatUiTokens.canvasDark,
       pageBuilder: (context, _, _) => const ChatCallSheet(),
     ).whenComplete(() {
       _shown = false;
@@ -1108,7 +1120,7 @@ class ChatCalls {
       if (pcAudioBlocked == blocked) return;
       pcAudioBlocked = blocked;
       revision.value++;
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_call', e); }
   }
 
   Future<void> allowPcAudio() async {
@@ -1160,7 +1172,7 @@ class ChatCalls {
       await const MethodChannel('socialsave/media').invokeMethod<void>(
         on ? 'playCallRingback' : 'stopCallRingback',
       );
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_call', e); }
   }
 
   Future<void> _playRing(int gen) async {
@@ -1176,7 +1188,7 @@ class ChatCalls {
     if (gen != _ringGen || !_ringOn) {
       try {
         await const MethodChannel('socialsave/media').invokeMethod<void>('stopCallRingtone');
-      } catch (_) {}
+      } catch (e) { logQuiet('chat_call', e); }
     }
   }
 
@@ -1187,7 +1199,7 @@ class ChatCalls {
     _toneFallback = null;
     try {
       await const MethodChannel('socialsave/media').invokeMethod<void>('stopCallRingtone');
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_call', e); }
     await _stopOutgoingTone();
     unawaited(NotificationService().cancelIncomingCall());
   }
@@ -1345,7 +1357,7 @@ class _ChatCallSheetState extends State<ChatCallSheet> with TickerProviderStateM
       case 'cancelled':
         return const Color(0xFF1C2833);
       default:
-        return const Color(0xFF0B141A);
+        return ChatUiTokens.canvasDark;
     }
   }
 
@@ -1388,7 +1400,7 @@ class _ChatCallSheetState extends State<ChatCallSheet> with TickerProviderStateM
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: const Color(0xFF1F2C34),
+                color: ChatUiTokens.fieldDark,
                 boxShadow: [
                   if (_bloom.value > 0)
                     BoxShadow(
@@ -1463,11 +1475,11 @@ class _ChatCallSheetState extends State<ChatCallSheet> with TickerProviderStateM
                   : holdOn
                   ? 1 - 0.045 * _hold.value
                   : _bloomScale(_bloom.value);
-              final bg = Color.lerp(const Color(0xFF0B141A), _wash(call.exitKind), _exit.value) ??
-                  const Color(0xFF0B141A);
+              final bg = Color.lerp(ChatUiTokens.canvasDark, _wash(call.exitKind), _exit.value) ??
+                  ChatUiTokens.canvasDark;
               final beat = pulse <= 0.5 ? pulse * 2 : (1 - pulse) * 2;
               final textOpacity = call.recovering && !leaving ? 0.45 + 0.55 * beat : 1.0;
-              final ringColor = call.outgoing ? const Color(0xFF53BDEB) : ChatUiTokens.brand;
+              final ringColor = call.outgoing ? ChatUiTokens.linkDark : ChatUiTokens.brand;
               return Material(
                 color: bg,
                 child: Opacity(
@@ -1479,30 +1491,35 @@ class _ChatCallSheetState extends State<ChatCallSheet> with TickerProviderStateM
                         builder: (context, box) {
                           final short = box.maxHeight < 560;
                           final end = _CallAction(
-                            color: const Color(0xFFE53935),
+                            color: ChatUiTokens.danger,
                             icon: Icons.call_end_rounded,
                             label: 'End',
                             onPressed: () => unawaited(call.hangUp()),
                           );
                           final controls = <Widget>[
                             _CallAction(
-                              color: const Color(0xFF1F2C34),
+                              color: ChatUiTokens.fieldDark,
                               icon: call.muted ? Icons.mic_off_rounded : Icons.mic_rounded,
                               label: call.muted ? 'Unmute' : 'Mute',
                               onPressed: () => unawaited(call.setMuted(!call.muted)),
                             ),
                             if (call.status == 'active')
                               _CallAction(
-                                color: call.held ? const Color(0xFFF9A825) : const Color(0xFF1F2C34),
+                                color: call.held ? const Color(0xFFF9A825) : ChatUiTokens.fieldDark,
                                 icon: call.held ? Icons.play_arrow_rounded : Icons.pause_rounded,
                                 label: call.held ? 'Resume' : 'Hold',
                                 onPressed: () => unawaited(call.setHeld(!call.held)),
                               ),
                             _CallAction(
-                              color: const Color(0xFF1F2C34),
+                              color: ChatUiTokens.fieldDark,
                               icon: call.speaker ? Icons.volume_up_rounded : Icons.hearing_rounded,
                               label: call.speaker ? 'Speaker' : 'Earpiece',
-                              onPressed: () => unawaited(call.setSpeaker(!call.speaker)),
+                              onPressed: () async {
+                                final ok = await call.setSpeaker(!call.speaker);
+                                if (!ok && context.mounted) {
+                                  AppSnack.error(context, "Couldn't switch the speaker. Please try again.");
+                                }
+                              },
                             ),
                             if (short) end,
                           ];
@@ -1528,7 +1545,7 @@ class _ChatCallSheetState extends State<ChatCallSheet> with TickerProviderStateM
                                               color: Colors.white,
                                             ),
                                           ),
-                                          const SizedBox(height: 8),
+                                          const SizedBox(height: AppSpacing.sm),
                                           Opacity(
                                             opacity: textOpacity,
                                             child: Text(
@@ -1536,7 +1553,7 @@ class _ChatCallSheetState extends State<ChatCallSheet> with TickerProviderStateM
                                               textAlign: TextAlign.center,
                                               style: TextStyle(
                                                 fontSize: 16,
-                                                color: leaving ? Colors.white : const Color(0xFFAEBAC1),
+                                                color: leaving ? Colors.white : ChatUiTokens.timeDark,
                                                 fontWeight: leaving ? FontWeight.w700 : FontWeight.w500,
                                               ),
                                             ),
@@ -1554,7 +1571,7 @@ class _ChatCallSheetState extends State<ChatCallSheet> with TickerProviderStateM
                                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                                     children: [
                                       _CallAction(
-                                        color: const Color(0xFFE53935),
+                                        color: ChatUiTokens.danger,
                                         icon: Icons.call_end_rounded,
                                         label: 'Decline',
                                         onPressed: () => unawaited(call.decline()),
@@ -1643,7 +1660,7 @@ class _CallAction extends StatelessWidget {
             icon: Icon(icon),
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: AppSpacing.sm),
         Text(label, style: const TextStyle(color: Colors.white)),
       ],
     );

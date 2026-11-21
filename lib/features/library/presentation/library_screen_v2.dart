@@ -43,6 +43,7 @@ import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/widgets/local_video_thumb.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
 import 'package:social_save/core/theme/app_tokens.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 double _libraryGutter(BuildContext context) {
   final width = MediaQuery.sizeOf(context).width;
@@ -153,7 +154,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
         if (v is int) map[key] = v;
       }
       if (mounted) setState(() => _resume = map);
-    } catch (_) {}
+    } catch (e) { logQuiet('library_screen_v2', e); }
   }
 
   /// 0..1 watched fraction for [video], or null when there is no resume spot.
@@ -268,7 +269,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
           ..clear()
           ..addAll(vaultPaths);
       });
-    } catch (_) {}
+    } catch (e) { logQuiet('library_screen_v2', e); }
     if (cached != null && cached.isNotEmpty && !rescan && DesktopSupport.scanFinished) return;
     await _scanSub?.cancel();
     if (!mounted) return;
@@ -1767,7 +1768,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
           await repo.delete(record.id, deleteFile: ownCopy);
         }
       }
-    } catch (_) {}
+    } catch (e) { logQuiet('library_screen_v2', e); }
     if (!mounted) return;
     final goneIds = <String>{
       for (final video in videos)

@@ -10,6 +10,7 @@ import 'package:social_save/core/platform/media_events.dart';
 import 'package:social_save/features/player/player_session.dart';
 import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/routing/app_router.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 const _videoChannel = MethodChannel('socialsave/media');
 
@@ -55,13 +56,13 @@ void listenForOpenedVideos() {
     await _playPayload(args);
     try {
       await _videoChannel.invokeMethod<void>('consumeOpenedVideo');
-    } catch (_) {}
+    } catch (e) { logQuiet('open_with', e); }
   });
   WidgetsBinding.instance.addPostFrameCallback((_) async {
     try {
       final payload = await _videoChannel.invokeMethod<dynamic>('consumeOpenedVideo');
       await _playPayload(payload);
-    } catch (_) {}
+    } catch (e) { logQuiet('open_with', e); }
   });
 }
 
@@ -164,7 +165,7 @@ Future<void> registerWindowsVideoPlayer() async {
       '-Command',
       "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class SsAssoc { [DllImport(\"shell32.dll\")] public static extern void SHChangeNotify(int e, uint f, System.IntPtr a, System.IntPtr b); }'; [SsAssoc]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)",
     ]);
-  } catch (_) {}
+  } catch (e) { logQuiet('open_with', e); }
 }
 
 Future<void> _addOpenWithList(String ext) async {

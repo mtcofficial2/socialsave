@@ -13,6 +13,7 @@ import 'package:social_save/core/platform/windows_video_scan_stub.dart'
     if (dart.library.ffi) 'package:social_save/core/platform/windows_video_scan.dart';
 import 'package:social_save/core/storage/download_path_service.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// Windows stand-ins for the Android-only parts of the app.
 ///
@@ -36,7 +37,7 @@ class DesktopSupport {
           ? Uri.directory(path, windows: true)
           : Uri.file(path, windows: true);
       if (await launchUrl(uri)) return true;
-    } catch (_) {}
+    } catch (e) { logQuiet('desktop_support', e); }
     try {
       await Process.start('explorer.exe', [path]);
       return true;
@@ -216,7 +217,7 @@ class DesktopSupport {
       if (videos.isEmpty) return;
       videos.sort(_byAdded);
       cachedVideos ??= List.unmodifiable(videos);
-    } catch (_) {}
+    } catch (e) { logQuiet('desktop_support', e); }
   }
 
   static Future<void> _storeIndex() async {
@@ -227,7 +228,7 @@ class DesktopSupport {
       await tmp.writeAsString(jsonEncode({'dirs': _savedDirs}), flush: true);
       if (file.existsSync()) await file.delete();
       await tmp.rename(file.path);
-    } catch (_) {}
+    } catch (e) { logQuiet('desktop_support', e); }
   }
 
   static Future<void> _persistCacheEdit(String oldPath, String? newPath) async {
@@ -267,7 +268,7 @@ class DesktopSupport {
         dir['m'] = '';
       }
       if (changed) await _storeIndex();
-    } catch (_) {}
+    } catch (e) { logQuiet('desktop_support', e); }
   }
 
   static void _updateCache(String oldPath, String? newPath) {
@@ -386,9 +387,9 @@ foreach ($p in [IO.File]::ReadAllLines($list, [Text.Encoding]::UTF8)) {
       for (final f in [list, ps1]) {
         try {
           await f.delete();
-        } catch (_) {}
+        } catch (e) { logQuiet('desktop_support', e); }
       }
-    } catch (_) {}
+    } catch (e) { logQuiet('desktop_support', e); }
     for (final path in paths) {
       if (!File(path).existsSync() && !Directory(path).existsSync()) {
         gone.add(path);

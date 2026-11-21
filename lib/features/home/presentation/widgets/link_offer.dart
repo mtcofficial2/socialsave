@@ -22,6 +22,7 @@ import 'package:social_save/shared/models/media_format.dart';
 import 'package:social_save/shared/models/media_info.dart';
 import 'package:social_save/shared/routing/app_router.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 export 'package:social_save/core/utils/video_links.dart' show videoLinkIn, videoLinksIn, linksToSaveTogether;
 
@@ -441,7 +442,7 @@ class _LinkOfferWatcherState extends ConsumerState<LinkOfferWatcher> with Widget
         var host = url;
         try {
           host = Uri.parse(url).host.replaceFirst('www.', '');
-        } catch (_) {}
+        } catch (e) { logQuiet('link_offer', e); }
         await ref.read(notificationServiceProvider).showLinkOffer(url: url, subtitle: host);
       }
     } finally {
@@ -480,12 +481,12 @@ class _LinkOfferWatcherState extends ConsumerState<LinkOfferWatcher> with Widget
             await ref.read(downloadManagerProvider.notifier).enqueue(media: media, format: format);
             return;
           }
-        } catch (_) {}
+        } catch (e) { logQuiet('link_offer', e); }
       }
       try {
         await windowManager.show();
         await windowManager.focus();
-      } catch (_) {}
+      } catch (e) { logQuiet('link_offer', e); }
       await offerLink(url);
     }());
   }

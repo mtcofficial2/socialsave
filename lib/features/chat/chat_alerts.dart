@@ -19,6 +19,8 @@ import 'package:social_save/features/chat/chat_live.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
 import 'package:social_save/features/library/desktop_tray.dart';
 import 'package:social_save/shared/routing/app_router.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 /// A sound plus a notification. Android's system "alert" sound does nothing,
 /// so an open app plays the phone's notification tone itself and keeps the
@@ -109,7 +111,7 @@ Future<({Uint8List? bytes, bool exact})> _savedFace(
   try {
     final disk = await loadNotificationPhoto(username, photoRev);
     if (disk.bytes != null && disk.bytes!.isNotEmpty) return disk;
-  } catch (_) {}
+  } catch (e) { logQuiet('chat_alerts', e); }
   final any = ChatPhotos.anyCached(username);
   if (any != null && any.isNotEmpty) {
     return (bytes: any, exact: false);
@@ -160,7 +162,7 @@ Future<void> _postChatAlert({
       silent: true,
       picture: later,
     );
-  } catch (_) {}
+  } catch (e) { logQuiet('chat_alerts', e); }
 }
 
 Future<void> _playPhoneTone() async {
@@ -168,7 +170,7 @@ Future<void> _playPhoneTone() async {
     await const MethodChannel(
       'socialsave/media',
     ).invokeMethod<void>('playNotificationSound');
-  } catch (_) {}
+  } catch (e) { logQuiet('chat_alerts', e); }
 }
 
 /// One inbox check for the whole app. The open chat list skips its own fetch
@@ -286,7 +288,7 @@ class ChatPresence {
             'me': await ChatSession.username(),
           },
         );
-      } catch (_) {}
+      } catch (e) { logQuiet('chat_alerts', e); }
     }
     if (signedIn == _on) return;
     _on = signedIn;
@@ -295,7 +297,7 @@ class ChatPresence {
         'socialsave/chat_listen',
       ).invokeMethod<void>(signedIn ? 'start' : 'stop');
       if (signedIn) unawaited(_askBatteryOnce());
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_alerts', e); }
   }
 
   static Future<void> _askBatteryOnce() async {
@@ -312,7 +314,7 @@ class ChatPresence {
       await const MethodChannel(
         'socialsave/session',
       ).invokeMethod<void>('requestBatteryExempt');
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_alerts', e); }
   }
 }
 
@@ -428,14 +430,14 @@ class ChatAlertWatch {
     if (!Plat.isAndroid) return;
     try {
       await const MethodChannel('socialsave/chat_listen').invokeMethod<void>('beat');
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_alerts', e); }
   }
 
   Future<void> _rest() async {
     if (!Plat.isAndroid) return;
     try {
       await const MethodChannel('socialsave/chat_listen').invokeMethod<void>('rest');
-    } catch (_) {}
+    } catch (e) { logQuiet('chat_alerts', e); }
   }
 
   void _onLive(ChatLiveEvent event) {
@@ -655,13 +657,13 @@ class ChatOutgoingBar extends StatelessWidget {
           child: Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
             child: Material(
-              color: const Color(0xFF1F2C34),
-              borderRadius: BorderRadius.circular(16),
+              color: ChatUiTokens.fieldDark,
+              borderRadius: AppRadii.lgAll,
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(14, 8, 6, 8),
                 child: Row(
                   children: [
-                    const Icon(Icons.call_rounded, color: Color(0xFF53BDEB), size: 20),
+                    const Icon(Icons.call_rounded, color: ChatUiTokens.linkDark, size: 20),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Column(
@@ -674,7 +676,7 @@ class ChatOutgoingBar extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
                           ),
-                          Text(line, style: const TextStyle(color: Color(0xFFAEBAC1), fontSize: 13)),
+                          Text(line, style: const TextStyle(color: ChatUiTokens.timeDark, fontSize: 13)),
                         ],
                       ),
                     ),

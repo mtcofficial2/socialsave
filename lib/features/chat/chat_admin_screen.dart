@@ -9,6 +9,7 @@ import 'package:social_save/features/chat/chat_thread_screen.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 /// People, devices, groups, and reports.
 /// The server returns this only for the admin account.
@@ -181,7 +182,7 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
                 SizedBox(width: 440, child: _list(wide: true)),
                 VerticalDivider(
                   width: 1,
-                  color: dark ? const Color(0xFF1F2C34) : const Color(0xFFE4E7EA),
+                  color: ChatUiTokens.line(dark),
                 ),
                 Expanded(child: detail ?? _placeholder(scheme)),
               ],
@@ -193,7 +194,7 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
   Widget _placeholder(ColorScheme scheme) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(AppSpacing.xl),
         child: Text(
           'Choose a device, person, group, or report.',
           textAlign: TextAlign.center,
@@ -283,29 +284,29 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
             'Every phone or computer that has opened SocialSave, including ones that only save downloads.',
             style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: AppSpacing.sm),
           Text(today.line, style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4)),
           if (cap.isNotEmpty) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             Text(cap, style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4)),
           ],
           if (_storage.isNotEmpty) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             _StorageChip(storage: _storage, onTap: () => unawaited(_explainStorage())),
           ],
           if (_error != null) ...[
-            const SizedBox(height: 16),
+            const SizedBox(height: AppSpacing.lg),
             Text(_error!, style: TextStyle(color: scheme.error, height: 1.4)),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             FilledButton(onPressed: _load, child: const Text('Try again')),
           ],
           if (_loading)
             const Padding(
-              padding: EdgeInsets.only(top: 32),
+              padding: EdgeInsets.only(top: AppSpacing.xxl),
               child: Center(child: CircularProgressIndicator()),
             )
           else if (_error == null) ...[
-            const SizedBox(height: 16),
+            const SizedBox(height: AppSpacing.lg),
             _StatRow(
               devices: _devices.length,
               opened: opened,
@@ -334,7 +335,7 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
               onPeople: _tapPeople,
               onPasswords: _tapPasswords,
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: AppSpacing.lg),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -345,11 +346,11 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
                 _tabChip(MonitorTab.reports, 'Reports', _reports.length),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             _sortButton(),
-            const SizedBox(height: 4),
+            const SizedBox(height: AppSpacing.xs),
             _filters(now, versions),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             ChatSearchField(
               controller: _query,
               hintText: 'Search people, devices, groups, and reports',
@@ -357,10 +358,10 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
               onSubmitted: (_) {},
             ),
             if (countLine.isNotEmpty) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               Text(countLine, style: TextStyle(color: scheme.onSurfaceVariant)),
             ],
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             Text(
               _hint(wide),
               style: TextStyle(color: scheme.onSurfaceVariant, height: 1.35),
@@ -538,7 +539,7 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
             PopupMenuItem<T>(value: item, child: Text(label(item))),
         ],
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
+          padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -860,7 +861,7 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
       _fact(device.seen == null ? 'Not opened yet' : 'Last opened ${_when(device.seen!)}'),
       _fact(_saveLine(device)),
       if (quiet.isNotEmpty) _fact(quiet),
-      const SizedBox(height: 8),
+      const SizedBox(height: AppSpacing.sm),
       SelectableText(device.id),
       _button(
         'Copy device id',
@@ -925,7 +926,7 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
           _busy != null ? null : () => unawaited(_endAll(person)),
           destructive: true,
         ),
-      const SizedBox(height: 8),
+      const SizedBox(height: AppSpacing.sm),
       if (_protected(person.username))
         _fact('This account stays open.')
       else
@@ -1014,7 +1015,7 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
         ? FilledButton(onPressed: onPressed, child: child)
         : OutlinedButton(onPressed: onPressed, child: child);
     return Padding(
-      padding: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.only(top: AppSpacing.md),
       child: Align(alignment: Alignment.centerLeft, child: button),
     );
   }
@@ -1196,7 +1197,7 @@ class _Heading extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(top: 16, bottom: 4),
+      padding: const EdgeInsets.only(top: AppSpacing.lg, bottom: AppSpacing.xs),
       child: Text(
         text,
         style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
@@ -1276,17 +1277,17 @@ class _Stat extends StatelessWidget {
     final line = selected
         ? ChatUiTokens.brand
         : dark
-        ? const Color(0xFF1F2C34)
-        : const Color(0xFFE4E7EA);
+        ? ChatUiTokens.fieldDark
+        : ChatUiTokens.lineLight;
     return Material(
-      color: dark ? const Color(0xFF111B21) : Colors.white,
+      color: ChatUiTokens.surface(dark),
       borderRadius: BorderRadius.circular(14),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(14),
         child: Container(
           width: 104,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 10),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(14),
             border: Border.all(color: line, width: selected ? 1.6 : 1),
@@ -1302,7 +1303,7 @@ class _Stat extends StatelessWidget {
                   letterSpacing: -0.4,
                 ),
               ),
-              const SizedBox(height: 2),
+              const SizedBox(height: AppSpacing.xxs),
               Text(
                 label,
                 style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
@@ -1382,14 +1383,14 @@ class _MonitorCard extends StatelessWidget {
     final line = selected
         ? ChatUiTokens.brand
         : dark
-        ? const Color(0xFF1F2C34)
-        : const Color(0xFFE4E7EA);
+        ? ChatUiTokens.fieldDark
+        : ChatUiTokens.lineLight;
     return Padding(
-      padding: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.only(top: AppSpacing.sm),
       child: Material(
-        color: dark ? const Color(0xFF111B21) : Colors.white,
+        color: ChatUiTokens.surface(dark),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: AppRadii.lgAll,
           side: BorderSide(color: line, width: selected ? 1.6 : 1),
         ),
         clipBehavior: Clip.antiAlias,
@@ -1407,11 +1408,11 @@ class _MonitorCard extends StatelessWidget {
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
                         color: ChatUiTokens.brand.withValues(alpha: 0.14),
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: AppRadii.mdAll,
                       ),
                       child: Icon(icon, color: ChatUiTokens.brand, size: 22),
                     ),
-                const SizedBox(width: 12),
+                const SizedBox(width: AppSpacing.md),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1427,7 +1428,7 @@ class _MonitorCard extends StatelessWidget {
                         ),
                       ),
                       if (detail.isNotEmpty) ...[
-                        const SizedBox(height: 2),
+                        const SizedBox(height: AppSpacing.xxs),
                         Text(
                           detail,
                           maxLines: 2,
@@ -1439,7 +1440,7 @@ class _MonitorCard extends StatelessWidget {
                         ),
                       ],
                       if (subtitle.isNotEmpty) ...[
-                        const SizedBox(height: 2),
+                        const SizedBox(height: AppSpacing.xxs),
                         Text(
                           subtitle,
                           maxLines: 2,
@@ -1448,7 +1449,7 @@ class _MonitorCard extends StatelessWidget {
                         ),
                       ],
                       if (foot.isNotEmpty) ...[
-                        const SizedBox(height: 2),
+                        const SizedBox(height: AppSpacing.xxs),
                         Text(
                           foot,
                           maxLines: 3,
@@ -1463,7 +1464,7 @@ class _MonitorCard extends StatelessWidget {
                   ),
                 ),
                 if (trailing != null) ...[
-                  const SizedBox(width: 4),
+                  const SizedBox(width: AppSpacing.xs),
                   trailing!,
                 ],
               ],

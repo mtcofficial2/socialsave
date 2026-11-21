@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:image/image.dart' as im;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// Stable across launches. [String.hashCode] is not.
 String _stableHash(String value) {
@@ -104,7 +105,7 @@ Future<String?> saveNotificationPhoto(Uint8List bytes, String name) async {
         ext = 'png';
       }
     }
-  } catch (_) {}
+  } catch (e) { logQuiet('notification_photo_io', e); }
   final dir = await getTemporaryDirectory();
   final file = File(p.join(dir.path, '${_faceStem(name)}.$ext'));
   await file.writeAsBytes(out, flush: true);

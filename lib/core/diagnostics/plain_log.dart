@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// One sentence this device wrote for a person to read.
 class PlainLine {
@@ -229,13 +230,13 @@ class PlainLog {
       if (_lines.length > keep) {
         _lines.removeRange(0, _lines.length - keep);
       }
-    } catch (_) {}
+    } catch (e) { logQuiet('plain_log', e); }
   }
 
   static Future<void> _write() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_key, jsonEncode([for (final line in _lines) line.toJson()]));
-    } catch (_) {}
+    } catch (e) { logQuiet('plain_log', e); }
   }
 }

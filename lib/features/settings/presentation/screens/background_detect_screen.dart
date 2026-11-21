@@ -6,6 +6,8 @@ import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/platform/media_events.dart';
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
+import 'package:social_save/shared/widgets/app_snack.dart';
 
 const _kEnabled = 'bgdetect.enabled';
 const _kBubble = 'bgdetect.bubble';
@@ -70,7 +72,12 @@ class _BackgroundDetectScreenState extends ConsumerState<BackgroundDetectScreen>
   Future<void> _call(String m) async {
     try {
       await MediaEvents.channel.invokeMethod<void>(m);
-    } catch (_) {}
+    } catch (e, st) {
+      logQuiet('background_detect.$m', e, st);
+      if (mounted) {
+        AppSnack.error(context, "That didn't work on this phone. Please try again.");
+      }
+    }
   }
 
   Future<void> _setEnabled(bool v) async {

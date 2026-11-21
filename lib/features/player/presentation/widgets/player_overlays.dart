@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/features/player/presentation/widgets/premium_player_chrome.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// Rounded, blurred bottom sheet shell with a grab handle.
 class PlayerGlassSheet extends StatelessWidget {
@@ -341,7 +342,7 @@ class PlayerFirstHint extends StatelessWidget {
   static Future<void> markSeen() async {
     try {
       await (await SharedPreferences.getInstance()).setBool(_key, true);
-    } catch (_) {}
+    } catch (e) { logQuiet('player_overlays', e); }
   }
 
   Widget _row(ColorScheme cs, IconData icon, String title, String body) {

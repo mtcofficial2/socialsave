@@ -3,6 +3,8 @@ import 'dart:typed_data';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:social_save/features/chat/chat_api.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
+import 'package:social_save/features/chat/chat_ui.dart';
 
 /// Messages that sit inside a photo set and should not get their own bubble.
 ///
@@ -235,8 +237,8 @@ class _ChatSwipeReplyState extends State<ChatSwipeReply> {
         children: [
           if (_drag > 8)
             Padding(
-              padding: const EdgeInsets.only(left: 4),
-              child: Icon(Icons.reply_rounded, color: ChatUiTokensBridge.brand),
+              padding: const EdgeInsets.only(left: AppSpacing.xs),
+              child: Icon(Icons.reply_rounded, color: ChatUiTokens.brand),
             ),
           AnimatedContainer(
             duration: _dragging ? Duration.zero : const Duration(milliseconds: 140),
@@ -250,8 +252,9 @@ class _ChatSwipeReplyState extends State<ChatSwipeReply> {
 }
 
 /// Brand color without importing the whole chat UI file from a low widget.
+/// Older name for [ChatUiTokens.brand]; kept so existing code still builds.
 class ChatUiTokensBridge {
-  static const brand = Color(0xFF25D366);
+  static const brand = ChatUiTokens.brand;
 }
 
 /// Looks at the photos and types one caption before they are sent.
@@ -296,7 +299,7 @@ class _PhotoPreviewState extends State<_PhotoPreview> {
               children: [
                 for (final bytes in widget.photos)
                   Padding(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.all(AppSpacing.md),
                     child: Image.memory(bytes, fit: BoxFit.contain),
                   ),
               ],
@@ -319,7 +322,7 @@ class _PhotoPreviewState extends State<_PhotoPreview> {
                 IconButton(
                   tooltip: 'Send',
                   onPressed: () => Navigator.pop(context, _caption.text.trim()),
-                  icon: const Icon(Icons.send_rounded, color: Color(0xFF25D366)),
+                  icon: const Icon(Icons.send_rounded, color: ChatUiTokens.brand),
                 ),
               ],
             ),
@@ -358,7 +361,7 @@ class ChatMediaPage extends StatelessWidget {
             'Older messages may be missing. This list is what is already loaded.',
             style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, height: 1.35),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.lg),
           _MediaBlock(
             title: 'Photos',
             empty: 'No photos',
@@ -424,15 +427,15 @@ class _MediaBlock extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
-        const SizedBox(height: 4),
+        const SizedBox(height: AppSpacing.xs),
         if (children.isEmpty)
           Padding(
-            padding: const EdgeInsets.only(bottom: 16),
+            padding: const EdgeInsets.only(bottom: AppSpacing.lg),
             child: Text(empty, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
           )
         else
           ...children,
-        const SizedBox(height: 8),
+        const SizedBox(height: AppSpacing.sm),
       ],
     );
   }
@@ -453,11 +456,11 @@ class ChatFileCard extends StatelessWidget {
     return InkWell(
       onTap: onOpen,
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2),
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.xxs),
         child: Row(
           children: [
             Icon(clip ? Icons.play_circle_outline : Icons.description_outlined, size: 28),
-            const SizedBox(width: 8),
+            const SizedBox(width: AppSpacing.sm),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,

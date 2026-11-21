@@ -9,6 +9,7 @@ import 'package:social_save/features/chat/chat_drafts.dart';
 import 'package:social_save/features/chat/chat_format.dart';
 import 'package:social_save/features/chat/chat_live.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
 
 /// Colors, radii, and spacing for chat. These match the chat canvas we
 /// already ship. Nothing here is a third-party brand mark.
@@ -28,11 +29,20 @@ class ChatUiTokens {
   static const Color linkLight = Color(0xFF027EB5);
   static const Color linkDark = Color(0xFF53BDEB);
   static const Color fieldDark = Color(0xFF1F2C34);
+  static const Color surfaceDark = Color(0xFF111B21);
+  static const Color lineLight = Color(0xFFE4E7EA);
+  static const Color panelLight = Color(0xFFF0F2F5);
+  static const Color iconMuted = Color(0xFF8696A0);
+  static const Color brandDeep = Color(0xFF008069);
+  static const Color danger = Color(0xFFE53935);
+  static const Color shadowDark = Color(0x33000000);
+  static const Color shadowLight = Color(0x14000000);
 
   static const double avatar = 56;
   static const double bubbleMax = 0.78;
-  static const double pill = 24;
-  static const double radius = 8;
+  // Shared corner sizes come from the app-wide design values.
+  static const double pill = AppRadii.xl;
+  static const double radius = AppRadii.sm;
   static const double tightRadius = 6;
 
   static bool dark(BuildContext context) =>
@@ -46,6 +56,14 @@ class ChatUiTokens {
   static Color link(bool dark) => dark ? linkDark : linkLight;
   static Color field(bool dark) => dark ? fieldDark : Colors.white;
   static Color searchFill(bool dark) => dark ? fieldDark : Colors.white;
+  /// Sheets and cards that sit on the chat canvas.
+  static Color surface(bool dark) => dark ? surfaceDark : Colors.white;
+  /// Hairlines and dividers.
+  static Color line(bool dark) => dark ? fieldDark : lineLight;
+  /// Filled inputs and grouped panels.
+  static Color panel(bool dark) => dark ? fieldDark : panelLight;
+  /// Soft drop shadow under cards.
+  static Color shadow(bool dark) => dark ? shadowDark : shadowLight;
 }
 
 /// Local list choices. Archive and mute stay on this phone. A hidden chat
@@ -240,9 +258,9 @@ class ChatSearchField extends StatelessWidget {
         ),
         filled: true,
         isDense: true,
-        fillColor: dark ? const Color(0xFF1F2C34) : const Color(0xFFF0F2F5),
+        fillColor: ChatUiTokens.panel(dark),
         constraints: const BoxConstraints(minHeight: 44),
-        contentPadding: const EdgeInsets.symmetric(vertical: 12),
+        contentPadding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
         border: border,
         enabledBorder: border,
         focusedBorder: border,
@@ -267,7 +285,7 @@ class ChatEmptyInbox extends StatelessWidget {
       child: Column(
         children: [
           Icon(Icons.forum_outlined, size: 48, color: scheme.onSurfaceVariant),
-          const SizedBox(height: 12),
+          const SizedBox(height: AppSpacing.md),
           Text(
             'No chats yet',
             style: TextStyle(
@@ -282,7 +300,7 @@ class ChatEmptyInbox extends StatelessWidget {
             textAlign: TextAlign.center,
             style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.lg),
           FilledButton(
             style: FilledButton.styleFrom(
               backgroundColor: ChatUiTokens.brand,
@@ -311,7 +329,7 @@ class ChatEmptyGroups extends StatelessWidget {
       child: Column(
         children: [
           Icon(Icons.groups_outlined, size: 48, color: scheme.onSurfaceVariant),
-          const SizedBox(height: 12),
+          const SizedBox(height: AppSpacing.md),
           Text(
             'No groups yet',
             style: TextStyle(
@@ -326,7 +344,7 @@ class ChatEmptyGroups extends StatelessWidget {
             textAlign: TextAlign.center,
             style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.lg),
           FilledButton(
             style: FilledButton.styleFrom(
               backgroundColor: ChatUiTokens.brand,
@@ -528,7 +546,7 @@ class _ChatListTileState extends State<ChatListTile> {
           if (showActions)
             Positioned.fill(
               child: ColoredBox(
-                color: dark ? const Color(0xFF111B21) : const Color(0xFFF0F2F5),
+                color: dark ? const Color(0xFF111B21) : ChatUiTokens.panelLight,
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
@@ -537,7 +555,7 @@ class _ChatListTileState extends State<ChatListTile> {
                       icon: widget.archived
                           ? Icons.unarchive_outlined
                           : Icons.archive_outlined,
-                      color: const Color(0xFF53BDEB),
+                      color: ChatUiTokens.linkDark,
                       onPressed: () {
                         _close();
                         widget.onArchive();
@@ -550,7 +568,7 @@ class _ChatListTileState extends State<ChatListTile> {
                       icon: widget.muted
                           ? Icons.notifications_off_outlined
                           : Icons.notifications_none_rounded,
-                      color: const Color(0xFF8696A0),
+                      color: ChatUiTokens.iconMuted,
                       onPressed: () {
                         _close();
                         widget.onMute();
@@ -638,7 +656,7 @@ class _ChatListTileState extends State<ChatListTile> {
                                 ? const Color(
                                     0xFFAEBAC1,
                                   ).withValues(alpha: 0.16)
-                                : const Color(0xFFE4E7EA),
+                                : ChatUiTokens.lineLight,
                           ),
                         ),
                       ],
@@ -719,11 +737,11 @@ class _RowBody extends StatelessWidget {
     final voice = draft.isEmpty && item.lastText.trim() == 'Voice message';
     final photo = draft.isEmpty && item.lastText.trim() == 'Photo';
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
       child: Row(
         children: [
           avatar,
-          const SizedBox(width: 12),
+          const SizedBox(width: AppSpacing.md),
           Expanded(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -733,7 +751,7 @@ class _RowBody extends StatelessWidget {
                   children: [
                     if (item.pinned) ...[
                       const Icon(Icons.push_pin, size: 14, color: ChatUiTokens.brand),
-                      const SizedBox(width: 4),
+                      const SizedBox(width: AppSpacing.xs),
                     ],
                     Expanded(
                       child: Text(
@@ -749,7 +767,7 @@ class _RowBody extends StatelessWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: AppSpacing.xxs),
                 if (recording || typing)
                   ChatActivityLine(recording: recording)
                 else if (failed && draft.isEmpty)
@@ -797,7 +815,7 @@ class _RowBody extends StatelessWidget {
                             dark: ChatUiTokens.dark(context),
                           ),
                         ),
-                        const SizedBox(width: 4),
+                        const SizedBox(width: AppSpacing.xs),
                       ],
                       if (voice)
                         Icon(
@@ -815,7 +833,7 @@ class _RowBody extends StatelessWidget {
                               ? scheme.onSurface
                               : scheme.onSurfaceVariant,
                         ),
-                      if (voice || photo) const SizedBox(width: 4),
+                      if (voice || photo) const SizedBox(width: AppSpacing.xs),
                       Expanded(
                         child: Text(
                           preview,
@@ -838,7 +856,7 @@ class _RowBody extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(width: 4),
+          const SizedBox(width: AppSpacing.xs),
           Column(
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.end,
@@ -855,7 +873,7 @@ class _RowBody extends StatelessWidget {
                   ),
                 ),
               if (muted) ...[
-                if (stamp.isNotEmpty) const SizedBox(height: 4),
+                if (stamp.isNotEmpty) const SizedBox(height: AppSpacing.xs),
                 Tooltip(
                   message: 'Notifications muted',
                   child: Icon(
@@ -1161,7 +1179,7 @@ class ChatDownChip extends StatelessWidget {
         customBorder: const StadiumBorder(),
         onTap: onPressed,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: AppSpacing.md),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -1324,17 +1342,17 @@ class ChatDayPill extends StatelessWidget {
   Widget build(BuildContext context) {
     final dark = ChatUiTokens.dark(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
       child: Center(
         child: DecoratedBox(
           decoration: BoxDecoration(
             color: (dark ? ChatUiTokens.incomingDark : Colors.white).withValues(
               alpha: 0.92,
             ),
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: AppRadii.mdAll,
           ),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 5),
             child: Text(
               label,
               style: TextStyle(

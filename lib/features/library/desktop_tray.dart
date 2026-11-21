@@ -7,6 +7,7 @@ import 'package:social_save/features/library/session_ui.dart';
 import 'package:social_save/features/library/share_session.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// Windows: while connected, hosting a hotspot, or signed in to chat,
 /// SocialSave sits in the system tray. Closing the window then only hides
@@ -27,7 +28,7 @@ class DesktopTray with TrayListener, WindowListener {
   static Future<void> show() async {
     try {
       await instance._showWindow();
-    } catch (_) {}
+    } catch (e) { logQuiet('desktop_tray', e); }
   }
 
   /// Signed-in chat stays running after the window is closed.
@@ -83,7 +84,7 @@ class DesktopTray with TrayListener, WindowListener {
             try {
               await trayManager.setToolTip(_tip);
               await _menu();
-            } catch (_) {}
+            } catch (e) { logQuiet('desktop_tray', e); }
           });
         }
       } else if (_shown) {
@@ -131,11 +132,11 @@ class DesktopTray with TrayListener, WindowListener {
     _tip = '';
     try {
       await trayManager.destroy();
-    } catch (_) {}
+    } catch (e) { logQuiet('desktop_tray', e); }
     try {
       await windowManager.setPreventClose(false);
       await windowManager.destroy();
-    } catch (_) {}
+    } catch (e) { logQuiet('desktop_tray', e); }
   }
 
   Future<void> _showWindow({bool session = false}) async {

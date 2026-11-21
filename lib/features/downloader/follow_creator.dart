@@ -12,6 +12,7 @@ import 'package:social_save/features/downloader/presentation/providers/download_
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
 import 'package:social_save/shared/models/media_format.dart';
 import 'package:social_save/shared/models/social_platform.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 export 'package:social_save/features/downloader/creator_notice.dart' show creatorNoticeTitle, creatorNoticeBody;
 
@@ -109,7 +110,7 @@ class FollowCreator {
   static Future<void> _arm(bool on) async {
     try {
       await MediaEvents.channel.invokeMethod<void>('scheduleFollow', {'on': on});
-    } catch (_) {}
+    } catch (e) { logQuiet('follow_creator', e); }
   }
 
   static Future<bool> isFollowing(String url) async {
@@ -155,7 +156,7 @@ class FollowCreator {
       });
       if (!due) return;
       await run(container);
-    } catch (_) {}
+    } catch (e) { logQuiet('follow_creator', e); }
   }
 
   /// Queues new public posts. Private and login-only items are skipped.
@@ -244,7 +245,7 @@ class FollowCreator {
             count: count,
             url: url,
           );
-    } catch (_) {}
+    } catch (e) { logQuiet('follow_creator', e); }
   }
 
   static MediaFormat? _quality(List<MediaFormat> formats, String quality) {

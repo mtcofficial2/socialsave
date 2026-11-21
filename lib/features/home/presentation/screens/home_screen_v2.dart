@@ -42,6 +42,7 @@ import 'package:social_save/shared/widgets/video_thumbnail.dart';
 import 'package:social_save/web/web_relay.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
 import 'package:social_save/core/theme/app_tokens.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// Premium, minimal Home: one calm primary area, quick actions, recent list.
 class HomeScreenV2 extends ConsumerStatefulWidget {
@@ -103,7 +104,7 @@ class _HomeScreenV2State extends ConsumerState<HomeScreenV2> with WidgetsBinding
     String? setUrl;
     try {
       setUrl = await channel.invokeMethod<String>('consumeSharedSet');
-    } catch (_) {}
+    } catch (e) { logQuiet('home_screen_v2', e); }
     if (setUrl != null && setUrl.trim().isNotEmpty && mounted) {
       final target = setUrl.trim();
       if (isPublicSet(target) || target.startsWith('http')) {

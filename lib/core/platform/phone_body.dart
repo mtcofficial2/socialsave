@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:social_save/core/platform/desktop_support.dart';
 import 'package:social_save/core/platform/media_events.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 class PhoneSnapshot {
   const PhoneSnapshot({
@@ -124,7 +125,7 @@ class PhoneBody {
         'positionMs': positionMs,
         'durationMs': durationMs,
       });
-    } catch (_) {}
+    } catch (e) { logQuiet('phone_body', e); }
   }
 
   static Future<void> vibrate({required bool saved}) async {
@@ -132,7 +133,7 @@ class PhoneBody {
       await MediaEvents.channel.invokeMethod<void>('vibrate', {
         'pattern': saved ? 'saved' : 'failed',
       });
-    } catch (_) {}
+    } catch (e) { logQuiet('phone_body', e); }
   }
 
   static Future<String?> pickFolder() async {
@@ -213,6 +214,6 @@ class PhoneBody {
       await MediaEvents.channel.invokeMethod<void>('setBrightness', {
         'value': value,
       });
-    } catch (_) {}
+    } catch (e) { logQuiet('phone_body', e); }
   }
 }

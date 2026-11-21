@@ -10,6 +10,7 @@ import 'package:social_save/shared/widgets/premium_glass.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/core/storage/media_store_service.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 const _videoExts = {'mp4', 'm4v', 'mov', 'mkv', 'webm'};
 
@@ -72,7 +73,7 @@ Future<bool> offerTiktokReady(
   var needs = false;
   try {
     needs = await MediaStoreService().needsTiktokWork(path, dest: chosen);
-  } catch (_) {}
+  } catch (e) { logQuiet('tiktok_ready', e); }
   if (!context.mounted) return false;
   if (!needs) {
     _note(context, '$label can already open this video.');
@@ -111,10 +112,10 @@ Future<bool> offerTiktokReady(
   var stillNeeds = true;
   try {
     stillNeeds = await MediaStoreService().needsTiktokWork(out, dest: chosen);
-  } catch (_) {}
+  } catch (e) { logQuiet('tiktok_ready', e); }
   try {
     await MediaStoreService().scanFile(out);
-  } catch (_) {}
+  } catch (e) { logQuiet('tiktok_ready', e); }
   close();
   if (context.mounted) {
     _note(

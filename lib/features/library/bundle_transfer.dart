@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:social_save/core/storage/download_path_service.dart';
 import 'package:social_save/core/platform/desktop_support.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// One file inside a transfer, with its path relative to the bundle root.
 class SendItem {
@@ -177,7 +178,7 @@ Future<void> indexReceived(File f) async {
   if (!Plat.isAndroid) return;
   try {
     await _media.invokeMethod<void>('scanFile', {'path': f.path});
-  } catch (_) {}
+  } catch (e) { logQuiet('bundle_transfer', e); }
 }
 
 /// Open with the system's default app.
@@ -190,7 +191,7 @@ Future<bool> openWithSystem(String path) async {
     if (Plat.isAndroid) {
       return await _media.invokeMethod<bool>('openFile', {'path': path}) ?? false;
     }
-  } catch (_) {}
+  } catch (e) { logQuiet('bundle_transfer', e); }
   return false;
 }
 
@@ -199,5 +200,5 @@ Future<void> showInFolder(String path) async {
   if (!Plat.isWindows) return;
   try {
     await Process.start('explorer.exe', ['/select,', path]);
-  } catch (_) {}
+  } catch (e) { logQuiet('bundle_transfer', e); }
 }

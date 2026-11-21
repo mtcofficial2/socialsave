@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/storage/vault_recovery.dart';
 import 'package:social_save/features/downloads/domain/repositories/downloads_repository.dart';
 import 'package:social_save/features/library/vault_service.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// 1.0.13: videos used to be saved twice on Android (the app's private
 /// folder plus a public copy in Download/SocialSave). This keeps one public
@@ -103,7 +104,7 @@ class StorageMigration {
     }
     try {
       await _media.invokeMethod<void>('scanFile', {'path': target});
-    } catch (_) {}
+    } catch (e) { logQuiet('storage_migration', e); }
     return target;
   }
 }

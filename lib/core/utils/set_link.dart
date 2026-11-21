@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:social_save/core/utils/platform_detector.dart';
 import 'package:social_save/shared/models/playlist_entry.dart';
 import 'package:social_save/shared/models/social_platform.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 const _youtubeTabs = {
   'videos',
@@ -327,7 +328,7 @@ Future<List<PlaylistEntry>> expandChannelSections(
       for (final child in nested) {
         add(child);
       }
-    } catch (_) {}
+    } catch (e) { logQuiet('set_link', e); }
   }
   return out;
 }

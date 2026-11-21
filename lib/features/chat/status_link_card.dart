@@ -3,6 +3,8 @@ import 'package:go_router/go_router.dart';
 import 'package:social_save/core/utils/open_link.dart';
 import 'package:social_save/features/chat/chat_link.dart';
 import 'package:social_save/features/chat/link_text.dart';
+import 'package:social_save/core/theme/app_tokens.dart';
+import 'package:social_save/features/chat/chat_ui.dart';
 
 /// A status that contains a link. Tap opens the site. A video also offers Download.
 class StatusLinkCard extends StatelessWidget {
@@ -21,7 +23,7 @@ class StatusLinkCard extends StatelessWidget {
         final host = Uri.tryParse(url)?.host ?? url;
         return Material(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: AppRadii.lgAll,
           clipBehavior: Clip.antiAlias,
           child: InkWell(
             onTap: () => openWebLink(url),
@@ -50,12 +52,12 @@ class StatusLinkCard extends StatelessWidget {
                   ),
                 ),
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
                   child: Text(
                     host,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Color(0xFF667781), fontSize: 13),
+                    style: const TextStyle(color: ChatUiTokens.timeLight, fontSize: 13),
                   ),
                 ),
                 Row(

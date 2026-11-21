@@ -18,6 +18,7 @@ import 'package:social_save/web/web_library.dart';
 import 'package:social_save/web/web_pages.dart';
 import 'package:social_save/web/web_saver.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 const _maxBytes = 200 * 1024 * 1024;
 
@@ -53,7 +54,7 @@ String _message(String body, String fallback) {
     final data = jsonDecode(body) as Map<String, dynamic>;
     final error = data['error'];
     if (error is Map && error['message'] is String) return error['message'] as String;
-  } catch (_) {}
+  } catch (e) { logQuiet('web_relay', e); }
   return fallback;
 }
 
@@ -256,7 +257,7 @@ class _UploadDialogState extends State<_UploadDialog> {
         final data = jsonDecode(body) as Map<String, dynamic>;
         setState(() => _code = data['code'] as String);
         return;
-      } catch (_) {}
+      } catch (e) { logQuiet('web_relay', e); }
     }
     setState(() => _error = status == 0
         ? 'Could not reach the server. Check your connection.'

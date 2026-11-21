@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 const chatDraftKey = 'chat.drafts.v1';
 
@@ -30,7 +31,7 @@ class ChatDrafts {
             }
           }
         }
-      } catch (_) {}
+      } catch (e) { logQuiet('chat_drafts', e); }
     }
     _loaded = true;
     revision.value++;

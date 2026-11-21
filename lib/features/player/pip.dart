@@ -1,10 +1,11 @@
 import 'package:social_save/core/platform/media_events.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 class PipController {
   static Future<void> setAllowed(bool allowed) async {
     try {
       await MediaEvents.channel.invokeMethod<void>('setPipAllowed', {'allowed': allowed});
-    } catch (_) {}
+    } catch (e) { logQuiet('pip', e); }
   }
 
   static Future<void> setAspect(int width, int height) async {
@@ -13,7 +14,7 @@ class PipController {
         'width': width,
         'height': height,
       });
-    } catch (_) {}
+    } catch (e) { logQuiet('pip', e); }
   }
 
   static Future<bool> enter() async {

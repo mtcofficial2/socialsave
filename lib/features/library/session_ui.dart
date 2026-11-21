@@ -26,6 +26,7 @@ import 'package:social_save/core/notifications/notification_service.dart';
 import 'package:social_save/features/library/usb_link.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 /// Hooks [ShareSession] to the UI. Called from installNearbyUi().
 void installSessionUi() {
@@ -87,7 +88,7 @@ Future<void> _offerUsbShare(String name) async {
   var front = true;
   try {
     front = await windowManager.isVisible() && !await windowManager.isMinimized() && await windowManager.isFocused();
-  } catch (_) {}
+  } catch (e) { logQuiet('session_ui', e); }
   if (!front) unawaited(NotificationService().showUsbShare(name));
   final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
   if (ctx == null || !ctx.mounted) return;
@@ -113,7 +114,7 @@ Future<void> openUsbShare() async {
       await windowManager.show();
       if (await windowManager.isMinimized()) await windowManager.restore();
       await windowManager.focus();
-    } catch (_) {}
+    } catch (e) { logQuiet('session_ui', e); }
   }
   NearbyService.ping();
   NearbyDevice? usb;
@@ -164,7 +165,7 @@ Future<void> _afterConnected() async {
   try {
     final st = await Permission.notification.status;
     if (!st.isGranted && !st.isPermanentlyDenied) await Permission.notification.request();
-  } catch (_) {}
+  } catch (e) { logQuiet('session_ui', e); }
   if (await SessionKeepAlive.batteryExempt()) return;
   final prefs = await SharedPreferences.getInstance();
   if (prefs.getBool(_batteryAskedKey) == true) return;
@@ -331,7 +332,7 @@ Future<void> landOnSession() async {
   for (final close in ShareSession.pairingUi.toList()) {
     try {
       close();
-    } catch (_) {}
+    } catch (e) { logQuiet('session_ui', e); }
   }
   ShareSession.pairingUi.clear();
   final nav = appRouter.routerDelegate.navigatorKey.currentState;

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:social_save/core/platform/desktop_support.dart';
+import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 class DeviceVideo {
   const DeviceVideo({
@@ -177,9 +178,9 @@ class DeviceMediaService {
           for (final f in inside) {
             try {
               await _channel.invokeMethod<void>('scanFile', {'path': f});
-            } catch (_) {}
+            } catch (e) { logQuiet('device_media', e); }
           }
-        } catch (_) {}
+        } catch (e) { logQuiet('device_media', e); }
       } else {
         files.add(path);
       }
@@ -190,7 +191,7 @@ class DeviceMediaService {
               'items': [for (final f in files) {'id': null, 'path': f, 'uri': null}],
             }) ??
             0;
-      } catch (_) {}
+      } catch (e) { logQuiet('device_media', e); }
     }
     return n;
   }
@@ -198,7 +199,7 @@ class DeviceMediaService {
   Future<void> setSecure(bool secure) async {
     try {
       await _channel.invokeMethod('setSecure', {'secure': secure});
-    } catch (_) {}
+    } catch (e) { logQuiet('device_media', e); }
   }
 
   Future<String?> videoThumbnail({
