@@ -79,9 +79,6 @@ class SettingsController extends Notifier<AppSettings> {
     return _commit(state.copyWith(liquidGlass: value));
   }
 
-  Future<void> setClassicHome(bool value) {
-    return _commit(state.copyWith(classicHome: value));
-  }
 
   Future<void> setUsbQuickAction(bool value) {
     return _commit(state.copyWith(usbQuickAction: value));
@@ -95,9 +92,6 @@ class SettingsController extends Notifier<AppSettings> {
     return _commit(state.copyWith(offerCopiedLinks: value));
   }
 
-  Future<void> setClassicLibrary(bool value) {
-    return _commit(state.copyWith(classicLibrary: value));
-  }
 
   Future<void> setOnlyWhileCharging(bool value) {
     return _commit(state.copyWith(onlyWhileCharging: value));

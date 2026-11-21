@@ -21,10 +21,8 @@ class AppSettings extends Equatable {
     this.qualityByPlatform = const {},
     this.useDynamicColor = false,
     this.liquidGlass = true,
-    this.classicHome = false,
     this.minimalShortcuts = true,
     this.usbQuickAction = true,
-    this.classicLibrary = false,
     this.offerCopiedLinks = true,
     this.onlyWhileCharging = false,
     this.pauseBelowBattery = false,
@@ -54,14 +52,12 @@ class AppSettings extends Equatable {
 
   /// iPhone-style lens on the tab bar, main buttons, players, and theme switch.
   final bool liquidGlass;
-  final bool classicHome;
 
   /// Home quick shortcuts without the card background (icon + label).
   final bool minimalShortcuts;
 
   /// 1.0.46: "Share files" prompt when a USB cable links phone and PC.
   final bool usbQuickAction;
-  final bool classicLibrary;
   final bool offerCopiedLinks;
   final bool onlyWhileCharging;
   final bool pauseBelowBattery;
@@ -98,10 +94,8 @@ class AppSettings extends Equatable {
     Map<String, String>? qualityByPlatform,
     bool? useDynamicColor,
     bool? liquidGlass,
-    bool? classicHome,
     bool? minimalShortcuts,
     bool? usbQuickAction,
-    bool? classicLibrary,
     bool? offerCopiedLinks,
     bool? onlyWhileCharging,
     bool? pauseBelowBattery,
@@ -130,10 +124,8 @@ class AppSettings extends Equatable {
       qualityByPlatform: qualityByPlatform ?? this.qualityByPlatform,
       useDynamicColor: useDynamicColor ?? this.useDynamicColor,
       liquidGlass: liquidGlass ?? this.liquidGlass,
-      classicHome: classicHome ?? this.classicHome,
       minimalShortcuts: minimalShortcuts ?? this.minimalShortcuts,
       usbQuickAction: usbQuickAction ?? this.usbQuickAction,
-      classicLibrary: classicLibrary ?? this.classicLibrary,
       offerCopiedLinks: offerCopiedLinks ?? this.offerCopiedLinks,
       onlyWhileCharging: onlyWhileCharging ?? this.onlyWhileCharging,
       pauseBelowBattery: pauseBelowBattery ?? this.pauseBelowBattery,
@@ -167,10 +159,8 @@ class AppSettings extends Equatable {
       'qualityByPlatform': qualityByPlatform,
       'useDynamicColor': useDynamicColor,
       'liquidGlass': liquidGlass,
-      'classicHome': classicHome,
       'minimalShortcuts': minimalShortcuts,
       'usbQuickAction': usbQuickAction,
-      'classicLibrary': classicLibrary,
       'offerCopiedLinks': offerCopiedLinks,
       'onlyWhileCharging': onlyWhileCharging,
       'pauseBelowBattery': pauseBelowBattery,
@@ -215,10 +205,8 @@ class AppSettings extends Equatable {
       qualityByPlatform: _stringMap(map['qualityByPlatform']),
       useDynamicColor: map['useDynamicColor'] as bool? ?? true,
       liquidGlass: map['liquidGlass'] as bool? ?? true,
-      classicHome: map['classicHome'] as bool? ?? false,
       minimalShortcuts: map['minimalShortcuts'] as bool? ?? true,
       usbQuickAction: map['usbQuickAction'] as bool? ?? true,
-      classicLibrary: map['classicLibrary'] as bool? ?? false,
       offerCopiedLinks: map['offerCopiedLinks'] as bool? ?? true,
       onlyWhileCharging: map['onlyWhileCharging'] as bool? ?? false,
       pauseBelowBattery: map['pauseBelowBattery'] as bool? ?? false,
@@ -251,10 +239,8 @@ class AppSettings extends Equatable {
         qualityByPlatform,
         useDynamicColor,
         liquidGlass,
-        classicHome,
         minimalShortcuts,
         usbQuickAction,
-        classicLibrary,
       offerCopiedLinks,
         onlyWhileCharging,
         pauseBelowBattery,

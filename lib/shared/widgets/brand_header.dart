@@ -88,11 +88,15 @@ class StitchNavBar extends StatelessWidget {
     required this.index,
     required this.onSelect,
     this.downloadBadge = 0,
+    this.moreBadge = 0,
   });
 
   final int index;
   final ValueChanged<int> onSelect;
   final int downloadBadge;
+
+  /// Unread chats, shown on the More tab.
+  final int moreBadge;
 
   /// 1.0.47: fill of the active-tab oval (Telegram style): a soft, slightly
   /// lighter translucent stadium, tinted with the accent.
@@ -111,6 +115,7 @@ class StitchNavBar extends StatelessWidget {
     (Icons.video_library_outlined, Icons.video_library_rounded, 'Library'),
     (Icons.download_outlined, Icons.download_rounded, 'Downloads'),
     (Icons.tune_outlined, Icons.tune_rounded, 'Settings'),
+    (Icons.grid_view_outlined, Icons.grid_view_rounded, 'More'),
   ];
 
   @override
@@ -159,7 +164,8 @@ class StitchNavBar extends StatelessWidget {
                             _tabs[i].$1,
                             _tabs[i].$2,
                             _tabs[i].$3,
-                            badge: i == 2 ? downloadBadge : 0,
+                            badge: i == 2 ? downloadBadge : (i == 4 ? moreBadge : 0),
+                            badgeNoun: i == 4 ? 'unread' : 'active',
                           ),
                       ],
                     ),
@@ -181,6 +187,7 @@ class StitchNavBar extends StatelessWidget {
     IconData selectedIcon,
     String label, {
     int badge = 0,
+    String badgeNoun = 'active',
   }) {
     final selected = index == i;
     final scheme = Theme.of(context).colorScheme;
@@ -193,7 +200,7 @@ class StitchNavBar extends StatelessWidget {
       child: Semantics(
         button: true,
         selected: selected,
-        label: badge > 0 ? '$label, $badge active' : label,
+        label: badge > 0 ? '$label, $badge $badgeNoun' : label,
         child: Padding(
           padding: const EdgeInsets.all(5),
           child: Material(

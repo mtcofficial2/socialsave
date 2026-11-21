@@ -20,7 +20,7 @@ import 'package:social_save/features/downloads/domain/entities/download_record.d
 import 'package:social_save/features/downloads/presentation/providers/downloads_controller.dart';
 import 'package:social_save/features/home/presentation/providers/home_controller.dart';
 import 'package:social_save/features/home/presentation/providers/save_queue.dart';
-import 'package:social_save/features/home/presentation/screens/home_screen.dart';
+import 'package:social_save/features/home/presentation/widgets/recent_links.dart';
 import 'package:social_save/features/home/presentation/widgets/save_queue_section.dart';
 import 'package:social_save/features/home/presentation/widgets/supported_platforms.dart';
 import 'package:social_save/features/home/presentation/widgets/url_input_card.dart';
@@ -29,7 +29,7 @@ import 'package:social_save/features/home/presentation/widgets/link_offer.dart';
 import 'package:social_save/features/library/app_share.dart';
 import 'package:social_save/features/library/hotspot_share.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
-import 'package:social_save/features/library/presentation/library_screen.dart'
+import 'package:social_save/features/library/presentation/vault_lock.dart'
     show vaultServiceProvider;
 import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
@@ -42,18 +42,6 @@ import 'package:social_save/shared/widgets/video_thumbnail.dart';
 import 'package:social_save/web/web_relay.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
 import 'package:social_save/core/theme/app_tokens.dart';
-
-/// Picks the Home screen live: the new one, or the old one when
-/// Settings > Appearance > "Classic home screen" is on.
-class HomeGate extends ConsumerWidget {
-  const HomeGate({super.key});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final classic = ref.watch(settingsControllerProvider.select((s) => s.classicHome));
-    return classic ? const HomeScreen() : const HomeScreenV2();
-  }
-}
 
 /// Premium, minimal Home: one calm primary area, quick actions, recent list.
 class HomeScreenV2 extends ConsumerStatefulWidget {
@@ -290,11 +278,30 @@ class _HomeScreenV2State extends ConsumerState<HomeScreenV2> with WidgetsBinding
     );
   }
 
+  /// Opens the playlist page for the link in the field, even when it does
+  /// not look like a playlist (moved from the classic Home in 1.0.123).
+  Future<void> _playlist() async {
+    final url = ref.read(homeControllerProvider.notifier).validatedUrl();
+    if (url == null || !mounted) return;
+    unawaited(HapticFeedback.lightImpact());
+    await context.push('/playlist', extra: url);
+  }
+
   List<Widget> _primary(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return [
       UrlInputCard(onAnalyze: _analyze, onPaste: _paste),
-      const SizedBox(height: AppSpacing.lg),
+      const RecentLinks(),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          key: const ValueKey('home-playlist'),
+          onPressed: _playlist,
+          icon: const Icon(Icons.playlist_play_rounded),
+          label: const Text('Save a public playlist'),
+        ),
+      ),
+      const SizedBox(height: AppSpacing.sm),
       const FavoriteCreatorsRow(),
       _wakingRow(scheme),
     ];

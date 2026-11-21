@@ -13,19 +13,15 @@ class DesktopSidebar extends StatelessWidget {
     required this.index,
     required this.onSelect,
     this.downloadBadge = 0,
-    this.onShare,
-    this.onMusic,
-    this.onChat,
+    this.moreBadge = 0,
   });
 
-  final VoidCallback? onChat;
-
-  final VoidCallback? onMusic;
-
-  final VoidCallback? onShare;
   final int index;
   final ValueChanged<int> onSelect;
   final int downloadBadge;
+
+  /// Unread chats, shown on More.
+  final int moreBadge;
 
   @override
   Widget build(BuildContext context) {
@@ -63,35 +59,9 @@ class DesktopSidebar extends StatelessWidget {
               _SideNav(
                 index: index,
                 downloadBadge: downloadBadge,
+                moreBadge: moreBadge,
                 onSelect: onSelect,
               ),
-              if (onChat != null) ...[
-                const SizedBox(height: AppSpacing.sm),
-                TextButton.icon(
-                  key: const ValueKey('sidebar-chat'),
-                  onPressed: onChat,
-                  icon: const Icon(Icons.forum_rounded),
-                  label: const Text('Chats'),
-                ),
-              ],
-              if (onMusic != null) ...[
-                const SizedBox(height: AppSpacing.sm),
-                TextButton.icon(
-                  key: const ValueKey('sidebar-music'),
-                  onPressed: onMusic,
-                  icon: const Icon(Icons.library_music_rounded),
-                  label: const Text('Music'),
-                ),
-              ],
-              if (onShare != null) ...[
-                const SizedBox(height: AppSpacing.md),
-                FilledButton.tonalIcon(
-                  key: const ValueKey('sidebar-share'),
-                  onPressed: onShare,
-                  icon: const Icon(Icons.swap_horiz_rounded),
-                  label: const Text('Send / Receive'),
-                ),
-              ],
               const Spacer(),
               Padding(
                 padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.sm, 0),
@@ -117,11 +87,13 @@ class _SideNav extends StatelessWidget {
   const _SideNav({
     required this.index,
     required this.downloadBadge,
+    required this.moreBadge,
     required this.onSelect,
   });
 
   final int index;
   final int downloadBadge;
+  final int moreBadge;
   final ValueChanged<int> onSelect;
 
   static const _tabs = <(IconData, IconData, String)>[
@@ -129,6 +101,7 @@ class _SideNav extends StatelessWidget {
     (Icons.video_library_outlined, Icons.video_library_rounded, 'Library'),
     (Icons.download_outlined, Icons.download_rounded, 'Downloads'),
     (Icons.tune_outlined, Icons.tune_rounded, 'Settings'),
+    (Icons.grid_view_outlined, Icons.grid_view_rounded, 'More'),
   ];
 
   @override
@@ -160,7 +133,8 @@ class _SideNav extends StatelessWidget {
                     icon: _tabs[i].$1,
                     selectedIcon: _tabs[i].$2,
                     label: _tabs[i].$3,
-                    badge: i == 2 ? downloadBadge : 0,
+                    badge: i == 2 ? downloadBadge : (i == 4 ? moreBadge : 0),
+                    badgeNoun: i == 4 ? 'unread' : 'new',
                     onTap: () => onSelect(i),
                   ),
                 ),
@@ -180,6 +154,7 @@ class _SideDestination extends StatefulWidget {
     required this.label,
     required this.onTap,
     this.badge = 0,
+    this.badgeNoun = 'new',
   });
 
   final bool selected;
@@ -188,6 +163,7 @@ class _SideDestination extends StatefulWidget {
   final String label;
   final VoidCallback onTap;
   final int badge;
+  final String badgeNoun;
 
   @override
   State<_SideDestination> createState() => _SideDestinationState();
@@ -239,7 +215,7 @@ class _SideDestinationState extends State<_SideDestination> {
       child: Semantics(
         button: true,
         selected: selected,
-        label: widget.badge > 0 ? '${widget.label}, ${widget.badge} new' : widget.label,
+        label: widget.badge > 0 ? '${widget.label}, ${widget.badge} ${widget.badgeNoun}' : widget.label,
         excludeSemantics: true,
         onTap: widget.onTap,
         child: GestureDetector(

@@ -77,7 +77,7 @@ class SettingsScreen extends ConsumerWidget {
             const SizedBox(height: AppSpacing.md),
             DesktopColumns(
               sections: [
-                _Sec(title: 'Appearance & theme', keys: 'appearance theme dark light system font typeface wallpaper color home shortcuts minimal liquid glass fuller log owner screen lock notification', child: Column(
+                _Sec(title: 'Appearance & theme', keys: 'appearance theme dark light system font typeface wallpaper color shortcuts minimal liquid glass fuller log owner screen lock notification', child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
             _groupTitle(context, Icons.palette_outlined, 'Appearance & theme'),
@@ -155,14 +155,6 @@ class SettingsScreen extends ConsumerWidget {
                     ),
                     const SizedBox(height: AppSpacing.xs),
                     SwitchListTile(
-                      key: const ValueKey('classic-home-switch'),
-                      contentPadding: EdgeInsets.zero,
-                      title: Text('Classic home screen', style: context.tokens.itemTitle),
-                      subtitle: Text('Turn on to bring back the previous Home layout', style: context.tokens.itemSubtitle),
-                      value: settings.classicHome,
-                      onChanged: controller.setClassicHome,
-                    ),
-                    SwitchListTile(
                       key: const ValueKey('minimal-shortcuts-switch'),
                       contentPadding: EdgeInsets.zero,
                       title: Text('Minimal home shortcuts', style: context.tokens.itemTitle),
@@ -201,14 +193,6 @@ class SettingsScreen extends ConsumerWidget {
                         onTap: () => showPhoneControl(context),
                       ),
                     if (Plat.isAndroid) const _FullerLogTile(),
-                    SwitchListTile(
-                      key: const ValueKey('classic-library-switch'),
-                      contentPadding: EdgeInsets.zero,
-                      title: Text('Classic library', style: context.tokens.itemTitle),
-                      subtitle: Text('Turn on to bring back the previous Library layout', style: context.tokens.itemSubtitle),
-                      value: settings.classicLibrary,
-                      onChanged: controller.setClassicLibrary,
-                    ),
                     SwitchListTile(
                       key: const ValueKey('offer-copied-links-switch'),
                       contentPadding: EdgeInsets.zero,

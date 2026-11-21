@@ -28,14 +28,8 @@ import 'package:social_save/features/library/phone_handoff.dart';
 import 'package:social_save/features/library/session_ui.dart';
 import 'package:social_save/features/library/share_session.dart';
 import 'package:social_save/features/library/presentation/library_look.dart';
-import 'package:social_save/features/library/presentation/library_screen.dart'
-    show
-        LibraryScreen,
-        VaultLockPane,
-        ensureVaultUnlocked,
-        vaultServiceProvider,
-        vaultUnlockedProvider;
-import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
+import 'package:social_save/features/library/presentation/vault_lock.dart'
+    show VaultLockPane, ensureVaultUnlocked, vaultServiceProvider, vaultUnlockedProvider;
 import 'package:social_save/features/library/summarize_sheet.dart';
 import 'package:social_save/features/library/tiktok_ready.dart';
 import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
@@ -55,18 +49,6 @@ double _libraryGutter(BuildContext context) {
   if (width >= 1100) return 32;
   if (width >= 840) return 24;
   return 20;
-}
-
-/// Picks the Library live: the new one, or the old one when Settings >
-/// Appearance > "Classic library" is on.
-class LibraryGate extends ConsumerWidget {
-  const LibraryGate({super.key});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final classic = ref.watch(settingsControllerProvider.select((s) => s.classicLibrary));
-    return classic ? const LibraryScreen() : const LibraryScreenV2();
-  }
 }
 
 class LibraryScreenV2 extends ConsumerStatefulWidget {

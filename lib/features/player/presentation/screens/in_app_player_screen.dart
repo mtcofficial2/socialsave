@@ -132,15 +132,17 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   Duration? _markB;
   bool _loopAB = false;
   bool _showEndCard = false;
-  int _countdown = 5;
+  // Ticks once a second on the end card; only the card listens.
+  final ValueNotifier<int> _countdown = ValueNotifier<int>(5);
   Timer? _nextTimer;
   late List<PlayerQueueItem> _queue;
   // Desktop keyboard / mouse.
   final GlobalKey<VideoState> _videoKey = GlobalKey<VideoState>();
   final FocusNode _keyFocus = FocusNode(debugLabel: 'player-keys');
-  String? _osd;
-  IconData? _osdIcon;
-  bool _osdVisible = false;
+  // On-screen feedback; only the HUD pill listens, not the whole page.
+  final ValueNotifier<_OsdState> _osd = ValueNotifier<_OsdState>(
+    const _OsdState(),
+  );
   Timer? _osdTimer;
   // Our own full screen (same page, so the OSD and keys keep working).
   bool _fs = false;
@@ -261,10 +263,11 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     _subs.add(
       _player.stream.volume.listen((value) {
         if (!mounted) return;
-        setState(() {
-          _volume = value;
-          _muted = value <= 0;
-        });
+        _volume = value;
+        // Only the mute state is drawn on this page; the volume slider lives
+        // in its own sheet, so a drag no longer rebuilds the whole player.
+        final muted = value <= 0;
+        if (muted != _muted) setState(() => _muted = muted);
       }),
     );
     _subs.add(
@@ -1427,22 +1430,20 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     }
     if (_loop || _showEndCard) return;
     final autoNext = ref.read(settingsControllerProvider).autoPlayNextInGallery;
-    setState(() {
-      _showEndCard = true;
-      _countdown = 5;
-    });
+    _countdown.value = 5;
+    setState(() => _showEndCard = true);
     if (!autoNext || !_hasNext) return;
     _nextTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted) {
         timer.cancel();
         return;
       }
-      if (_countdown <= 1) {
+      if (_countdown.value <= 1) {
         timer.cancel();
         unawaited(_playNext());
         return;
       }
-      setState(() => _countdown -= 1);
+      _countdown.value -= 1;
     });
   }
 
@@ -1463,14 +1464,10 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   void _flash(String text, {IconData? icon}) {
     _osdTimer?.cancel();
     if (mounted) {
-      setState(() {
-        _osd = text;
-        _osdIcon = icon;
-        _osdVisible = true;
-      });
+      _osd.value = _OsdState(text: text, icon: icon, visible: true);
     }
     _osdTimer = Timer(const Duration(milliseconds: 1100), () {
-      if (mounted) setState(() => _osdVisible = false);
+      if (mounted) _osd.value = _osd.value.hidden();
     });
   }
 
@@ -1480,10 +1477,15 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     return IgnorePointer(
       child: Align(
         alignment: const Alignment(0, -0.45),
-        child: AnimatedOpacity(
-          opacity: _osdVisible && _osd != null ? 1 : 0,
-          duration: Duration(milliseconds: _osdVisible ? 90 : 350),
-          child: PlayerHudPill(text: _osd ?? '', icon: _osdIcon),
+        child: RepaintBoundary(
+          child: ValueListenableBuilder<_OsdState>(
+            valueListenable: _osd,
+            builder: (context, osd, _) => AnimatedOpacity(
+              opacity: osd.visible && osd.text != null ? 1 : 0,
+              duration: Duration(milliseconds: osd.visible ? 90 : 350),
+              child: PlayerHudPill(text: osd.text ?? '', icon: osd.icon),
+            ),
+          ),
         ),
       ),
     );
@@ -2575,7 +2577,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                   : const Offset(0, 0.025),
               duration: const Duration(milliseconds: 260),
               curve: Curves.easeOutCubic,
-              child: _phoneChrome(),
+              child: RepaintBoundary(child: _phoneChrome()),
             ),
           ),
         ),
@@ -3021,7 +3023,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
         children: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: _DockSeek(player: _player, themed: _themedChrome),
+            child: RepaintBoundary(
+              child: _DockSeek(player: _player, themed: _themedChrome),
+            ),
           ),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -3217,6 +3221,8 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
     _chromeTimer?.cancel();
     _seekTimer?.cancel();
     _osdTimer?.cancel();
+    _osd.dispose();
+    _countdown.dispose();
     if (DesktopSupport.isWindows) {
       HardwareKeyboard.instance.removeHandler(_onHardwareKey);
       InAppPlayerScreen.openCount--;
@@ -3264,7 +3270,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
   @override
   Widget build(BuildContext context) {
     final theme = _theme();
-    final Widget video = DesktopSupport.isWindows
+    // The picture repaints every frame; keep that work off the controls.
+    final Widget video = RepaintBoundary(
+      child: DesktopSupport.isWindows
         ? _desktopVideo()
         : MaterialVideoControlsTheme(
             normal: theme,
@@ -3278,17 +3286,20 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                   ? _hiddenControls
                   : MaterialVideoControls,
             ),
-          );
+          ),
+    );
 
     if (_inPip) {
       final pictureOnly = _FittedVideo(
         width: _frameWidth,
         height: _frameHeight,
-        child: Video(
-          controller: _video,
-          fill: Colors.black,
-          fit: BoxFit.contain,
-          controls: null,
+        child: RepaintBoundary(
+          child: Video(
+            controller: _video,
+            fill: Colors.black,
+            fit: BoxFit.contain,
+            controls: null,
+          ),
         ),
       );
       if (!DesktopSupport.isWindows) {
@@ -3426,7 +3437,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                                 opacity: !_locked && (_chrome || _showEndCard) ? 1 : 0,
                                 duration: const Duration(milliseconds: 220),
                                 curve: Curves.easeOutCubic,
-                                child: _desktopChrome(),
+                                child: RepaintBoundary(child: _desktopChrome()),
                               ),
                             ),
                           ],
@@ -3442,7 +3453,9 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                                   ? 1
                                   : 0,
                               duration: const Duration(milliseconds: 180),
-                              child: _holdControls(_controlDock(), 'dock'),
+                              child: RepaintBoundary(
+                                child: _holdControls(_controlDock(), 'dock'),
+                              ),
                             ),
                           ),
                           child: _videoHero(video),
@@ -3475,8 +3488,10 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                       if (_locked) _lockLayer(phone),
                       _osdLayer(),
                       if (_showEndCard)
-                        _EndCard(
-                          countdown: _countdown,
+                        ValueListenableBuilder<int>(
+                          valueListenable: _countdown,
+                          builder: (context, countdown, _) => _EndCard(
+                          countdown: countdown,
                           hasNext: _hasNext,
                           nextTitle: _hasNext
                               ? _queue[_queueIndex + 1].title
@@ -3488,6 +3503,7 @@ class _InAppPlayerScreenState extends ConsumerState<InAppPlayerScreen>
                           onPlayNext: _hasNext
                               ? () => unawaited(_playNext())
                               : null,
+                        ),
                         ),
                     ],
                   ),
@@ -4026,4 +4042,16 @@ class _DelayedSpinnerState extends State<_DelayedSpinner> {
       color: AppColors.secondaryContainer,
     );
   }
+}
+
+/// What the on-screen HUD pill shows.
+@immutable
+class _OsdState {
+  const _OsdState({this.text, this.icon, this.visible = false});
+
+  final String? text;
+  final IconData? icon;
+  final bool visible;
+
+  _OsdState hidden() => _OsdState(text: text, icon: icon);
 }

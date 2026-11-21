@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
 import 'package:social_save/features/downloads/presentation/providers/downloads_controller.dart';
-import 'package:social_save/features/library/presentation/library_screen.dart';
+import 'package:social_save/features/library/presentation/vault_lock.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
 
 Future<bool> moveDownloadToVault(

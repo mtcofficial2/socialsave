@@ -7,10 +7,10 @@ import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/network/connectivity_service.dart';
 import 'package:social_save/features/downloads/data/datasources/download_history_store.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
-import 'package:social_save/features/home/presentation/screens/home_screen.dart';
+import 'package:social_save/features/home/presentation/screens/home_screen_v2.dart';
 import 'package:social_save/shared/models/download_status.dart';
 import 'package:social_save/shared/models/social_platform.dart';
-import 'package:social_save/features/library/presentation/library_screen.dart'
+import 'package:social_save/features/library/presentation/vault_lock.dart'
     show vaultServiceProvider;
 import 'package:social_save/features/library/vault_service.dart';
 import 'package:social_save/features/settings/domain/entities/app_settings.dart';
@@ -57,7 +57,7 @@ void main() {
           initialSettingsProvider.overrideWithValue(const AppSettings()),
           vaultServiceProvider.overrideWithValue(await vault()),
         ],
-        child: const MaterialApp(home: HomeScreen()),
+        child: const MaterialApp(home: HomeScreenV2()),
       ),
     );
     // Nearby share keeps a small spinner while it looks for devices.
@@ -91,7 +91,7 @@ void main() {
           initialSettingsProvider.overrideWithValue(const AppSettings()),
           vaultServiceProvider.overrideWithValue(await vault()),
         ],
-        child: const MaterialApp(home: HomeScreen()),
+        child: const MaterialApp(home: HomeScreenV2()),
       ),
     );
     await tester.pump();
@@ -151,7 +151,7 @@ void main() {
           initialSettingsProvider.overrideWithValue(const AppSettings()),
           vaultServiceProvider.overrideWithValue(await vault()),
         ],
-        child: const MaterialApp(home: HomeScreen()),
+        child: const MaterialApp(home: HomeScreenV2()),
       ),
     );
     await tester.pump();

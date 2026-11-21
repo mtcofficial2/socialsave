@@ -45,7 +45,7 @@ import 'package:social_save/features/library/session_ui.dart';
 import 'package:flutter/rendering.dart';
 import 'dart:ui' as ui;
 import 'package:social_save/features/library/transfer_meter.dart';
-import 'package:social_save/features/library/presentation/library_screen.dart';
+import 'package:social_save/features/library/presentation/vault_lock.dart';
 import 'package:social_save/features/library/vault_service.dart';
 import 'package:social_save/features/settings/data/datasources/settings_store.dart';
 import 'package:social_save/features/player/player_session.dart';

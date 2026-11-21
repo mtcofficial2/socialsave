@@ -3,7 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/theme/app_colors.dart';
-import 'package:social_save/features/library/presentation/library_screen.dart';
+import 'package:social_save/features/library/presentation/library_screen_v2.dart';
+import 'package:social_save/features/library/presentation/vault_lock.dart';
 import 'package:social_save/features/library/vault_service.dart';
 
 void main() {
@@ -29,33 +30,25 @@ void main() {
             useMaterial3: true,
             colorScheme: AppColors.lightScheme(),
           ),
-          home: const LibraryScreen(),
+          home: const LibraryScreenV2(),
         ),
       ),
     );
     await tester.pump();
 
     expect(find.text('Library'), findsOneWidget);
-    expect(find.byKey(const ValueKey('library-select')), findsOneWidget);
-    expect(find.byKey(const ValueKey('library-share')), findsOneWidget);
-    expect(find.text('Share'), findsOneWidget);
-    expect(find.byKey(const ValueKey('nearby-send')), findsOneWidget);
-    expect(find.byKey(const ValueKey('nearby-receive')), findsOneWidget);
+    expect(find.byKey(const ValueKey('library-menu')), findsOneWidget);
     expect(find.text('Search by title'), findsOneWidget);
     expect(tester.takeException(), isNull);
 
-    final title = tester.widget<Text>(find.text('Library'));
-    expect(title.style?.color, AppColors.lightScheme().onSurface);
-
     await tester.tap(find.text('Vault'));
     await tester.pump();
-    expect(find.byKey(const ValueKey('library-share')), findsNothing);
-    expect(find.text('Create Passcode'), findsOneWidget);
+    expect(find.text('Create PIN'), findsOneWidget);
     final key = find.ancestor(
       of: find.text('5'),
-      matching: find.byType(AnimatedContainer),
+      matching: find.byType(InkResponse),
     );
-    expect(tester.getSize(key).width, inInclusiveRange(56, 70));
+    expect(tester.getSize(key).width, inInclusiveRange(80, 96));
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 20));
@@ -100,29 +93,29 @@ void main() {
     }
 
     await pumpPane(AppColors.lightScheme());
-    expect(find.text('Enter Vault PIN'), findsOneWidget);
+    expect(find.text('Enter PIN'), findsOneWidget);
     expect(
-      tester.widget<Text>(find.text('Enter Vault PIN')).style?.color,
+      tester.widget<Text>(find.text('Enter PIN')).style?.color,
       AppColors.lightScheme().onSurface,
     );
     final lightKey = find.ancestor(
       of: find.text('5'),
-      matching: find.byType(AnimatedContainer),
+      matching: find.byType(InkResponse),
     );
-    expect(tester.getSize(lightKey).width, inInclusiveRange(56, 70));
+    expect(tester.getSize(lightKey).width, inInclusiveRange(80, 96));
     _expectEvenDial(tester);
 
     await pumpPane(AppColors.darkScheme());
-    expect(find.text('Enter Vault PIN'), findsOneWidget);
+    expect(find.text('Enter PIN'), findsOneWidget);
     expect(
-      tester.widget<Text>(find.text('Enter Vault PIN')).style?.color,
+      tester.widget<Text>(find.text('Enter PIN')).style?.color,
       AppColors.darkScheme().onSurface,
     );
     final darkKey = find.ancestor(
       of: find.text('5'),
-      matching: find.byType(AnimatedContainer),
+      matching: find.byType(InkResponse),
     );
-    expect(tester.getSize(darkKey).width, inInclusiveRange(56, 70));
+    expect(tester.getSize(darkKey).width, inInclusiveRange(80, 96));
     _expectEvenDial(tester);
     expect(tester.takeException(), isNull);
   });
@@ -133,18 +126,21 @@ void _expectEvenDial(WidgetTester tester) {
     return tester.getRect(
       find.ancestor(
         of: find.text(digit),
-        matching: find.byType(AnimatedContainer),
+        matching: find.byType(InkResponse),
       ),
     );
   }
 
+  final four = circle('4');
   final five = circle('5');
   final six = circle('6');
   final eight = circle('8');
-  final across = six.left - five.right;
-  final down = eight.top - five.bottom;
-  expect((across - down).abs(), lessThan(3));
-  expect(across, inInclusiveRange(12, 22));
+  // Keys sit on an even 3-column grid: same gaps across, 8 straight below 5.
+  final left = five.center.dx - four.center.dx;
+  final right = six.center.dx - five.center.dx;
+  expect((left - right).abs(), lessThan(1));
+  expect((eight.center.dx - five.center.dx).abs(), lessThan(1));
+  expect(eight.top, greaterThanOrEqualTo(five.bottom - 0.5));
 
   final paneTop = tester.getTopLeft(find.byType(VaultLockPane)).dy;
   final paneHeight = tester.getSize(find.byType(VaultLockPane)).height;

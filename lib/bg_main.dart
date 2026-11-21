@@ -12,7 +12,8 @@ import 'package:social_save/core/storage/download_path_service.dart';
 import 'package:social_save/core/storage/hive_init.dart';
 import 'package:social_save/features/downloads/data/datasources/download_history_store.dart';
 import 'package:social_save/features/library/phone_handoff.dart';
-import 'package:social_save/features/library/presentation/library_screen.dart' show vaultServiceProvider;
+import 'package:social_save/features/library/presentation/vault_lock.dart'
+    show vaultServiceProvider;
 import 'package:social_save/features/library/vault_service.dart';
 import 'package:social_save/features/settings/data/datasources/settings_store.dart';
 

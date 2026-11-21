@@ -7,7 +7,7 @@ import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/network/connectivity_service.dart';
 import 'package:social_save/features/downloads/data/datasources/download_history_store.dart';
 import 'package:social_save/features/home/presentation/screens/home_screen_v2.dart';
-import 'package:social_save/features/library/presentation/library_screen.dart'
+import 'package:social_save/features/library/presentation/vault_lock.dart'
     show vaultServiceProvider;
 import 'package:social_save/features/library/vault_service.dart';
 import 'package:social_save/features/settings/domain/entities/app_settings.dart';

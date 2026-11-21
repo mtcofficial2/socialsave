@@ -18,7 +18,6 @@ import 'package:social_save/features/downloads/presentation/screens/downloads_sc
 import 'package:social_save/features/player/player_session.dart';
 import 'package:social_save/features/player/presentation/screens/in_app_player_screen.dart';
 import 'package:social_save/features/home/presentation/screens/home_screen_v2.dart';
-import 'package:social_save/features/library/presentation/library_screen.dart';
 import 'package:social_save/features/library/presentation/library_screen_v2.dart';
 import 'package:social_save/features/settings/presentation/screens/about_screen.dart';
 import 'package:social_save/features/settings/presentation/screens/legal_screen.dart';
@@ -33,6 +32,7 @@ import 'package:social_save/shared/widgets/windows_drop_zone.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:social_save/web/web_library.dart';
 import 'package:social_save/shared/widgets/empty_state.dart';
+import 'package:social_save/features/more/more_screen.dart';
 
 /// Set before runApp by the `--open <path>` test switch.
 String debugInitialLocation = '/';
@@ -103,7 +103,7 @@ final appRouter = GoRouter(
             GoRoute(
               path: '/',
               pageBuilder: (context, state) => const NoTransitionPage(
-                child: HomeGate(),
+                child: HomeScreenV2(),
               ),
             ),
           ],
@@ -113,7 +113,7 @@ final appRouter = GoRouter(
             GoRoute(
               path: '/library',
               pageBuilder: (context, state) => const NoTransitionPage(
-                child: kIsWeb ? WebLibraryScreen() : LibraryGate(),
+                child: kIsWeb ? WebLibraryScreen() : LibraryScreenV2(),
               ),
             ),
           ],
@@ -143,6 +143,18 @@ final appRouter = GoRouter(
               path: '/settings',
               pageBuilder: (context, state) => const NoTransitionPage(
                 child: SettingsScreen(),
+              ),
+            ),
+          ],
+        ),
+        // More: Chats, Music and Send / Receive in one place. The pages
+        // themselves keep their own routes (/chat, /music, /share).
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/more',
+              pageBuilder: (context, state) => const NoTransitionPage(
+                child: MoreScreen(),
               ),
             ),
           ],

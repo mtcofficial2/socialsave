@@ -180,7 +180,10 @@ class PhonePlayerChrome extends StatelessWidget {
                   ),
                 ),
               ),
-              _PhoneSeek(player: player, centerLabel: resolution),
+              // Ticks with every position update; isolate its repaints.
+              RepaintBoundary(
+                child: _PhoneSeek(player: player, centerLabel: resolution),
+              ),
               const SizedBox(height: 2),
               _actionRow(context),
             ],
@@ -411,16 +414,18 @@ class PhonePlayerChrome extends StatelessWidget {
     if (LiquidGlassScope.of(context)) {
       return _GlassOrb(size: size, onTap: tap, child: face);
     }
-    return ClipOval(
-      child: BackdropFilter(
-        filter: GlassTokens.blur(16),
-        child: Material(
-          color: ink.withValues(alpha: 0.62),
-          shape: const CircleBorder(),
-          child: InkWell(
-            customBorder: const CircleBorder(),
-            onTap: tap,
-            child: face,
+    return RepaintBoundary(
+      child: ClipOval(
+        child: BackdropFilter(
+          filter: GlassTokens.blur(16),
+          child: Material(
+            color: ink.withValues(alpha: 0.62),
+            shape: const CircleBorder(),
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: tap,
+              child: face,
+            ),
           ),
         ),
       ),

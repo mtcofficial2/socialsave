@@ -135,6 +135,9 @@ class _ChatThreadViewState extends State<ChatThreadView>
   Timer? _draftTimer;
   Timer? _typingIdle;
   Timer? _typingClock;
+  // Bumped when the peer starts or stops typing or recording. Only the
+  // activity lines listen, so a typing blip no longer rebuilds the thread.
+  final ValueNotifier<int> _activityTick = ValueNotifier<int>(0);
   StreamSubscription<ChatLiveEvent>? _live;
   final Map<int, GlobalKey> _rowKeys = {};
   int _localSeq = 0;
@@ -225,6 +228,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     _draftTimer?.cancel();
     _typingIdle?.cancel();
     _typingClock?.cancel();
+    _activityTick.dispose();
     _text.removeListener(_onDraftChanged);
     final pendingDraft = _text.text;
     final threadId = _threadId;
@@ -331,14 +335,14 @@ class _ChatThreadViewState extends State<ChatThreadView>
 
   void _onTypingClock() {
     if (!mounted) return;
-    setState(() {});
+    _activityTick.value++;
     _typingClock?.cancel();
     final live =
         ChatLive.isTyping(_threadId) ||
         ChatLive.isRecording(_threadId);
     if (!live) return;
     _typingClock = Timer(const Duration(seconds: 4), () {
-      if (mounted) setState(() {});
+      if (mounted) _activityTick.value++;
     });
   }
 
@@ -2520,8 +2524,6 @@ class _ChatThreadViewState extends State<ChatThreadView>
     final dark = scheme.brightness == Brightness.dark;
     final canvas = ChatUiTokens.canvas(dark);
     final selecting = _selected.isNotEmpty;
-    final recording = ChatLive.isRecording(_threadId);
-    final peerTyping = !recording && ChatLive.isTyping(_threadId);
     final presence = chatPresenceLabel(
       _peerSeen,
       _peerOnline,
@@ -2634,10 +2636,11 @@ class _ChatThreadViewState extends State<ChatThreadView>
                           letterSpacing: -0.2,
                         ),
                       ),
-                      if (recording || peerTyping)
-                        ChatActivityLine(recording: recording)
-                      else
-                        ValueListenableBuilder<bool>(
+                      _ActivitySlot(
+                        tick: _activityTick,
+                        threadId: _threadId,
+                        builder: (recording) => ChatActivityLine(recording: recording),
+                        idle: ValueListenableBuilder<bool>(
                           valueListenable: ChatLive.instance.connected,
                           builder: (context, connected, _) {
                             if (!connected) {
@@ -2667,6 +2670,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
                             );
                           },
                         ),
+                      ),
                     ],
                   ),
                 ),
@@ -2808,7 +2812,10 @@ class _ChatThreadViewState extends State<ChatThreadView>
                               message.at.difference(previous.at).inMinutes.abs() <
                                   5;
                           final picked = _selected.contains(message.id);
-                          Widget bubble = ChatBubble(
+                          // Each bubble paints on its own layer, so selection,
+                          // swipe-to-reply and list scrolling reuse its picture.
+                          Widget bubble = RepaintBoundary(
+                            child: ChatBubble(
                             key: _keyFor(message.id),
                             message: message,
                             threadId: _threadId,
@@ -2860,6 +2867,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
                             onDoubleTap: _canHeartTap(message)
                                 ? () => unawaited(_react(message, '❤️'))
                                 : null,
+                            ),
                           );
                           if (_mouseMenu && message.id > 0) {
                             bubble = _MouseMessageBar(
@@ -2946,14 +2954,17 @@ class _ChatThreadViewState extends State<ChatThreadView>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (recording || peerTyping)
-                    Padding(
+                  _ActivitySlot(
+                    tick: _activityTick,
+                    threadId: _threadId,
+                    builder: (recording) => Padding(
                       padding: const EdgeInsets.only(left: 14, bottom: 4),
                       child: Align(
                         alignment: Alignment.centerLeft,
                         child: ChatActivityLine(recording: recording),
                       ),
                     ),
+                  ),
                   if (_editingId != null)
                     Container(
                       margin: const EdgeInsets.only(bottom: 6),
@@ -3426,6 +3437,34 @@ class _ChatThreadViewState extends State<ChatThreadView>
   }
 }
 
+/// The "typing…" / "recording…" line. Rebuilds on its own when the peer's
+/// activity changes; shows [idle] (or nothing) otherwise.
+class _ActivitySlot extends StatelessWidget {
+  const _ActivitySlot({
+    required this.tick,
+    required this.threadId,
+    required this.builder,
+    this.idle,
+  });
+
+  final ValueListenable<int> tick;
+  final String threadId;
+  final Widget Function(bool recording) builder;
+  final Widget? idle;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<int>(
+      valueListenable: tick,
+      builder: (context, value, child) {
+        final recording = ChatLive.isRecording(threadId);
+        final peerTyping = !recording && ChatLive.isTyping(threadId);
+        if (recording || peerTyping) return builder(recording);
+        return idle ?? const SizedBox.shrink();
+      },
+    );
+  }
+}
 class _Row {
   const _Row.day(this.day) : message = null, banner = null;
   const _Row.banner(this.banner) : message = null, day = null;

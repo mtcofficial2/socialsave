@@ -47,6 +47,18 @@ class ChatHistory {
   static Directory? rootOverride;
 
   static final Map<String, _Book> _open = {};
+
+  /// Unread messages across all chats of the signed-in account, as last
+  /// written to this device. Drives the badge on the More tab.
+  static final ValueNotifier<int> unreadTotal = ValueNotifier<int>(0);
+
+  static void _countUnread(_Book book) {
+    var total = 0;
+    for (final item in book.threads) {
+      if (item.unread > 0) total += item.unread;
+    }
+    if (unreadTotal.value != total) unreadTotal.value = total;
+  }
   static Future<void> _tail = Future<void>.value();
   static Future<void>? _archive;
 
@@ -282,6 +294,7 @@ class ChatHistory {
     final book = _Book(name);
     await book.load();
     _open[name] = book;
+    _countUnread(book);
     return book;
   }
 
@@ -428,6 +441,7 @@ class _Book {
   }
 
   Future<void> flush() async {
+    ChatHistory._countUnread(this);
     final file = await _file();
     await file.parent.create(recursive: true);
     final payload = jsonEncode({

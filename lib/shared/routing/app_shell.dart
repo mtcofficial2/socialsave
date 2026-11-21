@@ -4,9 +4,8 @@ import 'package:social_save/features/audio/music_screen.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:social_save/core/di/providers.dart';
-import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
 import 'package:social_save/features/downloader/presentation/providers/download_manager.dart';
-import 'package:social_save/features/library/presentation/library_screen.dart';
+import 'package:social_save/features/library/presentation/vault_lock.dart';
 import 'package:social_save/features/player/phone_remote.dart';
 import 'package:social_save/shared/models/download_status.dart';
 import 'package:social_save/features/updates/update_checker.dart';
@@ -14,6 +13,7 @@ import 'package:social_save/shared/widgets/brand_header.dart';
 import 'package:social_save/shared/widgets/desktop_sidebar.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
 import 'package:social_save/core/theme/app_tokens.dart';
+import 'package:social_save/features/chat/chat_history.dart';
 
 class AppShell extends ConsumerWidget {
   const AppShell({super.key, required this.navigationShell});
@@ -75,10 +75,14 @@ class AppShell extends ConsumerWidget {
             ),
           ),
         if (!wide)
-          StitchNavBar(
-            index: navigationShell.currentIndex,
-            downloadBadge: activeCount,
-            onSelect: selectTab,
+          ValueListenableBuilder<int>(
+            valueListenable: ChatHistory.unreadTotal,
+            builder: (context, unread, _) => StitchNavBar(
+              index: navigationShell.currentIndex,
+              downloadBadge: activeCount,
+              moreBadge: unread,
+              onSelect: selectTab,
+            ),
           ),
       ],
     );
@@ -88,13 +92,14 @@ class AppShell extends ConsumerWidget {
         backgroundColor: Colors.transparent,
         body: Row(
           children: [
-            DesktopSidebar(
-              index: navigationShell.currentIndex,
-              downloadBadge: activeCount,
-              onSelect: selectTab,
-              onShare: () => context.push('/share'),
-              onMusic: () => context.push('/music'),
-              onChat: () => context.push('/chat'),
+            ValueListenableBuilder<int>(
+              valueListenable: ChatHistory.unreadTotal,
+              builder: (context, unread, _) => DesktopSidebar(
+                index: navigationShell.currentIndex,
+                downloadBadge: activeCount,
+                moreBadge: unread,
+                onSelect: selectTab,
+              ),
             ),
             Expanded(
               child: DesktopChrome(
@@ -119,14 +124,6 @@ class AppShell extends ConsumerWidget {
       );
     }
 
-    // The new Home has its own Send / Receive card and Music tile, so the
-    // floating buttons only show there with the Classic home screen.
-    final classicHome = ref.watch(
-      settingsControllerProvider.select((s) => s.classicHome),
-    );
-    // Send / Receive and Music live on Home (and in menus), so the floating
-    // buttons only appear with the Classic home screen.
-    final hideFab = !classicHome;
     return Scaffold(
       backgroundColor: Colors.transparent,
       extendBody: true,
@@ -136,38 +133,6 @@ class AppShell extends ConsumerWidget {
           child: navigationShell,
         ),
       ),
-      floatingActionButton: hideFab
-          ? null
-          : Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                FloatingActionButton.small(
-                  key: const ValueKey('chat-fab'),
-                  heroTag: 'chat-fab',
-                  tooltip: 'Chats',
-                  onPressed: () => context.push('/chat'),
-                  child: const Icon(Icons.forum_rounded),
-                ),
-                const SizedBox(height: AppSpacing.md),
-                FloatingActionButton.small(
-                  key: const ValueKey('music-fab'),
-                  heroTag: 'music-fab',
-                  tooltip: 'Music player',
-                  onPressed: () => context.push('/music'),
-                  child: const Icon(Icons.library_music_rounded),
-                ),
-                const SizedBox(height: AppSpacing.md),
-                FloatingActionButton.extended(
-                  key: const ValueKey('share-hub-fab'),
-                  heroTag: 'share-fab',
-                  tooltip: 'Send or receive with nearby devices',
-                  onPressed: () => context.push('/share'),
-                  icon: const Icon(Icons.swap_horiz_rounded),
-                  label: const Text('Send / Receive'),
-                ),
-              ],
-            ),
       // One shared backdrop for the nav pill and the download pill.
       bottomNavigationBar: BackdropGroup(child: chrome),
     );
