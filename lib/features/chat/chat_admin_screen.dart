@@ -10,6 +10,8 @@ import 'package:social_save/features/chat/chat_ui.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
 import 'package:social_save/core/theme/app_tokens.dart';
+import 'package:social_save/shared/widgets/empty_state.dart';
+import 'package:social_save/shared/widgets/skeleton.dart';
 
 /// People, devices, groups, and reports.
 /// The server returns this only for the admin account.
@@ -30,6 +32,12 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
   List<ChatDeviceEntry> _devices = const [];
   List<ChatAdminGroup> _groups = const [];
   List<ChatAdminReport> _reports = const [];
+  List<ChatAdminAudit> _audit = const [];
+  String _role = 'owner';
+  List<String> _perms = chatAllPermissions;
+  MonitorAuditSort _auditSort = MonitorAuditSort.newest;
+  String _auditAction = '';
+  int _page = monitorPageSize;
   String _storage = '';
   int _limit = 2000;
   String? _error;
@@ -74,8 +82,46 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
     _devices = snapshot.devices;
     _groups = snapshot.groups;
     _reports = snapshot.reports;
+    _audit = snapshot.audit;
+    _role = snapshot.role;
+    _perms = snapshot.permissions;
     _storage = snapshot.storage;
     _limit = snapshot.deviceLimit > 0 ? snapshot.deviceLimit : 2000;
+    final tabs = monitorTabsFor(_perms);
+    if (tabs.isNotEmpty && !tabs.contains(_tab)) _tab = tabs.first;
+  }
+
+  bool _can(String permission) => _perms.contains(permission);
+
+  /// The owner, or a role at or above this viewer's, cannot be changed here.
+  bool _outranks(ChatDirectoryEntry person) =>
+      !_protected(person.username) && monitorOutranks(_role, person.role);
+
+  void _showTab(MonitorTab tab) {
+    setState(() {
+      _tab = tab;
+      _page = monitorPageSize;
+    });
+  }
+
+  /// Shows a page of [items] and a Show more button for the rest.
+  List<Widget> _paged<T>(List<T> items, Widget Function(T item) build) {
+    final shown = items.length > _page ? items.sublist(0, _page) : items;
+    return [
+      for (final item in shown) build(item),
+      if (items.length > _page)
+        Padding(
+          padding: const EdgeInsets.only(top: AppSpacing.md),
+          child: Center(
+            child: OutlinedButton.icon(
+              key: const Key('monitor-more'),
+              onPressed: () => setState(() => _page += monitorPageSize),
+              icon: const Icon(Icons.expand_more_rounded),
+              label: Text('Show more (${items.length - _page} left)'),
+            ),
+          ),
+        ),
+    ];
   }
 
   Future<void> _load() async {
@@ -241,6 +287,11 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
       monitorFilterReports(_reports, query),
       _reportSort,
     );
+    final audit = monitorSortAudit(
+      monitorFilterAudit(_audit, query, _auditAction),
+      _auditSort,
+    );
+    final tabs = monitorTabsFor(_perms);
     final shares = monitorShares(_people);
     final shown = searching
         ? people.length + devices.length + groups.length + reports.length
@@ -249,12 +300,14 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
             MonitorTab.people => people.length,
             MonitorTab.groups => groups.length,
             MonitorTab.reports => reports.length,
+            MonitorTab.audit => audit.length,
           };
     final total = switch (_tab) {
       MonitorTab.devices => _devices.length,
       MonitorTab.people => _people.length,
       MonitorTab.groups => _groups.length,
       MonitorTab.reports => _reports.length,
+      MonitorTab.audit => _audit.length,
     };
     final countLine = monitorCountLine(
       shown: shown,
@@ -292,58 +345,149 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
           ],
           if (_storage.isNotEmpty) ...[
             const SizedBox(height: AppSpacing.md),
-            _StorageChip(storage: _storage, onTap: () => unawaited(_explainStorage())),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                _StorageChip(storage: _storage, onTap: () => unawaited(_explainStorage())),
+                _RoleChip(role: _role),
+              ],
+            ),
           ],
-          if (_error != null) ...[
-            const SizedBox(height: AppSpacing.lg),
-            Text(_error!, style: TextStyle(color: scheme.error, height: 1.4)),
-            const SizedBox(height: AppSpacing.md),
-            FilledButton(onPressed: _load, child: const Text('Try again')),
-          ],
+          if (_error != null)
+            SizedBox(
+              height: 360,
+              child: EmptyState(
+                icon: Icons.cloud_off_rounded,
+                title: 'Monitor did not load',
+                message: _error!,
+                action: FilledButton(onPressed: _load, child: const Text('Try again')),
+              ),
+            ),
           if (_loading)
-            const Padding(
-              padding: EdgeInsets.only(top: AppSpacing.xxl),
-              child: Center(child: CircularProgressIndicator()),
+            const SizedBox(
+              key: Key('monitor-loading'),
+              height: 520,
+              child: SkeletonList(
+                count: 6,
+                leadingSize: 40,
+                leadingRadius: 20,
+                padding: EdgeInsets.only(top: AppSpacing.lg),
+              ),
+            )
+          else if (_error == null && tabs.isEmpty)
+            const SizedBox(
+              height: 360,
+              child: EmptyState(
+                icon: Icons.lock_outline_rounded,
+                title: 'No Monitor access',
+                message: 'Your role does not include any Monitor lists. Ask the owner.',
+              ),
             )
           else if (_error == null) ...[
             const SizedBox(height: AppSpacing.lg),
-            _StatRow(
-              devices: _devices.length,
-              opened: opened,
-              signedIn: signedIn,
-              people: _people.length,
-              passwords: passwords,
-              devicesOn: _tab == MonitorTab.devices && _deviceFiltersClear,
-              openedOn: _tab == MonitorTab.devices &&
-                  _freshness == MonitorFreshness.today &&
-                  _platform.isEmpty &&
-                  _version.isEmpty &&
-                  !_signedInOnly,
-              signedOn: _tab == MonitorTab.devices &&
-                  _signedInOnly &&
-                  _freshness == MonitorFreshness.any &&
-                  _platform.isEmpty &&
-                  _version.isEmpty,
-              peopleOn: _tab == MonitorTab.people && _peopleFiltersClear,
-              passwordsOn: _tab == MonitorTab.people &&
-                  _password == MonitorPassword.set &&
-                  !_noContact &&
-                  !_noRecovery,
-              onDevices: _tapDevices,
-              onOpened: _tapOpened,
-              onSignedIn: _tapSignedIn,
-              onPeople: _tapPeople,
-              onPasswords: _tapPasswords,
+            Semantics(
+              header: true,
+              child: Text(
+                'Overview',
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (_can(chatPermDevicesView)) ...[
+                  _Stat(
+                    value: '${_devices.length}',
+                    label: 'Devices',
+                    icon: Icons.devices_rounded,
+                    selected: _tab == MonitorTab.devices && _deviceFiltersClear,
+                    onTap: _tapDevices,
+                  ),
+                  _Stat(
+                    value: '$opened',
+                    label: 'Opened today',
+                    icon: Icons.today_rounded,
+                    selected: _tab == MonitorTab.devices &&
+                        _freshness == MonitorFreshness.today &&
+                        _platform.isEmpty &&
+                        _version.isEmpty &&
+                        !_signedInOnly,
+                    onTap: _tapOpened,
+                  ),
+                  _Stat(
+                    value: '$signedIn',
+                    label: 'Signed in',
+                    icon: Icons.login_rounded,
+                    selected: _tab == MonitorTab.devices &&
+                        _signedInOnly &&
+                        _freshness == MonitorFreshness.any &&
+                        _platform.isEmpty &&
+                        _version.isEmpty,
+                    onTap: _tapSignedIn,
+                  ),
+                ],
+                if (_can(chatPermUsersView)) ...[
+                  _Stat(
+                    value: '${_people.length}',
+                    label: 'People',
+                    icon: Icons.people_alt_rounded,
+                    selected: _tab == MonitorTab.people && _peopleFiltersClear,
+                    onTap: _tapPeople,
+                  ),
+                  _Stat(
+                    value: '$passwords',
+                    label: 'Passwords',
+                    icon: Icons.password_rounded,
+                    selected: _tab == MonitorTab.people &&
+                        _password == MonitorPassword.set &&
+                        !_noContact &&
+                        !_noRecovery,
+                    onTap: _tapPasswords,
+                  ),
+                  _Stat(
+                    value: '${_people.where((person) => person.disabled).length}',
+                    label: 'Turned off',
+                    icon: Icons.block_rounded,
+                    selected: false,
+                    onTap: () => _showTab(MonitorTab.people),
+                  ),
+                ],
+                if (_can(chatPermReportsView))
+                  _Stat(
+                    value: '${_reports.length}',
+                    label: 'Open reports',
+                    icon: Icons.flag_rounded,
+                    alert: _reports.isNotEmpty,
+                    selected: _tab == MonitorTab.reports,
+                    onTap: () => _showTab(MonitorTab.reports),
+                  ),
+                if (_can(chatPermGroupsView))
+                  _Stat(
+                    value: '${_groups.length}',
+                    label: 'Groups',
+                    icon: Icons.groups_rounded,
+                    selected: _tab == MonitorTab.groups,
+                    onTap: () => _showTab(MonitorTab.groups),
+                  ),
+              ],
             ),
             const SizedBox(height: AppSpacing.lg),
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: [
-                _tabChip(MonitorTab.devices, 'Devices', _devices.length),
-                _tabChip(MonitorTab.people, 'People', _people.length),
-                _tabChip(MonitorTab.groups, 'Groups', _groups.length),
-                _tabChip(MonitorTab.reports, 'Reports', _reports.length),
+                for (final tab in tabs)
+                  switch (tab) {
+                    MonitorTab.devices => _tabChip(tab, 'Devices', _devices.length),
+                    MonitorTab.people => _tabChip(tab, 'People', _people.length),
+                    MonitorTab.groups => _tabChip(tab, 'Groups', _groups.length),
+                    MonitorTab.reports => _tabChip(tab, 'Reports', _reports.length),
+                    MonitorTab.audit => _tabChip(tab, 'Audit', _audit.length),
+                  },
               ],
             ),
             const SizedBox(height: AppSpacing.sm),
@@ -354,7 +498,7 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
             ChatSearchField(
               controller: _query,
               hintText: 'Search people, devices, groups, and reports',
-              onChanged: (_) => setState(() {}),
+              onChanged: (_) => setState(() => _page = monitorPageSize),
               onSubmitted: (_) {},
             ),
             if (countLine.isNotEmpty) ...[
@@ -367,44 +511,38 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
               style: TextStyle(color: scheme.onSurfaceVariant, height: 1.35),
             ),
             if (shown == 0)
-              Padding(
-                padding: const EdgeInsets.only(top: 28),
-                child: Text(
-                  searching ? 'Nothing matches that search.' : _emptyText(query),
-                  style: TextStyle(color: scheme.onSurfaceVariant, height: 1.45),
+              SizedBox(
+                height: 300,
+                child: EmptyState(
+                  icon: searching ? Icons.search_off_rounded : _tabIcon(_tab),
+                  title: searching ? 'No matches' : 'Nothing here yet',
+                  message: searching ? 'Nothing matches that search.' : _emptyText(query),
                 ),
               )
             else if (searching) ...[
               if (people.isNotEmpty) ...[
                 const _Heading('People'),
-                for (final person in people) _personTile(person, shares),
+                ..._paged(people, (person) => _personTile(person, shares)),
               ],
               if (devices.isNotEmpty) ...[
                 const _Heading('Devices'),
-                for (final device in devices) _deviceTile(device, now),
+                ..._paged(devices, (device) => _deviceTile(device, now)),
               ],
               if (groups.isNotEmpty) ...[
                 const _Heading('Groups'),
-                for (final group in groups) _groupTile(group, wide),
+                ..._paged(groups, (group) => _groupTile(group, wide)),
               ],
               if (reports.isNotEmpty) ...[
                 const _Heading('Reports'),
-                for (final report in reports) _reportTile(report),
+                ..._paged(reports, _reportTile),
               ],
             ] else
               ...switch (_tab) {
-                MonitorTab.devices => [
-                  for (final device in devices) _deviceTile(device, now),
-                ],
-                MonitorTab.people => [
-                  for (final person in people) _personTile(person, shares),
-                ],
-                MonitorTab.groups => [
-                  for (final group in groups) _groupTile(group, wide),
-                ],
-                MonitorTab.reports => [
-                  for (final report in reports) _reportTile(report),
-                ],
+                MonitorTab.devices => _paged(devices, (device) => _deviceTile(device, now)),
+                MonitorTab.people => _paged(people, (person) => _personTile(person, shares)),
+                MonitorTab.groups => _paged(groups, (group) => _groupTile(group, wide)),
+                MonitorTab.reports => _paged(reports, _reportTile),
+                MonitorTab.audit => _paged(audit, _auditTile),
               },
           ],
         ],
@@ -418,7 +556,7 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
       selected: _tab == tab,
       showCheckmark: false,
       visualDensity: VisualDensity.compact,
-      onSelected: (_) => setState(() => _tab = tab),
+      onSelected: (_) => _showTab(tab),
     );
   }
 
@@ -486,6 +624,19 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
         ],
       );
     }
+    if (_tab == MonitorTab.audit) {
+      final actions = <String>{for (final entry in _audit) entry.action}.toList()..sort();
+      return Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final action in actions)
+            _chip(chatAuditLabel(action), _auditAction == action, (on) {
+              setState(() => _auditAction = on ? action : '');
+            }),
+        ],
+      );
+    }
     return const SizedBox.shrink();
   }
 
@@ -518,6 +669,13 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
           MonitorReportSort.values,
           (item) => item.label,
           (item) => setState(() => _reportSort = item),
+        );
+      case MonitorTab.audit:
+        return _sortMenu<MonitorAuditSort>(
+          _auditSort,
+          MonitorAuditSort.values,
+          (item) => item.label,
+          (item) => setState(() => _auditSort = item),
         );
     }
   }
@@ -562,9 +720,19 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
       case MonitorTab.groups:
         return wide ? 'Tap a group for its details.' : 'Tap a group to open it.';
       case MonitorTab.reports:
-        return 'Tap a report, then open your chat with that person.';
+        return 'Tap a report to review messages, open a chat, or dismiss it.';
+      case MonitorTab.audit:
+        return 'Every Monitor action by staff, newest first. Kept for the last 300.';
     }
   }
+
+  IconData _tabIcon(MonitorTab tab) => switch (tab) {
+    MonitorTab.devices => Icons.devices_rounded,
+    MonitorTab.people => Icons.people_alt_rounded,
+    MonitorTab.groups => Icons.groups_rounded,
+    MonitorTab.reports => Icons.flag_rounded,
+    MonitorTab.audit => Icons.history_rounded,
+  };
 
   String _emptyText(String query) {
     if (query.isNotEmpty) return 'Nothing matches that search.';
@@ -581,6 +749,8 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
         return 'No groups yet.';
       case MonitorTab.reports:
         return 'No reports yet.';
+      case MonitorTab.audit:
+        return 'No staff actions yet.';
     }
   }
 
@@ -730,6 +900,22 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
           unawaited(_openGroup(group));
         }
       },
+    );
+  }
+
+  Widget _auditTile(ChatAdminAudit entry) {
+    return _MonitorCard(
+      icon: Icons.history_rounded,
+      title: chatAuditLabel(entry.action),
+      subtitle: [
+        '@${entry.actor}',
+        if (entry.target.isNotEmpty) '@${entry.target}',
+      ].join(' → '),
+      detail: _seen(context, entry.at),
+      foot: [
+        if (entry.action == 'role' && entry.detail.isNotEmpty) 'Now ${chatRoleLabel(entry.detail)}',
+        if (entry.at != null) _when(entry.at!),
+      ].join(' · '),
     );
   }
 
@@ -887,8 +1073,12 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
     ];
     final others = person.sessions.where((session) => !session.current).length;
     final self = person.sessions.any((session) => session.current);
+    final canSessions = _can(chatPermSessionsEnd) && (self || _outranks(person));
+    final showSessions = _can(chatPermDevicesView) || _can(chatPermSessionsEnd);
     return [
-      _fact(person.contact.isEmpty ? 'No phone or email' : person.contact),
+      if (person.role.isNotEmpty) _fact('Role: ${chatRoleLabel(person.role)}'),
+      if (_can(chatPermUsersContact))
+        _fact(person.contact.isEmpty ? 'No phone or email' : person.contact),
       _fact(person.created == null ? 'Join date unknown' : 'Joined ${_when(person.created!)}'),
       _fact(_seen(context, person.lastSeen)),
       _fact(person.hasPassword ? 'Password set' : 'No password yet'),
@@ -901,6 +1091,19 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
             ? null
             : () => unawaited(_openPerson(person.username)),
       ),
+      if (_can(chatPermReportsView))
+        _button(
+          'Review messages',
+          _busy != null ? null : () => unawaited(_reviewMessages(person.username)),
+          filled: false,
+        ),
+      if (_can(chatPermRolesManage) && !_protected(person.username) && person.role != 'owner')
+        _button(
+          'Change role',
+          _busy != null ? null : () => unawaited(_changeRole(person)),
+          filled: false,
+        ),
+      if (_can(chatPermDevicesView)) ...[
       const _Heading('Devices that opened the app'),
       if (installs.isEmpty)
         _fact('No device has opened the app with this username.')
@@ -914,22 +1117,25 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
             ),
             onTap: () => _select('device', device.id, tab: MonitorTab.devices),
           ),
+      ],
+      if (showSessions) ...[
       const _Heading('Signed-in sessions'),
       _fact('These are sign-ins, separate from devices that only opened the app.'),
       if (person.sessions.isEmpty)
         _fact('No signed-in session.')
       else
-        for (final session in person.sessions) _sessionTile(person, session),
-      if (others > 0)
+        for (final session in person.sessions) _sessionTile(person, session, canSessions),
+      if (others > 0 && canSessions)
         _button(
           self ? 'Sign out other devices' : 'Sign out everywhere',
           _busy != null ? null : () => unawaited(_endAll(person)),
           destructive: true,
         ),
+      ],
       const SizedBox(height: AppSpacing.sm),
       if (_protected(person.username))
         _fact('This account stays open.')
-      else
+      else if (_can(chatPermUsersDisable) && !self && _outranks(person))
         _button(
           person.disabled ? 'Allow again' : 'Disable',
           _busy != null ? null : () => unawaited(_toggleDisabled(person)),
@@ -938,7 +1144,7 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
     ];
   }
 
-  Widget _sessionTile(ChatDirectoryEntry person, ChatAdminSession session) {
+  Widget _sessionTile(ChatDirectoryEntry person, ChatAdminSession session, bool canEnd) {
     final name = session.name.isNotEmpty
         ? session.name
         : monitorDeviceLabel(session.platform);
@@ -952,7 +1158,7 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
           if (when.isNotEmpty) when,
         ].join(' · '),
       ),
-      trailing: session.current
+      trailing: session.current || !canEnd
           ? null
           : TextButton(
               onPressed: _busy != null ? null : () => unawaited(_endOne(person, session)),
@@ -979,6 +1185,11 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
       if (report.at != null) _fact(_when(report.at!)),
       _fact('Open chat starts your conversation with them.'),
       _button(
+        'Review messages from @${report.target}',
+        _busy != null ? null : () => unawaited(_reviewMessages(report.target)),
+        filled: false,
+      ),
+      _button(
         'Open @${report.target}',
         _opening != null || _busy != null
             ? null
@@ -991,6 +1202,12 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
               ? null
               : () => unawaited(_openPerson(report.from)),
           filled: false,
+        ),
+      if (_can(chatPermReportsDismiss))
+        _button(
+          'Dismiss report',
+          _busy != null ? null : () => unawaited(_dismiss(report)),
+          destructive: true,
         ),
     ];
   }
@@ -1088,6 +1305,88 @@ class _ChatAdminScreenState extends State<ChatAdminScreen> {
   }
 
   bool _protected(String username) => username.toLowerCase() == 'daniel256';
+
+  Future<void> _dismiss(ChatAdminReport report) async {
+    final ok = await _confirm(
+      'Dismiss this report?',
+      'It leaves the Reports list for every staff member. The audit log keeps a record.',
+      'Dismiss',
+      destructive: true,
+    );
+    if (!ok || !mounted) return;
+    await _run('dismiss:${report.id}', () async {
+      await _api.dismissReport(report.id);
+      if (mounted) {
+        _clearPick();
+        AppSnack.info(context, 'Report dismissed');
+      }
+    });
+  }
+
+  Future<void> _changeRole(ChatDirectoryEntry person) async {
+    var picked = person.role;
+    final next = await showDialog<String>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setLocal) => AlertDialog(
+          title: Text('Role for @${person.username}'),
+          content: SingleChildScrollView(
+            child: RadioGroup<String>(
+              groupValue: picked,
+              onChanged: (value) => setLocal(() => picked = value ?? ''),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final role in ['', ...chatRoles])
+                    RadioListTile<String>(
+                      value: role,
+                      title: Text(role.isEmpty ? 'No role' : chatRoleLabel(role)),
+                      subtitle: Text(chatRoleSummary(role)),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: picked == person.role ? null : () => Navigator.pop(context, picked),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (next == null || !mounted) return;
+    await _run('role:${person.username}', () async {
+      await _api.setAccountRole(person.username, next);
+      if (mounted) {
+        AppSnack.info(
+          context,
+          next.isEmpty
+              ? '@${person.username} no longer has Monitor'
+              : '@${person.username} is now ${chatRoleLabel(next)}',
+        );
+      }
+    });
+  }
+
+  Future<void> _reviewMessages(String username) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => _MessagesSheet(
+        api: _api,
+        username: username,
+        canRemove: _can(chatPermMessagesRemove),
+        confirm: _confirm,
+      ),
+    );
+  }
 
   Future<void> _toggleDisabled(ChatDirectoryEntry person) async {
     if (_protected(person.username)) return;
@@ -1206,69 +1505,24 @@ class _Heading extends StatelessWidget {
   }
 }
 
-class _StatRow extends StatelessWidget {
-  const _StatRow({
-    required this.devices,
-    required this.opened,
-    required this.signedIn,
-    required this.people,
-    required this.passwords,
-    required this.devicesOn,
-    required this.openedOn,
-    required this.signedOn,
-    required this.peopleOn,
-    required this.passwordsOn,
-    required this.onDevices,
-    required this.onOpened,
-    required this.onSignedIn,
-    required this.onPeople,
-    required this.onPasswords,
-  });
-
-  final int devices;
-  final int opened;
-  final int signedIn;
-  final int people;
-  final int passwords;
-  final bool devicesOn;
-  final bool openedOn;
-  final bool signedOn;
-  final bool peopleOn;
-  final bool passwordsOn;
-  final VoidCallback onDevices;
-  final VoidCallback onOpened;
-  final VoidCallback onSignedIn;
-  final VoidCallback onPeople;
-  final VoidCallback onPasswords;
-
-  @override
-  Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        _Stat(value: '$devices', label: 'Devices', selected: devicesOn, onTap: onDevices),
-        _Stat(value: '$opened', label: 'Opened today', selected: openedOn, onTap: onOpened),
-        _Stat(value: '$signedIn', label: 'Signed in', selected: signedOn, onTap: onSignedIn),
-        _Stat(value: '$people', label: 'People', selected: peopleOn, onTap: onPeople),
-        _Stat(value: '$passwords', label: 'Passwords', selected: passwordsOn, onTap: onPasswords),
-      ],
-    );
-  }
-}
-
 class _Stat extends StatelessWidget {
   const _Stat({
     required this.value,
     required this.label,
     required this.selected,
     required this.onTap,
+    this.icon,
+    this.alert = false,
   });
 
   final String value;
   final String label;
   final bool selected;
   final VoidCallback onTap;
+  final IconData? icon;
+
+  /// Draws the number in the error colour, for open reports.
+  final bool alert;
 
   @override
   Widget build(BuildContext context) {
@@ -1279,38 +1533,241 @@ class _Stat extends StatelessWidget {
         : dark
         ? ChatUiTokens.fieldDark
         : ChatUiTokens.lineLight;
-    return Material(
-      color: ChatUiTokens.surface(dark),
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        onTap: onTap,
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: '$label: $value',
+      excludeSemantics: true,
+      child: Material(
+        color: ChatUiTokens.surface(dark),
         borderRadius: BorderRadius.circular(14),
-        child: Container(
-          width: 104,
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 10),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: line, width: selected ? 1.6 : 1),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                value,
-                style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: -0.4,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: Container(
+            constraints: const BoxConstraints(minWidth: 112),
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 10),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: line, width: selected ? 1.6 : 1),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (icon != null) ...[
+                      Icon(icon, size: 16, color: alert ? scheme.error : scheme.onSurfaceVariant),
+                      const SizedBox(width: 6),
+                    ],
+                    Text(
+                      value,
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -0.4,
+                        color: alert ? scheme.error : null,
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-              const SizedBox(height: AppSpacing.xxs),
+                const SizedBox(height: AppSpacing.xxs),
+                Text(
+                  label,
+                  style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Which role this Monitor is open as.
+class _RoleChip extends StatelessWidget {
+  const _RoleChip({required this.role});
+
+  final String role;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Tooltip(
+      message: chatRoleSummary(role),
+      child: Semantics(
+        label: 'Your role: ${chatRoleLabel(role)}. ${chatRoleSummary(role)}',
+        excludeSemantics: true,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: scheme.secondaryContainer,
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.admin_panel_settings_rounded, size: 16, color: scheme.onSecondaryContainer),
+              const SizedBox(width: 6),
               Text(
-                label,
-                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                chatRoleLabel(role),
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.onSecondaryContainer),
               ),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// The newest messages one account sent, with Remove for roles allowed to.
+class _MessagesSheet extends StatefulWidget {
+  const _MessagesSheet({
+    required this.api,
+    required this.username,
+    required this.canRemove,
+    required this.confirm,
+  });
+
+  final ChatApi api;
+  final String username;
+  final bool canRemove;
+  final Future<bool> Function(String title, String body, String action, {bool destructive}) confirm;
+
+  @override
+  State<_MessagesSheet> createState() => _MessagesSheetState();
+}
+
+class _MessagesSheetState extends State<_MessagesSheet> {
+  List<ChatAdminMessage>? _messages;
+  String? _error;
+  String? _busy;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    setState(() => _error = null);
+    try {
+      final rows = await widget.api.accountMessages(widget.username);
+      if (!mounted) return;
+      setState(() => _messages = rows);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = chatErrorText(error));
+    }
+  }
+
+  Future<void> _remove(ChatAdminMessage message) async {
+    final ok = await widget.confirm(
+      'Remove this message?',
+      'It disappears for everyone in that chat. This cannot be undone.',
+      'Remove',
+      destructive: true,
+    );
+    if (!ok || !mounted) return;
+    final key = '${message.thread}:${message.id}';
+    setState(() => _busy = key);
+    try {
+      await widget.api.removeMessage(message.thread, message.id);
+      if (!mounted) return;
+      setState(() {
+        _messages = [
+          for (final row in _messages ?? const <ChatAdminMessage>[])
+            if (row.thread != message.thread || row.id != message.id) row,
+        ];
+      });
+      AppSnack.info(context, 'Message removed');
+    } catch (error) {
+      if (mounted) AppSnack.error(context, chatErrorText(error));
+    } finally {
+      if (mounted) setState(() => _busy = null);
+    }
+  }
+
+  IconData _kindIcon(String kind) => switch (kind) {
+    'voice' => Icons.mic_rounded,
+    'photo' => Icons.photo_rounded,
+    'song' => Icons.music_note_rounded,
+    'poll' => Icons.poll_rounded,
+    _ => Icons.chat_bubble_outline_rounded,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final messages = _messages;
+    final height = MediaQuery.sizeOf(context).height * 0.75;
+    Widget body;
+    if (_error != null) {
+      body = EmptyState(
+        icon: Icons.cloud_off_rounded,
+        title: 'Messages did not load',
+        message: _error!,
+        action: FilledButton(onPressed: _load, child: const Text('Try again')),
+      );
+    } else if (messages == null) {
+      body = const SkeletonList(count: 5, leadingSize: 36, leadingRadius: 18);
+    } else if (messages.isEmpty) {
+      body = EmptyState(
+        icon: Icons.chat_bubble_outline_rounded,
+        title: 'No messages',
+        message: '@${widget.username} has no messages kept on the server.',
+      );
+    } else {
+      body = ListView.separated(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+        itemCount: messages.length,
+        separatorBuilder: (_, _) => const Divider(height: 1),
+        itemBuilder: (context, index) {
+          final message = messages[index];
+          final key = '${message.thread}:${message.id}';
+          final text = message.text.trim().isEmpty ? 'A ${message.kind} message' : message.text;
+          return ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(_kindIcon(message.kind)),
+            title: Text(text, maxLines: 4, overflow: TextOverflow.ellipsis),
+            subtitle: Text(
+              [
+                message.group.isNotEmpty ? message.group : 'Direct chat',
+                if (message.at != null) _when(message.at!),
+              ].join(' · '),
+            ),
+            trailing: widget.canRemove
+                ? TextButton(
+                    onPressed: _busy != null ? null : () => unawaited(_remove(message)),
+                    style: TextButton.styleFrom(foregroundColor: scheme.error),
+                    child: Text(_busy == key ? 'Removing…' : 'Remove'),
+                  )
+                : null,
+          );
+        },
+      );
+    }
+    return SizedBox(
+      height: height,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Semantics(
+              header: true,
+              child: Text(
+                'Recent messages from @${widget.username}',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+          Expanded(child: body),
+        ],
       ),
     );
   }
@@ -1385,7 +1842,11 @@ class _MonitorCard extends StatelessWidget {
         : dark
         ? ChatUiTokens.fieldDark
         : ChatUiTokens.lineLight;
-    return Padding(
+    return Semantics(
+      container: true,
+      button: onTap != null,
+      selected: selected,
+      child: Padding(
       padding: const EdgeInsets.only(top: AppSpacing.sm),
       child: Material(
         color: ChatUiTokens.surface(dark),
@@ -1472,6 +1933,7 @@ class _MonitorCard extends StatelessWidget {
           ),
         ),
       ),
+    ),
     );
   }
 }

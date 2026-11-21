@@ -99,7 +99,11 @@ class ChatUser {
     this.photoPrivacy = 'everyone',
     this.receipts = 'everyone',
     this.messageRequests = false,
+    this.role = '',
   });
+
+  /// owner, admin, moderator, support, or empty for everyone else.
+  final String role;
 
   final String id;
   final String username;
@@ -137,6 +141,7 @@ class ChatUser {
       photoPrivacy: photoPrivacy ?? this.photoPrivacy,
       receipts: receipts ?? this.receipts,
       messageRequests: messageRequests ?? this.messageRequests,
+      role: role,
     );
   }
 
@@ -146,7 +151,8 @@ class ChatUser {
   }
 
   /// The in-app people list. The server still refuses anyone else.
-  bool get isAdmin => chatUserIsAdmin(this);
+  /// True for the owner and anyone the owner gave a staff role.
+  bool get isAdmin => chatUserIsAdmin(this) || chatRoles.contains(role);
 
   factory ChatUser.fromJson(Map<String, dynamic> json) {
     final privacy = json['privacy'];
@@ -167,6 +173,7 @@ class ChatUser {
       photoPrivacy: audience('photo'),
       receipts: audience('receipts'),
       messageRequests: privacy is Map && privacy['requests'] == true,
+      role: (json['role'] as String?)?.trim() ?? '',
     );
   }
 }
@@ -197,8 +204,10 @@ class ChatDirectoryEntry {
     this.hasRecovery = false,
     this.disabled = false,
     this.sessions = const [],
+    this.role = '',
   });
 
+  final String role;
   final String username;
   final String phone;
   final String email;
@@ -227,6 +236,7 @@ class ChatDirectoryEntry {
       hasRecovery: json['hasRecovery'] == true,
       disabled: json['disabled'] == true,
       sessions: _adminSessions(json['sessions']),
+      role: (json['role'] as String?)?.trim() ?? '',
     );
   }
 }
@@ -268,7 +278,17 @@ class ChatAdminSnapshot {
     this.groups = const [],
     this.reports = const [],
     this.deviceLimit = 2000,
+    this.role = 'owner',
+    this.permissions = chatAllPermissions,
+    this.audit = const [],
   });
+
+  /// The viewer's role and what the server lets it do.
+  final String role;
+  final List<String> permissions;
+  final List<ChatAdminAudit> audit;
+
+  bool can(String permission) => permissions.contains(permission);
 
   final List<ChatDirectoryEntry> people;
   final List<ChatDeviceEntry> devices;
@@ -603,6 +623,146 @@ class ChatGroup {
   final String owner;
   final List<String> admins;
   final int inviteExp;
+}
+
+/// Monitor permissions. The server checks every one of these again.
+const chatPermUsersView = 'users.view';
+const chatPermUsersContact = 'users.contact';
+const chatPermUsersDisable = 'users.disable';
+const chatPermSessionsEnd = 'sessions.end';
+const chatPermDevicesView = 'devices.view';
+const chatPermGroupsView = 'groups.view';
+const chatPermReportsView = 'reports.view';
+const chatPermReportsDismiss = 'reports.dismiss';
+const chatPermMessagesRemove = 'messages.remove';
+const chatPermRolesManage = 'roles.manage';
+const chatPermAuditView = 'audit.view';
+
+const chatAllPermissions = <String>[
+  chatPermUsersView,
+  chatPermUsersContact,
+  chatPermUsersDisable,
+  chatPermSessionsEnd,
+  chatPermDevicesView,
+  chatPermGroupsView,
+  chatPermReportsView,
+  chatPermReportsDismiss,
+  chatPermMessagesRemove,
+  chatPermRolesManage,
+  chatPermAuditView,
+];
+
+/// Roles the owner can give, highest first.
+const chatRoles = <String>['admin', 'moderator', 'support'];
+
+int chatRoleRank(String role) => switch (role) {
+  'owner' => 4,
+  'admin' => 3,
+  'moderator' => 2,
+  'support' => 1,
+  _ => 0,
+};
+
+String chatRoleLabel(String role) => switch (role) {
+  'owner' => 'Owner',
+  'admin' => 'Admin',
+  'moderator' => 'Moderator',
+  'support' => 'Support',
+  _ => 'Member',
+};
+
+String chatRoleSummary(String role) => switch (role) {
+  'owner' => 'Everything, including giving roles.',
+  'admin' => 'Everything except giving roles.',
+  'moderator' => 'Reports, removing messages, turning accounts off.',
+  'support' => 'People, contact details, devices, signing devices out.',
+  _ => 'No Monitor access.',
+};
+
+String chatAuditLabel(String action) => switch (action) {
+  'account.disable' => 'Turned off',
+  'account.enable' => 'Turned on',
+  'session.end' => 'Signed out a device',
+  'session.end_all' => 'Signed out everywhere',
+  'role' => 'Changed role',
+  'report.dismiss' => 'Dismissed a report',
+  'message.remove' => 'Removed a message',
+  _ => action,
+};
+
+/// One staff action from the Monitor audit log.
+class ChatAdminAudit {
+  const ChatAdminAudit({
+    required this.actor,
+    required this.action,
+    this.target = '',
+    this.detail = '',
+    this.at,
+  });
+
+  final String actor;
+  final String action;
+  final String target;
+  final String detail;
+  final DateTime? at;
+
+  factory ChatAdminAudit.fromJson(Map<String, dynamic> json) {
+    final at = (json['at'] as num?)?.toInt() ?? 0;
+    return ChatAdminAudit(
+      actor: (json['actor'] as String?)?.trim() ?? '',
+      action: (json['action'] as String?)?.trim() ?? '',
+      target: (json['target'] as String?)?.trim() ?? '',
+      detail: (json['detail'] as String?)?.trim() ?? '',
+      at: at > 0 ? DateTime.fromMillisecondsSinceEpoch(at) : null,
+    );
+  }
+}
+
+/// A message one account sent, shown when reviewing a report.
+class ChatAdminMessage {
+  const ChatAdminMessage({
+    required this.thread,
+    required this.id,
+    this.text = '',
+    this.kind = 'text',
+    this.group = '',
+    this.at,
+  });
+
+  final String thread;
+  final int id;
+  final String text;
+  final String kind;
+  final String group;
+  final DateTime? at;
+
+  factory ChatAdminMessage.fromJson(Map<String, dynamic> json) {
+    final at = (json['at'] as num?)?.toInt() ?? 0;
+    return ChatAdminMessage(
+      thread: (json['thread'] as String?)?.trim() ?? '',
+      id: (json['id'] as num?)?.toInt() ?? 0,
+      text: (json['text'] as String?) ?? '',
+      kind: (json['kind'] as String?)?.trim() ?? 'text',
+      group: (json['group'] as String?)?.trim() ?? '',
+      at: at > 0 ? DateTime.fromMillisecondsSinceEpoch(at) : null,
+    );
+  }
+}
+
+/// Reads the role and permissions Monitor sent. An older server sent
+/// neither and only ever answered the owner.
+({String role, List<String> permissions}) chatAdminAccess(Map<String, dynamic> body) {
+  final role = (body['role'] as String?)?.trim() ?? '';
+  final raw = body['permissions'];
+  if (role.isEmpty && raw is! List) {
+    return (role: 'owner', permissions: chatAllPermissions);
+  }
+  final permissions = <String>[
+    if (raw is List)
+      for (final item in raw)
+        if (item is String && chatAllPermissions.contains(item)) item,
+  ];
+  return (role: role.isEmpty ? 'owner' : role, permissions: permissions);
 }
 
 /// True only for @daniel256 on 256703487378. The people list is still refused
@@ -1820,7 +1980,16 @@ class ChatApi {
     final body = _object(response);
     lastStorage = (body['storage'] as String?)?.trim() ?? '';
     final limit = (body['deviceLimit'] as num?)?.toInt() ?? 0;
+    final access = chatAdminAccess(body);
+    final audit = body['audit'];
     return ChatAdminSnapshot(
+      role: access.role,
+      permissions: access.permissions,
+      audit: [
+        if (audit is List)
+          for (final item in audit)
+            if (item is Map) ChatAdminAudit.fromJson(Map<String, dynamic>.from(item)),
+      ],
       people: _directoryRows(body['users']),
       devices: _deviceRows(body['devices']),
       groups: _groupRows(body['groups']),
@@ -1854,6 +2023,47 @@ class ChatApi {
     await _dio.post<dynamic>(
       '/api/v1/chat/admin/sessions/all',
       data: {'username': username},
+      options: await _auth(),
+    );
+  }
+
+  /// Owner only. An empty [role] takes Monitor away from [username].
+  Future<void> setAccountRole(String username, String role) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/admin/role',
+      data: {'username': username, 'role': role},
+      options: await _auth(),
+    );
+  }
+
+  Future<void> dismissReport(String id) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/admin/reports/dismiss',
+      data: {'id': id},
+      options: await _auth(),
+    );
+  }
+
+  /// The newest messages [username] sent, for reviewing a report.
+  Future<List<ChatAdminMessage>> accountMessages(String username) async {
+    final response = await _dio.get<dynamic>(
+      '/api/v1/chat/admin/messages',
+      queryParameters: {'username': username},
+      options: await _auth(),
+    );
+    final items = _object(response)['messages'];
+    if (items is! List) return const [];
+    return [
+      for (final item in items)
+        if (item is Map) ChatAdminMessage.fromJson(Map<String, dynamic>.from(item)),
+    ];
+  }
+
+  /// Removes one message for everyone in that chat.
+  Future<void> removeMessage(String thread, int id) async {
+    await _dio.post<dynamic>(
+      '/api/v1/chat/admin/messages/remove',
+      data: {'thread': thread, 'id': id},
       options: await _auth(),
     );
   }

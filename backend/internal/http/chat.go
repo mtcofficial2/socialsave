@@ -88,6 +88,9 @@ type chatUser struct {
 	Pins []string `json:"pins,omitempty"`
 	// UnreadMarks forces a badge without moving the read cursor backwards.
 	UnreadMarks []string `json:"unreadMarks,omitempty"`
+	// Role is a staff role given by the owner: admin, moderator or support.
+	// Empty for everyone else. The owner account is fixed in code.
+	Role string `json:"role,omitempty"`
 	// RecoveryPlain is shown once to the person registering. It is never stored.
 	RecoveryPlain string `json:"-"`
 }
@@ -220,6 +223,8 @@ type chatData struct {
 	Schedules []chatSchedule   `json:"schedules,omitempty"`
 	Calls     []chatCall       `json:"calls,omitempty"`
 	Reports   []chatReport     `json:"reports,omitempty"`
+	// Audit records what staff did in Monitor, newest last, capped.
+	Audit []chatAudit `json:"audit,omitempty"`
 }
 
 type chatThreadSync struct {
@@ -699,7 +704,7 @@ func (c *chatRoom) since(ctx context.Context, userID, threadID string, after, si
 	if !member {
 		viewer, ok := c.userLocked(userID)
 		// Monitor can open a group it does not belong to. Direct chats stay closed.
-		if !ok || !chatIsAdmin(viewer) || len(thread.Members) == 0 {
+		if !ok || !chatCan(viewer, permGroupsView) || len(thread.Members) == 0 {
 			c.mu.Unlock()
 			return chatThreadSync{}, chatRejected("That chat was not found.")
 		}
@@ -2108,6 +2113,10 @@ func chatPublicUser(user chatUser, withContact bool) map[string]any {
 		out["phone"] = user.Phone
 		out["email"] = user.Email
 		out["privacy"] = user.Privacy
+		if role := chatRole(user); role != "" {
+			out["role"] = role
+			out["permissions"] = chatPermissionList(user)
+		}
 	}
 	return out
 }

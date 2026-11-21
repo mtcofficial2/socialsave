@@ -1,7 +1,7 @@
 import 'package:social_save/features/chat/chat_api.dart';
 
 /// Which list Monitor is showing.
-enum MonitorTab { devices, people, groups, reports }
+enum MonitorTab { devices, people, groups, reports, audit }
 
 enum MonitorDeviceSort {
   lastOpened('Last opened'),
@@ -39,6 +39,66 @@ enum MonitorReportSort {
 
   const MonitorReportSort(this.label);
   final String label;
+}
+
+enum MonitorAuditSort {
+  newest('Newest'),
+  oldest('Oldest');
+
+  const MonitorAuditSort(this.label);
+  final String label;
+}
+
+/// Rows a long list shows before Show more.
+const monitorPageSize = 50;
+
+/// The permission that opens [tab]. The server refuses the rest anyway.
+String monitorTabPermission(MonitorTab tab) => switch (tab) {
+  MonitorTab.devices => chatPermDevicesView,
+  MonitorTab.people => chatPermUsersView,
+  MonitorTab.groups => chatPermGroupsView,
+  MonitorTab.reports => chatPermReportsView,
+  MonitorTab.audit => chatPermAuditView,
+};
+
+/// Tabs a role can open, in display order.
+List<MonitorTab> monitorTabsFor(List<String> permissions) => [
+  for (final tab in MonitorTab.values)
+    if (permissions.contains(monitorTabPermission(tab))) tab,
+];
+
+/// True when [actorRole] may act on someone holding [targetRole].
+bool monitorOutranks(String actorRole, String targetRole) =>
+    chatRoleRank(actorRole) > chatRoleRank(targetRole);
+
+List<ChatAdminAudit> monitorFilterAudit(
+  List<ChatAdminAudit> audit,
+  String query,
+  String action,
+) {
+  final q = query.trim().toLowerCase().replaceFirst('@', '');
+  return [
+    for (final entry in audit)
+      if ((action.isEmpty || entry.action == action) &&
+          (q.isEmpty ||
+              entry.actor.toLowerCase().contains(q) ||
+              entry.target.toLowerCase().contains(q) ||
+              chatAuditLabel(entry.action).toLowerCase().contains(q)))
+        entry,
+  ];
+}
+
+List<ChatAdminAudit> monitorSortAudit(
+  List<ChatAdminAudit> audit,
+  MonitorAuditSort sort,
+) {
+  final out = [...audit];
+  out.sort((a, b) {
+    final x = a.at?.millisecondsSinceEpoch ?? 0;
+    final y = b.at?.millisecondsSinceEpoch ?? 0;
+    return sort == MonitorAuditSort.newest ? y.compareTo(x) : x.compareTo(y);
+  });
+  return out;
 }
 
 enum MonitorFreshness { any, today, quiet7, quiet30 }

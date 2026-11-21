@@ -80,6 +80,7 @@ type chatAdminRow struct {
 	HasRecovery bool              `json:"hasRecovery,omitempty"`
 	Disabled    bool              `json:"disabled,omitempty"`
 	Sessions    []chatSessionView `json:"sessions,omitempty"`
+	Role        string            `json:"role,omitempty"`
 }
 
 type chatAdminGroup struct {
@@ -99,24 +100,32 @@ type chatAdminReport struct {
 	At     int64  `json:"at"`
 }
 
-func (c *chatRoom) adminUsers(ctx context.Context, current string) []chatAdminRow {
+func (c *chatRoom) adminUsers(ctx context.Context, viewer chatUser, current string) []chatAdminRow {
+	contact := chatCan(viewer, permUsersContact)
+	sessions := chatCan(viewer, permDevicesView) || chatCan(viewer, permSessionsEnd)
 	c.ensure(ctx)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	rows := make([]chatAdminRow, 0, len(c.data.Users))
 	for i := range c.data.Users {
 		user := &c.data.Users[i]
-		rows = append(rows, chatAdminRow{
+		row := chatAdminRow{
 			Username:    user.Username,
-			Phone:       user.Phone,
-			Email:       user.Email,
 			Created:     user.Created,
 			LastSeen:    user.LastSeen,
 			HasPassword: user.PasswordHash != "",
 			HasRecovery: user.RecoveryHash != "",
 			Disabled:    user.Disabled,
-			Sessions:    sessionViewsLocked(user, current),
-		})
+			Role:        chatRole(*user),
+		}
+		if contact {
+			row.Phone = user.Phone
+			row.Email = user.Email
+		}
+		if sessions {
+			row.Sessions = sessionViewsLocked(user, current)
+		}
+		rows = append(rows, row)
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].Created != rows[j].Created {
@@ -146,32 +155,39 @@ func (s *Server) chatAdminUsers(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !chatIsAdmin(user) {
+	if !chatIsStaff(user) {
 		writeChatError(w, http.StatusForbidden, "You cannot open that list.")
 		return
 	}
 	current := chatTokenHash(r.Header.Get(chatTokenHeader))
-	writeJSON(w, http.StatusOK, map[string]any{
+	// Each section is sent only to roles allowed to see it.
+	out := map[string]any{
 		"success":     true,
-		"users":       s.chat.adminUsers(r.Context(), current),
-		"devices":     s.chat.adminDevices(r.Context()),
-		"groups":      s.chat.adminGroups(r.Context()),
-		"reports":     s.chat.adminReports(r.Context()),
+		"role":        chatRole(user),
+		"permissions": chatPermissionList(user),
 		"storage":     s.chat.storageState(),
 		"deviceLimit": chatInstallKeep,
-	})
+	}
+	if chatCan(user, permUsersView) {
+		out["users"] = s.chat.adminUsers(r.Context(), user, current)
+	}
+	if chatCan(user, permDevicesView) {
+		out["devices"] = s.chat.adminDevices(r.Context())
+	}
+	if chatCan(user, permGroupsView) {
+		out["groups"] = s.chat.adminGroups(r.Context())
+	}
+	if chatCan(user, permReportsView) {
+		out["reports"] = s.chat.adminReports(r.Context())
+	}
+	if chatCan(user, permAuditView) {
+		out["audit"] = s.chat.adminAudit(r.Context())
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
-func (s *Server) chatAdminActor(w http.ResponseWriter, r *http.Request) (chatUser, bool) {
-	user, ok := s.chatActor(w, r)
-	if !ok {
-		return chatUser{}, false
-	}
-	if !chatIsAdmin(user) {
-		writeChatError(w, http.StatusForbidden, "You cannot open that list.")
-		return chatUser{}, false
-	}
-	return user, true
+func (s *Server) chatAdminActor(w http.ResponseWriter, r *http.Request, perm string) (chatUser, bool) {
+	return s.chatStaffActor(w, r, perm)
 }
 
 const (
@@ -467,8 +483,8 @@ func usernameLocked(c *chatRoom, id string) string {
 }
 
 func (c *chatRoom) setDisabled(ctx context.Context, actor chatUser, username string, disabled bool) error {
-	if !chatIsAdmin(actor) {
-		return chatRejected("You cannot open that list.")
+	if !chatCan(actor, permUsersDisable) {
+		return chatRejected("You do not have permission to do that.")
 	}
 	name, err := cleanChatUsername(username)
 	if err != nil {
@@ -481,18 +497,31 @@ func (c *chatRoom) setDisabled(ctx context.Context, actor chatUser, username str
 		c.mu.Unlock()
 		return chatRejected("No Social Save user has that username.")
 	}
-	if disabled && chatIsAdmin(*user) {
+	if chatIsAdmin(*user) || user.ID == actor.ID {
 		c.mu.Unlock()
 		return chatRejected("That account stays open.")
 	}
+	if !chatOutranks(actor, *user) {
+		c.mu.Unlock()
+		return chatRejected("You cannot change that person's account.")
+	}
+	if user.Disabled == disabled {
+		c.mu.Unlock()
+		return nil
+	}
 	user.Disabled = disabled
+	action := "account.enable"
+	if disabled {
+		action = "account.disable"
+	}
+	c.auditLocked(actor, action, name, "")
 	c.mu.Unlock()
 	c.persist(ctx)
 	return nil
 }
 
 func (s *Server) chatAdminDisable(w http.ResponseWriter, r *http.Request) {
-	actor, ok := s.chatAdminActor(w, r)
+	actor, ok := s.chatAdminActor(w, r, permUsersDisable)
 	if !ok {
 		return
 	}
@@ -512,8 +541,8 @@ func (s *Server) chatAdminDisable(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *chatRoom) adminEndSession(ctx context.Context, actor chatUser, current, username, prefix string) error {
-	if !chatIsAdmin(actor) {
-		return chatRejected("You cannot open that list.")
+	if !chatCan(actor, permSessionsEnd) {
+		return chatRejected("You do not have permission to do that.")
 	}
 	name, err := cleanChatUsername(username)
 	if err != nil {
@@ -529,6 +558,10 @@ func (c *chatRoom) adminEndSession(ctx context.Context, actor chatUser, current,
 	if user == nil {
 		c.mu.Unlock()
 		return chatRejected("No Social Save user has that username.")
+	}
+	if user.ID != actor.ID && !chatOutranks(actor, *user) {
+		c.mu.Unlock()
+		return chatRejected("You cannot change that person's account.")
 	}
 	match := ""
 	count := 0
@@ -558,14 +591,15 @@ func (c *chatRoom) adminEndSession(ctx context.Context, actor chatUser, current,
 		return chatRejected("This is the device you are using.")
 	}
 	dropSessionHash(user, match)
+	c.auditLocked(actor, "session.end", name, match[:8])
 	c.mu.Unlock()
 	c.persist(ctx)
 	return nil
 }
 
 func (c *chatRoom) adminEndSessions(ctx context.Context, actor chatUser, current, username string) error {
-	if !chatIsAdmin(actor) {
-		return chatRejected("You cannot open that list.")
+	if !chatCan(actor, permSessionsEnd) {
+		return chatRejected("You do not have permission to do that.")
 	}
 	name, err := cleanChatUsername(username)
 	if err != nil {
@@ -581,16 +615,21 @@ func (c *chatRoom) adminEndSessions(ctx context.Context, actor chatUser, current
 		c.mu.Unlock()
 		return chatRejected("No Social Save user has that username.")
 	}
+	if !chatOutranks(actor, *user) {
+		c.mu.Unlock()
+		return chatRejected("You cannot change that person's account.")
+	}
 	user.TokenHash = ""
 	user.Sessions = nil
 	user.Devices = nil
+	c.auditLocked(actor, "session.end_all", name, "")
 	c.mu.Unlock()
 	c.persist(ctx)
 	return nil
 }
 
 func (s *Server) chatAdminSessionEnd(w http.ResponseWriter, r *http.Request) {
-	actor, ok := s.chatAdminActor(w, r)
+	actor, ok := s.chatAdminActor(w, r, permSessionsEnd)
 	if !ok {
 		return
 	}
@@ -610,7 +649,7 @@ func (s *Server) chatAdminSessionEnd(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) chatAdminSessionsAll(w http.ResponseWriter, r *http.Request) {
-	actor, ok := s.chatAdminActor(w, r)
+	actor, ok := s.chatAdminActor(w, r, permSessionsEnd)
 	if !ok {
 		return
 	}
