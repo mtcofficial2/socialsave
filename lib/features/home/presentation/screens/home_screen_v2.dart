@@ -387,15 +387,15 @@ class _HomeTools extends ConsumerWidget {
     final minimal = ref.watch(settingsControllerProvider.select((s) => s.minimalShortcuts));
     final scan = HotspotShare.supported ? 'Scan QR' : 'Receive';
     final items = <_QuickItem>[
-      _QuickItem(Icons.swap_horiz_rounded, 'Send', 'Send files to a nearby phone or PC', () => context.push('/share')),
-      _QuickItem(Icons.forum_rounded, 'Chats', 'Message people by username', () => context.push('/chat')),
-      _QuickItem(Icons.movie_filter_rounded, 'Status', 'Prepare an HD WhatsApp status', () => context.push('/status')),
+      _QuickItem(Icons.swap_horiz_rounded, 'Send', 'Send files to a nearby phone or PC', () => context.push('/share'), const Color(0xFF2563EB)),
+      _QuickItem(Icons.forum_rounded, 'Chats', 'Message people by username', () => context.push('/chat'), const Color(0xFF4F46E5)),
+      _QuickItem(Icons.movie_filter_rounded, 'Status', 'Prepare an HD WhatsApp status', () => context.push('/status'), const Color(0xFF7C3AED)),
       if (HotspotShare.hostSupported)
-        _QuickItem(Icons.wifi_tethering_rounded, 'Hotspot', 'Hotspot share', () => showHotspotQuickShare(context)),
-      _QuickItem(Icons.public_rounded, 'Browse', 'Browse sites and download videos', () => context.push('/browse')),
-      _QuickItem(Icons.library_music_rounded, 'Music', 'Open music player', () => context.push('/music')),
-      _QuickItem(Icons.video_library_rounded, 'Library', 'Open library', () => context.go('/library')),
-      _QuickItem(Icons.qr_code_scanner_rounded, scan, 'Scan a QR code to join', () => showReceiveFromPhone(context)),
+        _QuickItem(Icons.wifi_tethering_rounded, 'Hotspot', 'Hotspot share', () => showHotspotQuickShare(context), const Color(0xFF0891B2)),
+      _QuickItem(Icons.public_rounded, 'Browse', 'Browse sites and download videos', () => context.push('/browse'), const Color(0xFF0284C7)),
+      _QuickItem(Icons.library_music_rounded, 'Music', 'Open music player', () => context.push('/music'), const Color(0xFFDB2777)),
+      _QuickItem(Icons.video_library_rounded, 'Library', 'Open library', () => context.go('/library'), const Color(0xFF1D4ED8)),
+      _QuickItem(Icons.qr_code_scanner_rounded, scan, 'Scan a QR code to join', () => showReceiveFromPhone(context), const Color(0xFF0EA5E9)),
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -437,11 +437,31 @@ class _HomeTools extends ConsumerWidget {
 }
 
 class _QuickItem {
-  const _QuickItem(this.icon, this.label, this.semantics, this.onTap);
+  const _QuickItem(this.icon, this.label, this.semantics, this.onTap, this.tint);
   final IconData icon;
   final String label;
   final String semantics;
   final VoidCallback onTap;
+  final Color tint;
+}
+
+BoxDecoration _softPanel(ColorScheme scheme, {Color? glow}) {
+  final dark = scheme.brightness == Brightness.dark;
+  return BoxDecoration(
+    color: dark ? scheme.surfaceContainerLow : const Color(0xF8FFFFFF),
+    borderRadius: BorderRadius.circular(22),
+    border: Border.all(
+      color: dark ? Colors.white.withValues(alpha: 0.07) : scheme.outline.withValues(alpha: 0.85),
+    ),
+    boxShadow: [
+      if (!dark)
+        BoxShadow(
+          color: (glow ?? scheme.primary).withValues(alpha: 0.08),
+          blurRadius: 18,
+          offset: const Offset(0, 8),
+        ),
+    ],
+  );
 }
 
 class _QuickTile extends StatelessWidget {
@@ -455,12 +475,11 @@ class _QuickTile extends StatelessWidget {
       button: true,
       label: item.semantics,
       excludeSemantics: true,
-      child: Material(
-        color: scheme.surfaceContainerLow,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(22),
-          side: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.6)),
-        ),
+      child: DecoratedBox(
+        decoration: _softPanel(scheme, glow: item.tint),
+        child: Material(
+        color: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: () {
@@ -475,8 +494,8 @@ class _QuickTile extends StatelessWidget {
                 Container(
                   width: 44,
                   height: 44,
-                  decoration: BoxDecoration(color: scheme.primary.withValues(alpha: 0.12), shape: BoxShape.circle),
-                  child: Icon(item.icon, size: 22, color: scheme.primary),
+                  decoration: BoxDecoration(color: item.tint.withValues(alpha: 0.14), shape: BoxShape.circle),
+                  child: Icon(item.icon, size: 22, color: item.tint),
                 ),
                 const SizedBox(height: 8),
                 Text(
@@ -489,6 +508,7 @@ class _QuickTile extends StatelessWidget {
             ),
           ),
         ),
+      ),
       ),
     );
   }
@@ -529,7 +549,7 @@ class _MinimalQuickTile extends StatelessWidget {
               children: [
                 SizedBox(
                   height: 32,
-                  child: Center(child: Icon(item.icon, size: 26, color: scheme.primary)),
+                  child: Center(child: Icon(item.icon, size: 26, color: item.tint)),
                 ),
                 const SizedBox(height: 6),
                 Text(
@@ -581,11 +601,7 @@ class _RecentSection extends ConsumerWidget {
           Padding(
             padding: const EdgeInsets.only(top: 4, bottom: 8),
             child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: scheme.surfaceContainerLow,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.5)),
-              ),
+              decoration: _softPanel(scheme),
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Row(
@@ -626,12 +642,11 @@ class _RecentCard extends ConsumerWidget {
         button: true,
         label: 'Open ${record.title}',
         excludeSemantics: true,
-        child: Material(
-          color: scheme.surfaceContainerLow,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(22),
-            side: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.5)),
-          ),
+        child: DecoratedBox(
+          decoration: _softPanel(scheme),
+          child: Material(
+          color: Colors.transparent,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
           clipBehavior: Clip.antiAlias,
           child: InkWell(
             onTap: () => context.push('/downloads/${record.id}'),
@@ -688,6 +703,7 @@ class _RecentCard extends ConsumerWidget {
               ),
             ),
           ),
+        ),
         ),
       ),
     );

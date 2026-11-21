@@ -515,7 +515,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     final vaultLocked = _tab == 1 && !unlocked;
     final look = LibraryPalette.of(context);
     return Scaffold(
-      backgroundColor: look.bg,
+      backgroundColor: Colors.transparent,
       body: SafeArea(bottom: false, 
         child: Column(
           children: [

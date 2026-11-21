@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:social_save/core/theme/app_colors.dart';
 import 'package:social_save/features/library/phone_control_open.dart';
 import 'package:social_save/features/library/phone_control_ui.dart';
 import 'package:social_save/features/library/usb_link.dart';
@@ -38,7 +39,7 @@ class PhoneControlApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const seed = Color(0xFF0F766E);
+    const seed = AppColors.seed;
     return MaterialApp(
       title: phoneControlWindowTitle,
       debugShowCheckedModeBanner: false,

@@ -160,7 +160,13 @@ class LibraryEmpty extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: wash,
                   shape: BoxShape.circle,
-                  border: Border.all(color: color.withValues(alpha: 0.4)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: color.withValues(alpha: 0.16),
+                      blurRadius: 24,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
                 ),
                 child: Icon(icon, size: 40, color: color),
               ),

@@ -33,7 +33,7 @@ class DesktopChrome extends InheritedWidget {
 TextStyle? pageTitleStyle(BuildContext context) {
   final text = Theme.of(context).textTheme;
   final style = isDesktopShell(context) ? text.headlineSmall : text.titleLarge;
-  return style?.copyWith(fontWeight: FontWeight.w700, letterSpacing: -0.4);
+  return style?.copyWith(fontWeight: FontWeight.w800, letterSpacing: -0.7, height: 1.1);
 }
 
 /// Shared page spacing: 16 px gutters on phones, and on wide windows the

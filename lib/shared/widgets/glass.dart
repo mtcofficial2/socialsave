@@ -22,17 +22,17 @@ class GlassBackground extends StatelessWidget {
           end: Alignment.bottomRight,
           colors: dark
               ? wide
-                  ? const [Color(0xFF101217), Color(0xFF0A0B0E), Color(0xFF0C1014)]
-                  : const [Color(0xFF0E1015), Color(0xFF0A0B0E), Color(0xFF0D1216)]
-              : const [Color(0xFFF2F5FA), Color(0xFFEAF0F7), Color(0xFFF6F2EC)],
+                  ? const [Color(0xFF0A1020), Color(0xFF070B14), Color(0xFF0C1428)]
+                  : const [Color(0xFF0B1220), Color(0xFF070B14), Color(0xFF10182C)]
+              : const [Color(0xFFF4F7FC), Color(0xFFE7F0FA), Color(0xFFF7F4EF)],
         ),
       ),
       child: Stack(
         children: [
-          _Glow(top: wide ? -200 : -120, left: wide ? 120 : -90, size: wide ? 640 : 380, color: const Color(0xAA5EEAD4)),
-          _Glow(top: wide ? -80 : 140, right: wide ? 0 : -120, size: wide ? 560 : 420, color: const Color(0x9993C5FD)),
-          _Glow(bottom: wide ? -140 : -90, left: wide ? 240 : -60, size: wide ? 520 : 400, color: const Color(0x88A5F3FC)),
-          _Glow(bottom: 40, right: -80, size: wide ? 400 : 320, color: const Color(0x88C4B5FD)),
+          _Glow(top: wide ? -200 : -120, left: wide ? 80 : -90, size: wide ? 620 : 360, color: const Color(0x883B82F6)),
+          _Glow(top: wide ? -60 : 120, right: wide ? -40 : -110, size: wide ? 540 : 400, color: const Color(0x7738BDF8)),
+          _Glow(bottom: wide ? -160 : -80, left: wide ? 200 : -40, size: wide ? 480 : 360, color: const Color(0x664C6EF5)),
+          _Glow(bottom: 20, right: -60, size: wide ? 380 : 300, color: const Color(0x552563EB)),
         ],
       ),
     ),
@@ -75,8 +75,8 @@ class _Glow extends StatelessWidget {
               shape: BoxShape.circle,
               gradient: RadialGradient(
                 colors: [
-                  color.withValues(alpha: dark ? 0.30 : color.a),
-                  color.withValues(alpha: dark ? 0.12 : color.a * 0.45),
+                  color.withValues(alpha: dark ? 0.16 : color.a * 0.72),
+                  color.withValues(alpha: dark ? 0.06 : color.a * 0.28),
                   color.withValues(alpha: 0),
                 ],
                 stops: const [0.0, 0.45, 1.0],

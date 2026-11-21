@@ -35,6 +35,15 @@ class AppTheme {
           displayColor: scheme.onSurface,
         )
         .copyWith(
+          headlineMedium: sourced.headlineMedium?.copyWith(
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.8,
+            height: 1.08,
+          ),
+          titleLarge: sourced.titleLarge?.copyWith(
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.45,
+          ),
           bodySmall: sourced.bodySmall?.copyWith(
             fontSize: 13,
             height: 1.4,
@@ -70,9 +79,9 @@ class AppTheme {
         backgroundColor: Colors.transparent,
         foregroundColor: scheme.onSurface,
         titleTextStyle: text.titleLarge?.copyWith(
-          fontWeight: FontWeight.w700,
+          fontWeight: FontWeight.w800,
           fontSize: 20,
-          letterSpacing: -0.3,
+          letterSpacing: -0.45,
           color: scheme.onSurface,
         ),
       ),
@@ -81,8 +90,8 @@ class AppTheme {
         color: scheme.surfaceContainerLow,
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18),
-          side: BorderSide(color: scheme.outline.withValues(alpha: 0.3)),
+          borderRadius: BorderRadius.circular(20),
+          side: BorderSide(color: scheme.outline.withValues(alpha: 0.55)),
         ),
         shadowColor: const Color(0x140F172A),
       ),
@@ -99,11 +108,11 @@ class AppTheme {
           borderSide: BorderSide(color: scheme.outline.withValues(alpha: 0.35)),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(16),
           borderSide: BorderSide(color: scheme.primary, width: 1.6),
         ),
         errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(16),
           borderSide: BorderSide(color: scheme.error),
         ),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),

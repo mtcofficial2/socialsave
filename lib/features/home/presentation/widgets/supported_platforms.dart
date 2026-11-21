@@ -26,9 +26,10 @@ class SupportedPlatformsSection extends StatelessWidget {
       children: [
         Text(
           'Supported Platforms',
-          style: Theme.of(context).textTheme.titleSmall?.copyWith(
-            fontWeight: FontWeight.w700,
-            fontSize: 14,
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w800,
+            fontSize: 16,
+            letterSpacing: -0.3,
           ),
         ),
         const SizedBox(height: 8),
