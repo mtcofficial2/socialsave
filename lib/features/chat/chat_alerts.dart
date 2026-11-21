@@ -336,6 +336,7 @@ class ChatAlertWatch {
   final ChatApi _api = ChatApi();
   Timer? _poll;
   Timer? _calls;
+  DateTime? _callsAt;
   StreamSubscription<List<ConnectivityResult>>? _net;
   bool _busy = false;
   bool _again = false;
@@ -364,7 +365,21 @@ class ChatAlertWatch {
     if (callsOnThisDevice(windows: Plat.isWindows)) {
       _calls = Timer.periodic(
         const Duration(seconds: 4),
-        (_) => unawaited(ChatCalls.instance.syncIncoming()),
+        (_) {
+          // Calls ring over the live connection; while it is up this is
+          // only a backup check.
+          final now = DateTime.now();
+          if (!chatPollDue(
+            live: ChatLive.instance.connected.value,
+            last: _callsAt,
+            now: now,
+            liveGap: const Duration(seconds: 15),
+          )) {
+            return;
+          }
+          _callsAt = now;
+          unawaited(ChatCalls.instance.syncIncoming());
+        },
       );
       unawaited(ChatCalls.instance.syncIncoming());
     }
@@ -545,7 +560,11 @@ class ChatAlertWatch {
       if (!chatInboxCheckRuns(WidgetsBinding.instance.lifecycleState)) return;
       await ChatPrefs.ensure();
       final fresh = ChatAlerts.lastInbox;
-      final gap = ChatPrefs.dataSaver
+      // New messages arrive over the live connection, so while it is up the
+      // full inbox check only runs as a slow safety net.
+      final gap = ChatLive.instance.connected.value
+          ? const Duration(seconds: 45)
+          : ChatPrefs.dataSaver
           ? const Duration(seconds: 30)
           : const Duration(seconds: 10);
       if (!force && fresh != null && DateTime.now().difference(fresh) < gap) {

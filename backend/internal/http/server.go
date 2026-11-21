@@ -97,6 +97,14 @@ func New(cfg config.Config, validator *security.Validator, store *jobs.Store) *S
 	return s
 }
 
+// Flush saves anything still waiting to be written to object storage. Call it
+// when the server stops.
+func (s *Server) Flush(ctx context.Context) {
+	if s.chat != nil {
+		s.chat.flushStore(ctx)
+	}
+}
+
 // Router is the public HTTP handler.
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
@@ -109,6 +117,9 @@ func (s *Server) Router() http.Handler {
 		MaxAge:         300,
 	}))
 	r.Use(s.limit)
+	// JSON and web pages shrink to a fraction of their size when gzipped.
+	// Phones and browsers unpack it on their own; media is left as it is.
+	r.Use(middleware.Compress(5, "application/json", "text/html", "text/css", "text/plain", "text/javascript", "application/javascript", "image/svg+xml"))
 	r.Get("/health", s.health)
 	r.Route("/api/v1", func(r chi.Router) {
 		r.With(s.requireKey).Get("/platforms", s.platforms)

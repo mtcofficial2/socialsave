@@ -23,6 +23,7 @@ import 'package:social_save/shared/widgets/app_snack.dart';
 import 'package:social_save/shared/widgets/skeleton.dart';
 import 'package:social_save/core/diagnostics/quiet_log.dart';
 import 'package:social_save/core/theme/app_tokens.dart';
+import 'package:social_save/features/chat/chat_alert_policy.dart';
 
 enum _ContactKind { phone, email }
 
@@ -53,6 +54,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   bool get _groups => _tab == _ChatTab.groups;
   Timer? _poll;
+  DateTime? _threadsAt;
   StreamSubscription<ChatLiveEvent>? _live;
   ChatUser? _user;
   List<ChatThreadSummary> _threads = const [];
@@ -224,6 +226,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (!mounted || !_signedIn) return;
       final route = ModalRoute.of(context);
       if (route != null && !route.isCurrent) return;
+      if (!chatPollDue(
+        live: ChatLive.instance.connected.value,
+        last: _threadsAt,
+        now: DateTime.now(),
+      )) {
+        return;
+      }
       unawaited(_loadThreads());
     });
   }
@@ -231,6 +240,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Future<void> _loadThreads() async {
     if (_refreshing || _user == null) return;
     _refreshing = true;
+    _threadsAt = DateTime.now();
     try {
       final server = await _api.threads();
       await ChatInboxFilter.takeServerFlags(server);

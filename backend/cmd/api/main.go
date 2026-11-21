@@ -41,11 +41,16 @@ func main() {
 	}
 	providers.Configure(cfg)
 	go app.Jobs.Run(ctx)
+	stopped := make(chan struct{})
 	go func() {
+		defer close(stopped)
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = httpServer.Shutdown(shutdown)
+		saveCtx, saved := context.WithTimeout(context.Background(), 8*time.Second)
+		app.Flush(saveCtx)
+		saved()
 	}()
 	slog.Info("api ready", "port", cfg.Port, "max_download_bytes", cfg.MaxDownloadBytes, "default_max_height", cfg.DefaultMaxHeight)
 	err := httpServer.ListenAndServe()
@@ -53,4 +58,6 @@ func main() {
 		slog.Error("server stopped", "err", err)
 		os.Exit(1)
 	}
+	// Wait for the last chat save before the process ends.
+	<-stopped
 }

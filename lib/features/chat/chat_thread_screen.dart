@@ -38,6 +38,7 @@ import 'package:social_save/core/diagnostics/quiet_log.dart';
 import 'package:social_save/core/theme/app_tokens.dart';
 import 'package:social_save/shared/widgets/empty_state.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:social_save/features/chat/chat_alert_policy.dart';
 
 /// A direct chat. On a phone this is its own page. On a wide window it sits
 /// beside the chat list.
@@ -118,6 +119,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
   final FocusNode _focus = FocusNode();
   List<ChatMessage> _messages = const [];
   Timer? _poll;
+  DateTime? _polledAt;
   String _me = '';
   String? _error;
   bool _starting = true;
@@ -676,6 +678,13 @@ class _ChatThreadViewState extends State<ChatThreadView>
       if (!mounted) return;
       final route = ModalRoute.of(context);
       if (route != null && !route.isCurrent) return;
+      if (!chatPollDue(
+        live: ChatLive.instance.connected.value,
+        last: _polledAt,
+        now: DateTime.now(),
+      )) {
+        return;
+      }
       unawaited(_refresh());
     });
   }
@@ -683,6 +692,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
   Future<void> _refresh() async {
     if (_refreshing || _threadId.isEmpty) return;
     _refreshing = true;
+    _polledAt = DateTime.now();
     try {
       final started = DateTime.now().millisecondsSinceEpoch;
       var sync = await _api.messages(_threadId, _after, since: _syncedAt);

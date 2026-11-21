@@ -43,7 +43,10 @@ const (
 	chatListPinMax  = 20
 	chatSearchMax   = 30
 	chatOnlineFor   = 35 * time.Second
-	chatSeenPersist = 45 * time.Second
+	// Last seen lives in memory; it is only written down now and then so a
+	// restart keeps a close time. Writing it every few seconds re-sent the
+	// whole chat store and used most of the server's bandwidth.
+	chatSeenPersist = 10 * time.Minute
 	chatEditFor     = 24 * time.Hour
 	chatPinMax      = 3
 	chatSessionKeep = 2
@@ -292,6 +295,11 @@ type chatRoom struct {
 	blob       chatBlob
 	file       string
 	live       *chatHub
+	// Saving to object storage is batched: many small changes in a short
+	// time become one upload, and an unchanged copy is never sent again.
+	blobMu    sync.Mutex
+	blobTimer *time.Timer
+	blobSum   [32]byte
 }
 
 func newChatRoom(up storage.Uploader) *chatRoom {
@@ -1769,22 +1777,75 @@ func chatLatest(data chatData) int64 {
 	return last
 }
 
+// chatBlobDelay batches uploads of the chat store. Every change still lands
+// on the local disk at once; object storage gets the newest copy at most this
+// often, and again on shutdown.
+var chatBlobDelay = 60 * time.Second
+
 func (c *chatRoom) persist(ctx context.Context) {
+	c.saveMu.Lock()
+	c.mu.Lock()
+	body, err := json.Marshal(c.data)
+	file := c.file
+	blob := c.blob
+	c.mu.Unlock()
+	if err != nil {
+		c.saveMu.Unlock()
+		return
+	}
+	_ = os.WriteFile(file, body, 0o600)
+	c.saveMu.Unlock()
+	if blob == nil {
+		return
+	}
+	if chatBlobDelay <= 0 {
+		c.uploadStore(ctx)
+		return
+	}
+	c.blobMu.Lock()
+	if c.blobTimer == nil {
+		c.blobTimer = time.AfterFunc(chatBlobDelay, func() {
+			c.blobMu.Lock()
+			c.blobTimer = nil
+			c.blobMu.Unlock()
+			c.uploadStore(context.Background())
+		})
+	}
+	c.blobMu.Unlock()
+}
+
+// flushStore uploads any batched change now. The server calls it when it
+// stops so nothing waiting in the batch is lost.
+func (c *chatRoom) flushStore(ctx context.Context) {
+	c.blobMu.Lock()
+	pending := c.blobTimer != nil && c.blobTimer.Stop()
+	c.blobTimer = nil
+	c.blobMu.Unlock()
+	if pending {
+		c.uploadStore(ctx)
+	}
+}
+
+// uploadStore sends the newest chat store to object storage, unless it is
+// byte-for-byte the copy that was sent last time.
+func (c *chatRoom) uploadStore(ctx context.Context) {
 	c.saveMu.Lock()
 	defer c.saveMu.Unlock()
 	c.mu.Lock()
 	body, err := json.Marshal(c.data)
-	file := c.file
 	blob := c.blob
 	failed := c.blobFailed
 	users := len(c.data.Users)
 	installs := len(c.data.Installs)
 	c.mu.Unlock()
-	if err != nil {
+	if err != nil || blob == nil {
 		return
 	}
-	_ = os.WriteFile(file, body, 0o600)
-	if blob == nil {
+	sum := sha256.Sum256(body)
+	c.blobMu.Lock()
+	same := sum == c.blobSum
+	c.blobMu.Unlock()
+	if same && !failed {
 		return
 	}
 	if failed {
@@ -1808,9 +1869,15 @@ func (c *chatRoom) persist(ctx context.Context) {
 	}
 	saveCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	if err := blob.PutBytes(saveCtx, chatKey, body); err != nil && !errors.Is(err, os.ErrNotExist) {
-		slog.Info("chat persist failed")
+	if err := blob.PutBytes(saveCtx, chatKey, body); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			slog.Info("chat persist failed")
+		}
+		return
 	}
+	c.blobMu.Lock()
+	c.blobSum = sum
+	c.blobMu.Unlock()
 }
 
 func readChatFile(path string) chatData {
