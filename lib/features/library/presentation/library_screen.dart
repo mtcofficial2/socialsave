@@ -2156,7 +2156,7 @@ class _DeviceList extends StatelessWidget {
         icon: Icons.play_circle_rounded,
         title: 'Your library is empty',
         message:
-            'Download your favorite reels, shorts, and TikTok videos to watch offline anytime.',
+            'Open Home, paste a public link, and the video will show up here to watch offline.',
       );
     }
     final grid = GridView.builder(

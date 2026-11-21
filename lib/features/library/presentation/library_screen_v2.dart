@@ -894,7 +894,7 @@ class _LibraryScreenV2State extends ConsumerState<LibraryScreenV2>
       cursorColor: look.accent,
       textInputAction: TextInputAction.search,
       decoration: InputDecoration(
-        hintText: 'Search your library',
+        hintText: 'Search by title',
         hintStyle: TextStyle(color: look.muted, fontSize: 15),
         prefixIcon: Icon(Icons.search_rounded, color: look.muted, size: 22),
         suffixIcon: _query.isEmpty
@@ -2063,7 +2063,7 @@ class _DeviceList extends StatelessWidget {
         icon: Icons.play_circle_rounded,
         title: 'Your library is empty',
         message:
-            'Download your favorite reels, shorts, and TikTok videos to watch offline anytime.',
+            'Open Home, paste a public link, and the video will show up here to watch offline.',
       );
     }
     final grid = GridView.builder(

@@ -214,6 +214,9 @@
             android:name=".ChatListenAlarmReceiver"
             android:exported="false" />
         <receiver
+            android:name=".ReturnReminderReceiver"
+            android:exported="false" />
+        <receiver
             android:name=".SocialSaveWidget"
             android:exported="true">
             <intent-filter>

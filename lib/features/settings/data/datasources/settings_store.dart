@@ -50,6 +50,8 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
       '${AppConstants.settingsPrefsPrefix}volumeKeysSeek';
   static const _hapticAlerts =
       '${AppConstants.settingsPrefsPrefix}hapticAlerts';
+  static const _returnReminders =
+      '${AppConstants.settingsPrefsPrefix}returnReminders';
   static const _saveTreeUri =
       '${AppConstants.settingsPrefsPrefix}saveTreeUri';
 
@@ -83,6 +85,7 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
       'autoPipOnBlur': _prefs.getBool(_autoPipOnBlur),
       'volumeKeysSeek': _prefs.getBool(_volumeKeysSeek),
       'hapticAlerts': _prefs.getBool(_hapticAlerts),
+      'returnReminders': _prefs.getBool(_returnReminders),
       'saveTreeUri': _prefs.getString(_saveTreeUri),
     });
   }
@@ -127,6 +130,7 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
     await _prefs.setBool(_autoPipOnBlur, settings.autoPipOnBlur);
     await _prefs.setBool(_volumeKeysSeek, settings.volumeKeysSeek);
     await _prefs.setBool(_hapticAlerts, settings.hapticAlerts);
+    await _prefs.setBool(_returnReminders, settings.returnReminders);
     final tree = settings.saveTreeUri;
     if (tree == null || tree.isEmpty) {
       await _prefs.remove(_saveTreeUri);

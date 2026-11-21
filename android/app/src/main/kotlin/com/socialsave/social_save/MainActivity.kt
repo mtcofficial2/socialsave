@@ -627,6 +627,7 @@ class MainActivity : FlutterFragmentActivity() {
         phoneBody = body
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, "socialsave/phone").setStreamHandler(body)
         channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
+        ReturnReminder.install(flutterEngine.dartExecutor.binaryMessenger, this)
         DownloadEvents.channel = channel
         ChatReplyBridge.install(this, flutterEngine.dartExecutor.binaryMessenger)
         ChatListen.attach(this, flutterEngine.dartExecutor.binaryMessenger)

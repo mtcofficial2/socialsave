@@ -35,6 +35,7 @@ class AppSettings extends Equatable {
     this.autoPipOnBlur = false,
     this.volumeKeysSeek = true,
     this.hapticAlerts = true,
+    this.returnReminders = true,
     this.saveTreeUri,
   });
 
@@ -78,6 +79,9 @@ class AppSettings extends Equatable {
   final bool autoPipOnBlur;
   final bool volumeKeysSeek;
   final bool hapticAlerts;
+
+  /// Phone: a reminder when Social Save has stayed closed for about six hours.
+  final bool returnReminders;
   final String? saveTreeUri;
 
   AppSettings copyWith({
@@ -108,6 +112,7 @@ class AppSettings extends Equatable {
     bool? autoPipOnBlur,
     bool? volumeKeysSeek,
     bool? hapticAlerts,
+    bool? returnReminders,
     String? saveTreeUri,
     bool clearSaveTree = false,
   }) {
@@ -139,6 +144,7 @@ class AppSettings extends Equatable {
       autoPipOnBlur: autoPipOnBlur ?? this.autoPipOnBlur,
       volumeKeysSeek: volumeKeysSeek ?? this.volumeKeysSeek,
       hapticAlerts: hapticAlerts ?? this.hapticAlerts,
+      returnReminders: returnReminders ?? this.returnReminders,
       saveTreeUri: clearSaveTree ? null : (saveTreeUri ?? this.saveTreeUri),
     );
   }
@@ -175,6 +181,7 @@ class AppSettings extends Equatable {
       'autoPipOnBlur': autoPipOnBlur,
       'volumeKeysSeek': volumeKeysSeek,
       'hapticAlerts': hapticAlerts,
+      'returnReminders': returnReminders,
       if (saveTreeUri != null) 'saveTreeUri': saveTreeUri!,
     };
   }
@@ -222,6 +229,7 @@ class AppSettings extends Equatable {
       autoPipOnBlur: map['autoPipOnBlur'] as bool? ?? false,
       volumeKeysSeek: map['volumeKeysSeek'] as bool? ?? true,
       hapticAlerts: map['hapticAlerts'] as bool? ?? true,
+      returnReminders: map['returnReminders'] as bool? ?? true,
       saveTreeUri: (map['saveTreeUri'] as String?)?.trim().isNotEmpty == true
           ? map['saveTreeUri'] as String
           : null,
@@ -257,6 +265,7 @@ class AppSettings extends Equatable {
         autoPipOnBlur,
         volumeKeysSeek,
         hapticAlerts,
+        returnReminders,
         saveTreeUri,
       ];
 }

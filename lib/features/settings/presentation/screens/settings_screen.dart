@@ -544,7 +544,7 @@ class SettingsScreen extends ConsumerWidget {
                   ],
                 )),
                 if (!kIsWeb)
-                _Sec(title: 'Notifications & System', keys: 'notifications alerts thumbnail system', child: Column(
+                _Sec(title: 'Notifications & System', keys: 'notifications alerts thumbnail system reminder', child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
             _groupTitle(context, Icons.notifications_active_outlined, 'Notifications & System'),
@@ -568,6 +568,23 @@ class SettingsScreen extends ConsumerWidget {
                         await controller.setNotifications(value);
                       },
                     ),
+                    if (Plat.isAndroid) ...[
+                      const SizedBox(height: 16),
+                      _toggleRow(
+                        context,
+                        icon: Icons.notifications_active_rounded,
+                        title: 'Remind me to open Social Save',
+                        subtitle:
+                            'If the app stays closed for about six hours, the phone reminds you. It repeats through the day until you open it, and stays quiet from 10 pm to 8 am.',
+                        value: settings.returnReminders,
+                        onChanged: (value) async {
+                          if (value) {
+                            await ref.read(notificationServiceProvider).requestPermission();
+                          }
+                          await controller.setReturnReminders(value);
+                        },
+                      ),
+                    ],
                     const SizedBox(height: 16),
                     _toggleRow(
                       context,

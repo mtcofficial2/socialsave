@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/storage/download_path_service.dart';
+import 'package:social_save/features/reminders/return_reminder.dart';
 import 'package:social_save/features/settings/domain/entities/app_settings.dart';
 
 final settingsControllerProvider =
@@ -124,6 +125,11 @@ class SettingsController extends Notifier<AppSettings> {
 
   Future<void> setHapticAlerts(bool value) {
     return _commit(state.copyWith(hapticAlerts: value));
+  }
+
+  Future<void> setReturnReminders(bool value) async {
+    await _commit(state.copyWith(returnReminders: value));
+    await ReturnReminder.touch(enabled: value);
   }
 
   Future<void> setSaveTree(String? uri) {

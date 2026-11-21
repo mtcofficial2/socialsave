@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:social_save/features/chat/chat_alerts.dart';
 import 'package:social_save/features/library/session_ui.dart';
 import 'package:social_save/web/web_pages.dart';
@@ -12,6 +14,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:social_save/core/constants/app_constants.dart';
 import 'package:social_save/core/theme/app_theme.dart';
+import 'package:social_save/features/reminders/return_reminder.dart';
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
 import 'package:social_save/shared/routing/app_router.dart';
 import 'package:social_save/shared/widgets/glass.dart';
@@ -54,6 +57,7 @@ class SocialSaveApp extends ConsumerWidget {
               if (!kIsWeb) const NearbyIncomingCard(),
               if (!kIsWeb) const SessionPill(),
               if (!kIsWeb) const ChatAlertHost(),
+              if (!kIsWeb) const _ReturnReminderHost(),
               if (!kIsWeb)
                 const Positioned(
                   top: 0,
@@ -137,6 +141,45 @@ Widget _desktopKeys(Widget child) {
       child: child,
     ),
   );
+}
+
+/// Arms the phone reminder whenever Social Save comes to the front.
+class _ReturnReminderHost extends ConsumerStatefulWidget {
+  const _ReturnReminderHost();
+
+  @override
+  ConsumerState<_ReturnReminderHost> createState() => _ReturnReminderHostState();
+}
+
+class _ReturnReminderHostState extends ConsumerState<_ReturnReminderHost>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_touch());
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_touch());
+  }
+
+  Future<void> _touch() async {
+    final on = ref.read(settingsControllerProvider).returnReminders;
+    await ReturnReminder.touch(enabled: on);
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
 }
 
 /// Web: the site is the phone app. On a wide browser window the phone

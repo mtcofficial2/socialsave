@@ -113,7 +113,7 @@ class _UrlInputCardState extends ConsumerState<UrlInputCard> {
                           fontWeight: FontWeight.w500,
                         ),
                         decoration: const InputDecoration(
-                          hintText: 'https://...',
+                          hintText: 'YouTube, TikTok, Instagram…',
                           isDense: true,
                           border: InputBorder.none,
                           enabledBorder: InputBorder.none,
@@ -143,7 +143,7 @@ class _UrlInputCardState extends ConsumerState<UrlInputCard> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      state.isAnalyzing ? 'Opening this link…' : 'Public video',
+                      state.isAnalyzing ? 'Opening this link…' : 'Ready to open',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -201,7 +201,7 @@ class _UrlInputCardState extends ConsumerState<UrlInputCard> {
 
   Widget _pasteButton(HomeState state, bool emphasizePaste) {
     final style = FilledButton.styleFrom(
-      minimumSize: const Size(0, 44),
+      minimumSize: const Size(0, 48),
       visualDensity: VisualDensity.compact,
     );
     final onPressed = state.isAnalyzing ? null : widget.onPaste;
@@ -235,7 +235,7 @@ class _UrlInputCardState extends ConsumerState<UrlInputCard> {
     bool emphasizePaste,
   ) {
     final style = FilledButton.styleFrom(
-      minimumSize: const Size(0, 44),
+      minimumSize: const Size(0, 48),
       visualDensity: VisualDensity.compact,
     );
     final onPressed = state.isAnalyzing ? null : widget.onAnalyze;
@@ -255,7 +255,7 @@ class _UrlInputCardState extends ConsumerState<UrlInputCard> {
           )
         : const Icon(Icons.arrow_forward_rounded, size: 18);
     final label = Text(
-      state.isAnalyzing ? 'Analyzing…' : 'Analyze Link',
+      state.isAnalyzing ? 'Opening…' : 'Continue',
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
     );

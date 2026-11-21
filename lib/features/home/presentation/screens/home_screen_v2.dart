@@ -33,6 +33,7 @@ import 'package:social_save/features/library/presentation/library_screen.dart'
 import 'package:social_save/features/player/open_player.dart';
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
 import 'package:social_save/features/updates/update_card.dart';
+import 'package:social_save/shared/widgets/app_logo.dart';
 import 'package:social_save/shared/widgets/compliance_notice.dart';
 import 'package:social_save/shared/widgets/page_layout.dart';
 import 'package:social_save/shared/widgets/platform_logo.dart';
@@ -219,46 +220,53 @@ class _HomeScreenV2State extends ConsumerState<HomeScreenV2> with WidgetsBinding
     return body;
   }
 
+  String _hello() {
+    final hour = DateTime.now().hour;
+    if (hour < 12) return 'Good morning';
+    if (hour < 17) return 'Good afternoon';
+    return 'Good evening';
+  }
+
   Widget _header(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final tag = AppConstants.appTagline.endsWith('.') ? AppConstants.appTagline : '${AppConstants.appTagline}.';
     return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 20, 4, 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.fromLTRB(4, 16, 4, 16),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Row(
-            children: [
-              Container(
-                width: 10,
-                height: 10,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(colors: [scheme.primary, scheme.tertiary]),
+          const AppLogo(size: 52),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _hello(),
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: scheme.primary),
                 ),
-              ),
-              const SizedBox(width: 10),
-              Text(
-                'SocialSave',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, letterSpacing: 1.2, color: scheme.onSurfaceVariant),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Semantics(
-            header: true,
-            child: Text(
-              'Save a video',
-              style: Theme.of(context).textTheme.headlineLarge?.copyWith(fontWeight: FontWeight.w800, letterSpacing: -1, height: 1.1),
+                const SizedBox(height: 2),
+                Semantics(
+                  header: true,
+                  child: Text(
+                    'Save a video',
+                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.8,
+                          height: 1.05,
+                        ),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(tag, style: TextStyle(fontSize: 14, height: 1.35, color: scheme.onSurfaceVariant)),
+                if (DesktopSupport.isWindows)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text('Ctrl+V pastes a link.', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+                  ),
+              ],
             ),
           ),
-          const SizedBox(height: 8),
-          Text(tag, style: TextStyle(fontSize: 15, height: 1.45, color: scheme.onSurfaceVariant)),
-          if (DesktopSupport.isWindows)
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Text('Ctrl+V pastes a link.', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
-            ),
         ],
       ),
     );
@@ -399,21 +407,29 @@ class _HomeTools extends ConsumerWidget {
             style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, letterSpacing: -0.4, color: scheme.onSurface),
           ),
         ),
-        const SizedBox(height: 4),
-        SizedBox(
-          height: minimal ? 84 : 112,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: items.length,
-            separatorBuilder: (_, _) => const SizedBox(width: 4),
-            itemBuilder: (context, index) {
-              final item = items[index];
-              return SizedBox(
-                width: minimal ? 76 : 96,
-                child: minimal ? _MinimalQuickTile(item: item) : _QuickTile(item: item),
-              );
-            },
-          ),
+        const SizedBox(height: 2),
+        Text(
+          'Send files, chat, and play what you saved.',
+          style: TextStyle(fontSize: 13, height: 1.35, color: scheme.onSurfaceVariant),
+        ),
+        const SizedBox(height: 8),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            const columns = 4;
+            const gap = 8.0;
+            final tileW = (constraints.maxWidth - gap * (columns - 1)) / columns;
+            return Wrap(
+              spacing: gap,
+              runSpacing: 4,
+              children: [
+                for (final item in items)
+                  SizedBox(
+                    width: tileW,
+                    child: minimal ? _MinimalQuickTile(item: item) : _QuickTile(item: item),
+                  ),
+              ],
+            );
+          },
         ),
       ],
     );
@@ -563,10 +579,28 @@ class _RecentSection extends ConsumerWidget {
         const SizedBox(height: 4),
         if (recent.isEmpty)
           Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Text(
-              'Nothing saved yet. Paste a public link above to start.',
-              style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4),
+            padding: const EdgeInsets.only(top: 4, bottom: 8),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerLow,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.5)),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    Icon(Icons.movie_outlined, color: scheme.primary),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Nothing saved yet. Paste a public link above and it will show up here.',
+                        style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           )
         else
