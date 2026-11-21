@@ -21,6 +21,7 @@ import 'package:social_save/core/utils/set_link.dart';
 import 'package:social_save/features/downloader/follow_creator.dart';
 import 'package:social_save/features/home/favorite_creators_row.dart';
 import 'package:social_save/features/home/presentation/providers/home_controller.dart';
+import 'package:social_save/features/home/presentation/providers/save_queue.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
 import 'package:social_save/features/downloads/presentation/providers/downloads_controller.dart';
 import 'package:social_save/features/home/presentation/widgets/recent_downloads_list.dart';
@@ -111,6 +112,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       return false;
     }
     if (text == null || text.trim().isEmpty || !mounted) return false;
+    if (_brought(text)) return true;
     ref.read(homeControllerProvider.notifier).setUrl(text);
     final url = ref.read(homeControllerProvider.notifier).validatedUrl();
     if (url == null || !mounted) return false;
@@ -142,7 +144,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     }
   }
 
+  /// Starts every video link in [raw] when there are at least two.
+  bool _brought(String? raw) {
+    final n = ref.read(saveQueueProvider.notifier).addBrought(raw);
+    if (n < 2) return false;
+    ref.read(homeControllerProvider.notifier).setUrl('');
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Saving $n links.')),
+      );
+    }
+    return true;
+  }
+
   Future<void> _paste() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    if (_brought(data?.text)) return;
     await ref.read(homeControllerProvider.notifier).pasteFromClipboard();
     if (!mounted) return;
     final state = ref.read(homeControllerProvider);
@@ -185,6 +202,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   }
 
   Future<void> _analyze() async {
+    if (_brought(ref.read(homeControllerProvider).url)) return;
     final url = ref.read(homeControllerProvider.notifier).validatedUrl();
     if (url == null || !mounted) return;
     HapticFeedback.lightImpact();

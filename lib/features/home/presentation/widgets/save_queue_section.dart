@@ -18,7 +18,10 @@ class SaveQueueSection extends ConsumerWidget {
         TextButton.icon(
           onPressed: url.trim().isEmpty
               ? null
-              : () => ref.read(saveQueueProvider.notifier).add(url),
+              : () {
+                  final n = ref.read(saveQueueProvider.notifier).addBrought(url);
+                  if (n == 0) ref.read(saveQueueProvider.notifier).add(url);
+                },
           icon: const Icon(Icons.playlist_add_rounded),
           label: const Text('Add to queue'),
         ),

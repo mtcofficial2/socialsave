@@ -58,6 +58,7 @@ class AppShell extends ConsumerWidget {
                 child: _MiniProgress(
                   title: current.title,
                   progress: current.progress,
+                  others: activeCount > 1 ? activeCount - 1 : 0,
                   speed: ref
                       .watch(formattersProvider)
                       .speed(current.bytesPerSecond),
@@ -177,6 +178,7 @@ class _MiniProgress extends StatelessWidget {
     required this.title,
     required this.progress,
     required this.speed,
+    this.others = 0,
     required this.onOpen,
     this.thumbnail,
     this.onPause,
@@ -185,6 +187,7 @@ class _MiniProgress extends StatelessWidget {
   final String title;
   final double progress;
   final String speed;
+  final int others;
   final String? thumbnail;
   final VoidCallback onOpen;
   final VoidCallback? onPause;
@@ -239,7 +242,9 @@ class _MiniProgress extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        '${(progress * 100).round()}%  •  $speed',
+                        others > 0
+                            ? '${(progress * 100).round()}%  •  $speed  •  ${others + 1} at once'
+                            : '${(progress * 100).round()}%  •  $speed',
                         // 1.0.49: accent text on light glass fell under 4.5:1.
                         style: TextStyle(
                           fontSize: 12,

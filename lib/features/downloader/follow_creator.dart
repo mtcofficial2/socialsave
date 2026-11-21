@@ -7,10 +7,13 @@ import 'package:social_save/core/errors/exceptions.dart';
 import 'package:social_save/core/platform/media_events.dart';
 import 'package:social_save/core/utils/platform_detector.dart';
 import 'package:social_save/core/utils/set_link.dart';
+import 'package:social_save/features/downloader/creator_notice.dart';
 import 'package:social_save/features/downloader/presentation/providers/download_manager.dart';
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
 import 'package:social_save/shared/models/media_format.dart';
 import 'package:social_save/shared/models/social_platform.dart';
+
+export 'package:social_save/features/downloader/creator_notice.dart' show creatorNoticeTitle, creatorNoticeBody;
 
 /// One public YouTube channel or playlist, or one TikTok profile, checked overnight.
 class FollowedSet {
@@ -179,15 +182,18 @@ class FollowCreator {
         final fresh = unseenUrls(current, set.seen);
         final take = fresh.take(maxNew).toList();
         final seen = [...set.seen];
+        var added = 0;
         for (final url in take) {
           if (isChannelSection(url) || youtubeChannelRoot(url) != null) {
             if (!seen.contains(url)) seen.add(url);
             continue;
           }
           final kept = await _queue(container, url);
-          if (kept && !seen.contains(url)) seen.add(url);
-          if (kept) queued++;
+          if (kept.keep && !seen.contains(url)) seen.add(url);
+          if (kept.keep) queued++;
+          if (kept.fresh) added++;
         }
+        if (added > 0) await _notice(container, set.url, set.title, added);
         next.add(set.copyWith(
           seen: seen.length > 500 ? seen.sublist(seen.length - 500) : seen,
           lastCheck: DateTime.now(),
@@ -200,11 +206,11 @@ class FollowCreator {
     return queued;
   }
 
-  /// True when this URL should not be tried again (saved, skipped, or queued).
-  static Future<bool> _queue(ProviderContainer container, String url) async {
+  /// [keep] means this URL should not be tried again. [fresh] means it was just queued.
+  static Future<({bool keep, bool fresh})> _queue(ProviderContainer container, String url) async {
     try {
       final media = await container.read(mediaRepositoryProvider).analyze(url);
-      if (!media.canDownload) return true;
+      if (!media.canDownload) return (keep: true, fresh: false);
       final settings = container.read(settingsControllerProvider);
       final remembered = settings.qualityByPlatform[media.platform.id];
       MediaFormat? format;
@@ -215,18 +221,30 @@ class FollowCreator {
         }
       }
       format ??= _quality(media.formats, 'auto') ?? media.defaultFormat;
-      if (format == null) return true;
+      if (format == null) return (keep: true, fresh: false);
       await container.read(downloadManagerProvider.notifier).enqueue(
             media: media,
             format: format,
             askExport: false,
           );
-      return true;
+      return (keep: true, fresh: true);
     } on AppException catch (error) {
-      return error.message.toLowerCase().contains('already saved');
+      final saved = error.message.toLowerCase().contains('already saved');
+      return (keep: saved, fresh: false);
     } catch (_) {
-      return false;
+      return (keep: false, fresh: false);
     }
+  }
+
+  /// One notice for this creator. A failure here still leaves the downloads queued.
+  static Future<void> _notice(ProviderContainer container, String url, String title, int count) async {
+    try {
+      await container.read(notificationServiceProvider).showCreatorReady(
+            name: creatorNoticeTitle(title),
+            count: count,
+            url: url,
+          );
+    } catch (_) {}
   }
 
   static MediaFormat? _quality(List<MediaFormat> formats, String quality) {

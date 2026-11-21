@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/errors/exceptions.dart';
 import 'package:social_save/core/utils/set_link.dart';
+import 'package:social_save/core/utils/together.dart';
 import 'package:social_save/features/downloader/follow_creator.dart';
 import 'package:social_save/features/home/favorite_creators.dart';
 import 'package:social_save/features/library/presentation/library_look.dart';
@@ -174,11 +175,12 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
     });
     var saved = 0;
     var skipped = 0;
+    var running = 0;
     try {
-      for (var i = 0; i < targets.length; i++) {
+      await runTogether(targets, (entry) async {
         if (!mounted) return;
-        setState(() => _step = i + 1);
-        final entry = targets[i];
+        running++;
+        setState(() => _step = saved + skipped + running);
         try {
           final media = await ref
               .read(mediaRepositoryProvider)
@@ -187,7 +189,7 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
           if (!mounted) return;
           if (!media.canDownload) {
             skipped++;
-            continue;
+            return;
           }
           final settings = ref.read(settingsControllerProvider);
           final remembered = settings.qualityByPlatform[media.platform.id];
@@ -203,7 +205,7 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
               _firstQuality(media.formats, 'auto') ?? media.defaultFormat;
           if (format == null) {
             skipped++;
-            continue;
+            return;
           }
           await ref
               .read(downloadManagerProvider.notifier)
@@ -215,8 +217,11 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen> {
           skipped++;
         } catch (_) {
           skipped++;
+        } finally {
+          running--;
+          if (mounted) setState(() => _step = saved + skipped + running);
         }
-      }
+      });
     } finally {
       if (mounted) setState(() => _saving = false);
     }

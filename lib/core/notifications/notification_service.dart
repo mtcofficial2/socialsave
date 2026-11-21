@@ -11,6 +11,7 @@ import 'package:social_save/core/notifications/windows_toast_setup_stub.dart'
     if (dart.library.ffi) 'package:social_save/core/notifications/windows_toast_setup.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
+import 'package:social_save/features/downloader/creator_notice.dart';
 
 const _notificationLogo = DrawableResourceAndroidBitmap('ic_notification_logo');
 
@@ -658,6 +659,40 @@ class NotificationService {
     try {
       await _plugin.cancel(incomingCallId);
     } catch (_) {}
+  }
+
+  /// One notice when a followed creator has new public videos ready to download.
+  Future<void> showCreatorReady({
+    required String name,
+    required int count,
+    required String url,
+  }) async {
+    if (kIsWeb || count < 1) return;
+    if (!_initialized) await init();
+    final title = creatorNoticeTitle(name);
+    final body = creatorNoticeBody(count);
+    final id = url.hashCode & 0x7fffffff;
+    if (defaultTargetPlatform == TargetPlatform.windows) {
+      await _showWindows(id, title, body);
+      return;
+    }
+    await _plugin.show(
+      id,
+      title,
+      body,
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          'creators',
+          'Creators',
+          channelDescription: 'New videos from creators you follow',
+          icon: 'ic_notification',
+          largeIcon: _notificationLogo,
+          importance: Importance.defaultImportance,
+          priority: Priority.defaultPriority,
+        ),
+        iOS: DarwinNotificationDetails(),
+      ),
+    );
   }
 
   Future<void> showDownloadComplete({

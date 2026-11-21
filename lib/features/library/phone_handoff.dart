@@ -15,6 +15,7 @@ import 'package:social_save/features/library/bundle_transfer.dart';
 import 'package:social_save/features/library/bundle_ui.dart';
 import 'package:social_save/features/library/firewall_check.dart';
 import 'package:social_save/features/library/hotspot_guide.dart';
+import 'package:social_save/features/home/presentation/providers/save_queue.dart';
 import 'package:social_save/features/home/presentation/widgets/link_offer.dart';
 import 'package:social_save/features/library/hotspot_share.dart';
 import 'package:social_save/features/library/pc_hotspot.dart';
@@ -3162,6 +3163,17 @@ void listenForQuickActions() {
           appRouter.go('/');
           await Future<void>.delayed(const Duration(milliseconds: 250));
           final home = ProviderScope.containerOf(ctx, listen: false);
+          final copied = (await Clipboard.getData(Clipboard.kTextPlain))?.text;
+          final brought = home.read(saveQueueProvider.notifier).addBrought(copied);
+          if (brought > 1) {
+            HapticFeedback.lightImpact();
+            if (ctx.mounted) {
+              ScaffoldMessenger.maybeOf(ctx)?.showSnackBar(
+                SnackBar(content: Text('Saving $brought links.')),
+              );
+            }
+            return;
+          }
           await home.read(homeControllerProvider.notifier).pasteFromClipboard();
           final state = home.read(homeControllerProvider);
           if (state.error == null && state.url.isNotEmpty) {
@@ -3201,6 +3213,14 @@ void listenForQuickActions() {
       final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
       if (ctx == null || !ctx.mounted) return;
       final home = ProviderScope.containerOf(ctx, listen: false);
+      final brought = home.read(saveQueueProvider.notifier).addBrought(text);
+      if (brought > 1) {
+        HapticFeedback.lightImpact();
+        ScaffoldMessenger.maybeOf(ctx)?.showSnackBar(
+          SnackBar(content: Text('Saving $brought links.')),
+        );
+        return;
+      }
       final controller = home.read(homeControllerProvider.notifier)..setUrl(text);
       final url = controller.validatedUrl();
       if (url == null) return;

@@ -4,7 +4,9 @@ import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
+import 'package:social_save/core/utils/video_links.dart';
 import 'package:social_save/features/home/presentation/providers/home_controller.dart';
+import 'package:social_save/features/home/presentation/providers/save_queue.dart';
 import 'package:social_save/features/library/bundle_transfer.dart' show isVideoName;
 import 'package:social_save/features/player/player_session.dart';
 import 'package:social_save/shared/models/social_platform.dart';
@@ -65,7 +67,7 @@ class _WindowsDropZoneState extends ConsumerState<WindowsDropZone> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'Videos play here. A link shortcut (.url) opens it to download.',
+                          'Videos play here. Several links download together.',
                           style: TextStyle(color: scheme.onPrimaryContainer),
                         ),
                       ],
@@ -81,7 +83,7 @@ class _WindowsDropZoneState extends ConsumerState<WindowsDropZone> {
 
   Future<void> _handle(List<String> paths) async {
     final videos = <String>[];
-    String? link;
+    final links = <String>[];
     for (final path in paths) {
       if (path.isEmpty) continue;
       if (isVideoName(path)) {
@@ -89,8 +91,8 @@ class _WindowsDropZoneState extends ConsumerState<WindowsDropZone> {
         continue;
       }
       final ext = p.extension(path).toLowerCase();
-      if (link == null && (ext == '.url' || ext == '.txt' || ext == '.webloc')) {
-        link = await _linkIn(File(path));
+      if (ext == '.url' || ext == '.txt' || ext == '.webloc') {
+        links.addAll(await _linksIn(File(path)));
       }
     }
     if (!mounted) return;
@@ -109,6 +111,17 @@ class _WindowsDropZoneState extends ConsumerState<WindowsDropZone> {
       );
       return;
     }
+    final together = linksToSaveTogether(links.join('\n'));
+    if (together.length > 1) {
+      ref.read(saveQueueProvider.notifier).addAll(together);
+      if (!mounted) return;
+      appRouter.go('/');
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text('Saving ${together.length} links.')),
+      );
+      return;
+    }
+    final link = links.isNotEmpty ? links.first : null;
     if (link != null) {
       final controller = ref.read(homeControllerProvider.notifier)..setUrl(link);
       final url = controller.validatedUrl();
@@ -124,14 +137,14 @@ class _WindowsDropZoneState extends ConsumerState<WindowsDropZone> {
     );
   }
 
-  /// First http(s) link inside a small text-like file.
-  static Future<String?> _linkIn(File file) async {
+  /// Supported links inside a small text-like file.
+  static Future<List<String>> _linksIn(File file) async {
     try {
-      if (await file.length() > 64 * 1024) return null;
+      if (await file.length() > 64 * 1024) return const [];
       final text = await file.readAsString();
-      return RegExp(r'https?://[^\s"<>]+').firstMatch(text)?.group(0);
+      return videoLinksIn(text);
     } catch (_) {
-      return null;
+      return const [];
     }
   }
 }

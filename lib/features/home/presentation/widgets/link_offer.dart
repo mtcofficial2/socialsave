@@ -9,9 +9,9 @@ import 'package:social_save/core/errors/error_messages.dart';
 import 'package:social_save/core/errors/exceptions.dart';
 import 'package:social_save/core/notifications/notification_service.dart';
 import 'package:social_save/core/platform/plat.dart';
-import 'package:social_save/core/utils/platform_detector.dart';
 import 'package:social_save/core/utils/set_link.dart';
-import 'package:social_save/core/utils/url_validator.dart';
+import 'package:social_save/core/utils/video_links.dart';
+import 'package:social_save/features/home/presentation/providers/save_queue.dart';
 import 'package:social_save/features/downloads/domain/entities/download_record.dart';
 import 'package:social_save/features/library/library_catalog.dart';
 import 'package:social_save/features/downloader/presentation/providers/download_manager.dart';
@@ -20,33 +20,17 @@ import 'package:social_save/features/settings/presentation/providers/settings_co
 import 'package:social_save/features/home/presentation/widgets/quality_pick.dart';
 import 'package:social_save/shared/models/media_format.dart';
 import 'package:social_save/shared/models/media_info.dart';
-import 'package:social_save/shared/models/social_platform.dart';
 import 'package:social_save/shared/routing/app_router.dart';
 import 'package:window_manager/window_manager.dart';
 
-final _urlInText = RegExp(r'https?://[^\s<>"]+', caseSensitive: false);
+export 'package:social_save/core/utils/video_links.dart' show videoLinkIn, videoLinksIn, linksToSaveTogether;
+
 const _lastKey = 'linkoffer.last';
 
 /// Links the background overlay already handed to the download pipeline, so the
 /// resume check does not offer them a second time.
 final Set<String> bgHandledLinks = <String>{};
 DateTime bgActiveAt = DateTime.fromMillisecondsSinceEpoch(0);
-
-/// A public video link found in [raw], or null for anything else.
-String? videoLinkIn(String? raw) {
-  final text = raw?.trim() ?? '';
-  if (text.isEmpty) return null;
-  const validator = UrlValidator();
-  var r = validator.validate(text);
-  if (!r.isValid) {
-    final m = _urlInText.firstMatch(text);
-    if (m == null) return null;
-    r = validator.validate(m.group(0)!);
-  }
-  if (!r.isValid) return null;
-  final url = r.normalized.toString();
-  return const PlatformDetector().detect(url) == SocialPlatform.unknown ? null : url;
-}
 
 String _clock(int s) {
   final h = s ~/ 3600, m = (s % 3600) ~/ 60, x = s % 60;
@@ -409,6 +393,27 @@ class _LinkOfferWatcherState extends ConsumerState<LinkOfferWatcher> with Widget
       } catch (_) {
         return;
       }
+      final many = linksToSaveTogether(text);
+      if (many.isNotEmpty) {
+        if (!await _windowActive()) return;
+        final mark = many.first;
+        if (mark == _seen) return;
+        final prefs = await SharedPreferences.getInstance();
+        if (prefs.getString(_lastKey) == mark) {
+          _seen = mark;
+          return;
+        }
+        _seen = mark;
+        await prefs.setString(_lastKey, mark);
+        _open = true;
+        try {
+          final yes = await _askMany(many.length);
+          if (yes) ref.read(saveQueueProvider.notifier).addAll(many);
+        } finally {
+          _open = false;
+        }
+        return;
+      }
       final url = videoLinkIn(text);
       if (url == null || url == _seen) return;
       if (Plat.isAndroid) {
@@ -442,6 +447,23 @@ class _LinkOfferWatcherState extends ConsumerState<LinkOfferWatcher> with Widget
     } finally {
       _busy = false;
     }
+  }
+
+  Future<bool> _askMany(int count) async {
+    final ctx = appRouter.routerDelegate.navigatorKey.currentContext;
+    if (ctx == null || !ctx.mounted) return false;
+    final yes = await showDialog<bool>(
+      context: ctx,
+      builder: (dialog) => AlertDialog(
+        title: Text('Download $count links?'),
+        content: const Text('They download at the same time.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialog, false), child: const Text('Not now')),
+          FilledButton(onPressed: () => Navigator.pop(dialog, true), child: const Text('Download')),
+        ],
+      ),
+    );
+    return yes == true;
   }
 
   /// A Windows toast was tapped: "download|url", "dismiss|url" or the body.

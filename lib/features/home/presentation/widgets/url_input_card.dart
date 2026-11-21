@@ -104,8 +104,10 @@ class _UrlInputCardState extends ConsumerState<UrlInputCard> {
                         key: const Key('url-input'),
                         controller: _controller,
                         onChanged: controller.setUrl,
-                        keyboardType: TextInputType.url,
-                        textInputAction: TextInputAction.done,
+                        keyboardType: TextInputType.multiline,
+                        textInputAction: TextInputAction.newline,
+                        minLines: 1,
+                        maxLines: 4,
                         autocorrect: false,
                         enableSuggestions: false,
                         style: const TextStyle(

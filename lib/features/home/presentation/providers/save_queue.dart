@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:social_save/core/di/providers.dart';
 import 'package:social_save/core/errors/error_messages.dart';
 import 'package:social_save/core/errors/exceptions.dart';
+import 'package:social_save/core/utils/together.dart';
+import 'package:social_save/core/utils/video_links.dart';
 import 'package:social_save/features/downloader/presentation/providers/download_manager.dart';
 import 'package:social_save/features/settings/domain/entities/app_settings.dart';
 import 'package:social_save/features/settings/presentation/providers/settings_controller.dart';
@@ -42,77 +46,100 @@ final saveQueueProvider =
 
 class SaveQueueController extends Notifier<List<SaveQueueItem>> {
   final _uuid = const Uuid();
-  var _busy = false;
+  var _active = 0;
 
   @override
   List<SaveQueueItem> build() => const [];
 
-  void add(String url) {
-    final trimmed = url.trim();
-    if (trimmed.isEmpty) return;
-    state = [
-      ...state,
-      SaveQueueItem(
+  void add(String url) => addAll([url]);
+
+  /// Queues every video link in [raw] when there are at least two.
+  /// Returns how many were queued. One link stays on the single-link path.
+  int addBrought(String? raw) {
+    final links = linksToSaveTogether(raw);
+    if (links.isEmpty) return 0;
+    addAll(links);
+    return links.length;
+  }
+
+  void addAll(Iterable<String> urls) {
+    final seen = {
+      for (final item in state)
+        if (item.phase == SavePhase.waiting || item.phase == SavePhase.saving) item.url,
+    };
+    final next = [...state];
+    var added = false;
+    for (final raw in urls) {
+      final trimmed = raw.trim();
+      if (trimmed.isEmpty || !seen.add(trimmed)) continue;
+      next.add(SaveQueueItem(
         id: _uuid.v4(),
         url: trimmed,
         title: trimmed,
         phase: SavePhase.waiting,
-      ),
-    ];
+      ));
+      added = true;
+    }
+    if (!added) return;
+    state = next;
     _pump();
   }
 
-  Future<void> _pump() async {
-    if (_busy) return;
-    _busy = true;
+  /// Looks up several waiting links at once. A download keeps going after
+  /// it is queued, so the next link does not wait for that file to finish.
+  void _pump() {
+    while (_active < saveAtOnce) {
+      final index = state.indexWhere((item) => item.phase == SavePhase.waiting);
+      if (index < 0) return;
+      final current = state[index];
+      _replace(current.copyWith(phase: SavePhase.saving, title: 'Looking up…'));
+      _active++;
+      unawaited(_one(current));
+    }
+  }
+
+  Future<void> _one(SaveQueueItem current) async {
     try {
-      while (true) {
-        final index = state.indexWhere((item) => item.phase == SavePhase.waiting);
-        if (index < 0) break;
-        final current = state[index];
-        _replace(current.copyWith(phase: SavePhase.saving, title: 'Looking up…'));
-        try {
-          final media = await ref.read(mediaRepositoryProvider).analyze(current.url);
-          final format = _formatFor(media);
-          if (format == null) {
-            _replace(current.copyWith(
-              title: media.title,
-              phase: SavePhase.failed,
-              detail: 'No downloadable quality was found.',
-            ));
-            continue;
-          }
-          await ref.read(downloadManagerProvider.notifier).enqueue(
-                media: media,
-                format: format,
-              );
-          _replace(current.copyWith(
-            title: media.title,
-            phase: SavePhase.done,
-            detail: 'Saving in Downloads',
-          ));
-        } on AppException catch (error) {
-          if (error.message == ErrorMessages.alreadySaved) {
-            _replace(current.copyWith(
-              title: current.title,
-              phase: SavePhase.done,
-              detail: 'Already on this device',
-            ));
-            continue;
-          }
-          _replace(current.copyWith(
-            phase: SavePhase.failed,
-            detail: error.message,
-          ));
-        } catch (_) {
-          _replace(current.copyWith(
-            phase: SavePhase.failed,
-            detail: 'Could not add this link.',
-          ));
-        }
+      final media = await ref.read(mediaRepositoryProvider).analyze(current.url);
+      final format = _formatFor(media);
+      if (format == null) {
+        _replace(current.copyWith(
+          title: media.title,
+          phase: SavePhase.failed,
+          detail: 'No downloadable quality was found.',
+        ));
+        return;
       }
+      await ref.read(downloadManagerProvider.notifier).enqueue(
+            media: media,
+            format: format,
+          );
+      _replace(current.copyWith(
+        title: media.title,
+        phase: SavePhase.done,
+        detail: 'Saving in Downloads',
+      ));
+    } on AppException catch (error) {
+      if (error.message == ErrorMessages.alreadySaved) {
+        _replace(current.copyWith(
+          title: current.title,
+          phase: SavePhase.done,
+          detail: 'Already on this device',
+        ));
+        return;
+      }
+      _replace(current.copyWith(
+        phase: SavePhase.failed,
+        detail: error.message,
+      ));
+    } catch (_) {
+      _replace(current.copyWith(
+        phase: SavePhase.failed,
+        detail: 'Could not add this link.',
+      ));
     } finally {
-      _busy = false;
+      _active--;
+      _pump();
     }
   }
 
