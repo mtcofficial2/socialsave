@@ -169,7 +169,7 @@ void main() {
     expect(callExitLabel('cancelled'), 'Cancelled');
     expect(callExitLabel('ended'), 'Call ended');
     expect(callUsesFullScreen(outgoing: true, status: 'ringing'), isTrue);
-    expect(callsOnThisDevice(windows: true), isFalse);
+    expect(callsOnThisDevice(windows: true), isTrue);
     expect(callsOnThisDevice(windows: false), isTrue);
     expect(chatNoticeHold, const Duration(minutes: 5));
     expect(

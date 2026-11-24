@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:social_save/bg_main.dart' show bgMain;
 import 'package:social_save/core/engine/local_engine.dart';
 import 'package:social_save/features/chat/chat_api.dart';
+import 'package:social_save/features/chat/chat_call.dart' show runCallSelfTest;
 import 'package:social_save/features/library/desktop_tray.dart';
 import 'package:social_save/core/platform/plat.dart';
 import 'package:social_save/core/engine/phone_engine.dart';
@@ -87,6 +88,13 @@ Future<void> main(List<String> args) async {
   if (kIsWeb) {
     await _runWeb();
     return;
+  }
+  // `--call-selftest <file>`: check the PC mic, speakers and call relay
+  // without placing a call, write the result to <file>, and quit.
+  final cs = args.indexOf('--call-selftest');
+  if (cs >= 0 && cs + 1 < args.length) {
+    final passed = await runCallSelfTest(args[cs + 1]);
+    exit(passed ? 0 : 1);
   }
   // Before the database. A second Open with launch must still be listed,
   // even when another SocialSave already holds the downloads box.

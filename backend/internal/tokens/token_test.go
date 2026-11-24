@@ -49,7 +49,10 @@ func TestRejectsTamperedToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tampered := token[:len(token)-1] + flip(token[len(token)-1])
+	// The last base64 character carries unused bits, so flipping it can leave
+	// the signature unchanged; change one that is fully used.
+	i := len(token) - 2
+	tampered := token[:i] + flip(token[i]) + token[i+1:]
 	if _, err := service.Parse(tampered); err == nil {
 		t.Fatal("expected tampered token to fail")
 	}

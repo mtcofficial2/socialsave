@@ -306,9 +306,11 @@ class NotificationService {
     List<WindowsAction> actions = const [],
     List<WindowsImage>? images,
     bool silent = false,
+    WindowsNotificationAudio? sound,
+    WindowsNotificationScenario? scenario,
   }) async {
     final shown = images ?? _windowsLogo();
-    final audio = silent ? WindowsNotificationAudio.silent() : null;
+    final audio = silent ? WindowsNotificationAudio.silent() : sound;
     try {
       await _plugin.show(
         id,
@@ -320,6 +322,7 @@ class NotificationService {
             inputs: inputs,
             actions: actions,
             audio: audio,
+            scenario: scenario,
           ),
         ),
         payload: payload,
@@ -338,6 +341,7 @@ class NotificationService {
                 inputs: inputs,
                 actions: actions,
                 audio: audio,
+            scenario: scenario,
               ),
             ),
             payload: payload,
@@ -355,6 +359,7 @@ class NotificationService {
               inputs: inputs,
               actions: actions,
               audio: audio,
+            scenario: scenario,
             ),
           ),
           payload: payload,
@@ -603,13 +608,32 @@ class NotificationService {
 
   static const incomingCallId = 910085;
 
-  /// A ringing banner with Answer and Hang up for this call.
-  /// A PC does not ring. The tone is Social Save's own ring.
+  /// A ringing banner with Answer and Hang up for this call. On a PC it is a
+  /// Windows call toast that loops the Windows ring until it is answered,
+  /// declined or cancelled. Throws when Windows refused the toast, so the
+  /// caller can ring another way.
   Future<void> showIncomingCall(String name, {String callId = ''}) async {
-    if (kIsWeb || defaultTargetPlatform == TargetPlatform.windows) return;
+    if (kIsWeb) return;
     if (!_initialized) await init();
     final who = name.trim().isEmpty ? 'Audio call' : name.trim();
     final id = callId.trim();
+    if (defaultTargetPlatform == TargetPlatform.windows) {
+      final shown = await _showWindows(
+        incomingCallId,
+        who,
+        'Incoming audio call',
+        payload: 'call|incoming',
+        actions: [
+          WindowsAction(content: 'Answer', arguments: 'answer|$id'),
+          WindowsAction(content: 'Decline', arguments: 'pcdecline|$id'),
+        ],
+        // The app rings itself, so the ring also plays with notices off.
+        silent: true,
+        scenario: WindowsNotificationScenario.incomingCall,
+      );
+      if (!shown) throw StateError('Windows did not show the call notice.');
+      return;
+    }
     if (defaultTargetPlatform == TargetPlatform.android && id.isNotEmpty) {
       final token = await ChatSession.token() ?? '';
       try {
@@ -763,6 +787,11 @@ class NotificationService {
         : (response.payload ?? '');
     if (probe.startsWith('usbshare')) {
       onUsbShare?.call();
+      return;
+    }
+    if (probe.startsWith('answer|') || probe.startsWith('pcdecline|')) {
+      if (probe.startsWith('answer|')) onCallOpen?.call();
+      _deliverCall(probe);
       return;
     }
     if (probe.startsWith('call|') || (response.payload ?? '').startsWith('call|')) {

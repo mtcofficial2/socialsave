@@ -5,7 +5,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:media_kit/media_kit.dart' show Media, Player, PlaylistMode;
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/notifications/notification_service.dart';
 import 'package:social_save/features/chat/chat_api.dart';
 import 'package:social_save/features/chat/chat_live.dart';
@@ -17,13 +19,14 @@ import 'package:social_save/shared/routing/app_router.dart';
 import 'package:social_save/core/diagnostics/quiet_log.dart';
 import 'package:social_save/core/theme/app_tokens.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 /// Peer settings for one call. [servers] come from the API and add a TURN
 /// relay when the server has one, so audio reaches phones on other networks.
-Map<String, dynamic> chatCallConfig(List<Map<String, dynamic>> servers) => {
+Map<String, dynamic> chatCallConfig(List<Map<String, dynamic>> servers, {bool relayOnly = false}) => {
   'sdpSemantics': 'unified-plan',
   'iceServers': servers.isEmpty ? chatDefaultIceServers : servers,
-  'iceTransportPolicy': 'all',
+  'iceTransportPolicy': relayOnly ? 'relay' : 'all',
   'bundlePolicy': 'max-bundle',
   'rtcpMuxPolicy': 'require',
   'iceCandidatePoolSize': 2,
@@ -42,6 +45,76 @@ class ChatCallMedia {
 
   /// Set before each call from [ChatApi.callIceServers].
   List<Map<String, dynamic>> iceServers = chatDefaultIceServers;
+
+  static const micKey = 'call.windows.mic';
+  static const speakerKey = 'call.windows.speaker';
+
+  static Future<String?> savedDevice(String key) async {
+    try {
+      return (await SharedPreferences.getInstance()).getString(key);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> _saveDevice(String key, String id) async {
+    try {
+      await (await SharedPreferences.getInstance()).setString(key, id);
+    } catch (e) { logQuiet('chat_call', e); }
+  }
+
+  /// Microphones and speakers Windows reports, for the Devices picker.
+  static Future<List<MediaDeviceInfo>> devices() async {
+    try {
+      return await navigator.mediaDevices.enumerateDevices();
+    } catch (e) {
+      logQuiet('chat_call.devices', e);
+      return const [];
+    }
+  }
+
+  /// The mic now sending audio, if known.
+  String? get micInUse => _micInUse;
+  String? _micInUse;
+
+  /// Switch the PC mic in the middle of a call without dropping it.
+  Future<void> useMic(String deviceId, {required bool muted}) async {
+    await _saveDevice(micKey, deviceId);
+    final pc = _pc;
+    if (pc == null) return;
+    await _runWindowsAudio(() async {
+      final next = await navigator.mediaDevices.getUserMedia(windowsCallMic(deviceId));
+      final tracks = next.getAudioTracks();
+      if (tracks.isEmpty) {
+        await next.dispose();
+        throw StateError(windowsMicProblem(blocked: false, mics: 1));
+      }
+      final track = tracks.first;
+      track.enabled = !muted;
+      for (final sender in await pc.getSenders()) {
+        if (sender.track?.kind == 'audio') await sender.replaceTrack(track);
+      }
+      final old = _local;
+      _local = next;
+      _micInUse = deviceId;
+      if (old != null) {
+        for (final t in old.getTracks()) {
+          try {
+            await t.stop();
+          } catch (e) { logQuiet('chat_call', e); }
+        }
+        try {
+          await old.dispose();
+        } catch (e) { logQuiet('chat_call', e); }
+      }
+    });
+  }
+
+  /// Play the call on this speaker or headset, and remember it.
+  Future<void> useSpeaker(String deviceId) async {
+    await _saveDevice(speakerKey, deviceId);
+    await routePlayback(preferSpeaker: true);
+  }
 
   /// Windows device changes share one audio engine. Overlapping them freezes
   /// the call screen, so Hang up never arrives.
@@ -106,19 +179,42 @@ class ChatCallMedia {
         ChatCalls.instance.noteLink(up: false);
       }
     };
+    if (Plat.isWindows && await windowsMicBlockedNow()) {
+      throw StateError(windowsMicProblem(blocked: true, mics: 1));
+    }
     final constraints = await _runWindowsAudio(_audioConstraints);
     MediaStream stream;
     try {
-      stream = await _runWindowsAudio(
-        () => navigator.mediaDevices.getUserMedia(constraints),
-      );
-    } catch (_) {
-      if (constraints['audio'] == true) rethrow;
-      stream = await _runWindowsAudio(
-        () => navigator.mediaDevices.getUserMedia(windowsCallMic(null)),
-      );
+      try {
+        stream = await _runWindowsAudio(
+          () => navigator.mediaDevices.getUserMedia(constraints),
+        );
+      } catch (_) {
+        if (constraints['audio'] == true) rethrow;
+        stream = await _runWindowsAudio(
+          () => navigator.mediaDevices.getUserMedia(windowsCallMic(null)),
+        );
+      }
+      if (Plat.isWindows && stream.getAudioTracks().isEmpty) {
+        await stream.dispose();
+        throw StateError('no mic track');
+      }
+    } catch (error) {
+      if (!Plat.isWindows) rethrow;
+      logQuiet('chat_call.mic', error);
+      final all = await devices();
+      final mics = all.where((d) => d.kind == 'audioinput').length;
+      throw StateError(windowsMicProblem(blocked: false, mics: mics));
     }
     _local = stream;
+    if (Plat.isWindows) {
+      final options = constraints['audio'];
+      if (options is Map && options['optional'] is List) {
+        for (final o in options['optional'] as List) {
+          if (o is Map && o['sourceId'] is String) _micInUse = o['sourceId'] as String;
+        }
+      }
+    }
     for (final track in stream.getAudioTracks()) {
       await pc.addTrack(track, stream);
     }
@@ -152,6 +248,11 @@ class ChatCallMedia {
     if (!Plat.isWindows) return {'audio': true, 'video': false};
     try {
       final devices = await navigator.mediaDevices.enumerateDevices();
+      final saved = callSavedDevice(
+        await savedDevice(micKey),
+        devices.where((d) => d.kind == 'audioinput').map((d) => d.deviceId),
+      );
+      if (saved != null) return windowsCallMic(saved);
       MediaDeviceInfo? fallback;
       MediaDeviceInfo? named;
       MediaDeviceInfo? preferred;
@@ -187,6 +288,16 @@ class ChatCallMedia {
   Future<void> playout({bool preferSpeaker = true}) async {
     try {
       final outputs = await Helper.audiooutputs;
+      if (Plat.isWindows) {
+        final saved = callSavedDevice(
+          await savedDevice(speakerKey),
+          outputs.map((d) => d.deviceId),
+        );
+        if (saved != null) {
+          await Helper.selectAudioOutput(saved);
+          return;
+        }
+      }
       MediaDeviceInfo? chosen;
       bool usable(MediaDeviceInfo device) {
         final label = device.label.toLowerCase();
@@ -348,6 +459,7 @@ class ChatCallMedia {
   }
 
   Future<void> close() async {
+    _micInUse = null;
     _played = false;
     _playGen++;
     _waiting.clear();
@@ -895,6 +1007,41 @@ class ChatCalls {
     return ok;
   }
 
+  /// The PC mic now in use, for the Devices picker.
+  String? get micInUse => _media.micInUse;
+
+  /// Pick the PC microphone. Works before and during a call.
+  Future<String?> chooseMic(String deviceId) async {
+    try {
+      await _media.useMic(deviceId, muted: muted || held);
+      revision.value++;
+      return null;
+    } catch (error) {
+      return error is StateError ? error.message : chatErrorText(error);
+    }
+  }
+
+  /// Pick the PC speaker or headset. Works before and during a call.
+  Future<void> chooseSpeaker(String deviceId) async {
+    _routeChosen = true;
+    speaker = true;
+    await _media.useSpeaker(deviceId);
+    revision.value++;
+  }
+
+  /// Decline tapped on the Windows call toast.
+  Future<void> declineNotice(String id) async {
+    if (id.isEmpty) return;
+    if (active?.id == id && status == 'ringing' && !outgoing) {
+      await decline();
+      return;
+    }
+    _remember(id);
+    try {
+      await _api.answerCall(id, accept: false);
+    } catch (e) { logQuiet('chat_call', e); }
+  }
+
   void _rememberIce(String ready) {
     if (_iceBeforeId.length >= 40) _iceBeforeId.removeAt(0);
     _iceBeforeId.add(ready);
@@ -1168,10 +1315,11 @@ class ChatCalls {
   }
 
   Future<void> _showIncoming(int gen) async {
+    if (Plat.isWindows) unawaited(_playRing(gen));
     try {
       await NotificationService().showIncomingCall(peerName, callId: active?.id ?? '');
     } catch (_) {
-      await _playRing(gen);
+      if (!Plat.isWindows) await _playRing(gen);
       return;
     }
     if (gen != _ringGen || !_ringOn) {
@@ -1180,7 +1328,13 @@ class ChatCalls {
   }
 
   void _beginOutgoingTone() {
-    if (!Plat.isAndroid || _outTone || !outgoing) return;
+    if (_outTone || !outgoing) return;
+    if (Plat.isWindows) {
+      _outTone = true;
+      unawaited(_pcTone.play('assets/sounds/ss_callout.wav'));
+      return;
+    }
+    if (!Plat.isAndroid) return;
     _outTone = true;
     unawaited(_ringback(true));
   }
@@ -1188,8 +1342,14 @@ class ChatCalls {
   Future<void> _stopOutgoingTone() async {
     if (!_outTone) return;
     _outTone = false;
+    if (Plat.isWindows) {
+      await _pcTone.stop();
+      return;
+    }
     await _ringback(false);
   }
+
+  final _pcTone = _PcTone();
 
   Future<void> _ringback(bool on) async {
     try {
@@ -1200,6 +1360,12 @@ class ChatCalls {
   }
 
   Future<void> _playRing(int gen) async {
+    if (Plat.isWindows) {
+      if (gen != _ringGen || !_ringOn) return;
+      await _pcTone.play('assets/sounds/ss_ring.wav');
+      if (gen != _ringGen || !_ringOn) await _pcTone.stop();
+      return;
+    }
     try {
       await const MethodChannel('socialsave/media').invokeMethod<void>('playCallRingtone');
     } catch (_) {
@@ -1221,12 +1387,184 @@ class ChatCalls {
     _ringOn = false;
     _toneFallback?.cancel();
     _toneFallback = null;
+    if (Plat.isWindows) await _pcTone.stop();
     try {
       await const MethodChannel('socialsave/media').invokeMethod<void>('stopCallRingtone');
     } catch (e) { logQuiet('chat_call', e); }
     await _stopOutgoingTone();
     unawaited(NotificationService().cancelIncomingCall());
   }
+}
+
+/// `SocialSave.exe --call-selftest <file>`: checks this PC can make calls
+/// without placing one. Lists mics and speakers, opens the call mic for a
+/// moment, then connects two local call ends through the relay only, and
+/// writes what happened to [outPath]. Relay passwords are never written.
+Future<bool> runCallSelfTest(String outPath) async {
+  final lines = <String>['SocialSave call self-test ${DateTime.now().toIso8601String()}'];
+  var ok = true;
+  void note(String line) => lines.add(line);
+  final media = ChatCallMedia();
+  final opened = <MediaStream>[];
+  final pcs = <RTCPeerConnection>[];
+  try {
+    final all = await ChatCallMedia.devices();
+    final mics = callDeviceChoices(all, 'audioinput');
+    final outs = callDeviceChoices(all, 'audiooutput');
+    note('mics=${mics.length} ${mics.map((d) => d.label).join(' | ')}');
+    note('speakers=${outs.length} ${outs.map((d) => d.label).join(' | ')}');
+    final blocked = await windowsMicBlockedNow();
+    note('mic privacy blocked=$blocked');
+    final constraints = await media._audioConstraints();
+    note('mic constraints=${jsonEncode(constraints)}');
+    final mic = await navigator.mediaDevices.getUserMedia(constraints);
+    opened.add(mic);
+    final tracks = mic.getAudioTracks();
+    note('mic open tracks=${tracks.length} label=${tracks.isEmpty ? '' : tracks.first.label}');
+    if (tracks.isEmpty) ok = false;
+
+    var servers = chatDefaultIceServers;
+    try {
+      servers = await ChatApi().callIceServers().timeout(const Duration(seconds: 8));
+    } catch (e) {
+      note('ice fetch failed: $e');
+    }
+    final urls = <String>[
+      for (final s in servers)
+        ...switch (s['urls']) {
+          final String u => [u],
+          final List<dynamic> l => l.map((e) => '$e'),
+          _ => const <String>[],
+        },
+    ];
+    final turn = urls.any((u) => u.startsWith('turn'));
+    note('ice servers=${servers.length} turn=$turn urls=${urls.join(' ')}');
+
+    final a = await createPeerConnection(chatCallConfig(servers, relayOnly: turn));
+    final b = await createPeerConnection(chatCallConfig(servers, relayOnly: turn));
+    pcs..add(a)..add(b);
+    final kinds = <String>{};
+    final heard = Completer<void>();
+    final linked = Completer<void>();
+    a.onIceCandidate = (c) {
+      final line = c.candidate ?? '';
+      final m = RegExp(r' typ (\w+)').firstMatch(line);
+      if (m != null) kinds.add(m.group(1)!);
+      if (line.isNotEmpty) unawaited(b.addCandidate(c));
+    };
+    b.onIceCandidate = (c) {
+      if ((c.candidate ?? '').isNotEmpty) unawaited(a.addCandidate(c));
+    };
+    b.onTrack = (e) {
+      if (e.track.kind == 'audio' && !heard.isCompleted) heard.complete();
+    };
+    a.onConnectionState = (s) {
+      if (s == RTCPeerConnectionState.RTCPeerConnectionStateConnected && !linked.isCompleted) {
+        linked.complete();
+      }
+    };
+    for (final t in tracks) {
+      await a.addTrack(t, mic);
+    }
+    final offer = await a.createOffer({'offerToReceiveAudio': true});
+    await a.setLocalDescription(offer);
+    await b.setRemoteDescription(offer);
+    final answer = await b.createAnswer({'offerToReceiveAudio': true});
+    await b.setLocalDescription(answer);
+    await a.setRemoteDescription(answer);
+    try {
+      await linked.future.timeout(const Duration(seconds: 20));
+      note('link=connected via ${turn ? 'relay only' : 'any path'}');
+    } catch (_) {
+      ok = false;
+      note('link=FAILED (state ${a.connectionState})');
+    }
+    try {
+      await heard.future.timeout(const Duration(seconds: 3));
+      note('remote audio track=yes');
+    } catch (_) {
+      ok = false;
+      note('remote audio track=no');
+    }
+    note('candidate types=${kinds.join(',')}');
+    if (turn && !kinds.contains('relay')) ok = false;
+  } catch (e) {
+    ok = false;
+    note('error: $e');
+  } finally {
+    for (final pc in pcs) {
+      try {
+        await pc.close();
+      } catch (_) {}
+    }
+    for (final s in opened) {
+      for (final t in s.getTracks()) {
+        try {
+          await t.stop();
+        } catch (_) {}
+      }
+      try {
+        await s.dispose();
+      } catch (_) {}
+    }
+    note('mic released');
+    note(ok ? 'RESULT ok' : 'RESULT problem');
+    try {
+      await File(outPath).writeAsString('${lines.join('\n')}\n');
+    } catch (_) {}
+  }
+  return ok;
+}
+
+/// Ring and calling tones on a PC, from the app's own sounds.
+class _PcTone {
+  Player? _player;
+
+  Future<void> play(String asset) async {
+    await stop();
+    try {
+      final player = Player();
+      _player = player;
+      await player.setPlaylistMode(PlaylistMode.loop);
+      await player.open(Media('asset:///$asset'));
+    } catch (e) {
+      logQuiet('chat_call.tone', e);
+    }
+  }
+
+  Future<void> stop() async {
+    final player = _player;
+    _player = null;
+    if (player == null) return;
+    try {
+      await player.dispose();
+    } catch (e) { logQuiet('chat_call.tone', e); }
+  }
+}
+
+/// True when Windows privacy settings stop desktop apps using the mic.
+Future<bool> windowsMicBlockedNow() async {
+  if (!Plat.isWindows) return false;
+  const base = r'Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone';
+  for (final key in [
+    'HKLM\\$base',
+    'HKCU\\$base',
+    'HKCU\\$base\\NonPackaged',
+  ]) {
+    try {
+      final res = await Process.run('reg', ['query', key, '/v', 'Value'])
+          .timeout(const Duration(seconds: 3));
+      if (res.exitCode == 0 && windowsMicDenied('${res.stdout}')) return true;
+    } catch (e) { logQuiet('chat_call.privacy', e); }
+  }
+  return false;
+}
+
+/// Opens the Windows microphone privacy page.
+Future<void> openWindowsMicSettings() async {
+  try {
+    await launchUrl(Uri.parse('ms-settings:privacy-microphone'));
+  } catch (e) { logQuiet('chat_call', e); }
 }
 
 bool _skippedAudioLabel(String label) {
@@ -1537,6 +1875,14 @@ class _ChatCallSheetState extends State<ChatCallSheet> with TickerProviderStateM
                                 label: call.held ? 'Resume' : 'Hold',
                                 onPressed: () => unawaited(call.setHeld(!call.held)),
                               ),
+                            if (Plat.isWindows)
+                              _CallAction(
+                                color: ChatUiTokens.fieldDark,
+                                icon: Icons.headset_mic_rounded,
+                                label: 'Devices',
+                                onPressed: () => unawaited(showCallDevices(context)),
+                              )
+                            else
                             _CallAction(
                               color: ChatUiTokens.fieldDark,
                               icon: call.speaker ? Icons.volume_up_rounded : Icons.hearing_rounded,
@@ -1590,6 +1936,22 @@ class _ChatCallSheetState extends State<ChatCallSheet> with TickerProviderStateM
                                     ),
                                   ),
                                 ),
+                                if (!leaving && Plat.isWindows && (call.problem ?? '').contains('Privacy'))
+                                  TextButton(
+                                    onPressed: () => unawaited(openWindowsMicSettings()),
+                                    child: const Text(
+                                      'Open microphone settings',
+                                      style: TextStyle(color: Colors.white),
+                                    ),
+                                  ),
+                                if (!leaving && Plat.isWindows && (call.problem ?? '').contains('Devices'))
+                                  TextButton(
+                                    onPressed: () => unawaited(showCallDevices(context)),
+                                    child: const Text(
+                                      'Choose a microphone',
+                                      style: TextStyle(color: Colors.white),
+                                    ),
+                                  ),
                                 if (!leaving &&
                                     call.status == 'ringing' &&
                                     !call.outgoing &&
@@ -1613,7 +1975,7 @@ class _ChatCallSheetState extends State<ChatCallSheet> with TickerProviderStateM
                                     ],
                                   )
                                 else if (!leaving && live) ...[
-                                  if (call.pcAudioBlocked)
+                                  if (call.pcAudioBlocked && !call.audioUp)
                                     TextButton(
                                       onPressed: call.allowingPcAudio
                                           ? null
@@ -1631,11 +1993,12 @@ class _ChatCallSheetState extends State<ChatCallSheet> with TickerProviderStateM
                                     const SizedBox(height: 22),
                                     end,
                                   ],
-                                ] else if (!leaving)
+                                ] else if (!leaving) ...[
                                   TextButton(
                                     onPressed: () => Navigator.of(context).pop(),
                                     child: const Text('Close'),
                                   ),
+                                ],
                               ],
                             ),
                           );
@@ -1651,6 +2014,77 @@ class _ChatCallSheetState extends State<ChatCallSheet> with TickerProviderStateM
       },
     );
   }
+}
+
+/// A PC picks its call microphone and speaker here. The choice is kept for
+/// the next call.
+Future<void> showCallDevices(BuildContext context) async {
+  final all = await ChatCallMedia.devices();
+  final mic = ChatCalls.instance.micInUse ?? await ChatCallMedia.savedDevice(ChatCallMedia.micKey);
+  final out = await ChatCallMedia.savedDevice(ChatCallMedia.speakerKey);
+  if (!context.mounted) return;
+  final mics = callDeviceChoices(all, 'audioinput');
+  final speakers = callDeviceChoices(all, 'audiooutput');
+  await showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    builder: (sheet) {
+      Widget section(String title, List<MediaDeviceInfo> items, String? current, Future<void> Function(MediaDeviceInfo) pick) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
+              child: Text(title, style: Theme.of(sheet).textTheme.titleSmall),
+            ),
+            if (items.isEmpty)
+              const ListTile(title: Text('None found')),
+            for (final d in items)
+              ListTile(
+                leading: Icon(
+                  d.deviceId == current ? Icons.radio_button_checked : Icons.radio_button_off,
+                ),
+                title: Text(d.label.isEmpty ? 'Device' : d.label),
+                onTap: () async {
+                  Navigator.of(sheet).pop();
+                  await pick(d);
+                },
+              ),
+          ],
+        );
+      }
+
+      return SafeArea(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              section('Microphone', mics, mic, (d) async {
+                final err = await ChatCalls.instance.chooseMic(d.deviceId);
+                if (err != null && context.mounted) AppSnack.error(context, err);
+              }),
+              section('Speaker or headset', speakers, out, (d) => ChatCalls.instance.chooseSpeaker(d.deviceId)),
+              const SizedBox(height: 12),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}
+
+/// Real devices of one kind, without duplicates or virtual cables.
+List<MediaDeviceInfo> callDeviceChoices(List<MediaDeviceInfo> all, String kind) {
+  final seen = <String>{};
+  return [
+    for (final d in all)
+      if (d.kind == kind &&
+          d.deviceId.isNotEmpty &&
+          !_skippedAudioLabel(d.label.toLowerCase()) &&
+          seen.add(d.deviceId))
+        d,
+  ];
 }
 
 class _CallAction extends StatelessWidget {

@@ -430,6 +430,11 @@ class ChatAlertWatch {
       unawaited(ChatCalls.instance.noticeDeclined(id));
       return;
     }
+    if (parts[0] == 'pcdecline') {
+      // The Windows toast does not tell the server itself.
+      unawaited(ChatCalls.instance.declineNotice(id));
+      return;
+    }
     if (parts[0] == 'open') unawaited(ChatCalls.instance.syncIncoming());
   }
 

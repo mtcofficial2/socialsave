@@ -1531,8 +1531,37 @@ Map<String, dynamic> windowsCallMic(String? sourceId) {
   return {'audio': audio, 'video': false};
 }
 
-/// Phones place and receive audio calls. A PC does not.
-bool callsOnThisDevice({required bool windows}) => !windows;
+/// Phones and the Windows app both place and receive audio calls.
+///
+/// 1.0.95 turned PC calls off: with no relay server a PC was often not heard
+/// across networks. 1.0.128 added the Cloudflare relay (TURN), and 1.0.130
+/// brings PC calls back with a ring, device pickers and clear mic errors.
+bool callsOnThisDevice({required bool windows}) => true;
+
+/// True when `reg query ... /v Value` output shows a Windows microphone
+/// privacy switch set to Deny.
+bool windowsMicDenied(String regOutput) =>
+    RegExp(r'\bValue\s+REG_SZ\s+Deny\b', caseSensitive: false).hasMatch(regOutput);
+
+/// Plain words for a PC microphone that cannot be used.
+String windowsMicProblem({required bool blocked, required int mics}) {
+  if (blocked) {
+    return 'Windows is blocking the microphone. Open Settings > Privacy & security > '
+        'Microphone and turn on microphone access and "Let desktop apps access your microphone".';
+  }
+  if (mics == 0) {
+    return 'No microphone found. Plug in a mic or headset and try again.';
+  }
+  return 'The microphone could not start. Close other apps using it, or pick another mic in Devices.';
+}
+
+/// The saved device wins when it is still plugged in; otherwise null so the
+/// automatic choice is used.
+String? callSavedDevice(String? saved, Iterable<String> present) {
+  final id = saved?.trim() ?? '';
+  if (id.isEmpty) return null;
+  return present.contains(id) ? id : null;
+}
 
 /// A message notice stays until it is cancelled, replied to, or swiped, or this passes.
 const Duration chatNoticeHold = Duration(minutes: 5);
