@@ -48,6 +48,7 @@ type Server struct {
 	pairs     pairStore
 	relay     *relayStore
 	chat      *chatRoom
+	ice       *iceSource
 }
 
 // New wires the handlers. jobs may be nil and will be created from config.
@@ -94,6 +95,7 @@ func New(cfg config.Config, validator *security.Validator, store *jobs.Store) *S
 		},
 	}
 	s.chat = newChatRoom(s.Objects)
+	s.ice = newIceSourceFromEnv()
 	return s
 }
 
@@ -172,6 +174,7 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requireKey).Post("/chat/sessions/others", s.chatSessionOthers)
 		r.With(s.requireKey).Post("/chat/sessions/touch", s.chatSessionTouch)
 		r.With(s.requireKey).Get("/chat/calls", s.chatCallList)
+		r.With(s.requireKey).Get("/chat/calls/ice", s.chatCallIce)
 		r.With(s.requireKey).Post("/chat/calls", s.chatCallInvite)
 		r.With(s.requireKey).Post("/chat/calls/{id}/answer", s.chatCallAnswer)
 		r.With(s.requireKey).Post("/chat/calls/{id}/end", s.chatCallEnd)

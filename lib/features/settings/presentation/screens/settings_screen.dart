@@ -1113,7 +1113,6 @@ class _FullerLogTile extends StatefulWidget {
 
 class _FullerLogTileState extends State<_FullerLogTile> {
   bool _on = false;
-  bool _secrets = false;
   bool _ready = false;
 
   @override
@@ -1124,30 +1123,11 @@ class _FullerLogTileState extends State<_FullerLogTile> {
 
   Future<void> _load() async {
     final value = await PhoneActivity.consent();
-    final secrets = await PhoneActivity.secretsAllowed();
     if (!mounted) return;
     setState(() {
       _on = value == true;
-      _secrets = value == true && secrets;
       _ready = true;
     });
-  }
-
-  Future<bool> _confirmSecrets() async {
-    final answer = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Show passwords and codes?'),
-        content: const Text(
-          'The phone log will keep a password or a code when those words are already on a notification. A computer on the USB cable can read them. Words that are not on a notification stay off the log.',
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Not now')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Show them')),
-        ],
-      ),
-    );
-    return answer == true;
   }
 
   @override
@@ -1160,38 +1140,15 @@ class _FullerLogTileState extends State<_FullerLogTile> {
           contentPadding: EdgeInsets.zero,
           title: Text('Fuller phone log', style: context.tokens.itemTitle),
           subtitle: Text(
-            'When you say yes, a computer on the cable can also see the screen, the lock, apps that opened, and the title and words of each notification',
+            'When you say yes, a computer on the cable can also see the screen, the lock, and apps that opened. Notifications are never read',
             style: subtitle,
           ),
           value: _on,
           onChanged: !_ready
               ? null
               : (next) async {
-                  setState(() {
-                    _on = next;
-                    if (!next) _secrets = false;
-                  });
+                  setState(() => _on = next);
                   await PhoneActivity.setConsent(next);
-                },
-        ),
-        SwitchListTile(
-          key: const ValueKey('secret-log-switch'),
-          contentPadding: EdgeInsets.zero,
-          title: Text('Show passwords and codes', style: context.tokens.itemTitle),
-          subtitle: Text(
-            _on
-                ? 'A notification that shows a password or a code keeps those words. Off replaces them with Hidden. Older hidden lines stay hidden'
-                : 'Turn on Fuller phone log first',
-            style: subtitle,
-          ),
-          value: _secrets,
-          onChanged: !_ready || !_on
-              ? null
-              : (next) async {
-                  if (next && !await _confirmSecrets()) return;
-                  if (!mounted) return;
-                  setState(() => _secrets = next);
-                  await PhoneActivity.setSecrets(next);
                 },
         ),
       ],

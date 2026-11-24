@@ -42,11 +42,23 @@ android {
         }
     }
 
+    signingConfigs {
+        // Every SocialSave release so far is signed with this PC's debug key
+        // (SHA-256 f5527ad4...). Android only installs an update signed with the
+        // same key, so it must stay until a planned key rotation. v1+v2+v3
+        // signatures let every Android version and installer verify the APK.
+        getByName("debug") {
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
+            // Same key as every earlier release; see signingConfigs above.
             signingConfig = signingConfigs.getByName("debug")
+            isDebuggable = false
             // Keep rules for the on-phone engine (see proguard-rules.pro).
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }

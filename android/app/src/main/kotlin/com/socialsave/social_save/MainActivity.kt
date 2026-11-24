@@ -978,11 +978,9 @@ class MainActivity : FlutterFragmentActivity() {
                     }
                 }
                 "openNotificationAccessIfNeeded" -> {
-                    try {
-                        result.success(PhoneNotes.openSettingsIfNeeded(applicationContext))
-                    } catch (_: Exception) {
-                        result.success(false)
-                    }
+                    // Notification reading was removed so Play Protect lets the app
+                    // install. Nothing to open.
+                    result.success(false)
                 }
                 "clearPhoneNotes" -> {
                     PhoneNotes.clear(applicationContext)
@@ -1002,6 +1000,11 @@ class MainActivity : FlutterFragmentActivity() {
                     val path = call.argument<String>("path")
                     if (path.isNullOrBlank()) {
                         result.error("missing", "No APK path", null)
+                        return@setMethodCallHandler
+                    }
+                    val problem = apkProblem(File(path))
+                    if (problem != null) {
+                        result.error("apk", problem, null)
                         return@setMethodCallHandler
                     }
                     result.success(installApk(path))
@@ -1296,7 +1299,8 @@ class MainActivity : FlutterFragmentActivity() {
         captureQuickAction(intent)
         wakeForCall(intent)
         ChatReplyBridge.note(intent)
-        PhoneNotes.rescan(this)
+        // Notifications are no longer read; drop any kept from older versions.
+        PhoneNotes.clear(this)
     }
 
     /** The Quick Settings tile: open Hotspot share. */
@@ -1860,6 +1864,51 @@ class MainActivity : FlutterFragmentActivity() {
         } catch (_: Exception) {
             false
         }
+    }
+
+    /**
+     * Android answers only "App not installed" when an update is older or signed
+     * with another key. Say which one before opening the installer.
+     */
+    private fun apkProblem(file: File): String? {
+        if (!file.exists()) return "That file is no longer on this phone."
+        return try {
+            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                PackageManager.GET_SIGNING_CERTIFICATES
+            } else {
+                @Suppress("DEPRECATION")
+                PackageManager.GET_SIGNATURES
+            }
+            val archive = packageManager.getPackageArchiveInfo(file.path, flags)
+                ?: return "This file is not a complete app. Send or download it again."
+            if (archive.packageName != packageName) return null
+            val mine = packageManager.getPackageInfo(packageName, flags)
+            @Suppress("DEPRECATION")
+            val newCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) archive.longVersionCode else archive.versionCode.toLong()
+            @Suppress("DEPRECATION")
+            val haveCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) mine.longVersionCode else mine.versionCode.toLong()
+            if (newCode < haveCode) {
+                return "This SocialSave (${archive.versionName}) is older than the one on this phone, so Android will not install it."
+            }
+            val theirs = signerBytes(archive)
+            val ours = signerBytes(mine)
+            if (theirs.isNotEmpty() && ours.isNotEmpty() && theirs.none { cert -> ours.any { it.contentEquals(cert) } }) {
+                return "This copy of SocialSave was signed with a different key, so Android will refuse it as an update. Uninstall SocialSave first, then open this file again."
+            }
+            null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun signerBytes(info: android.content.pm.PackageInfo): List<ByteArray> {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val signing = info.signingInfo ?: return emptyList()
+            val list = if (signing.hasMultipleSigners()) signing.apkContentsSigners else signing.signingCertificateHistory
+            return list?.map { it.toByteArray() } ?: emptyList()
+        }
+        @Suppress("DEPRECATION")
+        return info.signatures?.map { it.toByteArray() } ?: emptyList()
     }
 
     private fun installApk(path: String): Boolean {

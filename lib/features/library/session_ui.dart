@@ -878,9 +878,20 @@ class _SessionScreenState extends State<SessionScreen> with SingleTickerProvider
     if (err != null) AppSnack.info(context, err);
   }
 
+  /// Android says only "App not installed". The app says why first.
+  Future<void> _installApk(String path) async {
+    try {
+      await MediaEvents.channel.invokeMethod<bool>('installApk', {'path': path});
+    } on PlatformException catch (e) {
+      if (mounted) AppSnack.error(context, e.message ?? 'Android could not install this file.');
+    } catch (e) {
+      logQuiet('session_ui.install', e);
+    }
+  }
+
   void _openPath(String path, String name) {
     if (Plat.isAndroid && path.toLowerCase().endsWith('.apk')) {
-      unawaited(MediaEvents.channel.invokeMethod<bool>('installApk', {'path': path}));
+      unawaited(_installApk(path));
       return;
     }
     if (FileSystemEntity.isDirectorySync(path)) {

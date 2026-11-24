@@ -18,11 +18,15 @@ import 'package:social_save/core/diagnostics/quiet_log.dart';
 import 'package:social_save/core/theme/app_tokens.dart';
 import 'package:social_save/shared/widgets/app_snack.dart';
 
-const _callConfig = {
+/// Peer settings for one call. [servers] come from the API and add a TURN
+/// relay when the server has one, so audio reaches phones on other networks.
+Map<String, dynamic> chatCallConfig(List<Map<String, dynamic>> servers) => {
   'sdpSemantics': 'unified-plan',
-  'iceServers': [
-    {'urls': 'stun:stun.l.google.com:19302'},
-  ],
+  'iceServers': servers.isEmpty ? chatDefaultIceServers : servers,
+  'iceTransportPolicy': 'all',
+  'bundlePolicy': 'max-bundle',
+  'rtcpMuxPolicy': 'require',
+  'iceCandidatePoolSize': 2,
 };
 
 /// Microphone audio for one call. Binary socket frames stay photos.
@@ -35,6 +39,9 @@ class ChatCallMedia {
   bool _played = false;
   int _playGen = 0;
   Future<void> _audioChain = Future<void>.value();
+
+  /// Set before each call from [ChatApi.callIceServers].
+  List<Map<String, dynamic>> iceServers = chatDefaultIceServers;
 
   /// Windows device changes share one audio engine. Overlapping them freezes
   /// the call screen, so Hang up never arrives.
@@ -60,7 +67,7 @@ class ChatCallMedia {
         );
       } catch (e) { logQuiet('chat_call', e); }
     }
-    final pc = await createPeerConnection(_callConfig);
+    final pc = await createPeerConnection(chatCallConfig(iceServers));
     _pc = pc;
     pc.onTrack = (event) {
       for (final stream in event.streams) {
@@ -473,6 +480,20 @@ class ChatCalls {
   void _onSocket() {
     if (!ChatLive.instance.connected.value) return;
     _flushIce();
+    // Warm the relay list once a day so pressing Call does not wait on it.
+    unawaited(_api.callIceServers());
+  }
+
+  /// True once audio has a working path in this call.
+  bool get audioUp => _linked;
+
+  Future<void> _loadIce() async {
+    try {
+      _media.iceServers = await _api.callIceServers().timeout(const Duration(seconds: 5));
+    } catch (e) {
+      logQuiet('chat_call.ice', e);
+      _media.iceServers = chatDefaultIceServers;
+    }
   }
 
   Future<void> start(String threadId, String name) async {
@@ -508,6 +529,8 @@ class ChatCalls {
     try {
       await _rememberLan();
       unawaited(_notePcAudio());
+      if (_finishing || epoch != _callEpoch) return;
+      await _loadIce();
       if (_finishing || epoch != _callEpoch) return;
       final sdp = callSdpToSend(await _media.offer(_sendIce), _lanIp);
       if (sdp.isEmpty) {
@@ -778,6 +801,7 @@ class ChatCalls {
       if (offer.isEmpty) {
         throw StateError('The call offer did not arrive. Ask them to call again.');
       }
+      await _loadIce();
       final sdp = callSdpToSend(await _media.answer(offer, _sendIce), _lanIp);
       if (sdp.isEmpty) {
         throw StateError('The call could not start. Try again.');
@@ -1343,6 +1367,9 @@ class _ChatCallSheetState extends State<ChatCallSheet> with TickerProviderStateM
     if (call.held) return 'On hold';
     if (call.remoteHeld) return 'They held the call';
     if (call.recovering) return 'Reconnecting…';
+    if (call.status == 'active' && !call.audioUp) {
+      return callAudioWaitLine(call.elapsed);
+    }
     if (call.status == 'active') return _clock(call.elapsed);
     if (call.moment == 'accept') return 'Connecting…';
     if (call.outgoing) return 'Calling…';

@@ -1316,7 +1316,8 @@ bool callCandidateKeep(String line, String? lanIp) {
     if (lanIp != null && callLanIpUsable(lanIp)) return ip == lanIp;
     return callLanIpUsable(ip);
   }
-  return kind == 'srflx';
+  // relay is the TURN path that carries audio across carrier NATs.
+  return kind == 'srflx' || kind == 'relay';
 }
 
 String _candidateKey(String line) {
@@ -1391,6 +1392,56 @@ bool callRingShouldReset({
   }
   return true;
 }
+
+/// Used when the server cannot be reached. Two STUN servers find the public
+/// address; they cannot carry audio through a carrier NAT on their own.
+const chatDefaultIceServers = <Map<String, dynamic>>[
+  {
+    'urls': ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'],
+  },
+];
+
+/// Reads `/chat/calls/ice`. Credentials are kept until ten minutes before
+/// the server says they expire.
+({List<Map<String, dynamic>> servers, DateTime until}) chatIceFromJson(
+  Map<String, dynamic> body,
+  DateTime now,
+) {
+  final servers = <Map<String, dynamic>>[];
+  final raw = body['iceServers'];
+  if (raw is List) {
+    for (final item in raw) {
+      if (item is! Map) continue;
+      final urlsRaw = item['urls'];
+      final urls = <String>[
+        if (urlsRaw is String) urlsRaw,
+        if (urlsRaw is List)
+          for (final u in urlsRaw)
+            if (u is String && u.trim().isNotEmpty) u.trim(),
+      ].where((u) => u.startsWith('stun:') || u.startsWith('turn:') || u.startsWith('turns:')).toList();
+      if (urls.isEmpty) continue;
+      final user = (item['username'] as String?) ?? '';
+      final pass = (item['credential'] as String?) ?? '';
+      servers.add({
+        'urls': urls,
+        if (user.isNotEmpty) 'username': user,
+        if (pass.isNotEmpty) 'credential': pass,
+      });
+    }
+  }
+  if (servers.isEmpty) {
+    return (servers: chatDefaultIceServers, until: now.add(const Duration(minutes: 10)));
+  }
+  final ttl = (body['ttl'] as num?)?.toInt() ?? 0;
+  final keep = ttl > 1200 ? Duration(seconds: ttl - 600) : const Duration(minutes: 10);
+  return (servers: servers, until: now.add(keep));
+}
+
+/// True when [servers] include a TURN relay that can carry the audio.
+bool chatIceHasRelay(List<Map<String, dynamic>> servers) => servers.any((server) {
+  final urls = server['urls'];
+  return urls is List && urls.any((u) => u is String && u.startsWith('turn'));
+});
 
 /// The same *.local swap for an offer or answer that already gathered candidates.
 String callSdpForPeer(String sdp, String? lanIp) {
@@ -1484,6 +1535,13 @@ bool callPickedUpElsewhere({
 }
 
 /// Words shown while a call screen closes.
+/// Shown on an answered call while the voice path is still opening, so a
+/// silent call says so instead of counting up as if it worked.
+String callAudioWaitLine(Duration elapsed) {
+  if (elapsed.inSeconds < 10) return 'Connecting audio…';
+  return 'Weak connection. Still connecting audio…';
+}
+
 String callExitLabel(String kind) {
   switch (kind) {
     case 'declined':
@@ -2934,6 +2992,34 @@ class ChatApi {
       '/api/v1/chat/sessions/others',
       options: await _auth(),
     );
+  }
+
+  static ({List<Map<String, dynamic>> servers, DateTime until})? _ice;
+  static Future<List<Map<String, dynamic>>>? _iceLoading;
+
+  /// STUN and, when the server has one, TURN relay servers for calls. Kept
+  /// until shortly before the credentials expire, so this is one small
+  /// request a day. Any failure keeps the STUN list.
+  Future<List<Map<String, dynamic>>> callIceServers() {
+    final cached = _ice;
+    if (cached != null && DateTime.now().isBefore(cached.until)) {
+      return Future.value(cached.servers);
+    }
+    return _iceLoading ??= _loadIce().whenComplete(() => _iceLoading = null);
+  }
+
+  Future<List<Map<String, dynamic>>> _loadIce() async {
+    try {
+      final response = await _dio
+          .get<dynamic>('/api/v1/chat/calls/ice', options: await _auth())
+          .timeout(const Duration(seconds: 6));
+      final parsed = chatIceFromJson(_object(response), DateTime.now());
+      _ice = parsed;
+      return parsed.servers;
+    } catch (e) {
+      logQuiet('chat_api.ice', e);
+      return chatDefaultIceServers;
+    }
   }
 
   Future<ChatCallRecord> startCall(String threadId, {String sdp = ''}) async {

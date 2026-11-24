@@ -103,15 +103,9 @@
             android:name=".DownloadKeepAliveService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
-        <service
-            android:name=".NoteWatch"
-            android:exported="true"
-            android:label="SocialSave phone log"
-            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
-            <intent-filter>
-                <action android:name="android.service.notification.NotificationListenerService" />
-            </intent-filter>
-        </service>
+        <!-- No notification listener: Google Play Protect blocks sideloaded apps
+             that can read other apps' notifications (one-time codes), so the
+             phone log keeps app names and usage only. -->
         <service
             android:name=".HotspotTileService"
             android:exported="true"
