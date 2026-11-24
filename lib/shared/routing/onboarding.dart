@@ -53,6 +53,12 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   final _page = PageController();
   int _index = 0;
 
+  @override
+  void dispose() {
+    _page.dispose();
+    super.dispose();
+  }
+
   Future<void> _finish() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_doneKey, true);

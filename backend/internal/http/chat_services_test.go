@@ -510,6 +510,26 @@ func TestChatRecoverySessionsAndReports(t *testing.T) {
 	if postChat(app, "/api/v1/chat/report", ben.token, `{"username":"ada","reason":"spam"}`).Code != http.StatusTooManyRequests {
 		t.Fatal("report rate")
 	}
+	// Five reports from one person count once, so ada is not slowed yet.
+	room := app.chat
+	room.mu.Lock()
+	var adaID string
+	for _, u := range room.data.Users {
+		if u.Username == "ada" {
+			adaID = u.ID
+		}
+	}
+	slowed := room.reportedOftenLocked(adaID)
+	room.mu.Unlock()
+	if slowed {
+		t.Fatal("one reporter counted as many")
+	}
+	for i, name := range []string{"cat", "dan"} {
+		reporter := registerChat(t, app, `{"phone":"25672200009`+strconv.Itoa(i+3)+`","username":"`+name+`"}`)
+		if got := postChat(app, "/api/v1/chat/report", reporter.token, `{"username":"ada","reason":"spam"}`); got.Code != http.StatusOK {
+			t.Fatalf("report by %s %d %s", name, got.Code, got.Body.String())
+		}
+	}
 	fresh := postChat(app, "/api/v1/chat/threads", next.Token, `{"username":"ben"}`)
 	var thread struct {
 		ID string `json:"id"`

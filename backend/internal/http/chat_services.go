@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -239,15 +240,31 @@ func (c *chatRoom) receiptsSharedLocked(thread *chatThread) bool {
 	return true
 }
 
+// chatReportedBy is how many different people must report an account in a
+// week before its new chats are slowed. One person reporting many times
+// counts once.
+const chatReportedBy = 3
+
 func (c *chatRoom) reportedOftenLocked(userID string) bool {
 	cutoff := time.Now().Add(-7 * 24 * time.Hour).UnixMilli()
-	n := 0
+	from := map[string]bool{}
 	for _, report := range c.data.Reports {
-		if report.Target == userID && report.At >= cutoff {
-			n++
+		if report.Target == userID && report.At >= cutoff && report.From != "" {
+			from[report.From] = true
 		}
 	}
-	return n >= 5
+	return len(from) >= chatReportedBy
+}
+
+// otherRepliedLocked is true once anyone but userID has written in a direct
+// chat, so it is no longer a first contact.
+func otherRepliedLocked(thread *chatThread, userID string) bool {
+	for _, item := range thread.Messages {
+		if item.From != "" && item.From != userID {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *chatRoom) gatePostLocked(thread *chatThread, user chatUser) error {
@@ -260,13 +277,21 @@ func (c *chatRoom) gatePostLocked(thread *chatThread, user chatUser) error {
 	// A new direct chat stays a request until the other person replies,
 	// reacts, or accepts it. Messages still send, with a tighter limit,
 	// and a reported account can only start one of these a minute.
-	if len(thread.Members) == 0 && c.holdsRequestLocked(thread) && thread.Request != user.ID {
-		limit := 5
-		if c.reportedOftenLocked(user.ID) {
-			limit = 1
-		}
-		if !c.allowLocked(c.fresh, user.ID, limit) {
-			return errs.RateLimited()
+	if len(thread.Members) == 0 {
+		pending := c.holdsRequestLocked(thread) && thread.Request != user.ID
+		if pending || !otherRepliedLocked(thread, user.ID) {
+			limit := 0
+			if pending {
+				limit = 5
+			}
+			// A much-reported account is slowed in every first-contact
+			// chat, whether or not the other person uses message requests.
+			if c.reportedOftenLocked(user.ID) {
+				limit = 1
+			}
+			if limit > 0 && !c.allowLocked(c.fresh, user.ID, limit) {
+				return errs.RateLimited()
+			}
 		}
 	}
 	if len(thread.Members) > 0 && thread.Announce && !threadAdmin(thread, user.ID) {
@@ -524,6 +549,7 @@ func (c *chatRoom) sendDue(ctx context.Context) {
 	if len(due) > 0 {
 		c.persist(ctx)
 	}
+	retry := make([]chatSchedule, 0)
 	for _, item := range due {
 		c.mu.Lock()
 		author, ok := c.userLocked(item.From)
@@ -531,9 +557,34 @@ func (c *chatRoom) sendDue(ctx context.Context) {
 		if !ok {
 			continue
 		}
-		_, _ = c.post(ctx, author, item.Thread, item.Text, item.Reply)
+		if _, err := c.post(ctx, author, item.Thread, item.Text, item.Reply); err != nil && scheduleRetryable(err, item, now) {
+			retry = append(retry, item)
+		}
+	}
+	// A send that failed for a passing reason (rate limit, a busy moment)
+	// goes back in the list and is tried again on the next tick instead
+	// of being lost.
+	if len(retry) > 0 {
+		c.mu.Lock()
+		c.data.Schedules = append(c.data.Schedules, retry...)
+		c.mu.Unlock()
+		c.persist(ctx)
 	}
 	c.missStaleCalls(ctx)
+}
+
+// chatScheduleGiveUp is how long after its time a scheduled message is still
+// retried.
+const chatScheduleGiveUp = 24 * time.Hour
+
+// scheduleRetryable is false for a send the server refused for good (the
+// chat is gone, the person blocked you) and for one that is a day late.
+func scheduleRetryable(err error, item chatSchedule, now int64) bool {
+	var rejected *chatClientError
+	if errors.As(err, &rejected) {
+		return false
+	}
+	return now-item.SendAt < chatScheduleGiveUp.Milliseconds()
 }
 
 func (c *chatRoom) userRef(id string) (chatUser, bool) {

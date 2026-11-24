@@ -13,9 +13,14 @@ import 'package:social_save/core/diagnostics/plain_log.dart';
 import 'package:social_save/core/platform/device_name_io.dart'
     if (dart.library.html) 'package:social_save/core/platform/device_name_stub.dart';
 import 'package:social_save/core/platform/plat.dart';
+import 'package:social_save/core/security/token_seal.dart';
 import 'package:social_save/core/diagnostics/quiet_log.dart';
 
 const chatTokenKey = 'chat.token.v1';
+
+/// Windows keeps the sign-in sealed to the Windows user (DPAPI) under this
+/// key instead of as plain text.
+const chatSealedTokenKey = 'chat.token.sealed.v1';
 const chatUsernameKey = 'chat.username.v1';
 const chatContactKey = 'chat.contact.v1';
 const chatReadKey = 'chat.read.v1';
@@ -54,8 +59,34 @@ class ChatReads {
 class ChatSession {
   static Future<String?> token() async {
     final prefs = await SharedPreferences.getInstance();
+    if (TokenSeal.supported) {
+      final sealed = prefs.getString(chatSealedTokenKey) ?? '';
+      if (sealed.isNotEmpty) {
+        final open = TokenSeal.unseal(sealed)?.trim() ?? '';
+        if (open.isNotEmpty) return open;
+      }
+    }
     final value = prefs.getString(chatTokenKey)?.trim() ?? '';
-    return value.isEmpty ? null : value;
+    if (value.isEmpty) return null;
+    // Older versions kept the sign-in as plain text. Seal it now; the plain
+    // copy is only removed once the sealed one reads back the same.
+    if (TokenSeal.supported) await _storeToken(prefs, value);
+    return value;
+  }
+
+  static Future<void> _storeToken(SharedPreferences prefs, String token) async {
+    if (TokenSeal.supported) {
+      final sealed = TokenSeal.seal(token);
+      if (sealed != null && TokenSeal.unseal(sealed) == token) {
+        await prefs.setString(chatSealedTokenKey, sealed);
+        await prefs.remove(chatTokenKey);
+        return;
+      }
+    }
+    // Android's background reply service reads this key, so other systems
+    // keep it here (in app-private storage, left out of phone backups).
+    await prefs.setString(chatTokenKey, token);
+    await prefs.remove(chatSealedTokenKey);
   }
 
   static Future<String> username() async {
@@ -74,7 +105,7 @@ class ChatSession {
     required String contact,
   }) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(chatTokenKey, token);
+    await _storeToken(prefs, token);
     await prefs.setString(chatUsernameKey, username);
     await prefs.setString(chatContactKey, contact);
   }
@@ -82,6 +113,7 @@ class ChatSession {
   static Future<void> clear() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(chatTokenKey);
+    await prefs.remove(chatSealedTokenKey);
     await prefs.remove(chatUsernameKey);
     await prefs.remove(chatContactKey);
   }

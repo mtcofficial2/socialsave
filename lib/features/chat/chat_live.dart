@@ -44,6 +44,9 @@ class ChatLiveEvent {
   final int callDur;
 }
 
+/// How often the app checks that the live connection still answers.
+const chatLivePingInterval = Duration(seconds: 25);
+
 /// One live connection for messages, typing, and pictures.
 class ChatLive {
   ChatLive._();
@@ -135,6 +138,13 @@ class ChatLive {
       );
       _recordedAt = DateTime.now();
     }
+  }
+
+  /// Drops the current connection so a fresh one is made, e.g. after the
+  /// phone switched between Wi-Fi and mobile data.
+  void reconnect() {
+    if (!_started || stopped) return;
+    _close?.call();
   }
 
   void detach() {

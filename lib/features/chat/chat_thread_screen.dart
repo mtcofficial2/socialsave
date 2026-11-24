@@ -23,6 +23,7 @@ import 'package:social_save/features/chat/chat_history.dart';
 import 'package:social_save/features/chat/chat_image_store.dart';
 import 'package:social_save/features/chat/chat_link.dart';
 import 'package:social_save/features/chat/chat_live.dart';
+import 'package:social_save/features/chat/chat_outbox.dart';
 import 'package:social_save/features/chat/chat_call.dart';
 import 'package:social_save/features/chat/chat_prefs.dart';
 import 'package:social_save/features/chat/chat_profile.dart';
@@ -1651,6 +1652,13 @@ class _ChatThreadViewState extends State<ChatThreadView>
   /// Stops at the first one that is still offline.
   Future<void> _resendQueued() async {
     if (_resending || !mounted) return;
+    // The background outbox is sending this chat's queue right now; look
+    // again in a moment so nothing is sent twice.
+    if (ChatOutbox.sending == _threadId) {
+      _resendTimer?.cancel();
+      _resendTimer = Timer(const Duration(seconds: 2), () => unawaited(_resendQueued()));
+      return;
+    }
     _resending = true;
     try {
       await _refresh();
@@ -1678,49 +1686,7 @@ class _ChatThreadViewState extends State<ChatThreadView>
     if (message.id >= 0 || message.status == 'sending') return;
     _mark(message.id, 'sending');
     try {
-      final ChatMessage sent;
-      if (message.pendingKind == 'voice' && message.localBytes != null) {
-        sent = await _api.sendVoice(
-          _threadId,
-          message.localBytes!,
-          message.voiceMs,
-          reply: message.reply,
-        );
-      } else if (message.pendingKind == 'song' && message.localBytes != null) {
-        sent = await _api.sendSong(
-          _threadId,
-          message.localBytes!,
-          name: message.songName.isEmpty ? message.text : message.songName,
-          milliseconds: message.songMs,
-          reply: message.reply,
-        );
-      } else if (message.pendingKind == 'photo' && message.localBytes != null) {
-        final caption = message.text == 'Photo' ? '' : message.text;
-        final outgoing = await _api.sendPhoto(
-          _threadId,
-          message.localBytes!,
-          caption: caption,
-          reply: message.reply,
-        );
-        await _storePhoto(outgoing, message.localBytes!);
-        sent = outgoing.message;
-      } else if ((message.pendingKind == 'file' || message.pendingKind == 'clip') &&
-          message.localBytes != null) {
-        sent = await _api.sendFile(
-          _threadId,
-          message.localBytes!,
-          name: message.fileName.isEmpty ? 'file' : message.fileName,
-          caption: message.text,
-          reply: message.reply,
-          clip: message.isClip,
-        );
-      } else {
-        sent = await _api.send(
-          _threadId,
-          message.text,
-          reply: message.reply,
-        );
-      }
+      final sent = await chatSendPending(_api, _threadId, message);
       if (!mounted || !_messages.any((item) => item.id == message.id)) return;
       _replaceLocal(message.id, sent);
     } catch (error) {

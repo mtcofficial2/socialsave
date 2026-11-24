@@ -187,26 +187,31 @@ func TestAdminDisableAndSignOut(t *testing.T) {
 	if disabled.Code != http.StatusOK {
 		t.Fatalf("disable %d %s", disabled.Code, disabled.Body.String())
 	}
+	// Disabling ends every session: nothing works with the old sign-in.
 	refused := postChat(app, "/api/v1/chat/threads/"+thread.ID, ada.token, `{"text":"still here"}`)
-	if refused.Code == http.StatusOK || bytesIndex(refused.Body.Bytes(), "disabled") < 0 {
+	if refused.Code != http.StatusUnauthorized {
 		t.Fatalf("disabled send %d %s", refused.Code, refused.Body.String())
 	}
-	status := postChat(app, "/api/v1/chat/status", ada.token, `{"text":"out today"}`)
-	if status.Code == http.StatusOK || bytesIndex(status.Body.Bytes(), "disabled") < 0 {
-		t.Fatalf("disabled status %d %s", status.Code, status.Body.String())
-	}
-	call := postChat(app, "/api/v1/chat/calls", ada.token, `{"thread":"`+thread.ID+`","sdp":"v=0\r\n"}`)
-	if call.Code == http.StatusOK || bytesIndex(call.Body.Bytes(), "disabled") < 0 {
-		t.Fatalf("disabled call %d %s", call.Code, call.Body.String())
-	}
 	when := time.Now().Add(2 * time.Hour).UnixMilli()
-	scheduled := postChat(app, "/api/v1/chat/threads/"+thread.ID+"/schedule", ada.token, `{"text":"later","sendAt":`+strconv.FormatInt(when, 10)+`}`)
-	if scheduled.Code == http.StatusOK || bytesIndex(scheduled.Body.Bytes(), "disabled") < 0 {
-		t.Fatalf("disabled schedule %d %s", scheduled.Code, scheduled.Body.String())
+	for _, path := range []string{"/api/v1/chat/status", "/api/v1/chat/calls", "/api/v1/chat/groups", "/api/v1/chat/groups/join", "/api/v1/chat/threads/" + thread.ID + "/react", "/api/v1/chat/threads/" + thread.ID + "/schedule"} {
+		got := postChat(app, path, ada.token, `{"text":"later","name":"g","code":"ABCDEF","sendAt":`+strconv.FormatInt(when, 10)+`}`)
+		if got.Code != http.StatusUnauthorized {
+			t.Fatalf("disabled %s %d %s", path, got.Code, got.Body.String())
+		}
+	}
+	if getChat(app, "/api/v1/chat/me", ada.token).Code != http.StatusUnauthorized {
+		t.Fatal("disabled me")
+	}
+	// Signing in again is refused while the account is off.
+	again := postChat(app, "/api/v1/chat/register", "", chatTestBody(`{"phone":"256700000222","username":"ada"}`))
+	if again.Code == http.StatusOK || bytesIndex(again.Body.Bytes(), "disabled") < 0 {
+		t.Fatalf("disabled sign-in %d %s", again.Code, again.Body.String())
 	}
 	if postChat(app, "/api/v1/chat/admin/disable", admin.token, `{"username":"ada","disabled":false}`).Code != http.StatusOK {
 		t.Fatal("allow")
 	}
+	ada = registerChat(t, app, `{"phone":"256700000222","username":"ada"}`)
+	adaAgain = registerChat(t, app, `{"phone":"256700000222","username":"ada"}`)
 	if postChat(app, "/api/v1/chat/threads/"+thread.ID, ada.token, `{"text":"back"}`).Code != http.StatusOK {
 		t.Fatal("send after allow")
 	}

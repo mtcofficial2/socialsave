@@ -295,6 +295,7 @@ type chatRoom struct {
 	opens      map[string][]time.Time
 	fresh      map[string][]time.Time
 	rings      map[string][]time.Time
+	loginFails map[string][]time.Time
 	last       map[string]string
 	seenSaved  map[string]int64
 	blob       chatBlob
@@ -305,6 +306,11 @@ type chatRoom struct {
 	blobMu    sync.Mutex
 	blobTimer *time.Timer
 	blobSum   [32]byte
+	// blobDirty is set when the last upload failed, so a retry (and the
+	// save on shutdown) still sends it. blobRetry grows the wait between
+	// retries so a storage outage is not hammered.
+	blobDirty bool
+	blobRetry int
 }
 
 func newChatRoom(up storage.Uploader) *chatRoom {
@@ -343,10 +349,14 @@ func (c *chatRoom) register(ctx context.Context, ip, phone, email, username, pas
 		return chatUser{}, "", err
 	}
 	c.mu.Lock()
+	if c.joins == nil {
+		c.joins = map[string][]time.Time{}
+	}
 	if !c.allowLocked(c.joins, ip, chatJoinRate) {
 		c.mu.Unlock()
 		return chatUser{}, "", errs.RateLimited()
 	}
+	existingID, stored := "", ""
 	for i := range c.data.Users {
 		user := c.data.Users[i]
 		if !chatAccountOverlaps(user, phone, email, username) {
@@ -356,20 +366,68 @@ func (c *chatRoom) register(ctx context.Context, ip, phone, email, username, pas
 			c.mu.Unlock()
 			return chatUser{}, "", chatRejected(chatOverlapMessage(user, phone, email, username))
 		}
-		if err := applyChatPassword(&c.data.Users[i], password); err != nil {
+		if user.Disabled {
 			c.mu.Unlock()
+			return chatUser{}, "", chatRejected("This account is disabled.")
+		}
+		if c.loginLockedLocked(user.ID) {
+			c.mu.Unlock()
+			return chatUser{}, "", chatLoginLocked()
+		}
+		existingID, stored = user.ID, user.PasswordHash
+		break
+	}
+	c.mu.Unlock()
+	clean, err := cleanChatPassword(password)
+	if err != nil {
+		return chatUser{}, "", err
+	}
+
+	// The password hash is slow on purpose, so it runs without holding the
+	// chat lock; everyone else keeps chatting while one person signs in.
+	hashed := ""
+	if existingID == "" || stored == "" {
+		hashed, err = newPasswordHash(clean)
+		if err != nil {
 			return chatUser{}, "", err
 		}
-		keepSession(&c.data.Users[i], hash)
-		c.data.Users[i].RecoveryPlain = ""
-		if code, _, err := ensureRecovery(&c.data.Users[i]); err != nil {
+	} else if !passwordMatches(stored, clean) {
+		c.mu.Lock()
+		c.noteLoginFailLocked(existingID)
+		c.mu.Unlock()
+		return chatUser{}, "", chatRejected("That password does not match.")
+	}
+
+	c.mu.Lock()
+	if existingID != "" {
+		index := -1
+		for i := range c.data.Users {
+			if c.data.Users[i].ID == existingID {
+				index = i
+				break
+			}
+		}
+		// The account changed while the password was checked (a new
+		// password or recovery): ask for a fresh try instead of guessing.
+		if index < 0 || c.data.Users[index].PasswordHash != stored {
+			c.mu.Unlock()
+			return chatUser{}, "", chatRejected("Please try signing in again.")
+		}
+		user := &c.data.Users[index]
+		if stored == "" {
+			user.PasswordHash = hashed
+		}
+		c.clearLoginFailsLocked(existingID)
+		keepSession(user, hash)
+		user.RecoveryPlain = ""
+		if code, _, err := ensureRecovery(user); err != nil {
 			c.mu.Unlock()
 			return chatUser{}, "", err
 		} else if code != "" {
-			c.data.Users[i].RecoveryPlain = code
+			user.RecoveryPlain = code
 		}
-		signed := c.data.Users[i]
-		c.data.Users[i].RecoveryPlain = ""
+		signed := *user
+		user.RecoveryPlain = ""
 		c.mu.Unlock()
 		c.persist(ctx)
 		signed.TokenHash = ""
@@ -380,18 +438,22 @@ func (c *chatRoom) register(ctx context.Context, ip, phone, email, username, pas
 		signed.Devices = nil
 		return signed, plain, nil
 	}
-	user := chatUser{
-		ID:        newChatID("u"),
-		Phone:     phone,
-		Email:     email,
-		Username:  username,
-		TokenHash: hash,
-		Sessions:  []string{hash},
-		Created:   time.Now().UnixMilli(),
+	// Someone may have taken the name while the hash was made.
+	for _, other := range c.data.Users {
+		if chatAccountOverlaps(other, phone, email, username) {
+			c.mu.Unlock()
+			return chatUser{}, "", chatRejected("Please try signing in again.")
+		}
 	}
-	if err := applyChatPassword(&user, password); err != nil {
-		c.mu.Unlock()
-		return chatUser{}, "", err
+	user := chatUser{
+		ID:           newChatID("u"),
+		Phone:        phone,
+		Email:        email,
+		Username:     username,
+		TokenHash:    hash,
+		Sessions:     []string{hash},
+		Created:      time.Now().UnixMilli(),
+		PasswordHash: hashed,
 	}
 	if code, codeHash, err := ensureRecovery(&user); err != nil {
 		c.mu.Unlock()
@@ -411,6 +473,49 @@ func (c *chatRoom) register(ctx context.Context, ip, phone, email, username, pas
 	return user, plain, nil
 }
 
+// Wrong passwords are counted per account, so guessing is slow even from
+// many addresses: 10 misses in 15 minutes pause sign-in for that account.
+const (
+	chatLoginFailMax    = 10
+	chatLoginFailWindow = 15 * time.Minute
+)
+
+func chatLoginLocked() error {
+	return chatRejected("Too many wrong passwords. Wait 15 minutes, or use your recovery code.")
+}
+
+func (c *chatRoom) loginLockedLocked(userID string) bool {
+	if c.loginFails == nil {
+		return false
+	}
+	cutoff := time.Now().Add(-chatLoginFailWindow)
+	kept := c.loginFails[userID][:0]
+	for _, at := range c.loginFails[userID] {
+		if at.After(cutoff) {
+			kept = append(kept, at)
+		}
+	}
+	if len(kept) == 0 {
+		delete(c.loginFails, userID)
+		return false
+	}
+	c.loginFails[userID] = kept
+	return len(kept) >= chatLoginFailMax
+}
+
+func (c *chatRoom) noteLoginFailLocked(userID string) {
+	if c.loginFails == nil {
+		c.loginFails = map[string][]time.Time{}
+	}
+	c.loginFails[userID] = append(c.loginFails[userID], time.Now())
+}
+
+func (c *chatRoom) clearLoginFailsLocked(userID string) {
+	if c.loginFails != nil {
+		delete(c.loginFails, userID)
+	}
+}
+
 func (c *chatRoom) userByToken(ctx context.Context, plain string) (chatUser, bool) {
 	c.ensure(ctx)
 	sum := sha256.Sum256([]byte(strings.TrimSpace(plain)))
@@ -420,6 +525,11 @@ func (c *chatRoom) userByToken(ctx context.Context, plain string) (chatUser, boo
 	for _, user := range c.data.Users {
 		if !sessionMatches(user, want) {
 			continue
+		}
+		// A disabled account is signed out everywhere: none of its
+		// sessions work until an admin turns it back on.
+		if user.Disabled {
+			return chatUser{}, false
 		}
 		user.TokenHash = ""
 		user.Sessions = nil
@@ -1787,6 +1897,12 @@ func chatLatest(data chatData) int64 {
 // often, and again on shutdown.
 var chatBlobDelay = 60 * time.Second
 
+// A failed upload is tried again after 1, 2, 4, 8 and then every 15 minutes.
+var (
+	chatBlobRetryBase = 60 * time.Second
+	chatBlobRetryMax  = 15 * time.Minute
+)
+
 func (c *chatRoom) persist(ctx context.Context) {
 	c.saveMu.Lock()
 	c.mu.Lock()
@@ -1824,6 +1940,7 @@ func (c *chatRoom) persist(ctx context.Context) {
 func (c *chatRoom) flushStore(ctx context.Context) {
 	c.blobMu.Lock()
 	pending := c.blobTimer != nil && c.blobTimer.Stop()
+	pending = pending || c.blobDirty
 	c.blobTimer = nil
 	c.blobMu.Unlock()
 	if pending {
@@ -1858,7 +1975,8 @@ func (c *chatRoom) uploadStore(ctx context.Context) {
 		stored, getErr := blob.GetBytes(checkCtx, chatKey)
 		cancel()
 		if getErr != nil && !errors.Is(getErr, os.ErrNotExist) {
-			slog.Warn("chat storage still unreadable; save skipped")
+			delay := c.retryUploadLater()
+			slog.Warn("chat storage still unreadable; save skipped", "err", getErr, "retry_in", delay.String())
 			return
 		}
 		if getErr == nil {
@@ -1876,13 +1994,41 @@ func (c *chatRoom) uploadStore(ctx context.Context) {
 	defer cancel()
 	if err := blob.PutBytes(saveCtx, chatKey, body); err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
-			slog.Info("chat persist failed")
+			delay := c.retryUploadLater()
+			slog.Warn("chat persist failed", "err", err, "bytes", len(body), "retry_in", delay.String())
 		}
 		return
 	}
 	c.blobMu.Lock()
 	c.blobSum = sum
+	c.blobDirty = false
+	c.blobRetry = 0
 	c.blobMu.Unlock()
+}
+
+// retryUploadLater marks the store as still unsaved and plans one retry,
+// waiting longer after each failure in a row. It returns the wait.
+func (c *chatRoom) retryUploadLater() time.Duration {
+	c.blobMu.Lock()
+	defer c.blobMu.Unlock()
+	c.blobDirty = true
+	delay := chatBlobRetryBase
+	for i := 0; i < c.blobRetry && delay < chatBlobRetryMax; i++ {
+		delay *= 2
+	}
+	if delay > chatBlobRetryMax {
+		delay = chatBlobRetryMax
+	}
+	c.blobRetry++
+	if c.blobTimer == nil {
+		c.blobTimer = time.AfterFunc(delay, func() {
+			c.blobMu.Lock()
+			c.blobTimer = nil
+			c.blobMu.Unlock()
+			c.uploadStore(context.Background())
+		})
+	}
+	return delay
 }
 
 func readChatFile(path string) chatData {

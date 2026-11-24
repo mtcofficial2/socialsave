@@ -54,6 +54,30 @@ void installNearbyUi() {
     NearbyService.incomingText.value = null;
     unawaited(showIncomingText(ctx, NearbyService.incomingTextFrom.value, text));
   });
+  NearbyService.onTextOffer = (fromName) async {
+    final context = appRouter.routerDelegate.navigatorKey.currentContext;
+    if (context == null || !context.mounted) return false;
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.message_rounded),
+        title: Text('$fromName wants to send you text'),
+        content: const Text('Only show it if you know this device. Links from strangers can be scams.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Decline'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Show'),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  };
   NearbyService.onOffer = (offer) async {
     final context = appRouter.routerDelegate.navigatorKey.currentContext;
     if (context == null || !context.mounted) return false;

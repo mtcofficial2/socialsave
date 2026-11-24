@@ -16,6 +16,7 @@ import 'package:social_save/features/chat/chat_format.dart';
 import 'package:social_save/features/chat/chat_prefs.dart';
 import 'package:social_save/features/chat/chat_history.dart';
 import 'package:social_save/features/chat/chat_live.dart';
+import 'package:social_save/features/chat/chat_outbox.dart';
 import 'package:social_save/features/chat/chat_ui.dart';
 import 'package:social_save/features/library/desktop_tray.dart';
 import 'package:social_save/shared/routing/app_router.dart';
@@ -342,6 +343,7 @@ class ChatAlertWatch {
   bool _again = false;
   bool _asked = false;
   bool _offline = false;
+  String _netKind = '';
   bool _socketDown = true;
   String _me = '';
 
@@ -385,11 +387,17 @@ class ChatAlertWatch {
     }
     _net = Connectivity().onConnectivityChanged.listen((results) {
       final offline = results.length == 1 && results.contains(ConnectivityResult.none);
+      final kind = (results.map((r) => r.name).toList()..sort()).join(',');
+      final switched = _netKind.isNotEmpty && kind != _netKind;
+      _netKind = kind;
       if (offline) {
         _offline = true;
         return;
       }
-      if (!_offline) return;
+      // Moving between Wi-Fi and mobile data leaves the old live line dead
+      // even though it still looks open; start a fresh one.
+      if (switched) ChatLive.instance.reconnect();
+      if (!_offline && !switched) return;
       _offline = false;
       unawaited(_check(force: true));
       if (callsOnThisDevice(windows: Plat.isWindows)) {
@@ -585,6 +593,8 @@ class ChatAlertWatch {
       await _beat();
       fetched = true;
       final items = await _api.threads();
+      // Messages written offline in other chats go out now.
+      unawaited(ChatOutbox.flush(_api));
       _me = await ChatSession.username();
       if (_me.isNotEmpty) {
         unawaited(ChatHistory.archiveInbox(_api, _me, items));

@@ -125,6 +125,18 @@ func (c *chatRoom) recover(ctx context.Context, username, code, password string)
 	if err != nil {
 		return chatUser{}, "", "", err
 	}
+	// Check the attempt limit before the slow password hash, so blocked
+	// tries cost the server nothing.
+	c.ensure(ctx)
+	c.mu.Lock()
+	if c.joins == nil {
+		c.joins = map[string][]time.Time{}
+	}
+	if !c.allowLocked(c.joins, "recover:"+name, 5) {
+		c.mu.Unlock()
+		return chatUser{}, "", "", errs.RateLimited()
+	}
+	c.mu.Unlock()
 	hashed, err := newPasswordHash(clean)
 	if err != nil {
 		return chatUser{}, "", "", err
@@ -137,15 +149,7 @@ func (c *chatRoom) recover(ctx context.Context, username, code, password string)
 	if err != nil {
 		return chatUser{}, "", "", err
 	}
-	c.ensure(ctx)
 	c.mu.Lock()
-	if c.joins == nil {
-		c.joins = map[string][]time.Time{}
-	}
-	if !c.allowLocked(c.joins, "recover:"+name, 5) {
-		c.mu.Unlock()
-		return chatUser{}, "", "", errs.RateLimited()
-	}
 	index := -1
 	for i := range c.data.Users {
 		if c.data.Users[i].Username == name {
@@ -165,6 +169,7 @@ func (c *chatRoom) recover(ctx context.Context, username, code, password string)
 	user.Devices = []chatDevice{{Hash: tokenHash, Created: now, Seen: now}}
 	user.RecoveryHash = nextHash
 	user.RecoveryPlain = ""
+	c.clearLoginFailsLocked(user.ID)
 	signed := *user
 	c.mu.Unlock()
 	c.persist(ctx)

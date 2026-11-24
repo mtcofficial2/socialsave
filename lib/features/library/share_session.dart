@@ -559,6 +559,7 @@ class ShareSession {
     if (_installed) return;
     _installed = true;
     NearbyService.autoAccept = (fromId) => peer.value != null && peer.value!.id == fromId;
+    NearbyService.stayActive = () => active;
     NearbyService.extraRoute = _route;
     NearbyService.incoming.addListener(_onIncoming);
     PhoneHandoff.onContact = _onContact;

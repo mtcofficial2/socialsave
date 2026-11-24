@@ -513,6 +513,10 @@ func (c *chatRoom) setDisabled(ctx context.Context, actor chatUser, username str
 	action := "account.enable"
 	if disabled {
 		action = "account.disable"
+		// End every session so the person is signed out on all devices.
+		user.TokenHash = ""
+		user.Sessions = nil
+		user.Devices = nil
 	}
 	c.auditLocked(actor, action, name, "")
 	c.mu.Unlock()

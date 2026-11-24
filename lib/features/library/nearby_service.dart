@@ -8,8 +8,8 @@ import 'package:social_save/features/library/bundle_transfer.dart';
 import 'package:social_save/features/library/transfer_boost.dart';
 import 'package:social_save/features/library/transfer_meter.dart';
 import 'package:crypto/crypto.dart' show sha256;
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:social_save/core/diagnostics/phone_activity.dart';
@@ -252,13 +252,59 @@ class NearbyService {
     });
     unawaited(_refreshIfaces());
     _sendBeacon(hello: true);
+    _startBeacon();
+    if (Plat.isAndroid) {
+      WidgetsBinding.instance.addObserver(_NearbyLifecycle());
+    }
+  }
+
+  static int _ticks = 0;
+
+  static void _startBeacon() {
+    _beacon?.cancel();
     _beacon = Timer.periodic(const Duration(seconds: 2), (_) {
-      unawaited(_refreshIfaces());
+      // Network interfaces rarely change; looking every 10 s is plenty.
+      if (_ticks++ % 5 == 0) unawaited(_refreshIfaces());
       _sendBeacon();
       final before = _seen.length;
       _seen.removeWhere((_, d) => DateTime.now().difference(d.lastSeen) > const Duration(seconds: 8));
       if (_seen.length != before) _publishList();
     });
+  }
+
+  /// True while something must stay findable in the background (a share
+  /// session with another device). Set by ShareSession.
+  static bool Function()? stayActive;
+
+  static bool _paused = false;
+
+  /// On a phone the app stops announcing itself and lets Wi-Fi sleep while
+  /// it is in the background, unless a transfer or share session is running.
+  /// Announcing every 2 s with a Wi-Fi lock held drained the battery.
+  @visibleForTesting
+  static bool shouldPauseInBackground({required bool busy, required bool sessionActive}) =>
+      !busy && !sessionActive;
+
+  static Future<void> _onBackground() async {
+    if (_paused || !_started) return;
+    if (!shouldPauseInBackground(busy: _busy, sessionActive: stayActive?.call() ?? false)) return;
+    _paused = true;
+    _beacon?.cancel();
+    _beacon = null;
+    try {
+      await _media.invokeMethod<bool>('nearbyLock', {'on': false});
+    } catch (e) { logQuiet('nearby_service', e); }
+  }
+
+  static Future<void> _onForeground() async {
+    if (!_paused || !_started) return;
+    _paused = false;
+    try {
+      await _media.invokeMethod<bool>('nearbyLock', {'on': true});
+    } catch (e) { logQuiet('nearby_service', e); }
+    if (_udp == null) return;
+    unawaited(_sendBeacon(hello: true));
+    _startBeacon();
   }
 
   /// Local IPv4 interfaces (name, address), used to tell cable links from Wi-Fi.
@@ -443,6 +489,16 @@ class NearbyService {
     await prefs.setString(_textsKey, jsonEncode(l));
   }
 
+  /// Asks before showing text from a device that is not trusted. Set by the UI.
+  static Future<bool> Function(String fromName)? onTextOffer;
+
+  static Future<bool> _textAllowed(String fromId, String fromName) async {
+    if (fromId.isNotEmpty && (autoAccept?.call(fromId) == true || await isTrusted(fromId))) return true;
+    final ask = onTextOffer;
+    if (ask == null) return false;
+    return ask(fromName).timeout(const Duration(minutes: 2), onTimeout: () => false);
+  }
+
   /// Sends text or a link to [device]. Returns null on success.
   static Future<String?> sendText(NearbyDevice device, String text) async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
@@ -450,9 +506,13 @@ class NearbyService {
       final r = await client.postUrl(Uri.http('${device.host}:${device.port}', '/text'));
       r.headers.contentType = ContentType.json;
       r.write(jsonEncode({'id': id, 'name': name, 'text': text}));
-      final res = await r.close().timeout(const Duration(seconds: 15));
+      // The other device may ask its owner first, so wait a little longer.
+      final res = await r.close().timeout(const Duration(seconds: 130));
       await res.drain<void>();
       if (res.statusCode == HttpStatus.ok) return null;
+      if (res.statusCode == HttpStatus.forbidden) {
+        return '${device.name} did not accept the text.';
+      }
       if (res.statusCode == HttpStatus.notFound) {
         return '${device.name} runs an older SocialSave that cannot receive text yet. Update the app there.';
       }
@@ -485,6 +545,14 @@ class NearbyService {
           return;
         }
         final from = '${body['name'] ?? 'Another device'}';
+        final fromId = '${body['id'] ?? ''}';
+        // Text from a device you have not paired or trusted is only shown
+        // after you say yes, so nobody on the same Wi-Fi can pop a link up.
+        if (!await _textAllowed(fromId, from)) {
+          res.statusCode = HttpStatus.forbidden;
+          await res.close();
+          return;
+        }
         await _saveText(from, text);
         incomingTextFrom.value = from;
         incomingText.value = text;
@@ -1009,6 +1077,17 @@ class NearbyService {
       }
       await TransferBoost.end();
       client.close(force: true);
+    }
+  }
+}
+
+class _NearbyLifecycle with WidgetsBindingObserver {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
+      unawaited(NearbyService._onBackground());
+    } else if (state == AppLifecycleState.resumed) {
+      unawaited(NearbyService._onForeground());
     }
   }
 }

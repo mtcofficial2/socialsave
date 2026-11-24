@@ -50,6 +50,10 @@ Future<void> runChatSocket(ChatLive live, int epoch) async {
         await socket.close();
         return;
       }
+      // A light keep-alive: if the server stops answering (the phone moved
+      // to another network and the old line is dead), the socket closes
+      // and this loop connects again instead of looking connected forever.
+      socket.pingInterval = chatLivePingInterval;
       final current = socket;
       live.attach(
         text: (text) => current.add(text),

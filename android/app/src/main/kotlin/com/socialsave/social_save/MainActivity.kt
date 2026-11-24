@@ -1318,6 +1318,12 @@ class MainActivity : FlutterFragmentActivity() {
         hotspotShare = null
         phoneBody?.stop()
         phoneBody = null
+        // Never keep the Wi-Fi multicast lock after the screen is gone.
+        try {
+            multicastLock?.release()
+        } catch (_: Exception) {
+        }
+        multicastLock = null
         super.onDestroy()
         if (!SessionBridge.active && !ChatListen.active) {
             // Nothing left that has to keep receiving. Tear the engine down.

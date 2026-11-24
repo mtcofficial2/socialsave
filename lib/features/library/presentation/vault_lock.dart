@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -38,9 +39,40 @@ class _VaultLockPaneState extends ConsumerState<VaultLockPane>
 
   @override
   void dispose() {
+    _lockTick?.cancel();
     _shake.dispose();
     _focus.dispose();
     super.dispose();
+  }
+
+  Timer? _lockTick;
+
+  /// Plain wait text, e.g. "30 seconds" or "5 minutes".
+  static String waitLabel(Duration wait) {
+    final s = wait.inSeconds + (wait.inMilliseconds % 1000 > 0 ? 1 : 0);
+    if (s < 60) return '$s second${s == 1 ? '' : 's'}';
+    final m = (s / 60).ceil();
+    return '$m minute${m == 1 ? '' : 's'}';
+  }
+
+  /// Shows the wait after too many wrong PINs and counts it down.
+  bool _showLock() {
+    final vault = ref.read(vaultServiceProvider);
+    final wait = vault.lockedFor();
+    if (wait <= Duration.zero) {
+      _lockTick?.cancel();
+      _lockTick = null;
+      return false;
+    }
+    setState(() {
+      _pin = '';
+      _error = 'Too many wrong tries. Try again in ${waitLabel(wait)}.';
+    });
+    _lockTick ??= Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      if (!_showLock()) setState(() => _error = null);
+    });
+    return true;
   }
 
   void _wrong() {
@@ -51,6 +83,8 @@ class _VaultLockPaneState extends ConsumerState<VaultLockPane>
 
   Future<void> _press(String digit) async {
     if (_pin.length >= _length) return;
+    final vault = ref.read(vaultServiceProvider);
+    if (vault.hasPin && _showLock()) return;
     HapticFeedback.selectionClick();
     setState(() {
       _pin += digit;
@@ -112,12 +146,18 @@ class _VaultLockPaneState extends ConsumerState<VaultLockPane>
       widget.onUnlocked?.call();
       return;
     }
-    if (vault.verifyPin(pin)) {
+    final check = await vault.checkPin(pin);
+    if (!mounted) return;
+    if (check.ok) {
       ref.read(vaultUnlockedProvider.notifier).state = true;
       widget.onUnlocked?.call();
       return;
     }
     _wrong();
+    if (check.wait > Duration.zero) {
+      _showLock();
+      return;
+    }
     setState(() {
       _error = 'Wrong passcode';
       _pin = '';

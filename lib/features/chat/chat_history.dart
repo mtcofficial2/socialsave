@@ -107,6 +107,18 @@ class ChatHistory {
     });
   }
 
+  /// Chats on this device that still have a message waiting for network.
+  static Future<List<String>> queuedThreads(String username) {
+    return _run(() async {
+      final book = await _book(username);
+      if (book == null) return const <String>[];
+      return [
+        for (final entry in book.logs.entries)
+          if (entry.value.messages.any((m) => m.id < 0 && m.status == 'queued')) entry.key,
+      ];
+    });
+  }
+
   static Future<int> newest(String username, String threadId) async {
     final found = await log(username, threadId);
     return found?.newest ?? 0;

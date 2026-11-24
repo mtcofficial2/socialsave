@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/aviation256444-boop/socialsave/backend/internal/errs"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -79,6 +80,15 @@ func (c *chatRoom) joinGroup(ctx context.Context, user chatUser, code string) (c
 	}
 	c.ensure(ctx)
 	c.mu.Lock()
+	// Codes are short, so guessing is kept slow: 6 tries a minute and
+	// 20 wrong codes an hour per account.
+	if c.joins == nil {
+		c.joins = map[string][]time.Time{}
+	}
+	if recentCountLocked(c.joins, "groupmiss:"+user.ID, time.Hour) >= chatGroupMissMax || !c.allowLocked(c.joins, "group:"+user.ID, 6) {
+		c.mu.Unlock()
+		return chatThread{}, errs.RateLimited()
+	}
 	var thread *chatThread
 	for i := range c.data.Threads {
 		if strings.EqualFold(c.data.Threads[i].Code, code) && len(c.data.Threads[i].Members) > 0 {
@@ -87,6 +97,7 @@ func (c *chatRoom) joinGroup(ctx context.Context, user chatUser, code string) (c
 		}
 	}
 	if thread == nil {
+		c.joins["groupmiss:"+user.ID] = append(c.joins["groupmiss:"+user.ID], time.Now())
 		c.mu.Unlock()
 		return chatThread{}, chatRejected("No group uses that code.")
 	}
@@ -448,4 +459,25 @@ func (s *Server) chatLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	s.chat.dropSession(r.Context(), r.Header.Get(chatTokenHeader))
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+// chatGroupMissMax wrong group codes in an hour pause joining by code.
+const chatGroupMissMax = 20
+
+// recentCountLocked drops entries older than window and returns how many
+// are left.
+func recentCountLocked(bucket map[string][]time.Time, key string, window time.Duration) int {
+	cutoff := time.Now().Add(-window)
+	kept := bucket[key][:0]
+	for _, at := range bucket[key] {
+		if at.After(cutoff) {
+			kept = append(kept, at)
+		}
+	}
+	if len(kept) == 0 {
+		delete(bucket, key)
+		return 0
+	}
+	bucket[key] = kept
+	return len(kept)
 }

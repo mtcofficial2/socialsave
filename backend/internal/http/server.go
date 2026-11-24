@@ -539,7 +539,11 @@ func (s *Server) file(w http.ResponseWriter, r *http.Request) {
 	if parsed, parseErr := url.Parse(claims.URL); parseErr == nil && parsed.Hostname() != "" {
 		host = parsed.Hostname()
 	}
-	slog.Info("download delivery=redirect", "host", host, "size", claims.Size, "render_bytes", 0, "range", r.Header.Get("Range"))
+	var size int64
+	if claims.Size != nil {
+		size = *claims.Size
+	}
+	slog.Info("download delivery=redirect", "host", host, "size", size, "render_bytes", 0, "range", r.Header.Get("Range"))
 	http.Redirect(w, r, claims.URL, http.StatusTemporaryRedirect)
 }
 
@@ -831,7 +835,15 @@ func (l *rateLimiter) allow(ip, path string, limit int) bool {
 	return true
 }
 
+// clientIP is the caller's address for rate limits. On Render, traffic comes
+// through Cloudflare, which always sets CF-Connecting-IP itself and
+// overwrites any value a client sends, so it is trusted first.
+// X-Forwarded-For is only a fallback: its first entry can be typed by the
+// client when no proxy rewrites it.
 func clientIP(r *http.Request) string {
+	if value := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); value != "" && net.ParseIP(value) != nil {
+		return value
+	}
 	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
 		if ip := strings.TrimSpace(strings.Split(forwarded, ",")[0]); ip != "" {
 			return ip
