@@ -186,7 +186,7 @@ class AppSettings extends Equatable {
         (value) => value.name == map['downloadLocation'],
         orElse: () => DownloadLocation.appStorage,
       ),
-      wifiOnly: map['wifiOnly'] as bool? ?? true,
+      wifiOnly: map['wifiOnly'] as bool? ?? false,
       autoStartDownloads: map['autoStartDownloads'] as bool? ?? true,
       notificationsEnabled: map['notificationsEnabled'] as bool? ?? true,
       defaultQuality: VideoQualityPreference.values.firstWhere(

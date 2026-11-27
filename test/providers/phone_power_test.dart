@@ -81,10 +81,12 @@ void main() {
 
   test('new phone settings leave the power pauses off', () {
     const settings = AppSettings();
+    expect(settings.wifiOnly, isFalse);
     expect(settings.onlyWhileCharging, isFalse);
     expect(settings.pauseBelowBattery, isFalse);
     expect(settings.pocketPause, isFalse);
     final fresh = AppSettings.fromMap(const {});
+    expect(fresh.wifiOnly, isFalse);
     expect(fresh.onlyWhileCharging, isFalse);
     expect(fresh.pauseBelowBattery, isFalse);
     expect(fresh.pocketPause, isFalse);

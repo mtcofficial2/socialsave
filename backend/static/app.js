@@ -43,7 +43,7 @@
 
   const DEFAULT_SETTINGS = {
     theme: "system",
-    wifiOnly: true,
+    wifiOnly: false,
     autoStart: false,
     notifications: true,
     defaultQuality: "best",

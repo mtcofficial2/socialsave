@@ -13,7 +13,8 @@ class SharedPreferencesSettingsStore implements SettingsRepository {
   static const _themeMode = '${AppConstants.settingsPrefsPrefix}themeMode';
   static const _downloadLocation =
       '${AppConstants.settingsPrefsPrefix}downloadLocation';
-  static const _wifiOnly = '${AppConstants.settingsPrefsPrefix}wifiOnly';
+  // New key so an update does not keep the old on-by-default value.
+  static const _wifiOnly = '${AppConstants.settingsPrefsPrefix}wifiOnlyV2';
   static const _autoStart =
       '${AppConstants.settingsPrefsPrefix}autoStartDownloads';
   static const _notifications =
